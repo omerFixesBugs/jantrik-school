@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push to the same branch/PR cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-24.04
+    # Normal runs take well under 5 minutes; this only stops a hung job.
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+          TZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # CI-only throwaway credentials for the service container (not secrets).
+      DB_OWNER_PASSWORD: owner_ci_password
+      DB_APP_PASSWORD: app_ci_password
+      # Same roles as local dev; tests run against jantrik_test.
+      DATABASE_URL: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_test
+      DATABASE_MIGRATION_URL: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
+      DATABASE_URL_TEST: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_test
+      DATABASE_MIGRATION_URL_TEST: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
+      REDIS_URL: redis://localhost:6379
+      TURBO_TELEMETRY_DISABLED: 1
+      NEXT_TELEMETRY_DISABLED: 1
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same script Docker runs locally on first start: creates jantrik_owner, jantrik_app,
+      # and the jantrik + jantrik_test databases.
+      - name: Create database roles and databases
+        run: sh docker/postgres/init/01-roles.sh
+        env:
+          PGHOST: localhost
+          PGPASSWORD: postgres
+          POSTGRES_USER: postgres
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Apply migrations to the test database
+        run: pnpm db:deploy
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

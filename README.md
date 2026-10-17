@@ -80,6 +80,26 @@ Read [docs/database.md](docs/database.md) before touching the schema: roles, Row
 > Upgrading from the first scaffold? The Postgres roles changed. Run `docker compose down -v`
 > once (deletes local DB data), then follow the setup steps above.
 
+## CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request to
+`main`. It uses Postgres 16 and Redis 7 service containers. It creates the database roles with
+the same script Docker uses locally ([`docker/postgres/init/01-roles.sh`](docker/postgres/init/01-roles.sh)),
+then runs these steps in order and stops at the first failure:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm format:check
+pnpm db:deploy      # migrations against jantrik_test
+pnpm test
+pnpm build
+```
+
+A newer push to the same branch cancels the older run. To check a change before pushing, run
+the same commands locally with `docker compose up -d` running.
+
 ## Environment
 
 A single root `.env` is used by every app and package (`.env.example` lists all variables).
