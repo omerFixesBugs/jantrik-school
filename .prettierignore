@@ -1,0 +1,11 @@
+node_modules
+dist
+.next
+.turbo
+coverage
+pnpm-lock.yaml
+**/src/generated
+next-env.d.ts
+
+# hand-written project guide; keep its exact layout
+CLAUDE.md

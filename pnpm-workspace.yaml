@@ -1,0 +1,15 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm only runs dependency install scripts that are listed here as true.
+allowBuilds:
+  '@prisma/engines': true
+  prisma: true
+  unrs-resolver: true
+  sharp: false
+  '@swc/core': false
+  '@parcel/watcher': false
+
+minimumReleaseAgeExclude:
+  - next@16.4.2

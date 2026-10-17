@@ -1,0 +1,8 @@
+{
+  "extends": "@jantrik/typescript-config/nestjs.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["src", "test", "*.ts"]
+}

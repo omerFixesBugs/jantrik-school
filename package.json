@@ -1,0 +1,27 @@
+{
+  "name": "jantrik",
+  "private": true,
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "turbo run db:generate",
+    "db:migrate": "pnpm --filter @jantrik/db db:migrate",
+    "db:deploy": "pnpm --filter @jantrik/db db:deploy",
+    "db:studio": "pnpm --filter @jantrik/db db:studio"
+  },
+  "devDependencies": {
+    "prettier": "3.9.10",
+    "turbo": "2.11.8",
+    "typescript": "6.0.3"
+  }
+}

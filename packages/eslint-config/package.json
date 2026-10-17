@@ -1,0 +1,21 @@
+{
+  "name": "@jantrik/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./base": "./base.js",
+    "./nest": "./nest.js",
+    "./next": "./next.js"
+  },
+  "dependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint-config-next": "16.4.2",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.13.0",
+    "typescript-eslint": "8.71.2"
+  },
+  "peerDependencies": {
+    "eslint": "^9.0.0"
+  }
+}

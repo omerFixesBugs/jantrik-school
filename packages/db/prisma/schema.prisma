@@ -1,0 +1,14 @@
+// Prisma schema for Jantrik School.
+// No models yet — tables are added per module (see CLAUDE.md, Phase 1).
+// Rule: every tenant-owned model must have `tenantId` (mapped to `tenant_id`).
+
+generator client {
+  provider         = "prisma-client"
+  output           = "../src/generated/prisma"
+  moduleFormat     = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}

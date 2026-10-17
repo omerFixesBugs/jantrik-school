@@ -1,0 +1,16 @@
+{
+  "app": {
+    "name": "Jantrik School",
+    "tagline": "Complete management for education institutes"
+  },
+  "health": {
+    "title": "System status",
+    "checking": "Checking…",
+    "api": "API",
+    "database": "Database",
+    "up": "Up",
+    "down": "Down",
+    "unreachable": "Cannot reach the API",
+    "retry": "Retry"
+  }
+}

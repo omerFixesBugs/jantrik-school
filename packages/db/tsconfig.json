@@ -1,0 +1,9 @@
+{
+  "extends": "@jantrik/typescript-config/library.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
