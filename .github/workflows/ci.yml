@@ -82,6 +82,11 @@ jobs:
           PGPASSWORD: postgres
           POSTGRES_USER: postgres
 
+      # Turbo tasks also depend on db:generate; this explicit step just makes a Prisma
+      # failure show up as its own step.
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
       - name: Lint
         run: pnpm lint
 

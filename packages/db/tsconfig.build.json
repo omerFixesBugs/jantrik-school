@@ -1,4 +1,9 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["src/seed", "test"]
+  "compilerOptions": {
+    // Emit dist/index.js (what package.json "exports" points at), not dist/src/index.js.
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "exclude": ["src/seed"]
 }
