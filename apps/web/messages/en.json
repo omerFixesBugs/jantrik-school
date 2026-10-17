@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Jantrik School",
-    "tagline": "Complete management for education institutes"
+    "tagline": "Running a school, madrasa or coaching centre, made simple"
   },
   "common": {
     "loading": "Loading…",
@@ -39,7 +39,13 @@
     "identifier": "Mobile number or email",
     "password": "Password",
     "signIn": "Sign in",
-    "signingIn": "Signing in…"
+    "signingIn": "Signing in…",
+    "brandHeadline": "Running a school, madrasa or coaching centre, made simple",
+    "brandText": "Attendance, fees, exam results and guardian SMS, all in one place.",
+    "pointLanguage": "In Bangla and English",
+    "pointPhone": "Everything works from a phone",
+    "pointPrivate": "Your institute's data stays with your institute",
+    "help": "Trouble signing in? Contact your institute's office."
   },
   "selectInstitute": {
     "title": "Choose an institute",
@@ -54,7 +60,12 @@
     "userMenu": "User menu",
     "switchInstitute": "Switch institute",
     "logout": "Log out",
-    "academicYear": "{label}: {name}"
+    "academicYear": "{label} {name}",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar",
+    "breadcrumb": "Breadcrumb",
+    "institute": "Institute",
+    "account": "Your account"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -64,18 +75,47 @@
     "exams": "Exams & results"
   },
   "dashboard": {
-    "welcome": "Welcome, {name}",
-    "subtitle": "{institute} — start today's work from here.",
-    "attendance": "Attendance",
-    "attendanceText": "Take daily attendance and notify guardians.",
-    "fees": "Fees",
-    "feesText": "Set fees, collect payments and track dues.",
-    "exams": "Exams & results",
-    "examsText": "Enter marks, calculate GPA and print report cards."
+    "subtitle": "Today at {institute}, at a glance.",
+    "greetingMorning": "Good morning, {name}",
+    "greetingAfternoon": "Good afternoon, {name}",
+    "greetingEvening": "Good evening, {name}",
+    "greetingNight": "Good evening, {name}",
+    "banglaDate": "Bangla calendar",
+    "totalStudents": "Total {student}s",
+    "totalStudentsHint": "Across every {classLevel}",
+    "presentToday": "Present today",
+    "presentTodayHint": "Shows here once you start taking attendance",
+    "feesThisMonth": "Collected this month",
+    "feesThisMonthHint": "Shows here once you start collecting fees",
+    "upcomingExam": "Upcoming exam",
+    "upcomingExamHint": "Shows here once you schedule an exam",
+    "notYet": "Not started yet",
+    "quickActions": "Quick actions",
+    "addStudent": "Admit a {student}",
+    "addStudentText": "New admission with guardian details",
+    "takeAttendance": "Take attendance",
+    "takeAttendanceText": "Open today's register",
+    "collectFee": "Collect a fee",
+    "collectFeeText": "Take a payment, give a receipt",
+    "checklistTitle": "Getting started",
+    "checklistText": "Finish these steps and your institute is fully set up.",
+    "checklistProgress": "{done} of {total} done",
+    "stepInstitute": "Institute created",
+    "stepInstituteText": "Your institute is on Jantrik School.",
+    "stepYear": "Set the {label}",
+    "stepYearText": "Enter the start and end dates of the current year.",
+    "stepSections": "Set up {classLevel} and {section} lists",
+    "stepSectionsText": "Decide how many {section}s each {classLevel} has.",
+    "stepStudents": "Add {student} records",
+    "stepStudentsText": "Name, roll and the guardian's mobile number.",
+    "stepAttendance": "Take your first attendance",
+    "stepAttendanceText": "Guardians get an SMS right away when a child is absent.",
+    "done": "Done",
+    "open": "Open"
   },
   "students": {
     "title": "{student} list",
-    "search": "Search by name, ID or guardian phone",
+    "search": "Search by name, ID or phone",
     "allClassLevels": "Any {classLevel}",
     "allSections": "Any {section}",
     "code": "ID",
@@ -86,10 +126,23 @@
     "showing": "Showing {count}",
     "loadMore": "Load more",
     "empty": "No matching {student} found.",
-    "emptyHint": "Try a different search or filter."
+    "emptyHint": "Try a different search or filter.",
+    "filters": "Search and filters",
+    "clearFilters": "Clear filters",
+    "total": "{count} in total",
+    "found": "{count} found",
+    "showingOf": "Showing {count} of {total}",
+    "status": "Status",
+    "actions": "More actions",
+    "rowActions": "{name}: more actions",
+    "view": "View details",
+    "call": "Call {name}",
+    "emptyAll": "No {student} has been added yet.",
+    "emptyAllHint": "Once you add {student}s, the list appears here."
   },
   "comingSoon": {
-    "text": "This section is being built. You'll be able to work here soon."
+    "text": "This section is being built. You'll be able to work here soon.",
+    "back": "Back to dashboard"
   },
   "tenantChanged": {
     "title": "Institute changed",
@@ -100,5 +153,35 @@
   "notAvailable": {
     "title": "Not available",
     "text": "This section is not enabled for your institute, or you don't have permission."
+  },
+  "navGroups": {
+    "overview": "Overview",
+    "academic": "Academic",
+    "accounts": "Accounts"
+  },
+  "roles": {
+    "OWNER": "Owner",
+    "ADMIN": "Admin",
+    "TEACHER": "Teacher",
+    "ACCOUNTANT": "Accountant",
+    "STAFF": "Staff",
+    "GUARDIAN": "Guardian",
+    "STUDENT": "Student"
+  },
+  "guardian": {
+    "subtitle": "Your children at {institute}.",
+    "childrenTitle": "Your children",
+    "roll": "Roll",
+    "studentId": "ID",
+    "comingSoon": "Attendance, fees and exam results will appear here soon.",
+    "none": "No students are linked to your mobile number yet.",
+    "noneHint": "Ask the institute office to add your mobile number to your child's details."
+  },
+  "studentStatus": {
+    "ACTIVE": "Active",
+    "INACTIVE": "Inactive",
+    "GRADUATED": "Graduated",
+    "TRANSFERRED": "Transferred",
+    "DROPPED_OUT": "Dropped out"
   }
 }

@@ -62,6 +62,28 @@ describe('RLS on users', () => {
     });
   });
 
+  it('name_bn: set by the user themselves only, hidden from other tenants', async () => {
+    await withContext(app, { tenantId: tenantA, userId: userA }, async (tx) => {
+      const self = await tx.user.updateMany({ where: { id: userA }, data: { nameBn: 'শুধু ক' } });
+      expect(self.count).toBe(1);
+      const other = await tx.user.updateMany({ where: { id: shared }, data: { nameBn: 'x' } });
+      expect(other.count).toBe(0);
+    });
+    // A co-member in the same tenant sees it (staff lists); tenant B cannot see the row at all.
+    const inA = await withTenant(app, tenantA, (tx) =>
+      tx.user.findUnique({ where: { id: userA }, select: { nameBn: true } }),
+    );
+    expect(inA?.nameBn).toBe('শুধু ক');
+    const inB = await withTenant(app, tenantB, (tx) =>
+      tx.user.findUnique({ where: { id: userA }, select: { nameBn: true } }),
+    );
+    expect(inB).toBeNull();
+    const sharedRow = await withContext(app, { userId: shared }, (tx) =>
+      tx.user.findUniqueOrThrow({ where: { id: shared }, select: { nameBn: true } }),
+    );
+    expect(sharedRow.nameBn).toBeNull();
+  });
+
   it('the app role cannot insert or delete users directly', async () => {
     await expect(
       withTenant(

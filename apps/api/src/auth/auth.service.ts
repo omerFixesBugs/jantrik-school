@@ -26,6 +26,8 @@ import { ACCESS_TOKEN_TTL_SEC, TokenService } from './token.service.js';
 
 const invalidCredentials = () => new UnauthorizedException('Invalid credentials');
 
+type ResponseUser = AuthResponse['user'];
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -79,7 +81,13 @@ export class AuthService {
   }
 
   /** Users with exactly one selectable tenant are switched into it automatically. */
-  private async completeLogin(user: LoginUser, client: AuthClient, meta: SessionMeta) {
+  private async completeLogin(login: LoginUser, client: AuthClient, meta: SessionMeta) {
+    // The login lookup (a SECURITY DEFINER function) returns only what checking credentials
+    // needs. Profile fields are read afterwards as the user, under the normal users RLS.
+    const { nameBn } = await withContext(this.prisma.client, { userId: login.id }, (tx) =>
+      tx.user.findUniqueOrThrow({ where: { id: login.id }, select: { nameBn: true } }),
+    );
+    const user: ResponseUser = { id: login.id, name: login.name, nameBn, locale: login.locale };
     const selectable = (await listMembershipsFor(this.prisma.client, user.id)).filter(
       (m) => m.selectable,
     );
@@ -111,7 +119,7 @@ export class AuthService {
     }
 
     const response = await this.buildResponse(
-      { id: user.id, name: user.name, locale: user.locale, password_hash: null },
+      { id: user.id, name: user.name, nameBn: user.nameBn, locale: user.locale },
       sessionId,
       active,
       refreshToken,
@@ -129,7 +137,7 @@ export class AuthService {
   async me(principal: Principal) {
     const user = await this.db.tx.user.findUniqueOrThrow({
       where: { id: principal.userId },
-      select: { id: true, name: true, phone: true, email: true, locale: true },
+      select: { id: true, name: true, nameBn: true, phone: true, email: true, locale: true },
     });
     if (!principal.tenantId) return { user };
     const membership = (await listMemberships(this.db.tx)).find(
@@ -167,7 +175,7 @@ export class AuthService {
   }
 
   private async buildResponse(
-    user: LoginUser,
+    user: ResponseUser,
     sessionId: string,
     active: MembershipSummary | undefined,
     refreshToken: string,
@@ -181,7 +189,7 @@ export class AuthService {
     const response: AuthResponse = {
       accessToken,
       expiresIn: ACCESS_TOKEN_TTL_SEC,
-      user: { id: user.id, name: user.name, locale: user.locale },
+      user: { id: user.id, name: user.name, nameBn: user.nameBn, locale: user.locale },
       refreshToken,
     };
     if (active) {

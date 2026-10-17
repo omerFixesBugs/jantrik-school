@@ -52,10 +52,24 @@ All commands run from the repo root.
 | `pnpm db:migrate`        | Create + apply a dev migration (`prisma migrate dev`)                         |
 | `pnpm db:deploy`         | Apply pending migrations (production/CI)                                      |
 | `pnpm db:seed`           | Seed templates + demo tenants (idempotent)                                    |
+| `pnpm db:reset`          | Drop the local dev database, re-migrate and re-seed (see below)               |
 | `pnpm db:studio`         | Open Prisma Studio                                                            |
 | `docker compose up -d`   | Start Postgres + Redis                                                        |
 | `docker compose down`    | Stop them (data is kept in named volumes)                                     |
 | `docker compose down -v` | Stop and **delete all local data**                                            |
+
+**Resetting the dev database.** `pnpm db:seed` skips demo tenants that already exist, so after a
+seed or schema change that existing rows don't pick up, run `pnpm db:reset`. It drops the
+`jantrik` database, applies every migration and runs the seed. Every session goes with it, so sign
+in again afterwards. It refuses to run unless all of these hold:
+
+- `NODE_ENV` is not `production`;
+- `DATABASE_MIGRATION_URL` and `DATABASE_URL` point at the same database;
+- the host is this machine (`localhost`, `127.0.0.1` or `::1`);
+- the database is `jantrik`, the local dev database. `jantrik_test` and `jantrik_e2e` are managed
+  by their test setups.
+
+`pnpm db:reset --dry-run` runs the same checks and prints the steps without changing anything.
 
 Run a command in a single package with a filter, e.g. `pnpm --filter @jantrik/api test`.
 

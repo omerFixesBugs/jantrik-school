@@ -56,6 +56,11 @@ Do NOT build hostel, transport, AI tutor, virtual labs yet.
 
 ## How Claude should work in this repo
 - For any non-trivial task: **propose a plan first**, wait for approval, then implement.
+- **Always present a plan and wait for approval for any database, auth, security or API
+  change**, even if the brief is detailed.
+- **Never bypass or tamper with auth:** don't edit OTPs, sessions, tokens, passwords or
+  permissions in Redis or the database to get access. If you need a login for testing, ask, or
+  use the test SMS outbox (e2e: `SMS_PROVIDER=outbox`) or the seeded demo users.
 - Keep changes small and focused on the task asked. Don't refactor unrelated code.
 - Write tests for business logic (grading, fee calculation, tenant isolation).
 - After finishing, list: files changed, how to run/test it, and anything left undone.
@@ -72,7 +77,10 @@ Run from the repo root (see README.md for first-time setup).
 - `pnpm db:generate` — regenerate Prisma client after schema changes
 - `pnpm db:migrate` — `prisma migrate dev` in packages/db
 - `pnpm db:seed` — templates + demo tenants (shapla-school, alo-coaching)
+- `pnpm db:reset` — drop + re-migrate + re-seed the local `jantrik` DB only (refuses production,
+  remote hosts and any other DB name; `--dry-run` to check). Destructive: ask before running it
 - Database rules, RLS and the new-table checklist: docs/database.md
 - Auth, request pipeline, Db.tx / afterCommit rules for services: docs/auth.md
+- UI design system (colours, Bangla type scale, density, components): docs/design.md
 - `pnpm e2e` — Playwright (build first; stop dev servers on 3000/4000); uses jantrik_e2e
 - Single package: `pnpm --filter @jantrik/api <script>`

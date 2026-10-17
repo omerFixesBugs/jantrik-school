@@ -2,11 +2,12 @@
 
 import { useQuery } from '@tanstack/react-query';
 import type { MembershipSummary } from '@jantrik/shared';
-import { Building2Icon, LogOutIcon } from 'lucide-react';
+import { Building2Icon, ChevronRightIcon, LogOutIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import type { AuthClient } from '@/lib/auth/auth-client';
+import { Logo } from '@/components/brand';
 import { LanguageToggle } from '@/components/language-toggle';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -61,13 +62,16 @@ export default function SelectInstitutePage() {
   }, [autoTarget, client]);
 
   return (
-    <main className="flex flex-1 flex-col items-center gap-6 px-4 py-10">
-      <div className="flex w-full max-w-lg items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('title')}</h1>
-        <LanguageToggle />
+    <main className="bg-canvas flex min-h-svh flex-1 flex-col">
+      <div className="bg-brand flex items-center justify-between px-4 py-3 text-white sm:px-8">
+        <Logo inverted />
+        <LanguageToggle onBrand />
       </div>
-      <div className="flex w-full max-w-lg flex-col gap-3">
-        <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
+      <div className="mx-auto flex w-full max-w-lg flex-col gap-5 px-4 py-8 sm:py-12">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold">{t('title')}</h1>
+          <p className="text-muted-foreground">{t('subtitle')}</p>
+        </div>
         {error ? (
           <Alert variant="destructive">
             <AlertDescription>{describe(error)}</AlertDescription>
@@ -75,8 +79,8 @@ export default function SelectInstitutePage() {
         ) : null}
         {memberships.isPending ? (
           <>
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
           </>
         ) : memberships.isError ? (
           <Alert variant="destructive">
@@ -97,18 +101,22 @@ export default function SelectInstitutePage() {
               <li key={m.tenant.id}>
                 <Button
                   variant="outline"
-                  className="h-auto w-full justify-start gap-3 p-4 text-left"
+                  className="hover:border-primary/40 hover:bg-primary-soft/40 h-auto min-h-20 w-full justify-start gap-4 rounded-xl p-4 text-left whitespace-normal"
                   disabled={!m.selectable || switching !== null}
                   aria-current={session?.tenant?.id === m.tenant.id ? 'true' : undefined}
                   onClick={() => void choose(m.tenant.id)}
                 >
-                  <Building2Icon aria-hidden className="size-5 shrink-0" />
-                  <span className="flex flex-1 flex-col gap-0.5">
-                    <span className="font-medium">{m.tenant.name}</span>
+                  <span className="bg-accent-warm-soft text-foreground flex size-11 shrink-0 items-center justify-center rounded-lg">
+                    <Building2Icon aria-hidden className="size-5" />
+                  </span>
+                  <span className="flex flex-1 flex-col items-start gap-1">
+                    <span className="font-heading text-base font-semibold">{m.tenant.name}</span>
                     {!m.selectable && <Badge variant="secondary">{t('unavailable')}</Badge>}
                   </span>
-                  {(switching ?? autoTarget) === m.tenant.id && (
-                    <span className="text-sm">{t('switching')}</span>
+                  {(switching ?? autoTarget) === m.tenant.id ? (
+                    <span className="text-muted-foreground text-sm">{t('switching')}</span>
+                  ) : (
+                    <ChevronRightIcon aria-hidden className="text-muted-foreground size-5" />
                   )}
                 </Button>
               </li>

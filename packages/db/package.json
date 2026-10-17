@@ -16,7 +16,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:reset": "prisma migrate reset --force",
+    "db:reset": "tsx src/seed/reset.ts",
     "db:seed": "tsx src/seed/index.ts",
     "db:studio": "prisma studio",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",

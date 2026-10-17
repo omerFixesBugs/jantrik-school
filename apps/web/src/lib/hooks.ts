@@ -67,14 +67,27 @@ export function useMeContext(enabled = true) {
 }
 
 /**
+ * English labels are stored capitalised ("Academic Year"). Inside a sentence they read as
+ * "academic year"; words in capitals (HSC, SSC) stay as they are. Bangla has no case.
+ */
+export const labelInText = (value: string, locale: Locale): string =>
+  locale === 'en'
+    ? value.replace(/\b([A-Z])([a-z]+)\b/g, (_, a: string, b: string) => a.toLowerCase() + b)
+    : value;
+
+/**
  * Tenant UI label (from tenant_labels), e.g. `section` → "ব্যাচ" for a coaching centre and
  * "শাখা" for a school. Never branch on institute type in code; use labels.
+ * Pass `{ inText: true }` when the label sits mid-sentence ("Across every class").
  */
 export function useLabel() {
   const locale = useLocale() as Locale;
   const { data } = useMeContext();
   return useCallback(
-    (key: string, fallback: string) => data?.labels[key]?.[locale] ?? fallback,
+    (key: string, fallback: string, opts?: { inText?: boolean }) => {
+      const value = data?.labels[key]?.[locale] ?? fallback;
+      return opts?.inText ? labelInText(value, locale) : value;
+    },
     [data, locale],
   );
 }

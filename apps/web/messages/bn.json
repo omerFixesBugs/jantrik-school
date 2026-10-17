@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "যন্ত্রিক স্কুল",
-    "tagline": "শিক্ষা প্রতিষ্ঠানের জন্য সম্পূর্ণ ব্যবস্থাপনা"
+    "tagline": "স্কুল, মাদ্রাসা ও কোচিং চালানো এখন সহজ"
   },
   "common": {
     "loading": "লোড হচ্ছে…",
@@ -39,7 +39,13 @@
     "identifier": "মোবাইল নম্বর বা ইমেইল",
     "password": "পাসওয়ার্ড",
     "signIn": "লগইন",
-    "signingIn": "লগইন হচ্ছে…"
+    "signingIn": "লগইন হচ্ছে…",
+    "brandHeadline": "স্কুল, মাদ্রাসা ও কোচিং চালানো এখন সহজ",
+    "brandText": "হাজিরা, ফি, পরীক্ষার ফলাফল আর অভিভাবকদের SMS, সব এক জায়গায়।",
+    "pointLanguage": "বাংলা ও ইংরেজি, দুই ভাষাতেই",
+    "pointPhone": "মোবাইল থেকেই সব কাজ",
+    "pointPrivate": "আপনার প্রতিষ্ঠানের তথ্য শুধু আপনার প্রতিষ্ঠানের",
+    "help": "লগইনে সমস্যা হলে আপনার প্রতিষ্ঠানের অফিসে যোগাযোগ করুন।"
   },
   "selectInstitute": {
     "title": "প্রতিষ্ঠান নির্বাচন করুন",
@@ -54,7 +60,12 @@
     "userMenu": "ব্যবহারকারী মেনু",
     "switchInstitute": "প্রতিষ্ঠান পরিবর্তন",
     "logout": "লগআউট",
-    "academicYear": "{label}: {name}"
+    "academicYear": "{label} {name}",
+    "collapse": "সাইডবার ছোট করুন",
+    "expand": "সাইডবার বড় করুন",
+    "breadcrumb": "আপনি এখানে",
+    "institute": "প্রতিষ্ঠান",
+    "account": "আপনার অ্যাকাউন্ট"
   },
   "nav": {
     "dashboard": "ড্যাশবোর্ড",
@@ -64,18 +75,47 @@
     "exams": "পরীক্ষা ও ফলাফল"
   },
   "dashboard": {
-    "welcome": "স্বাগতম, {name}",
-    "subtitle": "{institute} — আজকের কাজ এখান থেকে শুরু করুন।",
-    "attendance": "হাজিরা",
-    "attendanceText": "দৈনিক হাজিরা নেওয়া ও অভিভাবকদের জানানো।",
-    "fees": "ফি",
-    "feesText": "ফি নির্ধারণ, আদায় ও বকেয়া হিসাব।",
-    "exams": "পরীক্ষা ও ফলাফল",
-    "examsText": "নম্বর প্রদান, জিপিএ হিসাব ও রিপোর্ট কার্ড।"
+    "subtitle": "{institute}-এর আজকের খবর এক নজরে।",
+    "greetingMorning": "শুভ সকাল, {name}",
+    "greetingAfternoon": "শুভ দুপুর, {name}",
+    "greetingEvening": "শুভ সন্ধ্যা, {name}",
+    "greetingNight": "শুভ রাত্রি, {name}",
+    "banglaDate": "বঙ্গাব্দ",
+    "totalStudents": "মোট {student}",
+    "totalStudentsHint": "সব {classLevel} মিলিয়ে",
+    "presentToday": "আজ উপস্থিত",
+    "presentTodayHint": "হাজিরা নেওয়া শুরু হলে এখানে দেখাবে",
+    "feesThisMonth": "এই মাসে আদায়",
+    "feesThisMonthHint": "ফি আদায় শুরু হলে এখানে দেখাবে",
+    "upcomingExam": "আসন্ন পরীক্ষা",
+    "upcomingExamHint": "পরীক্ষার সূচি দিলে এখানে দেখাবে",
+    "notYet": "এখনো শুরু হয়নি",
+    "quickActions": "দ্রুত কাজ",
+    "addStudent": "{student} ভর্তি করুন",
+    "addStudentText": "নতুন ভর্তি, অভিভাবকের তথ্যসহ",
+    "takeAttendance": "হাজিরা নিন",
+    "takeAttendanceText": "আজকের হাজিরা খাতা খুলুন",
+    "collectFee": "ফি আদায় করুন",
+    "collectFeeText": "টাকা জমা নিন, রসিদ দিন",
+    "checklistTitle": "শুরু করার ধাপ",
+    "checklistText": "এই কয়টি কাজ করলেই প্রতিষ্ঠান পুরোপুরি চালু হবে।",
+    "checklistProgress": "{total}টির মধ্যে {done}টি সম্পন্ন",
+    "stepInstitute": "প্রতিষ্ঠান খোলা হয়েছে",
+    "stepInstituteText": "যন্ত্রিক স্কুলে আপনার প্রতিষ্ঠান যুক্ত হয়েছে।",
+    "stepYear": "{label} ঠিক করুন",
+    "stepYearText": "চলতি বছরের শুরু ও শেষের তারিখ দিন।",
+    "stepSections": "{classLevel} ও {section} সাজান",
+    "stepSectionsText": "কোন {classLevel}-এ কয়টি {section}, তা ঠিক করুন।",
+    "stepStudents": "{student} যোগ করুন",
+    "stepStudentsText": "নাম, রোল আর অভিভাবকের মোবাইল নম্বর দিন।",
+    "stepAttendance": "প্রথম হাজিরা নিন",
+    "stepAttendanceText": "অনুপস্থিত হলে অভিভাবক সঙ্গে সঙ্গে SMS পাবেন।",
+    "done": "সম্পন্ন",
+    "open": "খুলুন"
   },
   "students": {
     "title": "{student} তালিকা",
-    "search": "নাম, আইডি বা অভিভাবকের ফোন দিয়ে খুঁজুন",
+    "search": "নাম, আইডি বা ফোন নম্বর দিয়ে খুঁজুন",
     "allClassLevels": "সব {classLevel}",
     "allSections": "সব {section}",
     "code": "আইডি",
@@ -86,10 +126,23 @@
     "showing": "{count} জন দেখানো হচ্ছে",
     "loadMore": "আরও দেখুন",
     "empty": "কোনো {student} পাওয়া যায়নি।",
-    "emptyHint": "খোঁজার শব্দ বা ফিল্টার পরিবর্তন করে দেখুন।"
+    "emptyHint": "খোঁজার শব্দ বা ফিল্টার পরিবর্তন করে দেখুন।",
+    "filters": "খোঁজ ও ফিল্টার",
+    "clearFilters": "ফিল্টার মুছুন",
+    "total": "মোট {count} জন",
+    "found": "{count} জন পাওয়া গেছে",
+    "showingOf": "{total} জনের মধ্যে {count} জন দেখানো হচ্ছে",
+    "status": "অবস্থা",
+    "actions": "আরও কাজ",
+    "rowActions": "{name}: আরও কাজ",
+    "view": "বিস্তারিত দেখুন",
+    "call": "{name}-কে কল করুন",
+    "emptyAll": "এখনো কোনো {student} যোগ করা হয়নি।",
+    "emptyAllHint": "{student} যোগ করলে এখানে তালিকা দেখাবে।"
   },
   "comingSoon": {
-    "text": "এই অংশটি তৈরি হচ্ছে। শীঘ্রই এখানে কাজ করতে পারবেন।"
+    "text": "এই অংশটি তৈরি হচ্ছে। শীঘ্রই এখানে কাজ করতে পারবেন।",
+    "back": "ড্যাশবোর্ডে ফিরে যান"
   },
   "tenantChanged": {
     "title": "প্রতিষ্ঠান পরিবর্তন হয়েছে",
@@ -100,5 +153,35 @@
   "notAvailable": {
     "title": "দেখা যাচ্ছে না",
     "text": "এই অংশটি আপনার প্রতিষ্ঠানে চালু নেই অথবা আপনার অনুমতি নেই।"
+  },
+  "navGroups": {
+    "overview": "সংক্ষেপ",
+    "academic": "একাডেমিক",
+    "accounts": "হিসাব"
+  },
+  "roles": {
+    "OWNER": "প্রতিষ্ঠান প্রধান",
+    "ADMIN": "প্রশাসক",
+    "TEACHER": "শিক্ষক",
+    "ACCOUNTANT": "হিসাবরক্ষক",
+    "STAFF": "কর্মী",
+    "GUARDIAN": "অভিভাবক",
+    "STUDENT": "শিক্ষার্থী"
+  },
+  "guardian": {
+    "subtitle": "{institute}-এ আপনার সন্তানের খোঁজখবর।",
+    "childrenTitle": "আপনার সন্তান",
+    "roll": "রোল",
+    "studentId": "আইডি",
+    "comingSoon": "হাজিরা, ফি ও পরীক্ষার ফলাফল শীঘ্রই এখানে দেখতে পাবেন।",
+    "none": "আপনার মোবাইল নম্বরের সাথে এখনো কোনো শিক্ষার্থী যুক্ত নেই।",
+    "noneHint": "প্রতিষ্ঠানের অফিসে আপনার মোবাইল নম্বরটি সন্তানের তথ্যে যোগ করতে বলুন।"
+  },
+  "studentStatus": {
+    "ACTIVE": "সক্রিয়",
+    "INACTIVE": "নিষ্ক্রিয়",
+    "GRADUATED": "উত্তীর্ণ",
+    "TRANSFERRED": "বদলি",
+    "DROPPED_OUT": "ঝরে পড়া"
   }
 }

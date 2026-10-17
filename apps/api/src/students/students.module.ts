@@ -1,5 +1,5 @@
 import { Controller, Get, Injectable, Module, Query } from '@nestjs/common';
-import { searchStudentIds } from '@jantrik/db';
+import { searchStudentIds, type Prisma } from '@jantrik/db';
 import {
   normalizeBdPhone,
   studentsQuerySchema,
@@ -32,30 +32,33 @@ export class StudentsService {
       select: { id: true },
     });
     const filtersByEnrolment = Boolean(query.classLevelId || query.sectionId);
-    if (filtersByEnrolment && !year) return { items: [], nextCursor: null };
+    const empty = { items: [], nextCursor: null, total: query.cursor ? null : 0 };
+    if (filtersByEnrolment && !year) return empty;
 
     let ids: string[] | undefined;
     if (query.q) {
       ids = await searchStudentIds(tx, { term: query.q, phone: phoneDigits(query.q) });
-      if (ids.length === 0) return { items: [], nextCursor: null };
+      if (ids.length === 0) return empty;
     }
 
-    const rows = await tx.student.findMany({
-      where: {
-        deletedAt: null,
-        ...(ids ? { id: { in: ids } } : {}),
-        ...(filtersByEnrolment && year
-          ? {
-              enrolments: {
-                some: {
-                  academicYearId: year.id,
-                  ...(query.classLevelId ? { classLevelId: query.classLevelId } : {}),
-                  ...(query.sectionId ? { sectionId: query.sectionId } : {}),
-                },
+    const where = {
+      deletedAt: null,
+      ...(ids ? { id: { in: ids } } : {}),
+      ...(filtersByEnrolment && year
+        ? {
+            enrolments: {
+              some: {
+                academicYearId: year.id,
+                ...(query.classLevelId ? { classLevelId: query.classLevelId } : {}),
+                ...(query.sectionId ? { sectionId: query.sectionId } : {}),
               },
-            }
-          : {}),
-      },
+            },
+          }
+        : {}),
+    } satisfies Prisma.StudentWhereInput;
+
+    const rows = await tx.student.findMany({
+      where,
       orderBy: [{ studentCode: 'asc' }, { id: 'asc' }],
       take: query.limit + 1,
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
@@ -82,6 +85,9 @@ export class StudentsService {
         },
       },
     });
+    // Counted once, with the first page (the list is paged by cursor). Sequential on purpose:
+    // the request transaction is a single connection.
+    const total = query.cursor ? null : await tx.student.count({ where });
 
     const page = rows.slice(0, query.limit);
     const items: StudentListItem[] = page.map(({ enrolments, guardians, ...s }) => ({
@@ -92,6 +98,7 @@ export class StudentsService {
     return {
       items,
       nextCursor: rows.length > query.limit ? (page.at(-1)?.id ?? null) : null,
+      total,
     };
   }
 

@@ -62,6 +62,30 @@ export interface StudentListItem {
 export interface StudentsPage {
   items: StudentListItem[];
   nextCursor: string | null;
+  /** Number of students matching the query; on the first page only (null with a cursor). */
+  total: number | null;
+}
+
+/** GET /me/children — a guardian's own children in the selected institute. */
+export interface GuardianChild {
+  id: string;
+  studentCode: string;
+  nameBn: string | null;
+  nameEn: string | null;
+  photoUrl: string | null;
+  status: StudentListItem['status'];
+  relation:
+    | 'FATHER'
+    | 'MOTHER'
+    | 'BROTHER'
+    | 'SISTER'
+    | 'GRANDFATHER'
+    | 'GRANDMOTHER'
+    | 'UNCLE'
+    | 'AUNT'
+    | 'OTHER';
+  /** Enrolment in the current academic year. */
+  enrolment: StudentListItem['enrolment'];
 }
 
 /** GET /students/filters — class levels with their sections in the current academic year. */

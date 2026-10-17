@@ -8,8 +8,8 @@ import {
   Module,
   Patch,
 } from '@nestjs/common';
-import { preferencesSchema, type MeContext } from '@jantrik/shared';
-import { CurrentUser, UserScoped } from '../common/decorators.js';
+import { preferencesSchema, type GuardianChild, type MeContext } from '@jantrik/shared';
+import { CurrentUser, RequireModule, Roles, UserScoped } from '../common/decorators.js';
 import type { Principal } from '../common/request-context.js';
 import { zodDto } from '../common/zod.js';
 import { Db } from '../tenancy/db.service.js';
@@ -71,6 +71,52 @@ export class MeService {
     };
   }
 
+  /**
+   * The caller's own children: students linked to a guardian record whose user is the caller.
+   * RLS limits every table here to the selected tenant; the `guardian.userId` filter limits it
+   * to this person. Soft-deleted students are left out.
+   */
+  async children(principal: Principal): Promise<GuardianChild[]> {
+    const tx = this.db.tx;
+    const year = await tx.academicYear.findFirst({
+      where: { isCurrent: true },
+      select: { id: true },
+    });
+    const links = await tx.studentGuardian.findMany({
+      where: { guardian: { userId: principal.userId }, student: { deletedAt: null } },
+      orderBy: [{ student: { studentCode: 'asc' } }],
+      select: {
+        relation: true,
+        student: {
+          select: {
+            id: true,
+            studentCode: true,
+            nameBn: true,
+            nameEn: true,
+            photoUrl: true,
+            status: true,
+            enrolments: {
+              where: { academicYearId: year?.id ?? '00000000-0000-0000-0000-000000000000' },
+              take: 1,
+              select: {
+                roll: true,
+                classLevel: { select: { id: true, nameBn: true, nameEn: true } },
+                section: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    // A person can be linked twice to one child (two guardian records); show the child once.
+    const seen = new Set<string>();
+    return links.flatMap(({ relation, student: { enrolments, ...s } }) => {
+      if (seen.has(s.id)) return [];
+      seen.add(s.id);
+      return [{ ...s, relation, enrolment: enrolments[0] ?? null }];
+    });
+  }
+
   /** RLS lets a user update only their own row. */
   async setLocale(principal: Principal, locale: 'bn' | 'en'): Promise<void> {
     await this.db.tx.user.update({ where: { id: principal.userId }, data: { locale } });
@@ -84,6 +130,13 @@ export class MeController {
   @Get('context')
   context(@CurrentUser() principal: Principal): Promise<MeContext> {
     return this.me.context(principal);
+  }
+
+  @Get('children')
+  @RequireModule('CORE')
+  @Roles('GUARDIAN')
+  children(@CurrentUser() principal: Principal): Promise<GuardianChild[]> {
+    return this.me.children(principal);
   }
 
   @Patch('preferences')

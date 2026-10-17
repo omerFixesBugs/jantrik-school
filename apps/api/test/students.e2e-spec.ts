@@ -120,11 +120,13 @@ describe('GET /students', () => {
       primaryGuardian: { nameEn: 'Abdul Rahim Sr', phone: '+8801755599911' },
     });
     expect(body.items.find((s) => s.studentCode === 'A-005')?.enrolment).toBeNull();
+    expect(body.total).toBe(4);
   });
 
   it("search never returns another tenant's students", async () => {
     const res = await list(a, { q: 'B-00' }).expect(200);
     expect((res.body as StudentsPage).items).toEqual([]);
+    expect((res.body as StudentsPage).total).toBe(0);
     const own = await list(b, { q: 'B-00' }).expect(200);
     expect((own.body as StudentsPage).items).toHaveLength(4);
   });
@@ -148,6 +150,7 @@ describe('GET /students', () => {
       'A-001',
       'A-002',
     ]);
+    expect((byClass.body as StudentsPage).total).toBe(2);
     const bySection = await list(a, { classLevelId: a.class6, sectionId: a.sectionB }).expect(200);
     expect((bySection.body as StudentsPage).items.map((s) => s.studentCode)).toEqual(['A-002']);
     // Another tenant's section id matches nothing.
@@ -158,10 +161,12 @@ describe('GET /students', () => {
   it('paginates with a cursor', async () => {
     const first = (await list(a, { limit: 2 }).expect(200)).body as StudentsPage;
     expect(first.items.map((s) => s.studentCode)).toEqual(['A-001', 'A-002']);
+    expect(first.total).toBe(4); // the whole match, not the page
     const second = (await list(a, { limit: 2, cursor: first.nextCursor! }).expect(200))
       .body as StudentsPage;
     expect(second.items.map((s) => s.studentCode)).toEqual(['A-003', 'A-005']);
     expect(second.nextCursor).toBeNull();
+    expect(second.total).toBeNull(); // counted on the first page only
   });
 
   it('validates the query', async () => {

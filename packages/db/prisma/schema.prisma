@@ -300,6 +300,8 @@ model User {
   phone        String   @unique
   email        String?  @unique
   name         String
+  /// Name in Bangla script, shown in the Bangla UI; falls back to `name`.
+  nameBn       String?  @map("name_bn")
   passwordHash String?  @map("password_hash")
   locale       Locale   @default(bn)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)

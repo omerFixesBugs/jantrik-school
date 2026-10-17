@@ -55,7 +55,8 @@ export interface AuthResponse {
   accessToken: string;
   /** Seconds until the access token expires. */
   expiresIn: number;
-  user: { id: string; name: string; locale: 'bn' | 'en' };
+  /** `nameBn`: the name in Bangla script, for the Bangla UI (falls back to `name`). */
+  user: { id: string; name: string; nameBn: string | null; locale: 'bn' | 'en' };
   /** Present when the session has a selected tenant. */
   tenant?: AuthTenant;
   /** Roles in `tenant`. A UI hint only — the API re-checks roles on every request. */

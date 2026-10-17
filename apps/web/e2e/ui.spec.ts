@@ -3,18 +3,37 @@ import { DEMO, passwordLogin } from './helpers';
 
 test('language toggle switches to English and is remembered for the user', async ({ page }) => {
   await passwordLogin(page, DEMO.shaplaTeacher);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  const html = page.locator('html');
+  // The language is saved on the shared demo user; a run that failed midway may have left it
+  // in English. Start from Bangla either way.
+  if ((await html.getAttribute('lang')) === 'en') {
+    await page.getByTestId('language-toggle').click();
+    await expect(html).toHaveAttribute('lang', 'bn');
+  }
   await expect(page.getByRole('link', { name: 'শিক্ষার্থী তালিকা' })).toBeVisible();
+  const greeting = page.getByRole('heading', { level: 2, name: /,/ });
+  await expect(greeting).toContainText('নাসরিন আক্তার'); // name_bn in Bangla
 
-  await page.getByTestId('language-toggle').click();
-  await expect(page.getByRole('link', { name: 'Student list' })).toBeVisible();
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.getByTestId('academic-year')).toContainText('2026'); // ASCII in English
+  try {
+    await page.getByTestId('language-toggle').click();
+    await expect(page.getByRole('link', { name: 'Student list' })).toBeVisible();
+    await expect(html).toHaveAttribute('lang', 'en');
+    await expect(greeting).toContainText('Nasrin Akter'); // name in English
+    await expect(page.getByTestId('academic-year')).toContainText('2026'); // ASCII in English
+    // Tenant labels are lowercased mid-sentence in English ("Class" → "class").
+    await expect(page.getByRole('link', { name: /^Total students/ })).toContainText(
+      'Across every class',
+    );
 
-  await page.reload();
-  await expect(page.getByRole('link', { name: 'Student list' })).toBeVisible();
-
-  // Back to Bangla so the shared demo user stays in its default language.
-  await page.getByTestId('language-toggle').click();
+    await page.reload();
+    await expect(page.getByRole('link', { name: 'Student list' })).toBeVisible();
+  } finally {
+    // Back to Bangla so the shared demo user stays in its default language.
+    if ((await html.getAttribute('lang')) === 'en') {
+      await page.getByTestId('language-toggle').click();
+    }
+  }
   await expect(page.getByRole('link', { name: 'শিক্ষার্থী তালিকা' })).toBeVisible();
 });
 

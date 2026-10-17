@@ -99,8 +99,10 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # Normally well under a minute; fail fast instead of eating the whole job timeout.
       - name: Typecheck
         run: pnpm typecheck
+        timeout-minutes: 5
 
       - name: Format check
         run: pnpm format:check

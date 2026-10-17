@@ -1,13 +1,14 @@
 'use client';
 
 import { formatBdPhone, normalizeBdPhone, toAsciiDigits } from '@jantrik/shared';
+import { LanguagesIcon, LifeBuoyIcon, ShieldCheckIcon, SmartphoneIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useId, useState, type FormEvent } from 'react';
+import { AlphabetChart, AlphabetStrip, Logo } from '@/components/brand';
 import { LanguageToggle } from '@/components/language-toggle';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { Label } from '@/components/ui/label';
@@ -30,7 +31,6 @@ export default function LoginPage() {
 
 function Login() {
   const t = useTranslations('login');
-  const tApp = useTranslations('app');
   const { status, session } = useAuth();
   const router = useRouter();
   const locale = useLocale() as Locale;
@@ -52,34 +52,82 @@ function Login() {
   }, [status, session, next, router]);
 
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-6 px-4 py-10">
-      <div className="flex w-full max-w-sm items-center justify-between">
-        <span className="text-lg font-semibold">{tApp('name')}</span>
-        <LanguageToggle />
-      </div>
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>
-            <h1>{t('title')}</h1>
-          </CardTitle>
-          <CardDescription>{t('subtitle')}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="otp">
-            <TabsList className="mb-4 w-full">
-              <TabsTrigger value="otp">{t('otpTab')}</TabsTrigger>
-              <TabsTrigger value="password">{t('passwordTab')}</TabsTrigger>
-            </TabsList>
-            <TabsContent value="otp">
-              <OtpForm onDone={finish} />
-            </TabsContent>
-            <TabsContent value="password">
-              <PasswordForm onDone={finish} />
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
+    <main className="bg-canvas grid min-h-svh flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+      <BrandPanel />
+      <section className="flex min-w-0 flex-col">
+        <div className="bg-brand flex items-center justify-between px-4 py-3 text-white lg:bg-transparent lg:px-8 lg:py-6 lg:text-inherit">
+          <Logo inverted className="lg:hidden" />
+          <span className="hidden lg:block" />
+          <span className="lg:hidden">
+            <LanguageToggle onBrand />
+          </span>
+          <span className="hidden lg:block">
+            <LanguageToggle />
+          </span>
+        </div>
+        {/* Phone: a short brand band above the form. */}
+        <div className="bg-brand flex flex-col gap-4 overflow-hidden px-4 pt-2 pb-14 text-white lg:hidden">
+          <p className="font-heading max-w-xs text-2xl leading-snug font-semibold">
+            {t('brandHeadline')}
+          </p>
+          <AlphabetStrip />
+        </div>
+        <div className="flex flex-1 flex-col items-center px-4 pb-10 lg:justify-center lg:px-8">
+          <div className="bg-card relative z-10 -mt-8 w-full max-w-md rounded-2xl border p-5 shadow-lg sm:p-8 lg:mt-0">
+            <div className="mb-6 flex flex-col gap-1">
+              <h1 className="text-2xl font-semibold">{t('title')}</h1>
+              <p className="text-muted-foreground">{t('subtitle')}</p>
+            </div>
+            <Tabs defaultValue="otp">
+              <TabsList className="mb-5 w-full">
+                <TabsTrigger value="otp">{t('otpTab')}</TabsTrigger>
+                <TabsTrigger value="password">{t('passwordTab')}</TabsTrigger>
+              </TabsList>
+              <TabsContent value="otp">
+                <OtpForm onDone={finish} />
+              </TabsContent>
+              <TabsContent value="password">
+                <PasswordForm onDone={finish} />
+              </TabsContent>
+            </Tabs>
+          </div>
+          <p className="text-muted-foreground mt-5 flex max-w-md items-start gap-2 text-sm">
+            <LifeBuoyIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+            {t('help')}
+          </p>
+        </div>
+      </section>
     </main>
+  );
+}
+
+/** Desktop brand panel: the বর্ণমালা chart, the promise, three plain facts. */
+function BrandPanel() {
+  const t = useTranslations('login');
+  const points = [
+    { icon: LanguagesIcon, text: t('pointLanguage') },
+    { icon: SmartphoneIcon, text: t('pointPhone') },
+    { icon: ShieldCheckIcon, text: t('pointPrivate') },
+  ];
+  return (
+    <aside className="bg-brand relative hidden flex-col overflow-hidden p-12 text-white lg:flex xl:p-16">
+      <Logo inverted />
+      <div className="relative z-10 mt-16 flex max-w-lg flex-col gap-5">
+        <h2 className="text-4xl leading-tight font-semibold">{t('brandHeadline')}</h2>
+        <p className="text-lg text-white/80">{t('brandText')}</p>
+        <ul className="mt-2 flex flex-col gap-3">
+          {points.map(({ icon: Icon, text }) => (
+            <li key={text} className="flex items-center gap-3 text-white/90">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-white/10">
+                <Icon aria-hidden className="size-4.5" />
+              </span>
+              {text}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <AlphabetChart className="pointer-events-none absolute -right-8 -bottom-10 w-[34rem]" />
+    </aside>
   );
 }
 
@@ -207,18 +255,20 @@ function OtpForm({ onDone }: { onDone: (s: Session) => void }) {
             inputMode="tel"
             autoComplete="tel"
             placeholder="01XXXXXXXXX"
+            className="tabular-nums"
+            dir="ltr"
             value={phoneInput}
             onChange={(e) => setPhoneInput(e.target.value)}
             aria-invalid={Boolean(localError)}
             aria-describedby={`${phoneId}-hint`}
             required
           />
-          <p id={`${phoneId}-hint`} className="text-muted-foreground text-xs">
+          <p id={`${phoneId}-hint`} className="text-muted-foreground text-sm">
             {t('phoneHint')}
           </p>
         </div>
         <FormError message={localError ?? message} />
-        <Button type="submit" disabled={busy || blocked}>
+        <Button type="submit" size="lg" disabled={busy || blocked}>
           {busy ? t('sending') : t('sendCode')}
         </Button>
       </form>
@@ -252,7 +302,7 @@ function OtpForm({ onDone }: { onDone: (s: Session) => void }) {
         </InputOTP>
       </div>
       <FormError message={localError ?? message} />
-      <Button type="submit" disabled={busy || blocked || code.length !== 6}>
+      <Button type="submit" size="lg" disabled={busy || blocked || code.length !== 6}>
         {busy ? t('verifying') : t('verify')}
       </Button>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -328,7 +378,7 @@ function PasswordForm({ onDone }: { onDone: (s: Session) => void }) {
         />
       </div>
       <FormError message={message} />
-      <Button type="submit" disabled={busy || blocked || !identifier || !password}>
+      <Button type="submit" size="lg" disabled={busy || blocked || !identifier || !password}>
         {busy ? t('signingIn') : t('signIn')}
       </Button>
     </form>

@@ -12,9 +12,11 @@ export const DEMO = {
   sharedTeacher: '01911000999',
   shaplaName: 'শাপলা উচ্চ বিদ্যালয়',
   aloName: 'আলো কোচিং সেন্টার',
+  // Guardian (OTP only) of two Shapla students.
+  shaplaGuardian: '01811000101',
 };
 
-export const API_URL = 'http://localhost:4000';
+export const API_URL = process.env['E2E_API_URL'] ?? 'http://localhost:4000';
 
 /** Latest OTP the API "sent" to a phone (SMS_PROVIDER=outbox → Redis list). */
 export async function readOtp(phone: string, previous?: string): Promise<string> {

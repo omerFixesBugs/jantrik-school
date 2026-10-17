@@ -7,7 +7,15 @@ import { defineConfig, globalIgnores } from 'eslint/config';
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
+  // Playwright output (HTML report bundles, traces) is generated, never linted.
+  globalIgnores([
+    '.next/**',
+    'out/**',
+    'build/**',
+    'next-env.d.ts',
+    'playwright-report/**',
+    'test-results/**',
+  ]),
   {
     rules: {
       // Same convention as the base config: a leading underscore marks an intentionally unused name.

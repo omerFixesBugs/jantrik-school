@@ -64,7 +64,7 @@ interface DemoTenant {
   instituteTypeKey: string;
   shifts: { nameBn: string; nameEn: string; start: string; end: string }[];
   sections: DemoSection[];
-  staff: { phone: string; name: string; role: Role }[];
+  staff: { phone: string; name: string; nameBn: string; role: Role }[];
   students: DemoStudent[];
 }
 
@@ -85,10 +85,10 @@ const DEMO_TENANTS: DemoTenant[] = [
       { classLevel: 'CLASS_9', name: 'ক', shift: 'Morning', capacity: 60 },
     ],
     staff: [
-      { phone: '01711000001', name: 'Abdul Karim', role: 'OWNER' },
-      { phone: '01711000002', name: 'Nasrin Akter', role: 'TEACHER' },
+      { phone: '01711000001', name: 'Abdul Karim', nameBn: 'আব্দুল করিম', role: 'OWNER' },
+      { phone: '01711000002', name: 'Nasrin Akter', nameBn: 'নাসরিন আক্তার', role: 'TEACHER' },
       // Teaches at both institutes: one person, two memberships (exercises /select-institute).
-      { phone: '01911000999', name: 'Sharmin Sultana', role: 'TEACHER' },
+      { phone: '01911000999', name: 'Sharmin Sultana', nameBn: 'শারমিন সুলতানা', role: 'TEACHER' },
     ],
     students: [
       {
@@ -179,10 +179,10 @@ const DEMO_TENANTS: DemoTenant[] = [
       { classLevel: 'HSC_1', name: 'HSC Batch 1', capacity: 40 },
     ],
     staff: [
-      { phone: '01511000001', name: 'Mahfuz Hasan', role: 'OWNER' },
-      { phone: '01511000002', name: 'Farhana Yasmin', role: 'TEACHER' },
+      { phone: '01511000001', name: 'Mahfuz Hasan', nameBn: 'মাহফুজ হাসান', role: 'OWNER' },
+      { phone: '01511000002', name: 'Farhana Yasmin', nameBn: 'ফারহানা ইয়াসমিন', role: 'TEACHER' },
       // Teaches at both institutes: one person, two memberships (exercises /select-institute).
-      { phone: '01911000999', name: 'Sharmin Sultana', role: 'TEACHER' },
+      { phone: '01911000999', name: 'Sharmin Sultana', nameBn: 'শারমিন সুলতানা', role: 'TEACHER' },
     ],
     students: [
       {
@@ -238,8 +238,18 @@ const DEMO_TENANTS: DemoTenant[] = [
   },
 ];
 
-/** Returns the staff user ids, so their passwords can be set afterwards. */
-async function seedTenantData(tx: TenantTx, tenantId: string, def: DemoTenant): Promise<string[]> {
+/** What has to be set on users afterwards, as each user (users RLS: update yourself only). */
+interface SeededUsers {
+  staffUserIds: string[];
+  /** Bangla-script name per user id (staff and guardians). */
+  namesBn: Map<string, string>;
+}
+
+async function seedTenantData(
+  tx: TenantTx,
+  tenantId: string,
+  def: DemoTenant,
+): Promise<SeededUsers> {
   const year = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
   const classLevels = new Map((await tx.classLevel.findMany()).map((c) => [c.code, c.id]));
   const studyGroups = new Map((await tx.studyGroup.findMany()).map((g) => [g.code, g.id]));
@@ -281,10 +291,12 @@ async function seedTenantData(tx: TenantTx, tenantId: string, def: DemoTenant): 
   }
 
   const staffUserIds: string[] = [];
+  const namesBn = new Map<string, string>();
   for (const member of def.staff) {
     const userId = await findOrCreateUser(tx, phone(member.phone), member.name);
     await tx.membership.create({ data: { tenantId, userId, role: member.role } });
     staffUserIds.push(userId);
+    namesBn.set(userId, member.nameBn);
   }
 
   const guardianIds = new Map<string, string>(); // by phone
@@ -314,6 +326,7 @@ async function seedTenantData(tx: TenantTx, tenantId: string, def: DemoTenant): 
         // Guardians log in to the app with phone + OTP.
         const userId = await findOrCreateUser(tx, p, g.nameEn);
         await tx.membership.create({ data: { tenantId, userId, role: 'GUARDIAN' } });
+        namesBn.set(userId, g.nameBn);
         const guardian = await tx.guardian.create({
           data: {
             tenantId,
@@ -350,7 +363,7 @@ async function seedTenantData(tx: TenantTx, tenantId: string, def: DemoTenant): 
       },
     });
   }
-  return staffUserIds;
+  return { staffUserIds, namesBn };
 }
 
 /** Create the demo tenants. Must run as the app role (RLS applies, as in production). */
@@ -378,7 +391,7 @@ export async function seedDemo(app: PrismaClient): Promise<void> {
       }
       throw error;
     }
-    const staffUserIds = await withTenant(
+    const { staffUserIds, namesBn } = await withTenant(
       app,
       tenantId,
       (tx) => seedTenantData(tx, tenantId, def),
@@ -387,11 +400,18 @@ export async function seedDemo(app: PrismaClient): Promise<void> {
       },
     );
 
-    // RLS lets a user update only their own row, so each password is set as that user.
+    // RLS lets a user update only their own row, so passwords and Bangla names are set as
+    // that user.
     const passwordHash = await hash(DEMO_STAFF_PASSWORD);
-    for (const userId of staffUserIds) {
+    for (const userId of new Set([...staffUserIds, ...namesBn.keys()])) {
       await withContext(app, { userId }, (tx) =>
-        tx.user.update({ where: { id: userId }, data: { passwordHash } }),
+        tx.user.update({
+          where: { id: userId },
+          data: {
+            nameBn: namesBn.get(userId) ?? null,
+            ...(staffUserIds.includes(userId) ? { passwordHash } : {}),
+          },
+        }),
       );
     }
     console.log(`  ${def.slug}: created (${def.students.length} students)`);
