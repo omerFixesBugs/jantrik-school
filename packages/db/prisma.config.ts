@@ -9,8 +9,10 @@ export default defineConfig({
   schema: 'prisma/schema.prisma',
   migrations: {
     path: 'prisma/migrations',
+    seed: 'tsx src/seed/index.ts',
   },
   datasource: {
-    url: process.env['DATABASE_URL'] ?? '',
+    // Migrations run as the schema owner, never as the RLS-restricted app role.
+    url: process.env['DATABASE_MIGRATION_URL'] ?? '',
   },
 });

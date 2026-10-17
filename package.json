@@ -17,7 +17,8 @@
     "db:generate": "turbo run db:generate",
     "db:migrate": "pnpm --filter @jantrik/db db:migrate",
     "db:deploy": "pnpm --filter @jantrik/db db:deploy",
-    "db:studio": "pnpm --filter @jantrik/db db:studio"
+    "db:studio": "pnpm --filter @jantrik/db db:studio",
+    "db:seed": "pnpm --filter @jantrik/db db:seed"
   },
   "devDependencies": {
     "prettier": "3.9.10",

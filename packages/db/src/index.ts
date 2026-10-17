@@ -3,6 +3,8 @@ import { PrismaClient } from './generated/prisma/client.js';
 
 export { PrismaClient };
 export * from './generated/prisma/client.js';
+export * from './tenancy/context.js';
+export * from './tenancy/provision.js';
 
 /** Create a Prisma client bound to the given Postgres connection string. */
 export function createPrismaClient(connectionString: string): PrismaClient {

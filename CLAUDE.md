@@ -57,8 +57,10 @@ Run from the repo root (see README.md for first-time setup).
 - `docker compose up -d --wait` — start Postgres 16 + Redis
 - `pnpm dev` — run web (:3000) + api (:4000, `GET /health`) in watch mode
 - `pnpm build` — build everything
-- `pnpm test` — Vitest (packages/shared, apps/api); no Docker needed
+- `pnpm test` — Vitest; packages/db integration tests need Docker (jantrik_test DB)
 - `pnpm lint` / `pnpm typecheck` / `pnpm format:check` — must pass before a task is done
 - `pnpm db:generate` — regenerate Prisma client after schema changes
 - `pnpm db:migrate` — `prisma migrate dev` in packages/db
+- `pnpm db:seed` — templates + demo tenants (shapla-school, alo-coaching)
+- Database rules, RLS and the new-table checklist: docs/database.md
 - Single package: `pnpm --filter @jantrik/api <script>`

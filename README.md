@@ -15,19 +15,21 @@ architecture rules and the current phase.
 corepack enable                 # makes the pinned pnpm (package.json "packageManager") available
 pnpm install                    # install all workspace dependencies
 cp .env.example .env            # Windows PowerShell: Copy-Item .env.example .env
-docker compose up -d --wait     # start Postgres 16 + Redis, wait until healthy
+docker compose up -d --wait     # start Postgres 16 + Redis; first start creates DB roles + databases
 pnpm db:generate                # generate the Prisma client
+pnpm db:deploy                  # apply migrations (tables, RLS, grants)
+pnpm db:seed                    # institute types, templates, GPA scheme + 2 demo tenants
 pnpm dev                        # start web + api (and watch shared packages)
 ```
 
 Then open:
 
-| What       | URL                                                |
-| ---------- | -------------------------------------------------- |
-| Web app    | http://localhost:3000                              |
-| API health | http://localhost:4000/health                       |
-| Postgres   | `localhost:5432` (jantrik / jantrik, db `jantrik`) |
-| Redis      | `localhost:6379`                                   |
+| What       | URL                                                                              |
+| ---------- | -------------------------------------------------------------------------------- |
+| Web app    | http://localhost:3000                                                            |
+| API health | http://localhost:4000/health                                                     |
+| Postgres   | `localhost:5432`, db `jantrik` (roles: see [docs/database.md](docs/database.md)) |
+| Redis      | `localhost:6379`                                                                 |
 
 `GET /health` returns `{"status":"ok","db":"up","timestamp":"..."}`, or HTTP 503 with
 `"db":"down"` if Postgres is unreachable.
@@ -36,22 +38,23 @@ Then open:
 
 All commands run from the repo root.
 
-| Command                  | What it does                                               |
-| ------------------------ | ---------------------------------------------------------- |
-| `pnpm dev`               | Run all apps in watch mode (web :3000, api :4000)          |
-| `pnpm build`             | Production build of every package and app                  |
-| `pnpm lint`              | ESLint across the workspace                                |
-| `pnpm typecheck`         | TypeScript `--noEmit` across the workspace                 |
-| `pnpm test`              | Unit + e2e tests (Vitest); no Docker needed                |
-| `pnpm format`            | Format everything with Prettier                            |
-| `pnpm format:check`      | Check formatting (CI)                                      |
-| `pnpm db:generate`       | Regenerate the Prisma client after editing `schema.prisma` |
-| `pnpm db:migrate`        | Create + apply a dev migration (`prisma migrate dev`)      |
-| `pnpm db:deploy`         | Apply pending migrations (production/CI)                   |
-| `pnpm db:studio`         | Open Prisma Studio                                         |
-| `docker compose up -d`   | Start Postgres + Redis                                     |
-| `docker compose down`    | Stop them (data is kept in named volumes)                  |
-| `docker compose down -v` | Stop and **delete all local data**                         |
+| Command                  | What it does                                                |
+| ------------------------ | ----------------------------------------------------------- |
+| `pnpm dev`               | Run all apps in watch mode (web :3000, api :4000)           |
+| `pnpm build`             | Production build of every package and app                   |
+| `pnpm lint`              | ESLint across the workspace                                 |
+| `pnpm typecheck`         | TypeScript `--noEmit` across the workspace                  |
+| `pnpm test`              | All tests (Vitest). `packages/db` tests need Docker running |
+| `pnpm format`            | Format everything with Prettier                             |
+| `pnpm format:check`      | Check formatting (CI)                                       |
+| `pnpm db:generate`       | Regenerate the Prisma client after editing `schema.prisma`  |
+| `pnpm db:migrate`        | Create + apply a dev migration (`prisma migrate dev`)       |
+| `pnpm db:deploy`         | Apply pending migrations (production/CI)                    |
+| `pnpm db:seed`           | Seed templates + demo tenants (idempotent)                  |
+| `pnpm db:studio`         | Open Prisma Studio                                          |
+| `docker compose up -d`   | Start Postgres + Redis                                      |
+| `docker compose down`    | Stop them (data is kept in named volumes)                   |
+| `docker compose down -v` | Stop and **delete all local data**                          |
 
 Run a command in a single package with a filter, e.g. `pnpm --filter @jantrik/api test`.
 
@@ -68,6 +71,14 @@ packages/
   typescript-config/   shared tsconfig bases
 docker-compose.yml     Postgres 16 + Redis 7 for local development
 ```
+
+## Database
+
+Read [docs/database.md](docs/database.md) before touching the schema: roles, Row-Level Security,
+`withTenant` vs `tenantClient`, and the checklist for adding a tenant table.
+
+> Upgrading from the first scaffold? The Postgres roles changed. Run `docker compose down -v`
+> once (deletes local DB data), then follow the setup steps above.
 
 ## Environment
 

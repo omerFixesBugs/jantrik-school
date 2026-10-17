@@ -1,0 +1,29 @@
+import path from 'node:path';
+import { config } from 'dotenv';
+import { createPrismaClient } from '../index.js';
+import { seedDemo } from './demo.js';
+import { seedTemplates } from './templates.js';
+
+// Seeds global templates (as the owner role) and demo tenants (as the RLS-restricted app role).
+// Run with `pnpm db:seed`.
+
+config({ path: path.resolve(import.meta.dirname, '../../../../.env'), quiet: true });
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set (see .env.example)`);
+  return value;
+}
+
+const owner = createPrismaClient(requireEnv('DATABASE_MIGRATION_URL'));
+const app = createPrismaClient(requireEnv('DATABASE_URL'));
+
+try {
+  console.log('Seeding institute types, templates and grading schemes...');
+  await seedTemplates(owner);
+  console.log('Seeding demo tenants...');
+  await seedDemo(app);
+  console.log('Done.');
+} finally {
+  await Promise.all([owner.$disconnect(), app.$disconnect()]);
+}
