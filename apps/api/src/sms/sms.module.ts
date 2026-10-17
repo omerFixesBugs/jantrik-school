@@ -2,7 +2,14 @@ import { BullModule } from '@nestjs/bullmq';
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.js';
-import { ConsoleSmsProvider, MemorySmsProvider, SMS_PROVIDER } from './sms.providers.js';
+import type { Redis } from 'ioredis';
+import { REDIS } from '../redis/redis.constants.js';
+import {
+  ConsoleSmsProvider,
+  MemorySmsProvider,
+  RedisOutboxSmsProvider,
+  SMS_PROVIDER,
+} from './sms.providers.js';
 import { SMS_QUEUE, SmsProcessor, SmsService } from './sms.service.js';
 
 @Global()
@@ -11,12 +18,17 @@ import { SMS_QUEUE, SmsProcessor, SmsService } from './sms.service.js';
   providers: [
     {
       provide: SMS_PROVIDER,
-      inject: [ConfigService],
-      useFactory: (config: ConfigService<Env, true>) => {
+      inject: [ConfigService, REDIS],
+      useFactory: (config: ConfigService<Env, true>, redis: Redis) => {
         const nodeEnv = config.get('NODE_ENV', { infer: true });
-        return config.get('SMS_PROVIDER', { infer: true }) === 'memory'
-          ? new MemorySmsProvider(nodeEnv)
-          : new ConsoleSmsProvider(nodeEnv);
+        switch (config.get('SMS_PROVIDER', { infer: true })) {
+          case 'memory':
+            return new MemorySmsProvider(nodeEnv);
+          case 'outbox':
+            return new RedisOutboxSmsProvider(redis, nodeEnv);
+          default:
+            return new ConsoleSmsProvider(nodeEnv);
+        }
       },
     },
     SmsService,

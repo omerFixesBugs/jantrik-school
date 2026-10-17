@@ -4,13 +4,21 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ClsModule } from 'nestjs-cls';
 import { AuthModule } from './auth/auth.module.js';
-import { JwtAuthGuard, ModuleGuard, RateLimitGuard, RolesGuard } from './common/guards.js';
+import {
+  JwtAuthGuard,
+  ModuleGuard,
+  RateLimitGuard,
+  RolesGuard,
+  TenantHeaderGuard,
+} from './common/guards.js';
 import { ZodValidationPipe } from './common/zod.js';
 import { validateEnv, type Env } from './config/env.js';
 import { HealthModule } from './health/health.module.js';
+import { MeModule } from './me/me.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { SmsModule } from './sms/sms.module.js';
+import { StudentsModule } from './students/students.module.js';
 import { TenancyModule } from './tenancy/tenancy.module.js';
 import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.js';
 
@@ -37,11 +45,15 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     SmsModule,
     AuthModule,
     HealthModule,
+    MeModule,
+    StudentsModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },
-    // Order matters: authenticate, then rate-limit (per user if known), then roles, then module.
+    // Order matters: authenticate, check the page's tenant, rate-limit (per user if known),
+    // then roles, then module.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: TenantHeaderGuard },
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: ModuleGuard },

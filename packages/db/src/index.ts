@@ -5,6 +5,7 @@ export { PrismaClient };
 export * from './generated/prisma/client.js';
 export * from './tenancy/context.js';
 export * from './tenancy/provision.js';
+export * from './tenancy/search.js';
 export * from './tenancy/users.js';
 export { seedTemplates } from './reference-data/templates.js';
 

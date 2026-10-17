@@ -78,13 +78,15 @@ describe('auth SECURITY DEFINER functions', () => {
         config: string[] | null;
         public_exec: boolean;
         app_exec: boolean;
+        owner_exec: boolean;
       }[]
     >`
       SELECT p.proname AS name, p.prosecdef AS definer, pg_get_userbyid(p.proowner) AS owner,
              p.proconfig AS config,
-             EXISTS (SELECT 1 FROM aclexplode(p.proacl) a
+             EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
                      WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS public_exec,
-             has_function_privilege('jantrik_app', p.oid, 'EXECUTE') AS app_exec
+             has_function_privilege('jantrik_app', p.oid, 'EXECUTE') AS app_exec,
+             has_function_privilege('jantrik_owner', p.oid, 'EXECUTE') AS owner_exec
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.proname = ANY(${FUNCTIONS})`;
 
@@ -95,6 +97,7 @@ describe('auth SECURITY DEFINER functions', () => {
         owner: 'jantrik_auth',
         public_exec: false,
         app_exec: true,
+        owner_exec: false,
       });
       expect(r.config).toContain('search_path=pg_catalog, public');
     }

@@ -155,17 +155,61 @@ export class StudentsService {
   `RequestContext.afterCommit(fn)`. `SmsService` already does this. Such callbacks are dropped if
   the request fails.
 
+## Tenant-switch safety: `X-Jantrik-Tenant`
+
+A browser tab is bound to the institute it was loaded for. It sends that institute's id as
+`X-Jantrik-Tenant` on every API request. `TenantHeaderGuard` answers **409
+`TENANT_MISMATCH`** when the header differs from the access token's `tid`, for example when the
+session was switched to another institute in another tab and this tab's token has since refreshed.
+
+- **Requests without the header** (mobile apps) are not checked.
+- **`@UserScoped` account routes** (`/auth/*`, `/me/preferences`) are not checked either, so
+  logout always works.
+
+## Web client (apps/web)
+
+Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-client.ts).
+
+- **Access token in memory only.** Never in localStorage, sessionStorage or a readable cookie. A
+  reload restores the session through the refresh cookie (`POST /auth/refresh` with
+  `X-Jantrik-Client: web`).
+- **Refreshes are serialised across tabs** with the Web Locks API (`jantrik-refresh`):
+  - The winner broadcasts the new session on the BroadcastChannel `jantrik-auth`.
+  - A tab that waited for the lock reuses a token received meanwhile instead of presenting the
+    (already rotated) cookie again.
+  - The client refreshes about 60 s before expiry (with jitter), and when a hidden tab becomes
+    visible.
+- **On a 401** the client refreshes once and retries once. If that fails, it signs out.
+- **Logout** (or a refresh that returns 401) broadcasts `logout`, and every tab clears its state
+  and goes to `/login`.
+- **Institute changes are never adopted silently.** When the session's institute stops matching the
+  tab's page institute, the tab:
+  1. refuses all further API calls (`TenantChangedError`)
+  2. clears the React Query cache
+  3. shows a blocking dialog ("Institute changed to X")
+  4. reloads to `/dashboard`
+
+  The change can arrive as a broadcast from another tab, a refreshed token, or a 409 from the API.
+
+- **Page protection is UX only.** The real boundary is the API (token, guards, RLS).
+  - `proxy.ts` redirects to `/login` when the readable, non-secret `jantrik_signed_in` hint
+    cookie is missing.
+  - `(app)/layout.tsx` bootstraps the session, sends users without an institute to
+    `/select-institute`, and loads `GET /me/context` once (labels, modules, roles, academic year).
+  - Sidebar items and page gates use the same `NAV_ITEMS` table (module + roles) as the API's
+    guards.
+
 ## Configuration
 
-| Variable             | Purpose                                                                      |
-| -------------------- | ---------------------------------------------------------------------------- |
-| `JWT_ACCESS_SECRET`  | at least 32 characters                                                       |
-| `OTP_PEPPER`         | at least 32 characters                                                       |
-| `CORS_ORIGINS`       | comma-separated allowlist                                                    |
-| `COOKIE_SECURE`      | Secure flag on the refresh cookie                                            |
-| `TRUST_PROXY`        | Express `trust proxy`; set it behind a load balancer so client IPs are right |
-| `SMS_PROVIDER`       | `console` in development                                                     |
-| rate-limit variables | see `.env.example`                                                           |
+| Variable             | Purpose                                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `JWT_ACCESS_SECRET`  | at least 32 characters                                                                                                                |
+| `OTP_PEPPER`         | at least 32 characters                                                                                                                |
+| `CORS_ORIGINS`       | comma-separated allowlist                                                                                                             |
+| `COOKIE_SECURE`      | Secure flag on the refresh cookie                                                                                                     |
+| `TRUST_PROXY`        | Express `trust proxy`; set it behind a load balancer so client IPs are right                                                          |
+| `SMS_PROVIDER`       | `console` in development, `memory` in API tests, `outbox` (Redis list `sms:outbox:<phone>`) for Playwright; all refused in production |
+| rate-limit variables | see `.env.example`                                                                                                                    |
 
 Demo staff accounts from `pnpm db:seed` use the password `Jantrik@2026` (development only; the
 seed refuses to run when `NODE_ENV=production`, and no API endpoint sets passwords). Demo

@@ -18,7 +18,8 @@
     "db:migrate": "pnpm --filter @jantrik/db db:migrate",
     "db:deploy": "pnpm --filter @jantrik/db db:deploy",
     "db:studio": "pnpm --filter @jantrik/db db:studio",
-    "db:seed": "pnpm --filter @jantrik/db db:seed"
+    "db:seed": "pnpm --filter @jantrik/db db:seed",
+    "e2e": "pnpm --filter @jantrik/web e2e"
   },
   "devDependencies": {
     "prettier": "3.9.10",

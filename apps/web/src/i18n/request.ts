@@ -1,8 +1,10 @@
+import { cookies } from 'next/headers';
 import { getRequestConfig } from 'next-intl/server';
-import { defaultLocale, timeZone } from './config';
+import { defaultLocale, isLocale, LOCALE_COOKIE, timeZone } from './config';
 
 export default getRequestConfig(async () => {
-  const locale = defaultLocale;
+  const fromCookie = (await cookies()).get(LOCALE_COOKIE)?.value;
+  const locale = isLocale(fromCookie) ? fromCookie : defaultLocale;
   return {
     locale,
     timeZone,

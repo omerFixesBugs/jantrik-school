@@ -38,23 +38,24 @@ Then open:
 
 All commands run from the repo root.
 
-| Command                  | What it does                                                |
-| ------------------------ | ----------------------------------------------------------- |
-| `pnpm dev`               | Run all apps in watch mode (web :3000, api :4000)           |
-| `pnpm build`             | Production build of every package and app                   |
-| `pnpm lint`              | ESLint across the workspace                                 |
-| `pnpm typecheck`         | TypeScript `--noEmit` across the workspace                  |
-| `pnpm test`              | All tests (Vitest). `packages/db` tests need Docker running |
-| `pnpm format`            | Format everything with Prettier                             |
-| `pnpm format:check`      | Check formatting (CI)                                       |
-| `pnpm db:generate`       | Regenerate the Prisma client after editing `schema.prisma`  |
-| `pnpm db:migrate`        | Create + apply a dev migration (`prisma migrate dev`)       |
-| `pnpm db:deploy`         | Apply pending migrations (production/CI)                    |
-| `pnpm db:seed`           | Seed templates + demo tenants (idempotent)                  |
-| `pnpm db:studio`         | Open Prisma Studio                                          |
-| `docker compose up -d`   | Start Postgres + Redis                                      |
-| `docker compose down`    | Stop them (data is kept in named volumes)                   |
-| `docker compose down -v` | Stop and **delete all local data**                          |
+| Command                  | What it does                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| `pnpm dev`               | Run all apps in watch mode (web :3000, api :4000)                             |
+| `pnpm build`             | Production build of every package and app                                     |
+| `pnpm lint`              | ESLint across the workspace                                                   |
+| `pnpm typecheck`         | TypeScript `--noEmit` across the workspace                                    |
+| `pnpm test`              | All tests (Vitest). `packages/db` and `apps/api` tests need Docker running    |
+| `pnpm e2e`               | Playwright end-to-end (run `pnpm build` first; stop dev servers on 3000/4000) |
+| `pnpm format`            | Format everything with Prettier                                               |
+| `pnpm format:check`      | Check formatting (CI)                                                         |
+| `pnpm db:generate`       | Regenerate the Prisma client after editing `schema.prisma`                    |
+| `pnpm db:migrate`        | Create + apply a dev migration (`prisma migrate dev`)                         |
+| `pnpm db:deploy`         | Apply pending migrations (production/CI)                                      |
+| `pnpm db:seed`           | Seed templates + demo tenants (idempotent)                                    |
+| `pnpm db:studio`         | Open Prisma Studio                                                            |
+| `docker compose up -d`   | Start Postgres + Redis                                                        |
+| `docker compose down`    | Stop them (data is kept in named volumes)                                     |
+| `docker compose down -v` | Stop and **delete all local data**                                            |
 
 Run a command in a single package with a filter, e.g. `pnpm --filter @jantrik/api test`.
 
@@ -77,7 +78,8 @@ docker-compose.yml     Postgres 16 + Redis 7 for local development
 Phone + OTP and password login, rotating refresh sessions, tenant switching and the per-request
 RLS transaction are described in [docs/auth.md](docs/auth.md). After `pnpm db:seed`, log in as
 demo staff with phone `01711000001` and password `Jantrik@2026` (development only), or as a
-guardian with OTP to `01811000101` (the code is printed in the API log).
+guardian with OTP to `01811000101` (the code is printed in the API log). `01911000999` (same
+password) teaches at both demo institutes and gets the institute picker.
 
 ## Database
 
@@ -103,7 +105,10 @@ pnpm format:check
 pnpm db:deploy      # migrations against jantrik_test
 pnpm test
 pnpm build
+pnpm e2e            # Playwright: built API + web against jantrik_e2e (Chromium)
 ```
+
+On failure the Playwright HTML report is uploaded as a build artifact.
 
 A newer push to the same branch cancels the older run. To check a change before pushing, run
 the same commands locally with `docker compose up -d` running.

@@ -44,6 +44,16 @@ Do NOT build hostel, transport, AI tutor, virtual labs yet.
 8. Money stored as integer paisa. Dates stored in UTC; display in Asia/Dhaka.
 9. Secrets only in `.env` (never committed). Provide `.env.example`.
 
+## Conventions
+- Digits: Bangla digits (০-৯) in the bn UI for dates, times, counts and amounts; ASCII digits
+  always for phone numbers, student_code, roll numbers, birth registration numbers and any IDs
+  (people copy them into dialers/WhatsApp). Use the formatters in packages/shared (`format.ts`:
+  `formatCount`, `formatTaka`, `formatDate`, `formatIdentifier`; `phone.ts`: `formatBdPhone`), never raw Intl.
+- Input: accept Bangla digits everywhere a user types numbers; normalise with `toAsciiDigits` /
+  `normalizeBdPhone` (packages/shared) before validating or searching.
+- UI labels that differ by institute type (Section vs Batch, Class vs Course) come from
+  `tenant_labels` (`useLabel()` in the web app), never from institute-type checks.
+
 ## How Claude should work in this repo
 - For any non-trivial task: **propose a plan first**, wait for approval, then implement.
 - Keep changes small and focused on the task asked. Don't refactor unrelated code.
@@ -64,4 +74,5 @@ Run from the repo root (see README.md for first-time setup).
 - `pnpm db:seed` — templates + demo tenants (shapla-school, alo-coaching)
 - Database rules, RLS and the new-table checklist: docs/database.md
 - Auth, request pipeline, Db.tx / afterCommit rules for services: docs/auth.md
+- `pnpm e2e` — Playwright (build first; stop dev servers on 3000/4000); uses jantrik_e2e
 - Single package: `pnpm --filter @jantrik/api <script>`

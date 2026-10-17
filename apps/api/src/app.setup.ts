@@ -17,7 +17,9 @@ export function configureApp(app: INestApplication): void {
   app.enableCors({
     origin: config.get('CORS_ORIGINS', { infer: true }),
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Jantrik-Client'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Jantrik-Client', 'X-Jantrik-Tenant'],
+    // Lets the web app show a countdown for 429 responses.
+    exposedHeaders: ['Retry-After'],
   });
   app.enableShutdownHooks();
 }

@@ -21,11 +21,18 @@ CREATE ROLE jantrik_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PA
 CREATE ROLE jantrik_auth NOLOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT jantrik_auth TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 
+-- Owns search_student_ids(): runs the trigram search outside RLS (non-LEAKPROOF ILIKE cannot use
+-- an index under RLS) and filters by the current tenant explicitly. Same rules as jantrik_auth.
+CREATE ROLE jantrik_search NOLOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT jantrik_search TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
+
 CREATE DATABASE jantrik OWNER jantrik_owner;
 CREATE DATABASE jantrik_test OWNER jantrik_owner;
+-- Playwright end-to-end tests (seeded demo data).
+CREATE DATABASE jantrik_e2e OWNER jantrik_owner;
 SQL
 
-for db in jantrik jantrik_test; do
+for db in jantrik jantrik_test jantrik_e2e; do
   psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$db" <<'SQL'
 ALTER SCHEMA public OWNER TO jantrik_owner;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;

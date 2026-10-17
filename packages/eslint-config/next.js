@@ -8,5 +8,14 @@ export default defineConfig([
   ...nextVitals,
   ...nextTs,
   globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
+  {
+    rules: {
+      // Same convention as the base config: a leading underscore marks an intentionally unused name.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', destructuredArrayIgnorePattern: '^_' },
+      ],
+    },
+  },
   prettier,
 ]);

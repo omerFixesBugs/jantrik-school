@@ -57,6 +57,11 @@ jobs:
       DATABASE_MIGRATION_URL_TEST: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
       REDIS_URL: redis://localhost:6379
       REDIS_URL_TEST: redis://localhost:6379/1
+      # Playwright end-to-end tests: seeded jantrik_e2e database, Redis DB 2.
+      DATABASE_URL_E2E: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_e2e
+      DATABASE_MIGRATION_URL_E2E: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_e2e
+      REDIS_URL_E2E: redis://localhost:6379/2
+      NEXT_PUBLIC_API_URL: http://localhost:4000
       # CI-only throwaway secrets (not used anywhere else).
       JWT_ACCESS_SECRET: ci-only-access-secret-0123456789abcdefghijkl
       OTP_PEPPER: ci-only-otp-pepper-0123456789abcdefghijklmno
@@ -108,3 +113,24 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @jantrik/web exec playwright install --with-deps chromium
+
+      # Starts the built API (outbox SMS provider) and web app against jantrik_e2e.
+      - name: End-to-end tests
+        run: pnpm e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          retention-days: 7

@@ -87,6 +87,8 @@ const DEMO_TENANTS: DemoTenant[] = [
     staff: [
       { phone: '01711000001', name: 'Abdul Karim', role: 'OWNER' },
       { phone: '01711000002', name: 'Nasrin Akter', role: 'TEACHER' },
+      // Teaches at both institutes: one person, two memberships (exercises /select-institute).
+      { phone: '01911000999', name: 'Sharmin Sultana', role: 'TEACHER' },
     ],
     students: [
       {
@@ -179,6 +181,8 @@ const DEMO_TENANTS: DemoTenant[] = [
     staff: [
       { phone: '01511000001', name: 'Mahfuz Hasan', role: 'OWNER' },
       { phone: '01511000002', name: 'Farhana Yasmin', role: 'TEACHER' },
+      // Teaches at both institutes: one person, two memberships (exercises /select-institute).
+      { phone: '01911000999', name: 'Sharmin Sultana', role: 'TEACHER' },
     ],
     students: [
       {

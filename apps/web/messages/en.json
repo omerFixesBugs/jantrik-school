@@ -3,14 +3,102 @@
     "name": "Jantrik School",
     "tagline": "Complete management for education institutes"
   },
-  "health": {
-    "title": "System status",
-    "checking": "Checking…",
-    "api": "API",
-    "database": "Database",
-    "up": "Up",
-    "down": "Down",
-    "unreachable": "Cannot reach the API",
-    "retry": "Retry"
+  "common": {
+    "loading": "Loading…",
+    "retry": "Try again",
+    "language": "Language",
+    "switchToEnglish": "English",
+    "switchToBangla": "বাংলা",
+    "comingSoon": "Coming soon"
+  },
+  "errors": {
+    "invalidCredentials": "The phone number, code or password is not correct.",
+    "invalidPhone": "Enter a valid mobile number (e.g. 01712345678).",
+    "invalidCode": "Enter the 6-digit code.",
+    "rateLimited": "Too many attempts. Try again in {seconds} seconds.",
+    "network": "Cannot reach the server. Check your internet connection and try again.",
+    "generic": "Something went wrong. Please try again.",
+    "forbidden": "You don't have permission to see this."
+  },
+  "login": {
+    "title": "Sign in",
+    "subtitle": "Use your mobile number to continue",
+    "otpTab": "OTP code",
+    "passwordTab": "Password",
+    "phone": "Mobile number",
+    "phoneHint": "Bangla or English digits are fine",
+    "sendCode": "Send code",
+    "sending": "Sending…",
+    "codeSentTo": "We sent a 6-digit code to {phone}.",
+    "code": "Verification code",
+    "verify": "Sign in",
+    "verifying": "Verifying…",
+    "resend": "Resend code",
+    "resendIn": "You can resend the code in {seconds} seconds",
+    "changePhone": "Change number",
+    "identifier": "Mobile number or email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "signingIn": "Signing in…"
+  },
+  "selectInstitute": {
+    "title": "Choose an institute",
+    "subtitle": "You belong to more than one institute. Which one do you want to work in?",
+    "none": "You don't have access to any active institute.",
+    "unavailable": "Temporarily unavailable",
+    "switching": "Switching…"
+  },
+  "shell": {
+    "openMenu": "Open menu",
+    "navigation": "Navigation",
+    "userMenu": "User menu",
+    "switchInstitute": "Switch institute",
+    "logout": "Log out",
+    "academicYear": "{label}: {name}"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "classesAndSections": "{classLevel} & {section}",
+    "attendance": "Attendance",
+    "fees": "Fees",
+    "exams": "Exams & results"
+  },
+  "dashboard": {
+    "welcome": "Welcome, {name}",
+    "subtitle": "{institute} — start today's work from here.",
+    "attendance": "Attendance",
+    "attendanceText": "Take daily attendance and notify guardians.",
+    "fees": "Fees",
+    "feesText": "Set fees, collect payments and track dues.",
+    "exams": "Exams & results",
+    "examsText": "Enter marks, calculate GPA and print report cards."
+  },
+  "students": {
+    "title": "{student} list",
+    "search": "Search by name, ID or guardian phone",
+    "allClassLevels": "Any {classLevel}",
+    "allSections": "Any {section}",
+    "code": "ID",
+    "name": "Name",
+    "roll": "Roll",
+    "guardian": "Guardian",
+    "notEnrolled": "Not enrolled",
+    "showing": "Showing {count}",
+    "loadMore": "Load more",
+    "empty": "No matching {student} found.",
+    "emptyHint": "Try a different search or filter."
+  },
+  "comingSoon": {
+    "text": "This section is being built. You'll be able to work here soon."
+  },
+  "tenantChanged": {
+    "title": "Institute changed",
+    "body": "The institute was changed to {name} in another tab. To avoid editing the wrong institute's data, this page will reload.",
+    "unknown": "another institute",
+    "reload": "OK, reload"
+  },
+  "notAvailable": {
+    "title": "Not available",
+    "text": "This section is not enabled for your institute, or you don't have permission."
   }
 }

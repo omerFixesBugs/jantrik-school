@@ -73,4 +73,38 @@ describe('schema safety net', () => {
       /permission denied/i,
     );
   });
+
+  // SECURITY DEFINER functions see past RLS, so they must never trust a caller-supplied
+  // tenant: scope comes only from app_current_tenant_id() / app_current_user_id().
+  // Exceptions: lookups that by design run before any tenant or user is known (login).
+  const PRE_CONTEXT_AUTH_LOOKUPS = [
+    'auth_find_user_for_login',
+    'auth_resolve_tenant',
+    'auth_find_refresh_token',
+  ];
+
+  it('no SECURITY DEFINER function takes a tenant id parameter', async () => {
+    const rows = await app.$queryRaw<{ fn: string; args: string }[]>`
+      SELECT p.proname AS fn, pg_get_function_arguments(p.oid) AS args
+      FROM pg_proc p
+      WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef`;
+    expect(rows.length).toBeGreaterThan(0);
+    const offenders = rows.filter((r) => /tenant/i.test(r.args) || /\buuid\b/i.test(r.args));
+    expect(offenders).toEqual([]);
+  });
+
+  it('every SECURITY DEFINER function (except pre-context auth lookups) is scoped by context', async () => {
+    const rows = await app.$queryRaw<{ fn: string; scoped: boolean }[]>`
+      SELECT p.proname AS fn,
+             (p.prosrc LIKE '%app_current_tenant_id()%' OR p.prosrc LIKE '%app_current_user_id()%') AS scoped
+      FROM pg_proc p
+      WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
+        AND p.proname <> ALL(${PRE_CONTEXT_AUTH_LOOKUPS})`;
+    expect(rows.map((r) => r.fn).sort()).toEqual([
+      'app_find_or_create_user',
+      'auth_list_my_memberships',
+      'search_student_ids',
+    ]);
+    expect(rows.filter((r) => !r.scoped)).toEqual([]);
+  });
 });

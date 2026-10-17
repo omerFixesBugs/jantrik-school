@@ -16,11 +16,13 @@ generator client {
   output              = "../src/generated/prisma"
   moduleFormat        = "esm"
   importFileExtension = "js"
-  previewFeatures     = ["partialIndexes"]
+  previewFeatures     = ["partialIndexes", "postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  // pg_trgm: trigram GIN indexes for substring search (students, guardians).
+  extensions = [pg_trgm]
 }
 
 // ───────────────────────────── Enums ─────────────────────────────
@@ -640,6 +642,10 @@ model Student {
   @@unique([tenantId, birthRegistrationNo])
   @@index([tenantId, status], where: raw("deleted_at IS NULL"))
   @@index([tenantId, nameEn])
+  // Trigram indexes for ILIKE '%…%' search (GET /students).
+  @@index([nameBn(ops: raw("gin_trgm_ops"))], type: Gin, map: "students_name_bn_trgm_idx")
+  @@index([nameEn(ops: raw("gin_trgm_ops"))], type: Gin, map: "students_name_en_trgm_idx")
+  @@index([studentCode(ops: raw("gin_trgm_ops"))], type: Gin, map: "students_student_code_trgm_idx")
   @@map("students")
 }
 
@@ -664,6 +670,7 @@ model Guardian {
 
   @@unique([tenantId, id])
   @@index([tenantId, phone])
+  @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin, map: "guardians_phone_trgm_idx")
   @@map("guardians")
 }
 

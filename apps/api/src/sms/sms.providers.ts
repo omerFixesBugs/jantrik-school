@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import type { Redis } from 'ioredis';
 
 /** Sends one SMS. The real Bangladeshi gateway implementation comes later. */
 export interface SmsProvider {
@@ -41,5 +42,26 @@ export class MemorySmsProvider implements SmsProvider {
 
   sentTo(to: string): string[] {
     return this.messages.filter((m) => m.to === to).map((m) => m.text);
+  }
+}
+
+/**
+ * End-to-end tests only: pushes each message to the Redis list `sms:outbox:<phone>` (1 h TTL),
+ * where Playwright reads the OTP. Refuses to run in production.
+ */
+export class RedisOutboxSmsProvider implements SmsProvider {
+  constructor(
+    private readonly redis: Pick<Redis, 'rpush' | 'expire'>,
+    nodeEnv: string,
+  ) {
+    if (nodeEnv === 'production') {
+      throw new Error('RedisOutboxSmsProvider must not be used in production');
+    }
+  }
+
+  async send(to: string, text: string): Promise<void> {
+    const key = `sms:outbox:${to}`;
+    await this.redis.rpush(key, text);
+    await this.redis.expire(key, 3600);
   }
 }

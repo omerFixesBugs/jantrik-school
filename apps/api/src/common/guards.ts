@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -9,6 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import type { ModuleKey, Role } from '@jantrik/db';
+import { TENANT_HEADER, TENANT_MISMATCH } from '@jantrik/shared';
 import type { Request } from 'express';
 import type { Redis } from 'ioredis';
 import { TokenService } from '../auth/token.service.js';
@@ -16,7 +18,7 @@ import type { Env } from '../config/env.js';
 import { RateLimiter } from '../redis/rate-limiter.service.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
-import { IS_PUBLIC, NO_RATE_LIMIT, REQUIRED_MODULE, ROLES } from './decorators.js';
+import { IS_PUBLIC, NO_RATE_LIMIT, REQUIRED_MODULE, ROLES, USER_SCOPED } from './decorators.js';
 import { RequestContext, type Principal } from './request-context.js';
 import { revokedSessionKey } from './revocation.js';
 
@@ -52,6 +54,34 @@ export class JwtAuthGuard implements CanActivate {
     };
     req.principal = principal;
     this.context.setPrincipal(principal);
+    return true;
+  }
+}
+
+/**
+ * Tenant-switch safety. A page sends X-Jantrik-Tenant with the tenant it was loaded for; if the
+ * access token now belongs to another tenant (switched in another tab), the request is refused
+ * with 409 TENANT_MISMATCH instead of silently reading or writing the other institute's data.
+ * Requests without the header (e.g. mobile) and account-level @UserScoped routes are not checked.
+ */
+@Injectable()
+export class TenantHeaderGuard implements CanActivate {
+  constructor(private readonly reflector: Reflector) {}
+
+  canActivate(ctx: ExecutionContext): boolean {
+    const targets = [ctx.getHandler(), ctx.getClass()];
+    if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, targets)) return true;
+    if (this.reflector.getAllAndOverride<boolean>(USER_SCOPED, targets)) return true;
+    const req = ctx.switchToHttp().getRequest<AuthedRequest>();
+    const expected = req.get(TENANT_HEADER);
+    if (expected === undefined) return true;
+    if (expected !== req.principal?.tenantId) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: TENANT_MISMATCH,
+        message: 'The selected institute has changed. Reload the page.',
+      });
+    }
     return true;
   }
 }

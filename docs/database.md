@@ -19,22 +19,33 @@ the template.
 
 ## Database roles
 
-| Role            | Used by                                                    | Notes                                                                                                                                                                                                                                                                              |
-| --------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `postgres`      | Docker admin only                                          | Superuser. Only the init script uses it.                                                                                                                                                                                                                                           |
-| `jantrik_owner` | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`) | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                |
-| `jantrik_app`   | API runtime, demo seed (`DATABASE_URL`)                    | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                               |
-| `jantrik_auth`  | Owner of the auth `SECURITY DEFINER` functions             | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything). |
+| Role             | Used by                                                    | Notes                                                                                                                                                                                                                                                                              |
+| ---------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres`       | Docker admin only                                          | Superuser. Only the init script uses it.                                                                                                                                                                                                                                           |
+| `jantrik_owner`  | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`) | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                |
+| `jantrik_app`    | API runtime, demo seed (`DATABASE_URL`)                    | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                               |
+| `jantrik_auth`   | Owner of the auth `SECURITY DEFINER` functions             | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything). |
+| `jantrik_search` | Owner of `search_student_ids()`                            | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                 |
 
 The roles and databases (`jantrik`, `jantrik_test`) are created by
 [`docker/postgres/init/01-roles.sh`](../docker/postgres/init/01-roles.sh). That script only runs
 on an empty volume, so after changing it run `docker compose down -v && docker compose up -d`.
 In production, infrastructure creates the same roles.
 
-**Existing local volume from before the auth task?** Create the new role once instead of wiping:
+**Existing local volume created before these roles/databases existed?** Add them once instead of
+wiping (each statement errors harmlessly if the object already exists):
 
 ```bash
-docker compose exec postgres psql -U postgres   -c "CREATE ROLE jantrik_auth NOLOGIN NOSUPERUSER NOBYPASSRLS"   -c "GRANT jantrik_auth TO jantrik_owner WITH INHERIT FALSE, SET TRUE"
+docker compose exec postgres psql -U postgres \
+  -c "CREATE ROLE jantrik_auth NOLOGIN NOSUPERUSER NOBYPASSRLS" \
+  -c "GRANT jantrik_auth TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
+  -c "CREATE ROLE jantrik_search NOLOGIN NOSUPERUSER NOBYPASSRLS" \
+  -c "GRANT jantrik_search TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
+  -c "CREATE DATABASE jantrik_e2e OWNER jantrik_owner"
+docker compose exec postgres psql -U postgres -d jantrik_e2e \
+  -c "ALTER SCHEMA public OWNER TO jantrik_owner" \
+  -c "REVOKE ALL ON SCHEMA public FROM PUBLIC" \
+  -c "GRANT USAGE ON SCHEMA public TO jantrik_app"
 ```
 
 ## Row-Level Security
@@ -83,6 +94,39 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   - `auth_find_refresh_token(hash)`
   - `app_find_or_create_user(phone, name)`
 - **Don't add more casually.** Each one is a deliberate hole in RLS.
+- **Never accept a tenant (or user) id as a parameter.** Scope only by `app_current_tenant_id()`
+  / `app_current_user_id()`, so a missing context returns nothing. The only exceptions are the
+  three pre-context login lookups. `test/schema-safety.test.ts` fails on any definer function that
+  takes a tenant/uuid argument or isn't scoped by context.
+- **Privileges on a definer function:** REVOKE/GRANT _before_ `ALTER FUNCTION … OWNER TO`, or
+  `SET ROLE <owner>` first. Only a function's owner can change its privileges. A REVOKE run by
+  anyone else is a silent no-op, which left PUBLIC with EXECUTE until migration
+  `fix_definer_function_privileges`. Tests check the _effective_ ACL with
+  `acldefault()`, because a NULL `proacl` means "default", and the default grants PUBLIC.
+
+### Student search (`search_student_ids`)
+
+**The problem.** ILIKE's operator (`texticlike`) is not LEAKPROOF. Under RLS, Postgres evaluates
+non-leakproof predicates only after the row-security qual, so it **cannot use an index for ILIKE
+on an RLS table**. A trigram GIN index would be ignored: search degrades to scanning all of the
+tenant's rows.
+
+**The fix.** Search runs in `search_student_ids(term, phone, limit)`:
+
+- It is SECURITY DEFINER, owned by `jantrik_search`, and executable only by `jantrik_app`.
+- It filters by `app_current_tenant_id()` **explicitly**, escapes LIKE wildcards, skips
+  soft-deleted students, and returns **ids only**.
+- The API then loads those students through normal RLS (`searchStudentIds(tx, …)` in
+  `@jantrik/db`).
+
+**Indexes.** The trigram indexes (`pg_trgm`) are on students.name_bn, students.name_en,
+students.student_code and guardians.phone.
+
+**Tests.** `test/search-indexes.test.ts` proves:
+
+- the indexes are usable by the function's role
+- they are unusable under tenant RLS
+- results never cross tenants
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 

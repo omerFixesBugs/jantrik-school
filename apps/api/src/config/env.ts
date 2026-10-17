@@ -28,8 +28,11 @@ export const envSchema = z.object({
   OTP_PEPPER: z.string().min(32, 'OTP_PEPPER must be at least 32 characters'),
   /** Set the refresh cookie's Secure flag. Browsers accept Secure cookies on http://localhost. */
   COOKIE_SECURE: z.stringbool().default(true),
-  /** `console` logs codes (development only); `memory` keeps them for tests. */
-  SMS_PROVIDER: z.enum(['console', 'memory']).default('console'),
+  /**
+   * `console` logs codes (development only); `memory` keeps them in-process (API tests);
+   * `outbox` pushes them to a Redis list that Playwright reads (e2e). Never in production.
+   */
+  SMS_PROVIDER: z.enum(['console', 'memory', 'outbox']).default('console'),
 
   // Rate limits. Per-phone / per-identifier limits are the real protection; per-IP limits are
   // generous because many Bangladeshi users share one IP (carrier CGNAT, school Wi-Fi).
