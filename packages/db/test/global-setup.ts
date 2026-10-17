@@ -1,7 +1,6 @@
 import { execSync } from 'node:child_process';
 import path from 'node:path';
-import { createPrismaClient } from '../src/index.js';
-import { seedTemplates } from '../src/seed/templates.js';
+import { createPrismaClient, seedTemplates } from '../src/index.js';
 import { OWNER_URL } from './env.js';
 
 /**

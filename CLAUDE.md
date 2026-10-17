@@ -63,4 +63,5 @@ Run from the repo root (see README.md for first-time setup).
 - `pnpm db:migrate` — `prisma migrate dev` in packages/db
 - `pnpm db:seed` — templates + demo tenants (shapla-school, alo-coaching)
 - Database rules, RLS and the new-table checklist: docs/database.md
+- Auth, request pipeline, Db.tx / afterCommit rules for services: docs/auth.md
 - Single package: `pnpm --filter @jantrik/api <script>`

@@ -2,33 +2,62 @@ import type { Prisma, PrismaClient } from '../generated/prisma/client.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function assertTenantId(tenantId: string): void {
-  if (!UUID_RE.test(tenantId)) {
-    throw new TypeError(`Invalid tenant id: ${JSON.stringify(tenantId)}`);
+function assertUuid(kind: string, value: string): void {
+  if (!UUID_RE.test(value)) {
+    throw new TypeError(`Invalid ${kind} id: ${JSON.stringify(value)}`);
   }
 }
 
-/** Transaction client handed to `withTenant` callbacks. */
+export function assertTenantId(tenantId: string): void {
+  assertUuid('tenant', tenantId);
+}
+
+/** Transaction client handed to `withTenant` / `withContext` callbacks. */
 export type TenantTx = Prisma.TransactionClient;
 
+/** RLS context: `app.tenant_id` and/or `app.user_id`. Unset means "nothing visible". */
+export interface DbContext {
+  tenantId?: string | null;
+  userId?: string | null;
+}
+
+export interface TxOptions {
+  timeout?: number;
+  maxWait?: number;
+}
+
 /**
- * Run `fn` in one transaction whose RLS context is `tenantId`.
+ * Run `fn` in one transaction with the given RLS context.
  *
- * `set_config('app.tenant_id', id, true)` is the parameter-safe form of `SET LOCAL`: it lasts
- * only until the transaction ends, so pooled connections never leak a tenant to the next user.
+ * `set_config(name, value, true)` is the parameter-safe form of `SET LOCAL`: it lasts only until
+ * the transaction ends, so pooled connections never leak a tenant or user to the next request.
  * Use this for any multi-step unit of work and for raw SQL.
  */
+export async function withContext<T>(
+  prisma: PrismaClient,
+  context: DbContext,
+  fn: (tx: TenantTx) => Promise<T>,
+  options?: TxOptions,
+): Promise<T> {
+  const { tenantId, userId } = context;
+  if (tenantId) assertUuid('tenant', tenantId);
+  if (userId) assertUuid('user', userId);
+  return prisma.$transaction(async (tx) => {
+    if (tenantId) await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
+    if (userId) await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true)`;
+    return fn(tx);
+  }, options);
+}
+
+/** `withContext` with only a tenant. */
 export async function withTenant<T>(
   prisma: PrismaClient,
   tenantId: string,
   fn: (tx: TenantTx) => Promise<T>,
-  options?: { timeout?: number; maxWait?: number },
+  options?: TxOptions,
 ): Promise<T> {
   assertTenantId(tenantId);
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
-    return fn(tx);
-  }, options);
+  return withContext(prisma, { tenantId }, fn, options);
 }
 
 /**

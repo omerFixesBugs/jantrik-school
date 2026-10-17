@@ -5,10 +5,11 @@ you add a table. Code lives in [`packages/db`](../packages/db).
 
 ## Two kinds of tables
 
-| Kind             | Examples                                                                                     | `tenant_id` | Row-Level Security     | App role can                          |
-| ---------------- | -------------------------------------------------------------------------------------------- | ----------- | ---------------------- | ------------------------------------- |
-| **Global**       | `institute_types`, `template_*`, `grading_scheme_templates`, `grade_band_templates`, `users` | no          | no                     | read templates; read/write `users`    |
-| **Tenant-owned** | `tenants`, `students`, `sections`, `grade_bands`, … (everything else)                        | `NOT NULL`  | enabled **and forced** | read/write its own tenant's rows only |
+| Kind             | Examples                                                                                     | `tenant_id`    | Row-Level Security                               | App role can                          |
+| ---------------- | -------------------------------------------------------------------------------------------- | -------------- | ------------------------------------------------ | ------------------------------------- |
+| **Global**       | `institute_types`, `template_*`, `grading_scheme_templates`, `grade_band_templates`, `users` | no             | templates: no; `users`: yes (see below)          | read templates; `users` via RLS       |
+| **User-owned**   | `sessions`, `refresh_tokens`                                                                 | no (`user_id`) | enabled **and forced** (`user_id = app.user_id`) | own sessions only                     |
+| **Tenant-owned** | `tenants`, `students`, `sections`, `grade_bands`, … (everything else)                        | `NOT NULL`     | enabled **and forced**                           | read/write its own tenant's rows only |
 
 Templates are global and read-only at runtime. When an institute signs up, `provisionTenant()`
 **copies** its institute type's template (labels, grading scheme + bands, study groups, class
@@ -18,16 +19,23 @@ the template.
 
 ## Database roles
 
-| Role            | Used by                                                    | Notes                                                                                                                               |
-| --------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `postgres`      | Docker admin only                                          | Superuser. Only the init script uses it.                                                                                            |
-| `jantrik_owner` | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`) | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database. |
-| `jantrik_app`   | API runtime, demo seed (`DATABASE_URL`)                    | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                |
+| Role            | Used by                                                    | Notes                                                                                                                                                                                                                                                                              |
+| --------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres`      | Docker admin only                                          | Superuser. Only the init script uses it.                                                                                                                                                                                                                                           |
+| `jantrik_owner` | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`) | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                |
+| `jantrik_app`   | API runtime, demo seed (`DATABASE_URL`)                    | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                               |
+| `jantrik_auth`  | Owner of the auth `SECURITY DEFINER` functions             | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything). |
 
 The roles and databases (`jantrik`, `jantrik_test`) are created by
 [`docker/postgres/init/01-roles.sh`](../docker/postgres/init/01-roles.sh). That script only runs
 on an empty volume, so after changing it run `docker compose down -v && docker compose up -d`.
-In production, infrastructure creates the same two roles.
+In production, infrastructure creates the same roles.
+
+**Existing local volume from before the auth task?** Create the new role once instead of wiping:
+
+```bash
+docker compose exec postgres psql -U postgres   -c "CREATE ROLE jantrik_auth NOLOGIN NOSUPERUSER NOBYPASSRLS"   -c "GRANT jantrik_auth TO jantrik_owner WITH INHERIT FALSE, SET TRUE"
+```
 
 ## Row-Level Security
 
@@ -54,7 +62,37 @@ could store a reference to tenant B's student if it knew the UUID. So every tena
 foreign key**: `(tenant_id, student_id) → students (tenant_id, id)`. This includes optional
 references such as `sections.shift_id`. A row can only point at rows of its own tenant.
 
-## Querying: `withTenant` vs `tenantClient`
+### Users, sessions and the auth functions
+
+`app_current_user_id()` works like the tenant helper, reading `app.user_id`.
+
+- **`users`** (RLS enabled + forced):
+  - **Visible:** yourself (`id = app.user_id`), or anyone with a membership in the current tenant.
+  - **Updatable:** your own row only. One person can belong to several tenants, so staff of
+    tenant A must not edit them.
+  - **No INSERT or DELETE for the app.** Create people with `findOrCreateUser(tx, phone, name)`,
+    which needs a tenant context. It returns only the id, so a person from another tenant stays
+    hidden until they get a membership here.
+- **`sessions`, `refresh_tokens`:** visible to their own user only.
+- **Lookups that must happen before any context exists** go through narrow `SECURITY DEFINER`
+  functions:
+  - Each is owned by `jantrik_auth`, pins `search_path`, and is executable only by `jantrik_app`.
+  - `auth_find_user_for_login(phone, email)`
+  - `auth_list_my_memberships()`: uses `app.user_id`, with no user parameter.
+  - `auth_resolve_tenant(slug)`
+  - `auth_find_refresh_token(hash)`
+  - `app_find_or_create_user(phone, name)`
+- **Don't add more casually.** Each one is a deliberate hole in RLS.
+
+## Querying: `withContext`, `withTenant`, `tenantClient`
+
+> **In the API, services never call these.** Every authenticated request already runs inside one
+> RLS transaction (tenant + user) opened by `TenantContextInterceptor`. Inject `Db` and use
+> `this.db.tx`. An ESLint rule forbids these imports outside `apps/api/src/tenancy` and
+> `apps/api/src/auth`. See [docs/auth.md](auth.md).
+
+`withContext(prisma, { tenantId?, userId? }, fn)` sets both settings in one transaction;
+`withTenant(prisma, tenantId, fn)` is the tenant-only shorthand.
 
 Both set `app.tenant_id` with `set_config(..., true)`, the parameter-safe form of `SET LOCAL`. The
 value disappears when the transaction ends, so a pooled connection never carries one tenant into
@@ -90,10 +128,6 @@ You still pass `tenantId` in `data` when you create rows. RLS rejects the write 
 match the context.
 
 Without either helper, queries run with no tenant and return nothing. That is intended.
-
-**Not handled yet (auth task):** resolving a tenant from its slug and listing a user's memberships
-across tenants both happen _before_ a tenant is known. They will be narrow `SECURITY DEFINER`
-functions. Do not work around RLS for them in application code.
 
 ## Other conventions
 
@@ -138,7 +172,7 @@ functions. Do not work around RLS for them in application code.
 5. **Check for drift**: `pnpm --filter @jantrik/db exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`
    must print an empty migration.
 6. **If the table is copied from a template**, add the template table (global, `GRANT SELECT`
-   only), seed it in `src/seed/templates.ts` and copy it in `provisionTenant()`.
+   only), seed it in `src/reference-data/templates.ts` and copy it in `provisionTenant()`.
 7. **Run `pnpm test`.** `test/schema-safety.test.ts` fails if any table with a `tenant_id` column
    lacks enabled + forced RLS, the `tenant_isolation` policy, `NOT NULL`, or a leading index.
    Add isolation tests for any non-trivial access pattern.
@@ -151,6 +185,6 @@ A **global** table needs no `tenant_id` and no RLS. It still needs an explicit `
 ```bash
 docker compose up -d --wait   # Postgres + Redis
 pnpm db:migrate               # create/apply migrations (owner role)
-pnpm db:seed                  # templates (owner) + demo tenants shapla-school, alo-coaching (app role)
+pnpm db:seed                  # templates (owner) + demo tenants (app role); refuses NODE_ENV=production
 pnpm --filter @jantrik/db test   # integration tests against jantrik_test (needs Docker)
 ```

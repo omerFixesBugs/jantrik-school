@@ -134,6 +134,21 @@ enum GuardianRelation {
   @@map("guardian_relation")
 }
 
+enum SessionClient {
+  WEB
+  MOBILE
+
+  @@map("session_client")
+}
+
+enum SessionRevokeReason {
+  LOGOUT
+  REUSE_DETECTED
+  ADMIN
+
+  @@map("session_revoke_reason")
+}
+
 enum AuditAction {
   CREATE
   UPDATE
@@ -292,6 +307,7 @@ model User {
   students    Student[]
   guardians   Guardian[]
   auditLogs   AuditLog[]
+  sessions    Session[]
 
   @@map("users")
 }
@@ -328,6 +344,7 @@ model Tenant {
   studentGuardians StudentGuardian[]
   enrolments       Enrolment[]
   auditLogs        AuditLog[]
+  sessions         Session[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -717,4 +734,53 @@ model AuditLog {
   @@index([tenantId, entity, entityId])
   @@index([tenantId, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+// ───────────────────────────── Auth sessions ─────────────────────────────
+// User-owned (not tenant-owned): RLS on user_id = app_current_user_id(). See docs/auth.md.
+
+/// One login on one device ("logged-in devices"). Refresh tokens rotate inside it.
+model Session {
+  id             String               @id @default(uuid(7)) @db.Uuid
+  userId         String               @map("user_id") @db.Uuid
+  /// Tenant selected via switch-tenant; refresh re-issues access tokens for it.
+  activeTenantId String?              @map("active_tenant_id") @db.Uuid
+  client         SessionClient
+  userAgent      String?              @map("user_agent")
+  ip             String?
+  lastUsedAt     DateTime             @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  /// Sliding: renewed on every refresh.
+  expiresAt      DateTime             @map("expires_at") @db.Timestamptz(3)
+  revokedAt      DateTime?            @map("revoked_at") @db.Timestamptz(3)
+  revokeReason   SessionRevokeReason? @map("revoke_reason")
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeTenant  Tenant?        @relation(fields: [activeTenantId], references: [id], onDelete: SetNull)
+  refreshTokens RefreshToken[]
+
+  @@unique([userId, id])
+  @@index([userId])
+  @@map("sessions")
+}
+
+/// Rotation chain of a session. Only the SHA-256 of each token is stored.
+model RefreshToken {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  sessionId String    @map("session_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  /// Set when this token was exchanged for a new one. Presenting it again is reuse
+  /// (except the 30 s idempotent-retry window, see docs/auth.md).
+  rotatedAt DateTime? @map("rotated_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  session Session @relation(fields: [userId, sessionId], references: [userId, id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([userId])
+  @@map("refresh_tokens")
 }

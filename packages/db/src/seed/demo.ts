@@ -6,13 +6,21 @@ import {
   type PrismaClient,
   type Role,
 } from '../generated/prisma/client.js';
-import { withTenant, type TenantTx } from '../tenancy/context.js';
+import { hash } from '@node-rs/argon2';
+import { withContext, withTenant, type TenantTx } from '../tenancy/context.js';
 import { provisionTenant } from '../tenancy/provision.js';
+import { findOrCreateUser } from '../tenancy/users.js';
 
 // Two demo tenants for local development. Created through provisionTenant() as the app role,
 // exactly like a real signup. Idempotent: an existing tenant (same slug) is skipped.
 
 const ALL_MODULES: ModuleKey[] = ['ATTENDANCE', 'FEES', 'EXAMS'];
+
+/**
+ * Password for the demo staff accounts. Development only: set exclusively by this seed (which
+ * refuses to run in production); no application code path sets passwords.
+ */
+export const DEMO_STAFF_PASSWORD = 'Jantrik@2026';
 
 const phone = (raw: string): string => {
   const p = normalizeBdPhone(raw);
@@ -226,7 +234,8 @@ const DEMO_TENANTS: DemoTenant[] = [
   },
 ];
 
-async function seedTenantData(tx: TenantTx, tenantId: string, def: DemoTenant): Promise<void> {
+/** Returns the staff user ids, so their passwords can be set afterwards. */
+async function seedTenantData(tx: TenantTx, tenantId: string, def: DemoTenant): Promise<string[]> {
   const year = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
   const classLevels = new Map((await tx.classLevel.findMany()).map((c) => [c.code, c.id]));
   const studyGroups = new Map((await tx.studyGroup.findMany()).map((g) => [g.code, g.id]));
@@ -267,13 +276,11 @@ async function seedTenantData(tx: TenantTx, tenantId: string, def: DemoTenant): 
     sections.set(`${sec.classLevel}/${sec.name}`, section.id);
   }
 
+  const staffUserIds: string[] = [];
   for (const member of def.staff) {
-    const user = await tx.user.upsert({
-      where: { phone: phone(member.phone) },
-      create: { phone: phone(member.phone), name: member.name },
-      update: {},
-    });
-    await tx.membership.create({ data: { tenantId, userId: user.id, role: member.role } });
+    const userId = await findOrCreateUser(tx, phone(member.phone), member.name);
+    await tx.membership.create({ data: { tenantId, userId, role: member.role } });
+    staffUserIds.push(userId);
   }
 
   const guardianIds = new Map<string, string>(); // by phone
@@ -300,9 +307,13 @@ async function seedTenantData(tx: TenantTx, tenantId: string, def: DemoTenant): 
       const p = phone(g.phone);
       let guardianId = guardianIds.get(p);
       if (!guardianId) {
+        // Guardians log in to the app with phone + OTP.
+        const userId = await findOrCreateUser(tx, p, g.nameEn);
+        await tx.membership.create({ data: { tenantId, userId, role: 'GUARDIAN' } });
         const guardian = await tx.guardian.create({
           data: {
             tenantId,
+            userId,
             nameBn: g.nameBn,
             nameEn: g.nameEn,
             phone: p,
@@ -335,6 +346,7 @@ async function seedTenantData(tx: TenantTx, tenantId: string, def: DemoTenant): 
       },
     });
   }
+  return staffUserIds;
 }
 
 /** Create the demo tenants. Must run as the app role (RLS applies, as in production). */
@@ -362,7 +374,22 @@ export async function seedDemo(app: PrismaClient): Promise<void> {
       }
       throw error;
     }
-    await withTenant(app, tenantId, (tx) => seedTenantData(tx, tenantId, def), { timeout: 30_000 });
+    const staffUserIds = await withTenant(
+      app,
+      tenantId,
+      (tx) => seedTenantData(tx, tenantId, def),
+      {
+        timeout: 30_000,
+      },
+    );
+
+    // RLS lets a user update only their own row, so each password is set as that user.
+    const passwordHash = await hash(DEMO_STAFF_PASSWORD);
+    for (const userId of staffUserIds) {
+      await withContext(app, { userId }, (tx) =>
+        tx.user.update({ where: { id: userId }, data: { passwordHash } }),
+      );
+    }
     console.log(`  ${def.slug}: created (${def.students.length} students)`);
   }
 }

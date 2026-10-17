@@ -72,13 +72,21 @@ packages/
 docker-compose.yml     Postgres 16 + Redis 7 for local development
 ```
 
+## Auth
+
+Phone + OTP and password login, rotating refresh sessions, tenant switching and the per-request
+RLS transaction are described in [docs/auth.md](docs/auth.md). After `pnpm db:seed`, log in as
+demo staff with phone `01711000001` and password `Jantrik@2026` (development only), or as a
+guardian with OTP to `01811000101` (the code is printed in the API log).
+
 ## Database
 
 Read [docs/database.md](docs/database.md) before touching the schema: roles, Row-Level Security,
 `withTenant` vs `tenantClient`, and the checklist for adding a tenant table.
 
-> Upgrading from the first scaffold? The Postgres roles changed. Run `docker compose down -v`
-> once (deletes local DB data), then follow the setup steps above.
+> Upgrading an existing local database? The Postgres roles changed. Either run
+> `docker compose down -v` once (deletes local DB data) and follow the setup steps above, or
+> create the new `jantrik_auth` role with the one-liner in [docs/database.md](docs/database.md).
 
 ## CI
 

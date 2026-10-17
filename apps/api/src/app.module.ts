@@ -1,8 +1,18 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { validateEnv } from './config/env.js';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
+import { ClsModule } from 'nestjs-cls';
+import { AuthModule } from './auth/auth.module.js';
+import { JwtAuthGuard, ModuleGuard, RateLimitGuard, RolesGuard } from './common/guards.js';
+import { ZodValidationPipe } from './common/zod.js';
+import { validateEnv, type Env } from './config/env.js';
 import { HealthModule } from './health/health.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { RedisModule } from './redis/redis.module.js';
+import { SmsModule } from './sms/sms.module.js';
+import { TenancyModule } from './tenancy/tenancy.module.js';
+import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.js';
 
 @Module({
   imports: [
@@ -12,8 +22,30 @@ import { PrismaModule } from './prisma/prisma.module.js';
       envFilePath: ['../../.env'],
       validate: validateEnv,
     }),
+    // AsyncLocalStorage per request (principal, RLS transaction, afterCommit queue).
+    ClsModule.forRoot({ global: true, middleware: { mount: true, saveReq: true, saveRes: true } }),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) => ({
+        connection: { url: config.get('REDIS_URL', { infer: true }) },
+        prefix: config.get('QUEUE_PREFIX', { infer: true }),
+      }),
+    }),
+    RedisModule,
     PrismaModule,
+    TenancyModule,
+    SmsModule,
+    AuthModule,
     HealthModule,
+  ],
+  providers: [
+    { provide: APP_PIPE, useClass: ZodValidationPipe },
+    // Order matters: authenticate, then rate-limit (per user if known), then roles, then module.
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RateLimitGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: ModuleGuard },
+    { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
   ],
 })
 export class AppModule {}

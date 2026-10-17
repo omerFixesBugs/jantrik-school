@@ -2,12 +2,18 @@ import path from 'node:path';
 import { config } from 'dotenv';
 import { createPrismaClient } from '../index.js';
 import { seedDemo } from './demo.js';
-import { seedTemplates } from './templates.js';
+import { seedTemplates } from '../reference-data/templates.js';
 
 // Seeds global templates (as the owner role) and demo tenants (as the RLS-restricted app role).
 // Run with `pnpm db:seed`.
 
 config({ path: path.resolve(import.meta.dirname, '../../../../.env'), quiet: true });
+
+// Demo tenants and the demo staff password must never reach a real database.
+if (process.env['NODE_ENV'] === 'production') {
+  console.error('Refusing to seed: NODE_ENV=production. The seed is for development only.');
+  process.exit(1);
+}
 
 function requireEnv(name: string): string {
   const value = process.env[name];

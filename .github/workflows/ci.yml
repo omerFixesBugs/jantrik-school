@@ -56,6 +56,10 @@ jobs:
       DATABASE_URL_TEST: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_test
       DATABASE_MIGRATION_URL_TEST: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
       REDIS_URL: redis://localhost:6379
+      REDIS_URL_TEST: redis://localhost:6379/1
+      # CI-only throwaway secrets (not used anywhere else).
+      JWT_ACCESS_SECRET: ci-only-access-secret-0123456789abcdefghijkl
+      OTP_PEPPER: ci-only-otp-pepper-0123456789abcdefghijklmno
       TURBO_TELEMETRY_DISABLED: 1
       NEXT_TELEMETRY_DISABLED: 1
 

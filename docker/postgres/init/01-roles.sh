@@ -13,6 +13,14 @@ CREATE ROLE jantrik_owner LOGIN CREATEDB NOSUPERUSER NOBYPASSRLS PASSWORD :'owne
 -- Runtime role used by the API. Never owns tables, can never bypass RLS.
 CREATE ROLE jantrik_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD :'app_pw';
 
+-- Owns the narrow SECURITY DEFINER auth functions (login lookup, memberships, tenant by slug).
+-- NOLOGIN and NOBYPASSRLS: it only sees rows through explicit `TO jantrik_auth` policies.
+-- jantrik_owner may SET ROLE to it (needed to hand function ownership over in migrations) but
+-- does NOT inherit it: otherwise the `TO jantrik_auth` policies would let the owner see every
+-- row and defeat FORCE ROW LEVEL SECURITY.
+CREATE ROLE jantrik_auth NOLOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT jantrik_auth TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
+
 CREATE DATABASE jantrik OWNER jantrik_owner;
 CREATE DATABASE jantrik_test OWNER jantrik_owner;
 SQL

@@ -11,6 +11,10 @@ import {
 import { APP_URL, OWNER_URL } from './env.js';
 
 export const appClient = (): PrismaClient => createPrismaClient(APP_URL);
+
+/** A random valid Bangladeshi mobile number (E.164). */
+export const randomPhone = (): string =>
+  `+88017${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
 export const ownerClient = (): PrismaClient => createPrismaClient(OWNER_URL);
 
 /** App-role client with a single pooled connection, to test connection reuse. */

@@ -1,4 +1,4 @@
-import type { Locale, PrismaClient, RoundingMode } from '../generated/prisma/client.js';
+import type { Locale, Prisma, PrismaClient, RoundingMode } from '../generated/prisma/client.js';
 
 // Global reference data: institute types and the templates copied into each new tenant.
 // Adding an institute type (QAWMI, ALIYA, ENGLISH_MEDIUM, TECHNICAL, ...) means adding an entry
@@ -211,9 +211,20 @@ export const INSTITUTE_TYPES: InstituteTypeDef[] = [
 
 /**
  * Upsert all global reference data. Idempotent. Must run as the schema owner
- * (the app role has read-only access to these tables).
+ * (the app role has read-only access to these tables). An advisory lock serialises concurrent
+ * callers (e.g. the db and api test setups running in parallel).
  */
-export async function seedTemplates(owner: PrismaClient): Promise<void> {
+export async function seedTemplates(client: PrismaClient): Promise<void> {
+  await client.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('jantrik:seed-templates'))`;
+      await upsertTemplates(tx);
+    },
+    { timeout: 120_000 },
+  );
+}
+
+async function upsertTemplates(owner: Prisma.TransactionClient): Promise<void> {
   const schemeIds = new Map<string, string>();
   for (const def of GRADING_SCHEMES) {
     const scheme = await owner.gradingSchemeTemplate.upsert({

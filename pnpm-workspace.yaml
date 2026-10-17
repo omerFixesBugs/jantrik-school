@@ -11,6 +11,8 @@ allowBuilds:
   sharp: false
   '@swc/core': false
   '@parcel/watcher': false
+  # Optional native accelerator for msgpackr (BullMQ); pure-JS fallback is fine.
+  msgpackr-extract: false
 
 minimumReleaseAgeExclude:
   - next@16.4.2
