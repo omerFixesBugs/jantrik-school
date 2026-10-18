@@ -159,20 +159,72 @@ enum AuditAction {
   @@map("audit_action")
 }
 
+/// DAILY: one register per section per day. PER_SESSION: one per class period / batch meeting.
+enum AttendanceMode {
+  DAILY
+  PER_SESSION
+
+  @@map("attendance_mode")
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  LEAVE
+
+  @@map("attendance_status")
+}
+
+/// Why a tenant SMS was sent (billing reports group by this).
+enum SmsPurpose {
+  ATTENDANCE_ABSENT
+
+  @@map("sms_purpose")
+}
+
+enum SmsStatus {
+  QUEUED
+  SENT
+  FAILED
+  /// Not sent: the reason went away before sending (e.g. absence corrected).
+  CANCELLED
+  /// Not sent: the tenant's daily SMS cap was reached.
+  HELD_OVER_LIMIT
+
+  @@map("sms_status")
+}
+
+/// SMS sent before any tenant is known (login OTP); platform cost.
+enum PlatformSmsPurpose {
+  OTP
+
+  @@map("platform_sms_purpose")
+}
+
+enum PlatformSmsStatus {
+  SENT
+  FAILED
+
+  @@map("platform_sms_status")
+}
+
 // ───────────────────── Global: institute types & templates ─────────────────────
 
 /// Kind of institute chosen at signup. `key` is data (not an enum) so new types are just rows.
 model InstituteType {
-  id                             String   @id @default(uuid(7)) @db.Uuid
-  key                            String   @unique
-  nameBn                         String   @map("name_bn")
-  nameEn                         String   @map("name_en")
-  defaultLocale                  Locale   @default(bn) @map("default_locale")
-  isActive                       Boolean  @default(true) @map("is_active")
-  sortOrder                      Int      @default(0) @map("sort_order")
-  defaultGradingSchemeTemplateId String?  @map("default_grading_scheme_template_id") @db.Uuid
-  createdAt                      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt                      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                             String         @id @default(uuid(7)) @db.Uuid
+  key                            String         @unique
+  nameBn                         String         @map("name_bn")
+  nameEn                         String         @map("name_en")
+  defaultLocale                  Locale         @default(bn) @map("default_locale")
+  /// Copied into attendance_settings.mode when a tenant is provisioned.
+  attendanceMode                 AttendanceMode @default(DAILY) @map("attendance_mode")
+  isActive                       Boolean        @default(true) @map("is_active")
+  sortOrder                      Int            @default(0) @map("sort_order")
+  defaultGradingSchemeTemplateId String?        @map("default_grading_scheme_template_id") @db.Uuid
+  createdAt                      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   defaultGradingSchemeTemplate GradingSchemeTemplate? @relation(fields: [defaultGradingSchemeTemplateId], references: [id], onDelete: SetNull)
   classLevels                  TemplateClassLevel[]
@@ -313,6 +365,11 @@ model User {
   auditLogs   AuditLog[]
   sessions    Session[]
 
+  sectionTeachers           SectionTeacher[]
+  attendanceSessionsTaken   AttendanceSession[] @relation("AttendanceTakenBy")
+  attendanceSessionsUpdated AttendanceSession[] @relation("AttendanceUpdatedBy")
+  holidaysCreated           Holiday[]
+
   @@map("users")
 }
 
@@ -349,6 +406,13 @@ model Tenant {
   enrolments       Enrolment[]
   auditLogs        AuditLog[]
   sessions         Session[]
+
+  attendanceSettings AttendanceSettings?
+  holidays           Holiday[]
+  sectionTeachers    SectionTeacher[]
+  attendanceSessions AttendanceSession[]
+  attendanceRecords  AttendanceRecord[]
+  smsLogs            SmsLog[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -555,6 +619,8 @@ model Subject {
   studyGroup     StudyGroup?      @relation(fields: [tenantId, studyGroupId], references: [tenantId, id], onDelete: Restrict)
   sourceTemplate TemplateSubject? @relation(fields: [sourceTemplateId], references: [id], onDelete: SetNull)
 
+  attendanceSessions AttendanceSession[]
+
   @@unique([tenantId, id])
   @@unique([tenantId, classLevelId, code])
   @@map("subjects")
@@ -580,6 +646,9 @@ model Section {
   branch       Branch?      @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict)
   shift        Shift?       @relation(fields: [tenantId, shiftId], references: [tenantId, id], onDelete: Restrict)
   enrolments   Enrolment[]
+
+  teachers           SectionTeacher[]
+  attendanceSessions AttendanceSession[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, academicYearId, classLevelId, name])
@@ -638,6 +707,8 @@ model Student {
   user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
   guardians  StudentGuardian[]
   enrolments Enrolment[]
+
+  attendanceRecords AttendanceRecord[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
@@ -743,6 +814,181 @@ model AuditLog {
   @@index([tenantId, entity, entityId])
   @@index([tenantId, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+// ───────────────────────────── Attendance ─────────────────────────────
+// Module ATTENDANCE. Dates are calendar dates in the tenant's timezone (tenants.timezone).
+
+/// One row per tenant, created by provisionTenant() from the institute type's defaults.
+model AttendanceSettings {
+  id                    String         @id @default(uuid(7)) @db.Uuid
+  tenantId              String         @map("tenant_id") @db.Uuid
+  mode                  AttendanceMode @default(DAILY)
+  /// ISO weekdays (1 = Monday … 7 = Sunday) with no attendance. Default: Friday.
+  weeklyOffDays         Int[]          @default([5]) @map("weekly_off_days")
+  /// How many days back a teacher may still take or change attendance (0 = same day only).
+  editWindowDays        Int            @default(0) @map("edit_window_days") @db.SmallInt
+  /// Present % normally leaves LEAVE out of the total; when true, LEAVE counts as absent.
+  leaveCountsAsAbsent   Boolean        @default(false) @map("leave_counts_as_absent")
+  absentSmsEnabled      Boolean        @default(false) @map("absent_sms_enabled")
+  /// Variables: {student}, {date}, {institute}. Null = the built-in default template.
+  absentSmsTemplate     String?        @map("absent_sms_template")
+  /// Wait before sending, so a mis-tap corrected right away never reaches a guardian.
+  absentSmsDelayMinutes Int            @default(10) @map("absent_sms_delay_minutes") @db.SmallInt
+  /// Max SMS per day (tenant timezone). Null = 2 × active students.
+  dailySmsCap           Int?           @map("daily_sms_cap")
+  createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId])
+  @@unique([tenantId, id])
+  @@map("attendance_settings")
+}
+
+/// No attendance on these dates unless an admin overrides.
+model Holiday {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  startDate   DateTime @map("start_date") @db.Date
+  endDate     DateTime @map("end_date") @db.Date
+  nameBn      String   @map("name_bn")
+  nameEn      String   @map("name_en")
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy User?  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, startDate])
+  @@map("holidays")
+}
+
+/// Teachers who may take attendance for a section (sections belong to one academic year).
+model SectionTeacher {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  sectionId      String   @map("section_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  isClassTeacher Boolean  @default(false) @map("is_class_teacher")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  section Section @relation(fields: [tenantId, sectionId], references: [tenantId, id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sectionId, userId])
+  @@unique([tenantId, sectionId], map: "section_teachers_one_class_teacher", where: raw("is_class_teacher"))
+  @@index([tenantId, userId])
+  @@map("section_teachers")
+}
+
+/// One register: a section on a date, for the whole day (period_no 0) or one period.
+model AttendanceSession {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  sectionId        String   @map("section_id") @db.Uuid
+  date             DateTime @db.Date
+  /// 0 = the whole day (DAILY mode); 1.. = a period (PER_SESSION mode).
+  periodNo         Int      @default(0) @map("period_no") @db.SmallInt
+  subjectId        String?  @map("subject_id") @db.Uuid
+  takenById        String   @map("taken_by_id") @db.Uuid
+  updatedById      String   @map("updated_by_id") @db.Uuid
+  submittedAt      DateTime @map("submitted_at") @db.Timestamptz(3)
+  /// Optimistic concurrency: a submit must name the version it was based on.
+  version          Int      @default(1)
+  /// The client's id for the last accepted submit, so a retried request is answered, not re-applied.
+  lastSubmissionId String   @map("last_submission_id") @db.Uuid
+  /// Taken on a weekly off day or holiday (admin override).
+  onNonWorkingDay  Boolean  @default(false) @map("on_non_working_day")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  section   Section            @relation(fields: [tenantId, sectionId], references: [tenantId, id], onDelete: Restrict)
+  subject   Subject?           @relation(fields: [tenantId, subjectId], references: [tenantId, id], onDelete: Restrict)
+  takenBy   User               @relation("AttendanceTakenBy", fields: [takenById], references: [id], onDelete: Restrict)
+  updatedBy User               @relation("AttendanceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  records   AttendanceRecord[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sectionId, date, periodNo])
+  @@index([tenantId, date])
+  @@map("attendance_sessions")
+}
+
+model AttendanceRecord {
+  id        String           @id @default(uuid(7)) @db.Uuid
+  tenantId  String           @map("tenant_id") @db.Uuid
+  sessionId String           @map("session_id") @db.Uuid
+  studentId String           @map("student_id") @db.Uuid
+  status    AttendanceStatus
+  note      String?
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  session AttendanceSession @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Cascade)
+  student Student           @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sessionId, studentId])
+  @@index([tenantId, studentId])
+  @@map("attendance_records")
+}
+
+// ───────────────────────────── SMS logs ─────────────────────────────
+
+/// Every SMS sent for a tenant (we bill from this). Bodies of tenant SMS never contain secrets.
+model SmsLog {
+  id                String     @id @default(uuid(7)) @db.Uuid
+  tenantId          String     @map("tenant_id") @db.Uuid
+  phone             String
+  purpose           SmsPurpose
+  status            SmsStatus  @default(QUEUED)
+  segments          Int        @db.SmallInt
+  body              String
+  /// The tenant-local day it belongs to (daily cap, billing).
+  localDate         DateTime   @map("local_date") @db.Date
+  /// At most one SMS per key per tenant, e.g. "absent:<student_id>:<date>".
+  dedupeKey         String?    @map("dedupe_key")
+  relatedEntity     String?    @map("related_entity")
+  relatedId         String?    @map("related_id") @db.Uuid
+  sendAfter         DateTime?  @map("send_after") @db.Timestamptz(3)
+  sentAt            DateTime?  @map("sent_at") @db.Timestamptz(3)
+  providerMessageId String?    @map("provider_message_id")
+  error             String?
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, dedupeKey], map: "sms_logs_dedupe", where: raw("dedupe_key IS NOT NULL"))
+  @@index([tenantId, localDate])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("sms_logs")
+}
+
+/// Global: SMS sent before any tenant is known (login OTP). The app role may only INSERT, never
+/// read: it holds phone numbers of every user. The body (it contains the OTP) is never stored.
+model PlatformSmsLog {
+  id                String             @id @default(uuid(7)) @db.Uuid
+  phone             String
+  purpose           PlatformSmsPurpose
+  status            PlatformSmsStatus
+  segments          Int                @db.SmallInt
+  providerMessageId String?            @map("provider_message_id")
+  error             String?
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt(sort: Desc)])
+  @@map("platform_sms_logs")
 }
 
 // ───────────────────────────── Auth sessions ─────────────────────────────

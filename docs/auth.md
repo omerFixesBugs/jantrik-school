@@ -32,6 +32,21 @@ attempt deletes the code. A successful verify deletes it too (single use).
   This is the only place an OTP may appear, and it refuses to start in production.
 - Tests use `MemorySmsProvider`.
 - The real Bangladeshi gateway will be another `SmsProvider`.
+- Every OTP send is recorded in `platform_sms_logs` (phone, segments, SENT/FAILED, never the
+  text) for cost tracking. The app role can only insert there.
+
+Tenant SMS (e.g. absent alerts) go through **`TenantSmsService.queue()`** instead, inside the
+request transaction:
+
+1. It takes a per-tenant advisory lock, so the dedupe check and the daily count can't race.
+2. A `dedupeKey` that already exists → `DUPLICATE`, nothing queued.
+3. Over the tenant's daily cap → an `sms_logs` row with status `HELD_OVER_LIMIT`, nothing queued.
+4. Otherwise an `sms_logs` row (`QUEUED`, with segments) and, after commit, a delayed job
+   `{ tenantId, smsLogId }`. No phone number or text goes into Redis.
+5. The worker loads the row in that tenant's context (see `TenantJobRunner` below), asks the
+   purpose's registered relevance check whether it is still wanted (an absence corrected in the
+   meantime → `CANCELLED`), sends it outside any transaction, then marks it `SENT` or, after the
+   last retry, `FAILED`.
 
 ## Rate limits (Redis, all configurable via env)
 
@@ -154,6 +169,16 @@ export class StudentsService {
 - Anything with an outside effect (queue jobs, SMS, cache invalidation) goes through
   `RequestContext.afterCommit(fn)`. `SmsService` already does this. Such callbacks are dropped if
   the request fails.
+- Write `audit_logs` with **`AuditService.record({ entity, entityId, action, oldValues,
+newValues })`**. It uses the request transaction (the audit row commits or rolls back with the
+  change) and fills in the tenant and actor.
+
+### Background jobs that touch tenant data
+
+A queue worker has no request. Wrap its work in **`TenantJobRunner.run(tenantId, fn)`**
+(`apps/api/src/tenancy`). It opens one RLS transaction for that tenant (with no user), so `Db.tx`
+and `afterCommit` work exactly as in a request. The tenant id must come from a job we enqueued
+ourselves, never from user input.
 
 ## Tenant-switch safety: `X-Jantrik-Tenant`
 

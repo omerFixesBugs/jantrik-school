@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ClsModule } from 'nestjs-cls';
+import { AttendanceModule } from './attendance/attendance.module.js';
+import { AuditModule } from './audit/audit.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import {
   JwtAuthGuard,
@@ -42,11 +44,13 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     RedisModule,
     PrismaModule,
     TenancyModule,
+    AuditModule,
     SmsModule,
     AuthModule,
     HealthModule,
     MeModule,
     StudentsModule,
+    AttendanceModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

@@ -26,7 +26,8 @@ export interface ProvisionTenantInput {
 
 /**
  * Create a tenant and COPY its institute type's template into it: labels, default grading
- * scheme + bands, study groups, class levels and subjects. The copies are ordinary tenant rows
+ * scheme + bands, study groups, class levels and subjects, plus attendance settings with the
+ * type's default mode (absent SMS starts off: it costs the institute money). The copies are ordinary tenant rows
  * (with `source_template_id` for traceability), so each institute can customise them freely.
  *
  * Runs as the app role inside the new tenant's RLS context, in a single transaction.
@@ -154,6 +155,10 @@ export async function provisionTenant(
             sourceTemplateId: s.id,
           })),
         ),
+      });
+
+      await tx.attendanceSettings.create({
+        data: { tenantId, mode: type.attendanceMode, absentSmsEnabled: false },
       });
 
       if (input.academicYear) {

@@ -11,6 +11,7 @@ import {
   SMS_PROVIDER,
 } from './sms.providers.js';
 import { SMS_QUEUE, SmsProcessor, SmsService } from './sms.service.js';
+import { TenantSmsService } from './tenant-sms.service.js';
 
 @Global()
 @Module({
@@ -32,8 +33,9 @@ import { SMS_QUEUE, SmsProcessor, SmsService } from './sms.service.js';
       },
     },
     SmsService,
+    TenantSmsService,
     SmsProcessor,
   ],
-  exports: [SmsService, SMS_PROVIDER],
+  exports: [SmsService, TenantSmsService, SMS_PROVIDER],
 })
 export class SmsModule {}

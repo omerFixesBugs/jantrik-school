@@ -15,6 +15,7 @@ import { hash } from '@node-rs/argon2';
 import type { Redis } from 'ioredis';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module.js';
+import { AttendanceModule } from '../../src/attendance/attendance.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { REDIS } from '../../src/redis/redis.constants.js';
 import { SMS_PROVIDER, type MemorySmsProvider } from '../../src/sms/sms.providers.js';
@@ -33,7 +34,8 @@ export interface Harness {
 
 export async function createHarness(): Promise<Harness> {
   const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
+    // AttendanceModule again so TestController can inject its exported service (same instance).
+    imports: [AppModule, AttendanceModule],
     controllers: [TestController],
   }).compile();
   const app = moduleRef.createNestApplication();

@@ -8,6 +8,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { RequireModule, Roles } from '../../src/common/decorators.js';
+import { AttendanceService, type SubmitInput } from '../../src/attendance/attendance.service.js';
 import { SmsService } from '../../src/sms/sms.service.js';
 import { Db } from '../../src/tenancy/db.service.js';
 
@@ -17,6 +18,7 @@ export class TestController {
   constructor(
     private readonly db: Db,
     private readonly sms: SmsService,
+    private readonly attendanceService: AttendanceService,
   ) {}
 
   @Get('students')
@@ -48,6 +50,13 @@ export class TestController {
   async smsThenFail(@Body() body: { phone: string }) {
     await this.sms.send(body.phone, 'must never arrive');
     throw new BadRequestException('handler failed after queueing an SMS');
+  }
+
+  /** Submits attendance (queueing absent SMS) and then fails: nothing may be saved or sent. */
+  @Post('attendance-then-fail')
+  async attendanceThenFail(@Body() body: SubmitInput) {
+    await this.attendanceService.submit(body);
+    throw new BadRequestException('handler failed after submitting attendance');
   }
 
   @Post('sms-ok')

@@ -8,7 +8,7 @@ import {
   Module,
   Patch,
 } from '@nestjs/common';
-import { preferencesSchema, type GuardianChild, type MeContext } from '@jantrik/shared';
+import { preferencesSchema, todayIn, type GuardianChild, type MeContext } from '@jantrik/shared';
 import { CurrentUser, RequireModule, Roles, UserScoped } from '../common/decorators.js';
 import type { Principal } from '../common/request-context.js';
 import { zodDto } from '../common/zod.js';
@@ -68,6 +68,7 @@ export class MeService {
             endDate: isoDate(year.endDate),
           }
         : null,
+      today: todayIn(tenant.timezone),
     };
   }
 

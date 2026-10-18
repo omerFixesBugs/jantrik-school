@@ -11,6 +11,11 @@ you add a table. Code lives in [`packages/db`](../packages/db).
 | **User-owned**   | `sessions`, `refresh_tokens`                                                                 | no (`user_id`) | enabled **and forced** (`user_id = app.user_id`) | own sessions only                     |
 | **Tenant-owned** | `tenants`, `students`, `sections`, `grade_bands`, … (everything else)                        | `NOT NULL`     | enabled **and forced**                           | read/write its own tenant's rows only |
 
+**`platform_sms_logs`** is a global table for SMS sent before any tenant is known (login OTP),
+kept for cost tracking. The app role may **only INSERT** into it: no SELECT, UPDATE or DELETE,
+because it holds the phone numbers of every user. Write it with `createMany` (a plain INSERT);
+`create()` uses `RETURNING`, which needs SELECT and is refused. The OTP text is never stored.
+
 Templates are global and read-only at runtime. When an institute signs up, `provisionTenant()`
 **copies** its institute type's template (labels, grading scheme + bands, study groups, class
 levels, subjects) into tenant-owned tables. Each copy keeps a `source_template_id` for
@@ -183,6 +188,19 @@ Without either helper, queries run with no tenant and return nothing. That is in
 - Phone numbers are E.164 Bangladeshi mobiles (`+8801XXXXXXXXX`), enforced by a CHECK constraint.
   Normalise input with `normalizeBdPhone` / `bdPhoneSchema` from `@jantrik/shared`.
 - Students are soft-deleted (`deleted_at`). Queries must filter `deletedAt: null` themselves.
+- **History tables have no DELETE grant:** `attendance_sessions`, `attendance_records` and
+  `sms_logs` (we bill from it) can be inserted and updated by the app, never deleted.
+- **Don't backfill tenant rows in a migration.** Migrations run as `jantrik_owner`, and FORCE RLS
+  hides every tenant row from it, so an `INSERT … SELECT FROM tenants` silently inserts nothing.
+  Create per-tenant rows in `provisionTenant()`, and give existing tenants defaults in code
+  (e.g. `AttendanceSettingsService.load()` falls back to the institute type's defaults until
+  an admin saves the settings).
+- **Attendance dates** are `date` columns holding the calendar day in the tenant's timezone
+  (`tenants.timezone`). "Today" is always computed on the server (`todayIn(timezone)` in
+  `@jantrik/shared`, also in `GET /me/context`), never taken from the device.
+- **SMS dedupe:** `sms_logs` has a partial unique index on `(tenant_id, dedupe_key)`, so one key
+  (e.g. `absent:<student_id>:<date>`) can produce at most one SMS per tenant, ever. Rows held back
+  by the daily cap keep their key too.
 - CHECK constraints, RLS, grants and functions live in hand-written SQL migrations. Partial unique
   indexes are declared in the Prisma schema (`partialIndexes` preview feature), so Prisma knows
   about them and won't try to drop them.

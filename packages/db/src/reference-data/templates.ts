@@ -1,4 +1,10 @@
-import type { Locale, Prisma, PrismaClient, RoundingMode } from '../generated/prisma/client.js';
+import type {
+  AttendanceMode,
+  Locale,
+  Prisma,
+  PrismaClient,
+  RoundingMode,
+} from '../generated/prisma/client.js';
 
 // Global reference data: institute types and the templates copied into each new tenant.
 // Adding an institute type (QAWMI, ALIYA, ENGLISH_MEDIUM, TECHNICAL, ...) means adding an entry
@@ -24,6 +30,8 @@ interface InstituteTypeDef {
   bn: string;
   en: string;
   defaultLocale: Locale;
+  /** Default attendance_settings.mode for new tenants of this type. */
+  attendanceMode: AttendanceMode;
   gradingScheme: string;
   labels: Record<string, [bn: string, en: string]>;
   studyGroups: NamePair[];
@@ -149,6 +157,7 @@ export const INSTITUTE_TYPES: InstituteTypeDef[] = [
     bn: 'কোচিং সেন্টার',
     en: 'Coaching Centre',
     defaultLocale: 'bn',
+    attendanceMode: 'PER_SESSION',
     gradingScheme: 'BD_GPA_5',
     labels: {
       class_level: ['কোর্স', 'Course'],
@@ -192,6 +201,7 @@ export const INSTITUTE_TYPES: InstituteTypeDef[] = [
     bn: 'এনসিটিবি স্কুল (বাংলা ভার্সন)',
     en: 'NCTB School (Bangla Version)',
     defaultLocale: 'bn',
+    attendanceMode: 'DAILY',
     gradingScheme: 'BD_GPA_5',
     labels: SCHOOL_LABELS,
     studyGroups: NCTB_STUDY_GROUPS,
@@ -202,6 +212,7 @@ export const INSTITUTE_TYPES: InstituteTypeDef[] = [
     bn: 'এনসিটিবি স্কুল (ইংলিশ ভার্সন)',
     en: 'NCTB School (English Version)',
     defaultLocale: 'en',
+    attendanceMode: 'DAILY',
     gradingScheme: 'BD_GPA_5',
     labels: SCHOOL_LABELS,
     studyGroups: NCTB_STUDY_GROUPS,
@@ -250,6 +261,7 @@ async function upsertTemplates(owner: Prisma.TransactionClient): Promise<void> {
       nameBn: def.bn,
       nameEn: def.en,
       defaultLocale: def.defaultLocale,
+      attendanceMode: def.attendanceMode,
       sortOrder: i,
       defaultGradingSchemeTemplateId: schemeIds.get(def.gradingScheme) ?? null,
     };

@@ -23,6 +23,8 @@ export interface MeContext {
   modules: ModuleKey[];
   roles: Role[];
   academicYear: { id: string; name: string; startDate: string; endDate: string } | null;
+  /** Today in the tenant's timezone (YYYY-MM-DD). Never use the device date. */
+  today: string;
 }
 
 export const preferencesSchema = z.object({

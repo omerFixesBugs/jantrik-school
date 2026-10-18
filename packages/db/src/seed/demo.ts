@@ -65,8 +65,21 @@ interface DemoTenant {
   shifts: { nameBn: string; nameEn: string; start: string; end: string }[];
   sections: DemoSection[];
   staff: { phone: string; name: string; nameBn: string; role: Role }[];
+  /** Who takes attendance where: `classLevel/section` keys as in `sections`. */
+  sectionTeachers: { phone: string; section: string; classTeacher?: boolean }[];
   students: DemoStudent[];
 }
+
+/** National holidays (same for every demo tenant). */
+const DEMO_HOLIDAYS = [
+  {
+    date: '2026-02-21',
+    nameBn: 'শহীদ দিবস ও আন্তর্জাতিক মাতৃভাষা দিবস',
+    nameEn: 'Language Martyrs Day',
+  },
+  { date: '2026-03-26', nameBn: 'স্বাধীনতা ও জাতীয় দিবস', nameEn: 'Independence Day' },
+  { date: '2026-12-16', nameBn: 'বিজয় দিবস', nameEn: 'Victory Day' },
+];
 
 const time = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00Z`);
 
@@ -89,6 +102,10 @@ const DEMO_TENANTS: DemoTenant[] = [
       { phone: '01711000002', name: 'Nasrin Akter', nameBn: 'নাসরিন আক্তার', role: 'TEACHER' },
       // Teaches at both institutes: one person, two memberships (exercises /select-institute).
       { phone: '01911000999', name: 'Sharmin Sultana', nameBn: 'শারমিন সুলতানা', role: 'TEACHER' },
+    ],
+    sectionTeachers: [
+      { phone: '01711000002', section: 'CLASS_6/ক', classTeacher: true },
+      { phone: '01911000999', section: 'CLASS_9/ক', classTeacher: true },
     ],
     students: [
       {
@@ -183,6 +200,9 @@ const DEMO_TENANTS: DemoTenant[] = [
       { phone: '01511000002', name: 'Farhana Yasmin', nameBn: 'ফারহানা ইয়াসমিন', role: 'TEACHER' },
       // Teaches at both institutes: one person, two memberships (exercises /select-institute).
       { phone: '01911000999', name: 'Sharmin Sultana', nameBn: 'শারমিন সুলতানা', role: 'TEACHER' },
+    ],
+    sectionTeachers: [
+      { phone: '01511000002', section: 'CLASS_10/SSC Batch A (Sat-Mon-Wed)', classTeacher: true },
     ],
     students: [
       {
@@ -298,6 +318,29 @@ async function seedTenantData(
     staffUserIds.push(userId);
     namesBn.set(userId, member.nameBn);
   }
+
+  const userIdByPhone = new Map(
+    def.staff.map((m, i) => [phone(m.phone), staffUserIds[i]!] as const),
+  );
+  for (const st of def.sectionTeachers) {
+    await tx.sectionTeacher.create({
+      data: {
+        tenantId,
+        sectionId: id(sections, st.section),
+        userId: id(userIdByPhone, phone(st.phone)),
+        isClassTeacher: st.classTeacher ?? false,
+      },
+    });
+  }
+  await tx.holiday.createMany({
+    data: DEMO_HOLIDAYS.map((h) => ({
+      tenantId,
+      startDate: new Date(h.date),
+      endDate: new Date(h.date),
+      nameBn: h.nameBn,
+      nameEn: h.nameEn,
+    })),
+  });
 
   const guardianIds = new Map<string, string>(); // by phone
   for (const st of def.students) {
