@@ -8,6 +8,7 @@ import {
   formatBanglaCalendarDate,
   formatDate,
   formatTime,
+  formatWallClock,
 } from './format.js';
 
 describe('Bangla calendar (বঙ্গাব্দ, 2019 revision)', () => {
@@ -79,6 +80,11 @@ describe('formatTime', () => {
 
   it('24-hour in English', () => {
     expect(formatTime('2026-10-18T08:15:00Z', 'en')).toBe('14:15');
+  });
+
+  it('wall-clock times (shifts) read the same way, whatever the device timezone', () => {
+    expect(formatWallClock('07:30', 'bn')).toBe('সকাল ৭:৩০');
+    expect(formatWallClock('13:05', 'en')).toBe('13:05');
   });
 });
 

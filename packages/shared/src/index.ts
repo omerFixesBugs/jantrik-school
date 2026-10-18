@@ -10,3 +10,4 @@ export * from './phone.js';
 export * from './sms.js';
 export * from './register.js';
 export * from './reports.js';
+export * from './setup.js';

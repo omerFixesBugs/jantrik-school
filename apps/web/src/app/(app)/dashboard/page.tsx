@@ -474,13 +474,14 @@ function GettingStarted({
       done: Boolean(context.academicYear),
       title: t('stepYear', { label: label('academic_year', 'Academic Year', { inText: true }) }),
       text: t('stepYearText'),
+      href: '/setup',
     },
     {
       key: 'sections',
       done: hasSections,
       title: t('stepSections', { classLevel, section }),
       text: t('stepSectionsText', { classLevel, section }),
-      href: '/sections',
+      href: '/setup/classes',
     },
     {
       key: 'students',

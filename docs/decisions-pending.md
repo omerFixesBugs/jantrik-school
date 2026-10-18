@@ -40,3 +40,9 @@ Each entry: what needed deciding, the default taken (safe and reversible), and h
 
 - Default: Uppercase initials of the tenant slug's words (`shapla-school` → `SS`), falling back to `STU`.
 - To change: Set it in student settings.
+
+13. **Constraint violations that slip past a service's checks (races).**
+    - Default: a global filter maps Prisma P2002 → 409 `DUPLICATE` and P2003 → 409 `REFERENCE_CONFLICT` (both were 500s before, in every module). No constraint names are returned.
+    - To change: scope `PrismaErrorFilter` to the new controllers only.
+14. **Port 3000 is taken on this machine by another project (`hishab-nikash`'s Next dev server).**
+    - Default: left it running; local dev checks ran on 3100/4100 and e2e on 3200/4200 with an uncommitted copy of the Playwright config (`apps/web/playwright.alt.config.ts`, listed in `.git/info/exclude`). CI uses the normal config.

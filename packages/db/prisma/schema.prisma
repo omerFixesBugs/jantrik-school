@@ -500,6 +500,8 @@ model Shift {
   startTime DateTime @map("start_time") @db.Time(0)
   endTime   DateTime @map("end_time") @db.Time(0)
   sortOrder Int      @default(0) @map("sort_order")
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -566,6 +568,8 @@ model ClassLevel {
   /// Overrides the tenant's default grading scheme for this class level.
   gradingSchemeId  String?  @map("grading_scheme_id") @db.Uuid
   sourceTemplateId String?  @map("source_template_id") @db.Uuid
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -589,6 +593,8 @@ model StudyGroup {
   nameEn           String   @map("name_en")
   sortOrder        Int      @default(0) @map("sort_order")
   sourceTemplateId String?  @map("source_template_id") @db.Uuid
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -613,6 +619,8 @@ model Subject {
   isOptional       Boolean  @default(false) @map("is_optional")
   sortOrder        Int      @default(0) @map("sort_order")
   sourceTemplateId String?  @map("source_template_id") @db.Uuid
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -639,6 +647,8 @@ model Section {
   name           String
   capacity       Int?
   sortOrder      Int      @default(0) @map("sort_order")
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 

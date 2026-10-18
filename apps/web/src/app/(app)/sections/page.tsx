@@ -1,13 +1,6 @@
-'use client';
+import { redirect } from 'next/navigation';
 
-import { ComingSoon, PageGate } from '@/components/page-gate';
-import { useNavLabel } from '@/components/app-shell';
-
+/** The old "classes and sections" placeholder; that lives in institute setup now. */
 export default function Page() {
-  const navLabel = useNavLabel();
-  return (
-    <PageGate page="sections">
-      <ComingSoon title={navLabel('sections')} />
-    </PageGate>
-  );
+  redirect('/setup/classes');
 }

@@ -2,18 +2,19 @@ import type { MeContext, ModuleKey, Role } from '@jantrik/shared';
 import {
   BookOpenCheckIcon,
   CalendarCheckIcon,
-  LayersIcon,
   LayoutDashboardIcon,
+  Settings2Icon,
+  UserCogIcon,
   UsersIcon,
   WalletIcon,
   type LucideIcon,
 } from 'lucide-react';
 
-export type NavKey = 'dashboard' | 'students' | 'sections' | 'attendance' | 'fees' | 'exams';
+export type NavKey = 'dashboard' | 'students' | 'attendance' | 'fees' | 'exams' | 'setup' | 'staff';
 
 /** Sidebar groups, in display order. */
-export type NavGroup = 'overview' | 'academic' | 'accounts';
-export const NAV_GROUPS: NavGroup[] = ['overview', 'academic', 'accounts'];
+export type NavGroup = 'overview' | 'academic' | 'accounts' | 'admin';
+export const NAV_GROUPS: NavGroup[] = ['overview', 'academic', 'accounts', 'admin'];
 
 export interface NavItem {
   key: NavKey;
@@ -57,14 +58,6 @@ export const NAV_ITEMS: NavItem[] = [
     roles: STAFF,
   },
   {
-    key: 'sections',
-    href: '/sections',
-    icon: LayersIcon,
-    group: 'academic',
-    module: 'CORE',
-    roles: ['OWNER', 'ADMIN'],
-  },
-  {
     key: 'attendance',
     href: '/attendance',
     icon: CalendarCheckIcon,
@@ -87,6 +80,22 @@ export const NAV_ITEMS: NavItem[] = [
     group: 'academic',
     module: 'EXAMS',
     roles: STAFF,
+  },
+  {
+    key: 'setup',
+    href: '/setup',
+    icon: Settings2Icon,
+    group: 'admin',
+    module: 'CORE',
+    roles: ['OWNER', 'ADMIN'],
+  },
+  {
+    key: 'staff',
+    href: '/staff',
+    icon: UserCogIcon,
+    group: 'admin',
+    module: 'CORE',
+    roles: ['OWNER', 'ADMIN'],
   },
 ];
 
