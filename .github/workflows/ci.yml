@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # feature/**: pushed work branches are checked too (docs/decisions-pending.md #1).
+    branches: [main, 'feature/**']
   pull_request:
     branches: [main]
 
