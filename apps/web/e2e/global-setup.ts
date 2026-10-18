@@ -3,23 +3,36 @@ import path from 'node:path';
 import { Redis } from 'ioredis';
 import { E2E_REDIS_URL } from '../playwright.config';
 
+const E2E_DATABASE = 'jantrik_e2e';
+
+/** True only for a connection URL whose database is exactly jantrik_e2e. */
+const isE2eDatabase = (url: string | undefined): boolean => {
+  if (!url) return false;
+  try {
+    return decodeURIComponent(new URL(url).pathname.replace(/^\//, '')) === E2E_DATABASE;
+  } catch {
+    return false;
+  }
+};
+
 /**
- * Migrate + seed jantrik_e2e (idempotent: demo tenants are created once) and flush the e2e
- * Redis DB, which holds the SMS outbox and rate-limit counters.
+ * Every run starts from the same data: drop and re-migrate jantrik_e2e, seed it, and flush the
+ * e2e Redis DB (SMS outbox, rate-limit counters). Refuses any database not named jantrik_e2e.
  */
 export default async function globalSetup(): Promise<void> {
   const root = path.resolve(import.meta.dirname, '../../..');
   const ownerUrl = process.env['DATABASE_MIGRATION_URL_E2E'];
   const appUrl = process.env['DATABASE_URL_E2E'];
-  if (!ownerUrl?.includes('/jantrik_e2e') || !appUrl?.includes('/jantrik_e2e')) {
-    throw new Error('DATABASE_URL_E2E / DATABASE_MIGRATION_URL_E2E must point at jantrik_e2e');
+  if (!isE2eDatabase(ownerUrl) || !isE2eDatabase(appUrl)) {
+    throw new Error(`DATABASE_URL_E2E / DATABASE_MIGRATION_URL_E2E must point at ${E2E_DATABASE}`);
   }
   if (!/\/([1-9]|1[0-5])$/.test(E2E_REDIS_URL)) {
     throw new Error('REDIS_URL_E2E must select a non-zero Redis database (it is flushed)');
   }
 
   const env = { ...process.env, DATABASE_MIGRATION_URL: ownerUrl, DATABASE_URL: appUrl };
-  execSync('pnpm --filter @jantrik/db exec prisma migrate deploy', {
+  // Prisma 7's reset applies every migration but does not seed; the seed is the next step.
+  execSync('pnpm --filter @jantrik/db exec prisma migrate reset --force', {
     cwd: root,
     env,
     stdio: 'pipe',

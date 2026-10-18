@@ -209,6 +209,23 @@ export interface SectionTeacherEntry {
   isClassTeacher: boolean;
 }
 
+/**
+ * GET /attendance/summary/today: the dashboard "present today" card. Caller's sections (teacher)
+ * or all (admin). In PER_SESSION mode each section's first period of the day is the roll call.
+ */
+export interface AttendanceTodaySummary {
+  today: IsoDate;
+  sectionsTotal: number;
+  sectionsTaken: number;
+  /** Students on the counted registers. */
+  students: number;
+  counts: AttendanceCounts;
+  /** Present % with the tenant's LEAVE rule; null when nothing is taken yet. */
+  percent: number | null;
+  /** Whether this institute has ever taken attendance (getting-started checklist). */
+  everTaken: boolean;
+}
+
 /** GET /attendance/sms/today (OWNER/ADMIN): for the dashboard over-limit warning. */
 export interface SmsDailyStatus {
   date: IsoDate;

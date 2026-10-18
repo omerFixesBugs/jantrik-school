@@ -82,5 +82,6 @@ Run from the repo root (see README.md for first-time setup).
 - Database rules, RLS and the new-table checklist: docs/database.md
 - Auth, request pipeline, Db.tx / afterCommit rules for services: docs/auth.md
 - UI design system (colours, Bangla type scale, density, components): docs/design.md
-- `pnpm e2e` — Playwright (build first; stop dev servers on 3000/4000); uses jantrik_e2e
+- `pnpm e2e` — Playwright (build first; stop dev servers on 3000/4000); resets and seeds jantrik_e2e every run
+- Attendance rules, drafts/offline sync, absent SMS: docs/attendance.md
 - Single package: `pnpm --filter @jantrik/api <script>`

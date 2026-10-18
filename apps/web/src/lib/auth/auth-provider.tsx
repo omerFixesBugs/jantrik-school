@@ -15,13 +15,23 @@ import {
 import type { AuthTenant } from '@jantrik/shared';
 import { AuthClient, type Session } from './auth-client';
 
-type Status = 'loading' | 'signed-in' | 'signed-out';
+/**
+ * `unreachable`: the session could not be restored because the API did not answer (network
+ * error, 5xx). Nothing is signed out: the app shows a "connecting…" screen and retries. Only a
+ * real 401 from the refresh endpoint means signed out.
+ */
+type Status = 'loading' | 'signed-in' | 'signed-out' | 'unreachable';
 
 interface AuthState {
   client: AuthClient;
   status: Status;
   session: Session | null;
+  /** Try restoring the session again now (the "unreachable" screen's button). */
+  retry: () => void;
 }
+
+/** Waits between session-restore attempts while the API is unreachable (ms). */
+const RETRY_DELAYS = [2_000, 4_000, 8_000, 15_000, 30_000];
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -59,19 +69,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [client, queryClient]);
 
+  // Restore the session; while the API is unreachable, try again with backoff, when the browser
+  // comes back online, and when the tab becomes visible.
+  const [attempt, setAttempt] = useState(0);
+  const pending = status === 'loading' || status === 'unreachable';
   useEffect(() => {
-    if (status !== 'loading') return;
+    if (!pending) return;
+    let cancelled = false;
     client
       .bootstrap()
       .then((s) => {
+        if (cancelled) return;
         setSession(s);
         setStatus(s ? 'signed-in' : 'signed-out');
       })
-      .catch(() => setStatus('signed-out'));
-  }, [client, status]);
+      .catch(() => {
+        if (!cancelled) setStatus('unreachable');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `attempt` re-runs the restore; `pending` stops it once it succeeded.
+  }, [client, attempt, pending]);
+
+  useEffect(() => {
+    if (status !== 'unreachable') return;
+    const again = () => setAttempt((n) => n + 1);
+    const timer = setTimeout(again, RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)]);
+    const onVisible = () => document.visibilityState === 'visible' && again();
+    window.addEventListener('online', again);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('online', again);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [status, attempt]);
+
+  const retry = () => setAttempt((n) => n + 1);
 
   return (
-    <AuthContext.Provider value={{ client, status, session }}>
+    <AuthContext.Provider value={{ client, status, session, retry }}>
       {children}
       <TenantChangedDialog tenant={changedTo} />
     </AuthContext.Provider>

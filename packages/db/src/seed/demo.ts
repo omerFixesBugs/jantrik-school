@@ -83,6 +83,59 @@ const DEMO_HOLIDAYS = [
 
 const time = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00Z`);
 
+// A full Class 6 ক (rolls 2–27) so the attendance register looks like a real class.
+const CLASS6_NAMES: [bn: string, en: string, gender: 'MALE' | 'FEMALE'][] = [
+  ['আরিফ হোসেন', 'Arif Hossain', 'MALE'],
+  ['সুমাইয়া আক্তার', 'Sumaiya Akter', 'FEMALE'],
+  ['রাকিব হাসান', 'Rakib Hasan', 'MALE'],
+  ['নাফিসা ইসলাম', 'Nafisa Islam', 'FEMALE'],
+  ['তানভীর আহমেদ', 'Tanvir Ahmed', 'MALE'],
+  ['মারিয়া খাতুন', 'Maria Khatun', 'FEMALE'],
+  ['সাব্বির রহমান', 'Sabbir Rahman', 'MALE'],
+  ['ফারিহা চৌধুরী', 'Fariha Chowdhury', 'FEMALE'],
+  ['ইমন মিয়া', 'Emon Mia', 'MALE'],
+  ['জান্নাতুল ফেরদৌস', 'Jannatul Ferdous', 'FEMALE'],
+  ['মেহেদী হাসান', 'Mehedi Hasan', 'MALE'],
+  ['আনিকা তাবাসসুম', 'Anika Tabassum', 'FEMALE'],
+  ['শাকিল আহমেদ', 'Shakil Ahmed', 'MALE'],
+  ['রুমানা পারভীন', 'Rumana Parvin', 'FEMALE'],
+  ['নাঈম ইসলাম', 'Naim Islam', 'MALE'],
+  ['তাহসিন জাহান', 'Tahsin Jahan', 'FEMALE'],
+  ['রিফাত হোসেন', 'Rifat Hossain', 'MALE'],
+  ['সাদিয়া রহমান', 'Sadia Rahman', 'FEMALE'],
+  ['জুবায়ের আলম', 'Zubayer Alam', 'MALE'],
+  ['মিম আক্তার', 'Mim Akter', 'FEMALE'],
+  ['আসিফ ইকবাল', 'Asif Iqbal', 'MALE'],
+  ['লামিয়া হক', 'Lamia Haque', 'FEMALE'],
+  ['সজীব দাস', 'Sajib Das', 'MALE'],
+  ['প্রিয়াঙ্কা রায়', 'Priyanka Roy', 'FEMALE'],
+  ['ফাহিম মুনতাসির', 'Fahim Muntasir', 'MALE'],
+  ['উম্মে হাবিবা', 'Umme Habiba', 'FEMALE'],
+];
+
+const class6Students = (): DemoStudent[] =>
+  CLASS6_NAMES.map(([nameBn, nameEn, gender], i) => {
+    const roll = i + 2; // Tasnim Rahman is roll 1
+    return {
+      code: `SHS-2026-${String(100 + roll).padStart(4, '0')}`,
+      nameBn,
+      nameEn,
+      gender,
+      dob: `2014-${String((i % 12) + 1).padStart(2, '0')}-${String((i % 27) + 1).padStart(2, '0')}`,
+      classLevel: 'CLASS_6',
+      section: 'ক',
+      roll,
+      guardians: [
+        {
+          nameBn: `${nameBn.split(' ').at(-1)} পরিবারের অভিভাবক`,
+          nameEn: `Guardian of ${nameEn}`,
+          phone: `01811${String(700 + roll).padStart(6, '0')}`,
+          relation: gender === 'MALE' ? 'FATHER' : 'MOTHER',
+        },
+      ],
+    };
+  });
+
 const DEMO_TENANTS: DemoTenant[] = [
   {
     slug: 'shapla-school',
@@ -184,6 +237,7 @@ const DEMO_TENANTS: DemoTenant[] = [
           },
         ],
       },
+      ...class6Students(),
     ],
   },
   {

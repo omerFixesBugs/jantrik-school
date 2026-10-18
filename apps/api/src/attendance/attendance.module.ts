@@ -20,6 +20,7 @@ import {
   submitAttendanceSchema,
   type AttendanceSettings,
   type AttendanceSheet,
+  type AttendanceTodaySummary,
   type Holiday,
   type MySectionsResponse,
   type SectionTeacherEntry,
@@ -57,6 +58,12 @@ export class AttendanceController {
   @Get('my-sections')
   mySections(@Query() query: MySectionsQueryDto): Promise<MySectionsResponse> {
     return this.attendance.mySections(query.date);
+  }
+
+  /** Dashboard "present today": the caller's sections (teacher) or all (admin). */
+  @Get('summary/today')
+  todaySummary(): Promise<AttendanceTodaySummary> {
+    return this.attendance.todaySummary();
   }
 
   @Get('sessions')

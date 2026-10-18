@@ -38,25 +38,25 @@ Then open:
 
 All commands run from the repo root.
 
-| Command                  | What it does                                                                  |
-| ------------------------ | ----------------------------------------------------------------------------- |
-| `pnpm dev`               | Run all apps in watch mode (web :3000, api :4000)                             |
-| `pnpm build`             | Production build of every package and app                                     |
-| `pnpm lint`              | ESLint across the workspace                                                   |
-| `pnpm typecheck`         | TypeScript `--noEmit` across the workspace                                    |
-| `pnpm test`              | All tests (Vitest). `packages/db` and `apps/api` tests need Docker running    |
-| `pnpm e2e`               | Playwright end-to-end (run `pnpm build` first; stop dev servers on 3000/4000) |
-| `pnpm format`            | Format everything with Prettier                                               |
-| `pnpm format:check`      | Check formatting (CI)                                                         |
-| `pnpm db:generate`       | Regenerate the Prisma client after editing `schema.prisma`                    |
-| `pnpm db:migrate`        | Create + apply a dev migration (`prisma migrate dev`)                         |
-| `pnpm db:deploy`         | Apply pending migrations (production/CI)                                      |
-| `pnpm db:seed`           | Seed templates + demo tenants (idempotent)                                    |
-| `pnpm db:reset`          | Drop the local dev database, re-migrate and re-seed (see below)               |
-| `pnpm db:studio`         | Open Prisma Studio                                                            |
-| `docker compose up -d`   | Start Postgres + Redis                                                        |
-| `docker compose down`    | Stop them (data is kept in named volumes)                                     |
-| `docker compose down -v` | Stop and **delete all local data**                                            |
+| Command                  | What it does                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `pnpm dev`               | Run all apps in watch mode (web :3000, api :4000)                                                            |
+| `pnpm build`             | Production build of every package and app                                                                    |
+| `pnpm lint`              | ESLint across the workspace                                                                                  |
+| `pnpm typecheck`         | TypeScript `--noEmit` across the workspace                                                                   |
+| `pnpm test`              | All tests (Vitest). `packages/db` and `apps/api` tests need Docker running                                   |
+| `pnpm e2e`               | Playwright end-to-end (run `pnpm build` first; stop dev servers on 3000/4000; resets `jantrik_e2e` each run) |
+| `pnpm format`            | Format everything with Prettier                                                                              |
+| `pnpm format:check`      | Check formatting (CI)                                                                                        |
+| `pnpm db:generate`       | Regenerate the Prisma client after editing `schema.prisma`                                                   |
+| `pnpm db:migrate`        | Create + apply a dev migration (`prisma migrate dev`)                                                        |
+| `pnpm db:deploy`         | Apply pending migrations (production/CI)                                                                     |
+| `pnpm db:seed`           | Seed templates + demo tenants (idempotent)                                                                   |
+| `pnpm db:reset`          | Drop the local dev database, re-migrate and re-seed (see below)                                              |
+| `pnpm db:studio`         | Open Prisma Studio                                                                                           |
+| `docker compose up -d`   | Start Postgres + Redis                                                                                       |
+| `docker compose down`    | Stop them (data is kept in named volumes)                                                                    |
+| `docker compose down -v` | Stop and **delete all local data**                                                                           |
 
 **Resetting the dev database.** `pnpm db:seed` skips demo tenants that already exist, so after a
 seed or schema change that existing rows don't pick up, run `pnpm db:reset`. It drops the

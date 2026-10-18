@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common
 import { Prisma } from '@jantrik/db';
 import {
   addDays,
+  attendancePercent,
   DEFAULT_ABSENT_SMS_TEMPLATE,
   dateToDb,
   formatDate,
@@ -9,6 +10,7 @@ import {
   type AttendanceSessionState,
   type AttendanceSheet,
   type AttendanceStatus,
+  type AttendanceTodaySummary,
   type IsoDate,
   type MySectionsResponse,
   type RosterStudent,
@@ -151,6 +153,39 @@ export class AttendanceService implements OnModuleInit {
       blockedReason,
       students: await this.roster(section.id, section.academicYearId),
       session: await this.sessionState(section.id, date, query.periodNo),
+    };
+  }
+
+  async todaySummary(): Promise<AttendanceTodaySummary> {
+    const tenant = await this.settings.load();
+    const mine = await this.mySections();
+    const counts = { present: 0, absent: 0, late: 0, leave: 0 };
+    let taken = 0;
+    for (const section of mine.sections) {
+      const first = section.sessions[0]; // lowest period number: the day's roll call
+      if (!first) continue;
+      taken += 1;
+      const rows = await this.db.tx.attendanceRecord.groupBy({
+        by: ['status'],
+        where: {
+          session: {
+            sectionId: section.id,
+            date: dateToDb(tenant.today),
+            periodNo: first.periodNo,
+          },
+        },
+        _count: { _all: true },
+      });
+      for (const r of rows) counts[STATUS_KEY[r.status]] += r._count._all;
+    }
+    return {
+      today: tenant.today,
+      sectionsTotal: mine.sections.length,
+      sectionsTaken: taken,
+      students: counts.present + counts.absent + counts.late + counts.leave,
+      counts,
+      percent: attendancePercent(counts, tenant.settings.leaveCountsAsAbsent),
+      everTaken: (await this.db.tx.attendanceSession.findFirst({ select: { id: true } })) !== null,
     };
   }
 
@@ -512,6 +547,13 @@ export class AttendanceService implements OnModuleInit {
     return s?.lastSubmissionId === submissionId;
   }
 }
+
+const STATUS_KEY = {
+  PRESENT: 'present',
+  ABSENT: 'absent',
+  LATE: 'late',
+  LEAVE: 'leave',
+} as const satisfies Record<AttendanceStatus, keyof AttendanceTodaySummary['counts']>;
 
 const statusJson = (r: { status: AttendanceStatus; note: string | null } | undefined) =>
   r ? (r.note ? { status: r.status, note: r.note } : r.status) : null;

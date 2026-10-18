@@ -14,7 +14,9 @@ test('password login → dashboard → only own students → search → logout',
   await page.getByRole('link', { name: 'শিক্ষার্থী তালিকা' }).click();
   await expect(page).toHaveURL(/\/students$/);
   const table = page.getByTestId('students-table');
-  await expect(table.getByRole('row')).toHaveCount(5); // header + 4 shapla students
+  // 30 Shapla students (a full demo Class 6 ক); the first page shows 25.
+  await expect(page.getByTestId('result-count')).toContainText('৩০');
+  await expect(table.getByRole('row')).toHaveCount(26); // header + 25
   await expect(table).toContainText('SHS-2026-0001'); // IDs stay ASCII in the Bangla UI
   await expect(table).not.toContainText('ALO-26'); // never the coaching centre's students
 

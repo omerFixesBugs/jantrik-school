@@ -6,6 +6,8 @@ export class ApiError extends Error {
     message: string,
     /** Seconds from the Retry-After header (429). */
     readonly retryAfter?: number,
+    /** The parsed JSON body, for errors that carry data (e.g. 409 with the current state). */
+    readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -39,10 +41,12 @@ export class TenantChangedError extends Error {
 export async function toApiError(res: Response): Promise<ApiError> {
   let code: string | undefined;
   let message = res.statusText;
+  let body: unknown;
   try {
-    const body = (await res.json()) as { code?: string; message?: unknown };
-    code = body.code;
-    if (typeof body.message === 'string') message = body.message;
+    body = await res.json();
+    const b = body as { code?: string; message?: unknown };
+    code = b.code;
+    if (typeof b.message === 'string') message = b.message;
   } catch {
     // not JSON
   }
@@ -52,5 +56,6 @@ export async function toApiError(res: Response): Promise<ApiError> {
     code,
     message,
     Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
+    body,
   );
 }

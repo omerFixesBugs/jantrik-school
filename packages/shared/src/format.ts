@@ -136,13 +136,33 @@ export function formatBanglaCalendarDate(value: Date | string, locale: UiLocale)
   ).format(year)}`;
 }
 
-/** A time of day (Asia/Dhaka): "সকাল ৭:০০" / "07:00". */
+/**
+ * A time of day (Asia/Dhaka): "দুপুর ২:১৫" / "14:15". Bangla puts the part of the day (ভোর,
+ * সকাল, দুপুর, বিকেল, সন্ধ্যা, রাত্রি) first, as people say it, instead of a Latin "PM".
+ */
 export function formatTime(value: Date | string, locale: UiLocale): string {
-  return new Intl.DateTimeFormat(intlLocale(locale), {
+  const date = new Date(value);
+  if (locale === 'en') {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  }
+  const parts = new Intl.DateTimeFormat('bn-BD', {
     timeZone: TIME_ZONE,
     hour: 'numeric',
     minute: '2-digit',
-  }).format(new Date(value));
+    dayPeriod: 'short',
+  }).formatToParts(date);
+  const period = parts.find((p) => p.type === 'dayPeriod')?.value;
+  const time = parts
+    .filter(
+      (p) => p.type === 'hour' || p.type === 'minute' || (p.type === 'literal' && p.value === ':'),
+    )
+    .map((p) => p.value)
+    .join('');
+  return period ? `${period} ${time}` : time;
 }
 
 /**

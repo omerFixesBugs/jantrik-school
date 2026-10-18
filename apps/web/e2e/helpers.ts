@@ -75,3 +75,63 @@ export async function apiLogin(identifier: string, password = DEMO.password): Pr
   expect(res.status).toBe(200);
   return ((await res.json()) as { accessToken: string }).accessToken;
 }
+
+/** The latest 6-digit code in a phone's SMS outbox, if any (to tell a new OTP from an old one). */
+async function lastOtp(phone: string): Promise<string | undefined> {
+  const redis = new Redis(E2E_REDIS_URL);
+  try {
+    const last = await redis.lindex(`sms:outbox:${normalizeBdPhone(phone)!}`, -1);
+    return last ? /\b(\d{6})\b/.exec(last)?.[1] : undefined;
+  } finally {
+    await redis.quit();
+  }
+}
+
+/**
+ * Access token via OTP (test SMS outbox), for API-level setup. Doesn't use up the account's
+ * password attempts (5 per 15 minutes), which the UI login tests need.
+ */
+export async function apiOtpLogin(phone: string): Promise<string> {
+  const previous = await lastOtp(phone);
+  const request = () =>
+    fetch(`${API_URL}/auth/otp/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone }),
+    });
+  let req = await request();
+  if (req.status === 429) {
+    // One OTP per phone per minute: after a failed test Playwright re-runs beforeAll in a new
+    // worker, which can land inside that minute. Wait it out once.
+    const wait = Number(req.headers.get('Retry-After') ?? 60);
+    await new Promise((r) => setTimeout(r, (Math.min(wait, 65) + 1) * 1000));
+    req = await request();
+  }
+  expect(req.status).toBe(202);
+  const code = await readOtp(phone, previous);
+  const res = await fetch(`${API_URL}/auth/otp/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, code, client: 'mobile' }),
+  });
+  expect(res.status).toBe(200);
+  return ((await res.json()) as { accessToken: string }).accessToken;
+}
+
+/** Authenticated JSON call straight to the API. */
+export async function api<T>(
+  token: string,
+  path: string,
+  init: { method?: string; json?: unknown } = {},
+): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: init.method ?? 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(init.json !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: init.json !== undefined ? JSON.stringify(init.json) : undefined,
+  });
+  expect(res.ok, `${init.method ?? 'GET'} ${path} → ${res.status}`).toBe(true);
+  return (await res.json()) as T;
+}

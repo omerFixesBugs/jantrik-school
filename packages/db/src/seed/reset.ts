@@ -32,12 +32,12 @@ console.log(
 for (const step of steps) {
   console.log(`${dryRun ? '[dry run] ' : ''}${step.label}: pnpm ${step.args.join(' ')}`);
   if (dryRun) continue;
-  const result = spawnSync('pnpm', step.args, {
-    cwd: packageDir,
-    stdio: 'inherit',
-    // pnpm is a .cmd shim on Windows, which needs a shell.
-    shell: process.platform === 'win32',
-  });
+  // pnpm is a .cmd shim on Windows, which needs a shell; the arguments are fixed strings above,
+  // so they are passed as one command line (no user input reaches the shell).
+  const result =
+    process.platform === 'win32'
+      ? spawnSync(`pnpm ${step.args.join(' ')}`, { cwd: packageDir, stdio: 'inherit', shell: true })
+      : spawnSync('pnpm', step.args, { cwd: packageDir, stdio: 'inherit' });
   if (result.status !== 0) {
     console.error(`${step.label} failed (exit ${result.status ?? result.signal}).`);
     process.exit(result.status ?? 1);

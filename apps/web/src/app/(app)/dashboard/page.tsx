@@ -8,6 +8,7 @@ import {
   formatCount,
   formatDate,
   formatIdentifier,
+  type AttendanceTodaySummary,
   type GuardianChild,
   type MeContext,
   type StudentFilters,
@@ -20,6 +21,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   ClockIcon,
+  CloudOffIcon,
   HeartHandshakeIcon,
   UserPlusIcon,
   UsersIcon,
@@ -28,13 +30,14 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
+import { listDrafts } from '@/lib/attendance/drafts';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { classLevelName, displayName, displayUserName } from '@/lib/names';
@@ -102,6 +105,7 @@ function SectionTitle({ children, aside }: { children: ReactNode; aside?: ReactN
 
 function StaffDashboard({ context }: { context: MeContext }) {
   const t = useTranslations('dashboard');
+  const locale = useLocale() as Locale;
   const label = useLabel();
   const { client, session } = useAuth();
   const tenantId = session?.tenant?.id;
@@ -119,13 +123,47 @@ function StaffDashboard({ context }: { context: MeContext }) {
     enabled: canSeeStudents && isAdmin,
   });
 
+  const canSeeAttendance = canSee(navItem('attendance'), context);
+  const summary = useQuery({
+    queryKey: ['attendance-summary', tenantId],
+    queryFn: () => client.api<AttendanceTodaySummary>('/attendance/summary/today'),
+    enabled: canSeeAttendance,
+  });
+  // Attendance kept on this phone that the server doesn't have yet.
+  const [unsent] = useState(() =>
+    session?.tenant ? listDrafts(session.user.id, session.tenant.id).length : 0,
+  );
+
   const studentLabel = label('student', 'Student', { inText: true });
   const classLabel = label('class_level', 'Class', { inText: true });
+  const sectionLabel = label('section', 'Section', { inText: true });
   const total = students.data?.total ?? null;
+  const today = summary.data;
+  const present = today ? today.counts.present + today.counts.late : 0;
 
   return (
     <>
       <Greeting subtitle={t('subtitle', { institute: context.tenant.name })} />
+
+      {unsent > 0 && (
+        <div
+          className="border-warning/40 bg-warning-soft flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3"
+          data-testid="unsent-banner"
+        >
+          <span className="flex items-center gap-2 font-medium">
+            <CloudOffIcon aria-hidden className="text-warning size-5" />
+            {t('unsentBanner', { count: formatCount(unsent, locale) })}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            render={<Link href="/attendance" />}
+            nativeButton={false}
+          >
+            {t('unsentOpen')}
+          </Button>
+        </div>
+      )}
 
       <ul className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         {canSeeStudents && (
@@ -138,12 +176,47 @@ function StaffDashboard({ context }: { context: MeContext }) {
             href="/students"
           />
         )}
-        {canSee(navItem('attendance'), context) && (
+        {canSeeAttendance && (
           <StatCard
             testId="module-card-attendance"
             icon={CalendarCheckIcon}
             label={t('presentToday')}
-            hint={t('presentTodayHint')}
+            href="/attendance"
+            loading={summary.isPending}
+            value={today ? (today.students > 0 ? present : null) : undefined}
+            display={
+              today && today.students > 0 ? (
+                <>
+                  {formatCount(present, locale)}
+                  <span className="text-muted-foreground text-xl font-medium">
+                    {' / '}
+                    {formatCount(today.students, locale)}
+                  </span>
+                </>
+              ) : undefined
+            }
+            hint={
+              !today ? (
+                t('presentTodayHint')
+              ) : today.students === 0 ? (
+                t('presentTodayNone')
+              ) : (
+                <>
+                  {today.percent !== null && (
+                    <span className="text-foreground block font-medium">
+                      {t('presentTodayPercent', {
+                        percent: formatCount(Math.round(today.percent), locale),
+                      })}
+                    </span>
+                  )}
+                  {t('presentTodaySectionsOf', {
+                    taken: formatCount(today.sectionsTaken, locale),
+                    total: formatCount(today.sectionsTotal, locale),
+                    section: sectionLabel,
+                  })}
+                </>
+              )
+            }
           />
         )}
         {canSee(navItem('fees'), context) && (
@@ -175,6 +248,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
             context={context}
             hasSections={Boolean(filters.data?.classLevels.some((c) => c.sections.length > 0))}
             hasStudents={(total ?? 0) > 0}
+            hasAttendance={summary.data?.everTaken ?? false}
             loading={students.isPending || filters.isPending}
           />
         )}
@@ -193,21 +267,24 @@ function StatCard({
   label,
   hint,
   value,
+  display,
   loading,
   href,
   testId,
 }: {
   icon: LucideIcon;
   label: string;
-  hint: string;
+  hint: ReactNode;
   value?: number | null;
+  /** Custom rendering of the value (e.g. "4 / 5"). */
+  display?: ReactNode;
   loading?: boolean;
   href?: string;
   testId?: string;
 }) {
   const t = useTranslations('dashboard');
   const locale = useLocale() as Locale;
-  const placeholder = value === undefined;
+  const placeholder = value === undefined && display === undefined;
   const body = (
     <>
       <span className="flex items-center justify-between gap-2">
@@ -230,14 +307,15 @@ function StatCard({
             placeholder && 'text-muted-foreground',
           )}
         >
-          {placeholder ? (
-            <>
-              <span aria-hidden>—</span>
-              <span className="sr-only">{t('notYet')}</span>
-            </>
-          ) : (
-            formatCount(value ?? 0, locale)
-          )}
+          {display ??
+            (placeholder || value === null ? (
+              <>
+                <span aria-hidden>—</span>
+                <span className="sr-only">{t('notYet')}</span>
+              </>
+            ) : (
+              formatCount(value ?? 0, locale)
+            ))}
         </span>
       )}
       <span className="text-muted-foreground text-xs leading-snug sm:text-sm">{hint}</span>
@@ -353,11 +431,13 @@ function GettingStarted({
   context,
   hasSections,
   hasStudents,
+  hasAttendance,
   loading,
 }: {
   context: MeContext;
   hasSections: boolean;
   hasStudents: boolean;
+  hasAttendance: boolean;
   loading: boolean;
 }) {
   const t = useTranslations('dashboard');
@@ -393,7 +473,7 @@ function GettingStarted({
       ? [
           {
             key: 'attendance',
-            done: false,
+            done: hasAttendance,
             title: t('stepAttendance'),
             text: t('stepAttendanceText'),
             href: '/attendance',

@@ -469,8 +469,12 @@ describe('attendance', () => {
   });
 
   describe('absent SMS', () => {
-    it('nothing is saved or sent when the request fails after submitting', async () => {
+    it('nothing is saved, queued or sent when the request fails after submitting', async () => {
       const t = await school(h);
+      // Watch the queue itself, so a broken afterCommit guard fails here directly
+      // (the worker's own "row must exist" check would otherwise hide it).
+      const queue = h.app.get<Queue>(getQueueToken('sms'));
+      const add = vi.spyOn(queue, 'add');
       await http(h)
         .post('/test/attendance-then-fail')
         .set(bearer(t.admin))
@@ -483,11 +487,22 @@ describe('attendance', () => {
           records: records(t.a, [0, 1, 2]),
         })
         .expect(400);
+      expect(add.mock.calls.filter(([name]) => name === 'tenant')).toEqual([]);
+      add.mockRestore();
       expect(await smsLogs(t.tenantId)).toEqual([]);
       const sessions = await withTenant(h.prisma, t.tenantId, (tx) => tx.attendanceSession.count());
       expect(sessions).toBe(0);
       await new Promise((r) => setTimeout(r, 300));
       expect(h.sms.sentTo(t.a[0]!.phone)).toEqual([]);
+    });
+
+    it('a successful submit queues exactly one job per absent student (control for the test above)', async () => {
+      const t = await school(h);
+      const queue = h.app.get<Queue>(getQueueToken('sms'));
+      const add = vi.spyOn(queue, 'add');
+      await submit(t.admin, { sectionId: t.sectionA, records: records(t.a, [0, 1]) }).expect(200);
+      expect(add.mock.calls.filter(([name]) => name === 'tenant')).toHaveLength(2);
+      add.mockRestore();
     });
 
     it('is off by default for new tenants and sends nothing when off', async () => {
@@ -592,6 +607,78 @@ describe('attendance', () => {
         })
         .expect(400);
       expect(JSON.stringify(bad.body)).toContain('absentSmsTemplate');
+    });
+  });
+
+  describe('today summary (dashboard card)', () => {
+    const summary = (token: string) =>
+      http(h).get('/attendance/summary/today').set(bearer(token)).expect(200);
+
+    it("counts the caller's sections with the tenant's LEAVE rule", async () => {
+      const t = await school(h, { settings: { absentSmsEnabled: false } });
+      const mixed: AttendanceStatus[] = ['ABSENT', 'LATE', 'LEAVE'];
+      await submit(t.teacher, {
+        sectionId: t.sectionA,
+        records: t.a.map((st, i) => ({ studentId: st.id, status: mixed[i]! })),
+      }).expect(200);
+
+      const mine = (await summary(t.teacher)).body;
+      expect(mine).toMatchObject({
+        today: TODAY(),
+        sectionsTotal: 1,
+        sectionsTaken: 1,
+        students: 3,
+        counts: { present: 0, absent: 1, late: 1, leave: 1 },
+        everTaken: true,
+      });
+      expect(mine.percent).toBeCloseTo(50); // LATE counts as present; LEAVE left out
+      const all = (await summary(t.admin)).body;
+      expect(all).toMatchObject({ sectionsTotal: 2, sectionsTaken: 1 });
+
+      await http(h)
+        .put('/attendance/settings')
+        .set(bearer(t.admin))
+        .send({
+          mode: 'DAILY',
+          weeklyOffDays: [],
+          editWindowDays: 0,
+          leaveCountsAsAbsent: true,
+          absentSmsEnabled: false,
+          absentSmsTemplate: null,
+          absentSmsDelayMinutes: 0,
+          dailySmsCap: null,
+        })
+        .expect(200);
+      expect((await summary(t.teacher)).body.percent).toBeCloseTo(100 / 3);
+    });
+
+    it('nothing taken yet: percent is null', async () => {
+      const t = await school(h);
+      expect((await summary(t.teacher)).body).toMatchObject({
+        sectionsTaken: 0,
+        students: 0,
+        percent: null,
+        everTaken: false,
+      });
+    });
+
+    it('per-session mode counts the first period only', async () => {
+      const c = await school(h, {
+        instituteTypeKey: 'COACHING',
+        settings: { absentSmsEnabled: false },
+      });
+      await submit(c.teacher, { sectionId: c.sectionA, records: records(c.a), periodNo: 1 }).expect(
+        200,
+      );
+      await submit(c.teacher, {
+        sectionId: c.sectionA,
+        records: records(c.a, [0, 1, 2]),
+        periodNo: 2,
+      }).expect(200);
+      expect((await summary(c.teacher)).body).toMatchObject({
+        students: 3,
+        counts: { present: 3, absent: 0 },
+      });
     });
   });
 

@@ -205,6 +205,11 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
   - The client refreshes about 60 s before expiry (with jitter), and when a hidden tab becomes
     visible.
 - **On a 401** the client refreshes once and retries once. If that fails, it signs out.
+- **The API can't be reached at startup** (network error or 5xx while restoring the session):
+  nobody is signed out. `AuthProvider` reports `unreachable`, the app shows "সার্ভারের সাথে
+  সংযোগ হচ্ছে না" with the number of unsent attendance drafts on the phone (a count only, no
+  names), and retries with backoff (2–30 s), on the browser's `online` event and when the tab
+  becomes visible. Only a real 401 from `/auth/refresh` means signed out.
 - **Logout** (or a refresh that returns 401) broadcasts `logout`, and every tab clears its state
   and goes to `/login`.
 - **Institute changes are never adopted silently.** When the session's institute stops matching the

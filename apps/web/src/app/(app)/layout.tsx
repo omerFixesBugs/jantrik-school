@@ -4,9 +4,11 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useEffect, type ReactNode } from 'react';
 import { AppShell, ShellSkeleton } from '@/components/app-shell';
+import { ConnectionScreen } from '@/components/connection-screen';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { NetworkError } from '@/lib/api/errors';
 import { useErrorMessage, useMeContext } from '@/lib/hooks';
 
 /**
@@ -15,7 +17,7 @@ import { useErrorMessage, useMeContext } from '@/lib/hooks';
  * to the session's institute (sent as X-Jantrik-Tenant) and /me/context is loaded once.
  */
 export default function AppLayout({ children }: { children: ReactNode }) {
-  const { client, status, session } = useAuth();
+  const { client, status, session, retry } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const t = useTranslations('common');
@@ -37,6 +39,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   const context = useMeContext(Boolean(boundTenant));
 
+  // The API can't be reached: keep the person signed in and keep trying.
+  if (status === 'unreachable') return <ConnectionScreen onRetry={retry} />;
+  if (context.isError && context.error instanceof NetworkError) {
+    return <ConnectionScreen onRetry={() => void context.refetch()} />;
+  }
   if (!boundTenant || context.isPending) return <ShellSkeleton />;
   if (context.isError) {
     return (

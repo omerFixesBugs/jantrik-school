@@ -5,6 +5,7 @@ import {
   dhakaHour,
   formatBanglaCalendarDate,
   formatDate,
+  formatTime,
 } from './format.js';
 
 describe('Bangla calendar (বঙ্গাব্দ, 2019 revision)', () => {
@@ -59,5 +60,20 @@ describe('dayPeriod', () => {
     [0, 'night'],
   ] as const)('%i:00 → %s', (hour, period) => {
     expect(dayPeriod(hour)).toBe(period);
+  });
+});
+
+describe('formatTime', () => {
+  it.each([
+    ['2026-10-18T03:15:00Z', 'সকাল ৯:১৫'],
+    ['2026-10-18T08:15:00Z', 'দুপুর ২:১৫'],
+    ['2026-10-18T12:20:00Z', 'সন্ধ্যা ৬:২০'],
+    ['2026-10-18T15:10:00Z', 'রাত্রি ৯:১০'],
+  ])('%s → %s (Dhaka, part of day first)', (iso, text) => {
+    expect(formatTime(iso, 'bn')).toBe(text);
+  });
+
+  it('24-hour in English', () => {
+    expect(formatTime('2026-10-18T08:15:00Z', 'en')).toBe('14:15');
   });
 });
