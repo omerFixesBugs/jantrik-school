@@ -65,6 +65,11 @@ export class TenantAccessService {
     await this.context.afterCommit(() => this.redis.del(rolesKey(tenantId, userId)));
   }
 
+  /** Drop a member's cached roles once the current request commits (after a direct write). */
+  async invalidateRolesAfterCommit(tenantId: string, userId: string): Promise<void> {
+    await this.context.afterCommit(() => this.redis.del(rolesKey(tenantId, userId)));
+  }
+
   /** Use the request transaction when it is for this tenant; otherwise open one. */
   private async inTenant<T>(tenantId: string, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
     const tx = this.context.tx;

@@ -46,3 +46,11 @@ Each entry: what needed deciding, the default taken (safe and reversible), and h
     - To change: scope `PrismaErrorFilter` to the new controllers only.
 14. **Port 3000 is taken on this machine by another project (`hishab-nikash`'s Next dev server).**
     - Default: left it running; local dev checks ran on 3100/4100 and e2e on 3200/4200 with an uncommitted copy of the Playwright config (`apps/web/playwright.alt.config.ts`, listed in `.git/info/exclude`). CI uses the normal config.
+15. **Adding staff by phone links an existing person (as the brief asks: find-or-create).**
+    - The review noted that an admin who types any phone then sees that person's real name (if they exist, e.g. as a guardian at another institute) and the person gets a membership without confirming. This is how the brief's find-or-create works.
+    - Default: kept as briefed; the audit entry records the phone and whether a new person was created (`newPerson`). Owner/admin only.
+    - To change (recommended before launch): require the person's confirmation (OTP/invite) before an existing user is linked, or show only the typed name until they accept.
+16. **Roles cache race (pre-existing pattern).** A request by the target that loads roles just before a change commits can re-cache the old roles for up to the 5-minute TTL. Pure staff are still cut off at once (memberships are re-checked every request); someone who is also an active guardian keeps their old staff roles until the TTL.
+    - Default: left as is.
+    - To change: version the cache key, or check membership status in `RolesGuard` against the request transaction.
+17. **Deactivated staff keep their section assignments** (restored on reactivation); they do not count when choosing a section's class teacher.

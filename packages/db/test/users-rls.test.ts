@@ -115,4 +115,28 @@ describe('RLS on users', () => {
       expect(await tx.user.findUnique({ where: { id: userB } })).toBeNull();
     });
   });
+
+  it('findOrCreateUser stores name_bn for a new person, never renames an existing one', async () => {
+    const phone = randomPhone();
+    const id = await withTenant(app, tenantA, async (tx) => {
+      const created = await findOrCreateUser(tx, phone, 'Rahim', 'রহিম');
+      await tx.membership.create({ data: { tenantId: tenantA, userId: created, role: 'TEACHER' } });
+      return created;
+    });
+    // Tenant B adds the same phone with other names: same person, names unchanged.
+    await withTenant(app, tenantB, async (tx) => {
+      expect(await findOrCreateUser(tx, phone, 'Someone', 'অন্য নাম')).toBe(id);
+    });
+    const user = await withContext(app, { userId: id }, (tx) =>
+      tx.user.findUniqueOrThrow({ where: { id }, select: { name: true, nameBn: true } }),
+    );
+    expect(user).toEqual({ name: 'Rahim', nameBn: 'রহিম' });
+  });
+
+  it('app_find_or_create_user has exactly one overload', async () => {
+    const rows = await app.$queryRaw<{ args: string }[]>`
+      SELECT pg_get_function_identity_arguments(oid) AS args
+      FROM pg_proc WHERE proname = 'app_find_or_create_user'`;
+    expect(rows.map((r) => r.args)).toEqual(['p_phone text, p_name text, p_name_bn text']);
+  });
 });

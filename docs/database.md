@@ -97,7 +97,7 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   - `auth_list_my_memberships()`: uses `app.user_id`, with no user parameter.
   - `auth_resolve_tenant(slug)`
   - `auth_find_refresh_token(hash)`
-  - `app_find_or_create_user(phone, name)`
+  - `app_find_or_create_user(phone, name, name_bn)`: `name_bn` is written only for a new person
 - **Don't add more casually.** Each one is a deliberate hole in RLS.
 - **Never accept a tenant (or user) id as a parameter.** Scope only by `app_current_tenant_id()`
   / `app_current_user_id()`, so a missing context returns nothing. The only exceptions are the

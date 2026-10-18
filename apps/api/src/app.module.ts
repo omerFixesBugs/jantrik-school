@@ -22,6 +22,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { SmsModule } from './sms/sms.module.js';
 import { SetupModule } from './setup/setup.module.js';
+import { StaffModule } from './staff/staff.module.js';
 import { StudentsModule } from './students/students.module.js';
 import { TenancyModule } from './tenancy/tenancy.module.js';
 import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.js';
@@ -53,6 +54,7 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     MeModule,
     StudentsModule,
     SetupModule,
+    StaffModule,
     AttendanceModule,
   ],
   providers: [
