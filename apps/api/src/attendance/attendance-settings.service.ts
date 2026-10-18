@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   DEFAULT_ABSENT_SMS_TEMPLATE,
+  addDays,
   dateToDb,
   isoWeekday,
   todayIn,
@@ -141,6 +142,27 @@ export class AttendanceSettingsService {
     if (holiday) return { reason: 'HOLIDAY', ...holiday };
     if (settings.weeklyOffDays.includes(isoWeekday(date))) return { reason: 'OFF_DAY' };
     return null;
+  }
+
+  /** Every non-working date from `from` to `to` (inclusive), in one query. */
+  async nonWorkingDays(
+    from: IsoDate,
+    to: IsoDate,
+    settings: StoredSettings,
+  ): Promise<Record<IsoDate, NonWorkingDay>> {
+    const holidays = await this.db.tx.holiday.findMany({
+      where: { startDate: { lte: dateToDb(to) }, endDate: { gte: dateToDb(from) } },
+      orderBy: { startDate: 'asc' },
+      select: { startDate: true, endDate: true, nameBn: true, nameEn: true },
+    });
+    const out: Record<IsoDate, NonWorkingDay> = {};
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      const day = dateToDb(d);
+      const h = holidays.find((x) => x.startDate <= day && x.endDate >= day);
+      if (h) out[d] = { reason: 'HOLIDAY', nameBn: h.nameBn, nameEn: h.nameEn };
+      else if (settings.weeklyOffDays.includes(isoWeekday(d))) out[d] = { reason: 'OFF_DAY' };
+    }
+    return out;
   }
 
   private async toResponse(s: StoredSettings): Promise<AttendanceSettings> {

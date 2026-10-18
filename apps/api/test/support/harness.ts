@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
@@ -55,12 +56,16 @@ export async function createHarness(): Promise<Harness> {
   };
 }
 
-let counter = 0;
 export const randomPhone = (): string =>
   `+88018${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
-/** A distinct client IP per call (sent as X-Forwarded-For) so per-IP limits don't collide. */
-export const randomIp = (): string =>
-  `10.${(counter++ >> 8) & 255}.${counter & 255}.${Math.floor(Math.random() * 250) + 1}`;
+/**
+ * A distinct client IP per call (sent as X-Forwarded-For) so per-IP limits don't collide. Fully
+ * random: test files run in parallel workers and share Redis, so a per-worker counter repeats.
+ */
+export const randomIp = (): string => {
+  const [a, b, c] = randomBytes(3);
+  return `10.${a}.${b}.${(c! % 250) + 1}`;
+};
 
 export const http = (h: Harness) => request(h.app.getHttpServer());
 

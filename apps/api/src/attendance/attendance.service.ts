@@ -43,7 +43,7 @@ export interface SubmitInput {
   records: { studentId: string; status: AttendanceStatus; note?: string | null }[];
 }
 
-interface Caller {
+export interface Caller {
   userId: string;
   isAdmin: boolean;
 }
@@ -400,7 +400,7 @@ export class AttendanceService implements OnModuleInit {
 
   // ─────────────────────────── Rules ───────────────────────────
 
-  private async caller(): Promise<Caller> {
+  async caller(): Promise<Caller> {
     const p = this.context.requirePrincipal();
     const roles = await this.access.getRoles(p.tenantId!, p.userId);
     return { userId: p.userId, isAdmin: roles.includes('OWNER') || roles.includes('ADMIN') };
@@ -410,7 +410,7 @@ export class AttendanceService implements OnModuleInit {
     return this.db.tx.academicYear.findFirst({ where: { isCurrent: true }, select: { id: true } });
   }
 
-  private async currentSection(sectionId: string): Promise<{
+  async currentSection(sectionId: string): Promise<{
     id: string;
     academicYearId: string;
     classLevelId: string;
@@ -444,7 +444,7 @@ export class AttendanceService implements OnModuleInit {
   }
 
   /** Teachers mark only their assigned sections; OWNER/ADMIN any. */
-  private async assertMayMark(sectionId: string, caller: Caller): Promise<void> {
+  async assertMayMark(sectionId: string, caller: Caller): Promise<void> {
     if (caller.isAdmin) return;
     const assigned = await this.db.tx.sectionTeacher.findFirst({
       where: { sectionId, userId: caller.userId },
@@ -495,7 +495,7 @@ export class AttendanceService implements OnModuleInit {
   // ─────────────────────────── Data ───────────────────────────
 
   /** Students enrolled in the section this year, by roll. Only what the register needs. */
-  private async roster(sectionId: string, academicYearId: string): Promise<RosterStudent[]> {
+  async roster(sectionId: string, academicYearId: string): Promise<RosterStudent[]> {
     const enrolments = await this.db.tx.enrolment.findMany({
       where: { sectionId, academicYearId, student: { deletedAt: null } },
       orderBy: [{ roll: { sort: 'asc', nulls: 'last' } }, { student: { studentCode: 'asc' } }],

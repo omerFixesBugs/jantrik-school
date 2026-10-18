@@ -53,14 +53,14 @@ request transaction:
 Per-IP limits are deliberately generous because many users share one IP (carrier CGNAT, school
 Wi-Fi). The per-phone and per-account limits are the real protection.
 
-| Limit                            | Default                                                    |
-| -------------------------------- | ---------------------------------------------------------- |
-| OTP per phone                    | 1 per 60 s, 5 per 15 min, **10 per day** (SMS costs money) |
-| OTP requests per IP              | 200 / hour                                                 |
-| Login / OTP-verify per IP        | 300 / 15 min                                               |
-| Password attempts per identifier | 5 / 15 min                                                 |
-| Authenticated requests           | 300 / min **per user**                                     |
-| Unauthenticated requests         | 600 / min per IP                                           |
+| Limit                                | Default                                                                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| OTP per phone                        | 1 per 60 s, 5 per 15 min, **10 per day** (SMS costs money)                                                                      |
+| OTP requests per IP                  | 200 / hour                                                                                                                      |
+| Login / OTP-verify per IP            | 300 / 15 min                                                                                                                    |
+| Failed password attempts per account | 5 / 15 min; a successful login resets it (counted before the check, cleared on success, so parallel guesses can't slip through) |
+| Authenticated requests               | 300 / min **per user**                                                                                                          |
+| Unauthenticated requests             | 600 / min per IP                                                                                                                |
 
 Exceeding a limit returns `429` with `Retry-After`.
 

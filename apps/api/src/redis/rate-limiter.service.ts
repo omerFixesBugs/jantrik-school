@@ -35,6 +35,11 @@ export class RateLimiter {
     return { allowed: count <= rule.limit, retryAfter: Math.max(ttl, 1) };
   }
 
+  /** Forget a counter (e.g. failed password attempts after a successful login). */
+  async reset(key: string): Promise<void> {
+    await this.redis.del(`rl:${key}`);
+  }
+
   /** Count one hit on every rule; throw 429 (with Retry-After) if any is exceeded. */
   async consume(...rules: RateLimitRule[]): Promise<void> {
     let retryAfter = 0;

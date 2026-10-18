@@ -1,0 +1,136 @@
+import { expect, test, type Page } from '@playwright/test';
+import { API_URL, DEMO, otpLoginWithBanglaDigits, passwordLogin } from './helpers';
+import { findLayoutProblems } from './layout-check';
+
+// Long Bangla strings must wrap or truncate with "…", never clip or overlap: checked on a small
+// Android phone (360 px), and the busiest screens again at 320 px (a phone with larger text).
+test.use({ viewport: { width: 360, height: 780 }, isMobile: true, hasTouch: true });
+
+async function expectClean(page: Page, where: string) {
+  await page.waitForLoadState('networkidle');
+  const problems = await findLayoutProblems(page);
+  expect(problems, `${where}: ${JSON.stringify(problems, null, 1)}`).toEqual([]);
+}
+
+async function english(page: Page) {
+  await page.context().addCookies([{ name: 'NEXT_LOCALE', value: 'en', url: page.url() }]);
+  await page.reload();
+}
+
+test('login: both tabs and the code step, bn and en', async ({ page }) => {
+  await page.goto('/login');
+  await expectClean(page, 'login otp bn');
+  await page.getByRole('tab', { name: 'পাসওয়ার্ড' }).tap();
+  await expectClean(page, 'login password bn');
+
+  await page.route(`${API_URL}/auth/otp/request`, (r) =>
+    r.fulfill({ status: 202, contentType: 'application/json', body: '{"expiresIn":300}' }),
+  );
+  await page.getByRole('tab', { name: 'ওটিপি কোড' }).tap();
+  await page.getByLabel('মোবাইল নম্বর').fill('01711000001');
+  await page.getByRole('button', { name: 'কোড পাঠান' }).tap();
+  await expect(page.getByTestId('resend-countdown')).toBeVisible();
+  await expectClean(page, 'login code step bn');
+
+  await page.goto('/login');
+  await english(page);
+  await expectClean(page, 'login otp en');
+});
+
+test('staff screens: dashboard, drawer, students, attendance picker', async ({ page }) => {
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page.getByTestId('module-card-attendance')).toBeVisible();
+  await expectClean(page, 'dashboard bn');
+
+  await page.getByRole('button', { name: 'মেনু খুলুন' }).tap();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expectClean(page, 'drawer bn');
+  await page.keyboard.press('Escape');
+
+  await page.goto('/students');
+  await expect(page.getByTestId('students-cards')).toBeVisible();
+  await expectClean(page, 'students bn');
+
+  await page.goto('/attendance');
+  await expect(page.getByTestId('section-list')).toBeVisible();
+  await expectClean(page, 'attendance picker bn');
+
+  await page.goto('/attendance/today');
+  await expect(page.getByTestId('today-section').first()).toBeVisible();
+  await expectClean(page, 'today report bn');
+  await page.goto('/attendance/register');
+  await expect(page.getByTestId('register-table')).toBeVisible();
+  await expectClean(page, 'month register bn');
+  await page.goto('/attendance/settings');
+  await expect(page.getByTestId('settings-teachers')).toBeVisible();
+  await expectClean(page, 'settings bn');
+
+  await page.goto('/dashboard');
+  await english(page);
+  await expect(page.getByTestId('module-card-attendance')).toBeVisible();
+  await expectClean(page, 'dashboard en');
+  await page.setViewportSize({ width: 320, height: 780 });
+  await expectClean(page, 'dashboard en 320');
+  // Back to Bangla for the shared demo user's later tests.
+  await page.context().addCookies([{ name: 'NEXT_LOCALE', value: 'bn', url: page.url() }]);
+});
+
+test('register: draft, submitted, more-than-half dialog, conflict dialog', async ({ page }) => {
+  await passwordLogin(page, DEMO.shaplaTeacher);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.goto('/attendance');
+  const rows = page.getByTestId('register-list').getByRole('button');
+  await expect(rows).toHaveCount(27);
+
+  await page.getByRole('button', { name: 'সবাই উপস্থিত' }).tap();
+  await rows.nth(0).tap();
+  await expectClean(page, 'register draft');
+  await page.getByTestId('register-submit').tap();
+  await expect(page.getByTestId('sync-state')).toHaveAttribute('data-sync', 'saved');
+  await expectClean(page, 'register submitted');
+  await page.setViewportSize({ width: 320, height: 780 });
+  await expectClean(page, 'register submitted 320');
+  await page.setViewportSize({ width: 360, height: 780 });
+
+  for (let i = 1; i < 15; i++) await rows.nth(i).tap();
+  await page.getByTestId('register-submit').tap();
+  await expect(page.getByTestId('absent-confirm')).toBeVisible();
+  await expectClean(page, 'more-than-half dialog');
+  await page.getByRole('button', { name: 'ফিরে দেখি' }).tap();
+
+  // A conflict with a long name, answered by the browser (no data changes).
+  await page.route(`${API_URL}/attendance/sessions`, (route) =>
+    route.request().method() !== 'PUT'
+      ? route.continue()
+      : route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            statusCode: 409,
+            code: 'VERSION_CONFLICT',
+            message: 'x',
+            session: {
+              id: '0199f000-0000-7000-8000-000000000001',
+              version: 99,
+              submittedAt: new Date().toISOString(),
+              updatedBy: {
+                id: '0199f000-0000-7000-8000-000000000002',
+                name: 'Mohammad Abdur Rahman Chowdhury',
+                nameBn: 'মোহাম্মদ আব্দুর রহমান চৌধুরী',
+              },
+              records: [],
+            },
+          }),
+        }),
+  );
+  await page.getByTestId('register-submit').tap();
+  await page.getByTestId('absent-confirm').getByRole('button', { name: 'হ্যাঁ, জমা দিন' }).tap();
+  await expect(page.getByTestId('conflict-dialog')).toBeVisible();
+  await expectClean(page, 'conflict dialog');
+});
+
+test('guardian dashboard', async ({ page }) => {
+  await otpLoginWithBanglaDigits(page, DEMO.shaplaGuardian);
+  await expect(page.getByTestId('children')).toBeVisible();
+  await expectClean(page, 'guardian dashboard');
+});

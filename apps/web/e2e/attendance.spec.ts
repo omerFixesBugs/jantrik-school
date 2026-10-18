@@ -8,16 +8,15 @@ test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true
 let ownerToken: string;
 /** Nasrin Akter (teacher) takes Class 6 ক: 27 students, roll 1 = তাসনিম রহমান. */
 let sectionId: string;
+/** The tenant's settings before this suite, put back afterwards for the specs that follow. */
+let original: AttendanceSettings;
 
-test.beforeAll(async () => {
-  ownerToken = await apiOtpLogin(DEMO.shaplaOwner);
-  // Weekly off days would make this suite fail on Fridays: switch them off for the e2e tenant.
-  const s = await api<AttendanceSettings>(ownerToken, '/attendance/settings');
-  await api(ownerToken, '/attendance/settings', {
+const putSettings = (s: AttendanceSettings, weeklyOffDays: number[]) =>
+  api(ownerToken, '/attendance/settings', {
     method: 'PUT',
     json: {
       mode: s.mode,
-      weeklyOffDays: [],
+      weeklyOffDays,
       editWindowDays: s.editWindowDays,
       leaveCountsAsAbsent: s.leaveCountsAsAbsent,
       absentSmsEnabled: s.absentSmsEnabled,
@@ -26,8 +25,19 @@ test.beforeAll(async () => {
       dailySmsCap: s.dailySmsCap,
     },
   });
+
+test.beforeAll(async () => {
+  ownerToken = await apiOtpLogin(DEMO.shaplaOwner);
+  // Weekly off days would make this suite fail on Fridays: switch them off for the e2e tenant.
+  original = await api<AttendanceSettings>(ownerToken, '/attendance/settings');
+  await putSettings(original, []);
   const mine = await api<MySectionsResponse>(ownerToken, '/attendance/my-sections');
   sectionId = mine.sections.find((x) => x.classLevel.nameEn === 'Class 6' && x.name === 'ক')!.id;
+});
+
+// Later specs (the guardian calendar) expect the seeded Friday off day.
+test.afterAll(async () => {
+  await putSettings(original, original.weeklyOffDays);
 });
 
 const register = (page: Page) => page.getByTestId('register-list');

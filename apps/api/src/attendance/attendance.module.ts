@@ -10,15 +10,25 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
 import {
   attendanceSettingsSchema,
+  childAttendanceQuerySchema,
+  registerQuerySchema,
+  studentReportQuerySchema,
   attendanceSheetQuerySchema,
   holidaySchema,
   mySectionsQuerySchema,
   sectionTeachersSchema,
   submitAttendanceSchema,
+  type AttendanceRegisterReport,
   type AttendanceSettings,
+  type AttendanceStaffMember,
+  type AttendanceTodayReport,
+  type ChildAttendanceMonth,
+  type SendHeldSmsResult,
+  type StudentAttendanceReport,
   type AttendanceSheet,
   type AttendanceTodaySummary,
   type Holiday,
@@ -27,10 +37,12 @@ import {
   type SmsDailyStatus,
   type SubmitAttendanceResponse,
 } from '@jantrik/shared';
+import type { Response } from 'express';
 import { z } from 'zod';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import { AttendanceAdminService } from './attendance-admin.service.js';
+import { AttendanceReportsService } from './attendance-reports.service.js';
 import { AttendanceSettingsService } from './attendance-settings.service.js';
 import { AttendanceService } from './attendance.service.js';
 
@@ -40,6 +52,9 @@ export class MySectionsQueryDto extends zodDto(mySectionsQuerySchema) {}
 export class AttendanceSettingsDto extends zodDto(attendanceSettingsSchema) {}
 export class HolidayDto extends zodDto(holidaySchema) {}
 export class SectionTeachersDto extends zodDto(sectionTeachersSchema) {}
+export class RegisterQueryDto extends zodDto(registerQuerySchema) {}
+export class StudentReportQueryDto extends zodDto(studentReportQuerySchema) {}
+export class ChildAttendanceQueryDto extends zodDto(childAttendanceQuerySchema) {}
 export class HolidayQueryDto extends zodDto(
   z.object({ year: z.coerce.number().int().min(2000).max(2100).optional() }),
 ) {}
@@ -53,6 +68,7 @@ export class AttendanceController {
     private readonly attendance: AttendanceService,
     private readonly settings: AttendanceSettingsService,
     private readonly admin: AttendanceAdminService,
+    private readonly reports: AttendanceReportsService,
   ) {}
 
   @Get('my-sections')
@@ -86,6 +102,40 @@ export class AttendanceController {
   getSettings(): Promise<AttendanceSettings> {
     return this.settings.get();
   }
+
+  /** Every section's roll call today (teachers: their sections). */
+  @Get('reports/today')
+  todayReport(): Promise<AttendanceTodayReport> {
+    return this.reports.today();
+  }
+
+  /** The month register for one section (students × days). */
+  @Get('reports/register')
+  register(@Query() query: RegisterQueryDto): Promise<AttendanceRegisterReport> {
+    return this.reports.register(query);
+  }
+
+  /** The same as CSV: UTF-8 with a BOM, ASCII digits. */
+  @Get('reports/register/csv')
+  async registerCsv(
+    @Query() query: RegisterQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    const { filename, csv } = await this.reports.registerCsv(query);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return csv;
+  }
+
+  /** One student's present % over a date range (at most a year). */
+  @Get('reports/students/:id')
+  studentReport(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: StudentReportQueryDto,
+  ): Promise<StudentAttendanceReport> {
+    return this.reports.student(id, query.from, query.to);
+  }
 }
 
 /** Configuration (OWNER/ADMIN). */
@@ -97,7 +147,14 @@ export class AttendanceAdminController {
     private readonly attendance: AttendanceService,
     private readonly settings: AttendanceSettingsService,
     private readonly admin: AttendanceAdminService,
+    private readonly reports: AttendanceReportsService,
   ) {}
+
+  /** Staff who can be given a section (settings: section teachers). */
+  @Get('staff')
+  staff(): Promise<AttendanceStaffMember[]> {
+    return this.reports.staff();
+  }
 
   @Put('settings')
   updateSettings(@Body() dto: AttendanceSettingsDto): Promise<AttendanceSettings> {
@@ -138,11 +195,39 @@ export class AttendanceAdminController {
   smsToday(): Promise<SmsDailyStatus> {
     return this.attendance.smsToday();
   }
+
+  /** Send today's SMS held back by the daily cap; each is re-checked (still absent?) first. */
+  @Post('sms/held/send')
+  @HttpCode(200)
+  sendHeld(): Promise<SendHeldSmsResult> {
+    return this.reports.sendHeld();
+  }
+}
+
+/** A guardian's own child's attendance month (the dashboard calendar). */
+@Controller('me/children')
+@RequireModule('ATTENDANCE')
+@Roles('GUARDIAN')
+export class ChildAttendanceController {
+  constructor(private readonly reports: AttendanceReportsService) {}
+
+  @Get(':id/attendance')
+  month(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: ChildAttendanceQueryDto,
+  ): Promise<ChildAttendanceMonth> {
+    return this.reports.childMonth(id, query.month);
+  }
 }
 
 @Module({
-  controllers: [AttendanceController, AttendanceAdminController],
-  providers: [AttendanceService, AttendanceSettingsService, AttendanceAdminService],
+  controllers: [AttendanceController, AttendanceAdminController, ChildAttendanceController],
+  providers: [
+    AttendanceService,
+    AttendanceSettingsService,
+    AttendanceAdminService,
+    AttendanceReportsService,
+  ],
   exports: [AttendanceService],
 })
 export class AttendanceModule {}

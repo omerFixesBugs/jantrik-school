@@ -15,7 +15,12 @@ export function initials(name: string): string {
     .filter((w) => w && !HONORIFICS.test(w));
   const first = words[0] ?? name.trim();
   if (!first) return '?';
-  const graphemes = (w: string) => [...new Intl.Segmenter().segment(w)].map((s) => s.segment);
+  // Intl.Segmenter keeps a Bangla letter with its vowel signs (তা, রা). Firefox before 125 lacks
+  // it: fall back to code points, which may split a sign off but never crashes the page.
+  const graphemes = (w: string) =>
+    typeof Intl.Segmenter === 'function'
+      ? [...new Intl.Segmenter().segment(w)].map((s) => s.segment)
+      : Array.from(w);
   if (BANGLA.test(first)) return graphemes(first)[0] ?? '?';
   const last = words.length > 1 ? words.at(-1)! : '';
   return (graphemes(first)[0]! + (last ? graphemes(last)[0]! : '')).toUpperCase();

@@ -5,6 +5,7 @@ import { isoDateSchema, type MySectionsResponse } from '@jantrik/shared';
 import { useLocale } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
+import { AttendanceTabs } from '@/components/attendance/attendance-tabs';
 import { RegisterView } from '@/components/attendance/register-view';
 import { SectionPicker } from '@/components/attendance/section-picker';
 import { PageGate } from '@/components/page-gate';
@@ -42,7 +43,13 @@ function Attendance() {
     enabled: Boolean(sectionId),
   });
 
-  if (!sectionId) return <SectionPicker />;
+  if (!sectionId)
+    return (
+      <div className="flex flex-col gap-5">
+        <AttendanceTabs active="take" />
+        <SectionPicker />
+      </div>
+    );
   const isAdmin = context?.roles.some((r) => r === 'OWNER' || r === 'ADMIN') ?? false;
   const section = mine.data?.sections.find((s) => s.id === sectionId);
   return (

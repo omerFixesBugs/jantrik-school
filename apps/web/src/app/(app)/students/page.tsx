@@ -24,7 +24,7 @@ import { PageGate } from '@/components/page-gate';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -501,15 +501,13 @@ function StudentCards({
                     {formatBdPhone(g.phone)}
                   </span>
                 </span>
-                <Button
-                  size="icon-lg"
-                  className={cn('rounded-full')}
-                  render={<a href={`tel:${g.phone}`} />}
-                  nativeButton={false}
+                <a
+                  href={`tel:${g.phone}`}
+                  className={buttonVariants({ size: 'icon-lg', className: 'rounded-full' })}
                   aria-label={t('call', { name: guardianName })}
                 >
                   <PhoneIcon aria-hidden className="size-5" />
-                </Button>
+                </a>
               </div>
             )}
           </li>

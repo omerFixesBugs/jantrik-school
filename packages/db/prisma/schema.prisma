@@ -191,6 +191,8 @@ enum SmsStatus {
   CANCELLED
   /// Not sent: the tenant's daily SMS cap was reached.
   HELD_OVER_LIMIT
+  /// Not sent: held over the cap and not released by an admin before the day ended.
+  EXPIRED
 
   @@map("sms_status")
 }

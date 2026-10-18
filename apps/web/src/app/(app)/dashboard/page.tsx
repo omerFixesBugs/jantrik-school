@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   dayPeriod,
   dhakaHour,
@@ -8,7 +8,10 @@ import {
   formatCount,
   formatDate,
   formatIdentifier,
+  type AttendanceSettings,
   type AttendanceTodaySummary,
+  type SendHeldSmsResult,
+  type SmsDailyStatus,
   type GuardianChild,
   type MeContext,
   type StudentFilters,
@@ -23,6 +26,7 @@ import {
   ClockIcon,
   CloudOffIcon,
   HeartHandshakeIcon,
+  MessageSquareWarningIcon,
   UserPlusIcon,
   UsersIcon,
   WalletIcon,
@@ -31,10 +35,20 @@ import {
 import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState, type ReactNode } from 'react';
+import { toast } from 'sonner';
+import { ChildCalendar } from '@/components/attendance/child-calendar';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { listDrafts } from '@/lib/attendance/drafts';
@@ -129,6 +143,12 @@ function StaffDashboard({ context }: { context: MeContext }) {
     queryFn: () => client.api<AttendanceTodaySummary>('/attendance/summary/today'),
     enabled: canSeeAttendance,
   });
+  const attendanceAdmin = canSeeAttendance && isAdmin;
+  const attendanceSettings = useQuery({
+    queryKey: ['attendance-settings', tenantId],
+    queryFn: () => client.api<AttendanceSettings>('/attendance/settings'),
+    enabled: attendanceAdmin,
+  });
   // Attendance kept on this phone that the server doesn't have yet.
   const [unsent] = useState(() =>
     session?.tenant ? listDrafts(session.user.id, session.tenant.id).length : 0,
@@ -154,16 +174,13 @@ function StaffDashboard({ context }: { context: MeContext }) {
             <CloudOffIcon aria-hidden className="text-warning size-5" />
             {t('unsentBanner', { count: formatCount(unsent, locale) })}
           </span>
-          <Button
-            size="sm"
-            variant="outline"
-            render={<Link href="/attendance" />}
-            nativeButton={false}
-          >
+          <ButtonLink size="sm" variant="outline" href="/attendance">
             {t('unsentOpen')}
-          </Button>
+          </ButtonLink>
         </div>
       )}
+
+      {attendanceAdmin && <HeldSmsBanner />}
 
       <ul className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         {canSeeStudents && (
@@ -249,7 +266,8 @@ function StaffDashboard({ context }: { context: MeContext }) {
             hasSections={Boolean(filters.data?.classLevels.some((c) => c.sections.length > 0))}
             hasStudents={(total ?? 0) > 0}
             hasAttendance={summary.data?.everTaken ?? false}
-            loading={students.isPending || filters.isPending}
+            hasAbsentSms={attendanceSettings.data?.absentSmsEnabled ?? false}
+            loading={students.isPending || filters.isPending || attendanceSettings.isPending}
           />
         )}
         <QuickActions context={context} wide={!isAdmin} />
@@ -432,12 +450,14 @@ function GettingStarted({
   hasSections,
   hasStudents,
   hasAttendance,
+  hasAbsentSms,
   loading,
 }: {
   context: MeContext;
   hasSections: boolean;
   hasStudents: boolean;
   hasAttendance: boolean;
+  hasAbsentSms: boolean;
   loading: boolean;
 }) {
   const t = useTranslations('dashboard');
@@ -477,6 +497,13 @@ function GettingStarted({
             title: t('stepAttendance'),
             text: t('stepAttendanceText'),
             href: '/attendance',
+          },
+          {
+            key: 'sms',
+            done: hasAbsentSms,
+            title: t('stepSms'),
+            text: t('stepSmsText'),
+            href: '/attendance/settings#settings-sms',
           },
         ]
       : []),
@@ -550,21 +577,98 @@ function GettingStarted({
                 {!s.done && <span className="text-muted-foreground text-sm">{s.text}</span>}
               </span>
               {!s.done && s.href && isNext && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  render={<Link href={s.href} />}
-                  nativeButton={false}
-                  className="shrink-0"
-                >
+                <ButtonLink size="sm" variant="outline" href={s.href} className="shrink-0">
                   {t('open')}
-                </Button>
+                </ButtonLink>
               )}
             </li>
           );
         })}
       </ol>
     </section>
+  );
+}
+
+/**
+ * SMS held back today by the daily cap: the admin can send them anyway (after confirming).
+ * The API re-checks each student is still absent; anything not sent today expires at midnight.
+ */
+function HeldSmsBanner() {
+  const t = useTranslations('dashboard');
+  const locale = useLocale() as Locale;
+  const describe = useErrorMessage();
+  const { client, session } = useAuth();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const key = ['sms-today', session?.tenant?.id];
+  const status = useQuery({
+    queryKey: key,
+    queryFn: () => client.api<SmsDailyStatus>('/attendance/sms/today'),
+  });
+  const send = useMutation({
+    mutationFn: () =>
+      client.api<SendHeldSmsResult>('/attendance/sms/held/send', { method: 'POST' }),
+    onSuccess: (r) => {
+      setOpen(false);
+      const n = {
+        queued: formatCount(r.queued, locale),
+        cancelled: formatCount(r.cancelled, locale),
+      };
+      toast.success(r.cancelled > 0 ? t('heldDoneCancelled', n) : t('heldDone', n));
+      void queryClient.invalidateQueries({ queryKey: key });
+    },
+    onError: (e) => toast.error(`${t('heldFailed')} ${describe(e)}`),
+  });
+  const held = status.data?.held ?? 0;
+  if (held === 0) return null;
+  const count = formatCount(held, locale);
+  return (
+    <div
+      className="border-warning/40 bg-warning-soft flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+      data-testid="held-sms"
+    >
+      <div className="flex min-w-0 gap-3">
+        <MessageSquareWarningIcon aria-hidden className="text-warning mt-0.5 size-5 shrink-0" />
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="font-medium">{t('heldTitle', { count })}</span>
+          <span className="text-muted-foreground text-sm">
+            {t('heldText', { cap: formatCount(status.data!.cap, locale) })}
+          </span>
+        </div>
+      </div>
+      <Button variant="outline" className="shrink-0" onClick={() => setOpen(true)}>
+        {t('heldSend')}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent data-testid="held-confirm">
+          <DialogHeader>
+            <DialogTitle>{t('heldConfirmTitle', { count, n: held })}</DialogTitle>
+            <DialogDescription>{t('heldConfirmBody')}</DialogDescription>
+          </DialogHeader>
+          <dl className="bg-muted/50 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 rounded-lg px-3 py-2 text-sm">
+            <dt className="text-muted-foreground">{t('heldConfirmMessages')}</dt>
+            <dd className="font-numeric text-end font-medium" data-testid="held-confirm-count">
+              {t('heldConfirmMessagesValue', { count })}
+            </dd>
+            <dt className="text-muted-foreground">{t('heldConfirmSegments')}</dt>
+            <dd className="font-numeric text-end font-medium" data-testid="held-confirm-segments">
+              {t('heldConfirmSegmentsValue', {
+                segments: formatCount(status.data!.heldSegments, locale),
+                n: status.data!.heldSegments,
+              })}
+            </dd>
+          </dl>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              {t('heldConfirmNo')}
+            </Button>
+            <Button onClick={() => send.mutate()} disabled={send.isPending}>
+              {t('heldConfirmYes')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 
@@ -619,7 +723,11 @@ function GuardianDashboard({ context }: { context: MeContext }) {
         ) : (
           <ul className="grid gap-4 md:grid-cols-2" data-testid="children">
             {children.data.map((c) => (
-              <ChildCard key={c.id} child={c} />
+              <ChildCard
+                key={c.id}
+                child={c}
+                showAttendance={context.modules.includes('ATTENDANCE')}
+              />
             ))}
           </ul>
         )}
@@ -628,7 +736,7 @@ function GuardianDashboard({ context }: { context: MeContext }) {
   );
 }
 
-function ChildCard({ child }: { child: GuardianChild }) {
+function ChildCard({ child, showAttendance }: { child: GuardianChild; showAttendance: boolean }) {
   const t = useTranslations('guardian');
   const tStudents = useTranslations('students');
   const locale = useLocale() as Locale;
@@ -668,6 +776,7 @@ function ChildCard({ child }: { child: GuardianChild }) {
           </div>
         ))}
       </dl>
+      {showAttendance && <ChildCalendar studentId={child.id} />}
       <p className="bg-canvas text-muted-foreground flex items-center gap-2 border-t px-4 py-3 text-sm sm:px-5">
         <ClockIcon aria-hidden className="size-4 shrink-0" />
         {t('comingSoon')}

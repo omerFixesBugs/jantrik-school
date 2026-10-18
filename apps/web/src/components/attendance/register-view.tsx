@@ -20,6 +20,7 @@ import {
   LoaderCircleIcon,
   SendIcon,
   SmartphoneIcon,
+  TableIcon,
   TriangleAlertIcon,
   XIcon,
   type LucideIcon,
@@ -71,6 +72,7 @@ interface Props {
 /** Take or edit one register. Phone-first: big rows, a sticky bar with counts and submit. */
 export function RegisterView({ sectionId, periodNo, date, sectionName, showBack }: Props) {
   const t = useTranslations('attendance');
+  const tReports = useTranslations('reports');
   const locale = useLocale() as Locale;
   const label = useLabel();
   const describe = useErrorMessage();
@@ -119,15 +121,27 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 pb-2">
       {/* Heading: which register, which day (from the server), and whether it is saved. */}
       <div className="flex flex-col gap-2">
-        {showBack && (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm">
+          {showBack ? (
+            <Link
+              href="/attendance"
+              className="text-muted-foreground hover:text-foreground flex w-fit min-h-8 items-center gap-1"
+            >
+              <ChevronLeftIcon aria-hidden className="size-4" />
+              {t('back', { section: label('section', 'Section', { inText: true }) })}
+            </Link>
+          ) : (
+            <span />
+          )}
           <Link
-            href="/attendance"
-            className="text-muted-foreground hover:text-foreground flex w-fit items-center gap-1 text-sm"
+            href={`/attendance/register?section=${sectionId}`}
+            className="text-primary flex min-h-8 items-center gap-1 font-medium hover:underline"
+            data-testid="open-month-register"
           >
-            <ChevronLeftIcon aria-hidden className="size-4" />
-            {t('back', { section: label('section', 'Section', { inText: true }) })}
+            <TableIcon aria-hidden className="size-4" />
+            {tReports('registerTitle')}
           </Link>
-        )}
+        </div>
         <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-col">
             <h2 className="truncate text-2xl font-semibold" data-testid="register-title">
@@ -231,10 +245,12 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
                 <span className="font-numeric bg-canvas text-foreground flex size-11 shrink-0 items-center justify-center rounded-full border text-base font-semibold">
                   {st.roll != null ? formatIdentifier(st.roll) : '–'}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-base font-medium">{name}</span>
+                <span className="line-clamp-2 min-w-0 flex-1 text-base leading-snug font-medium break-words">
+                  {name}
+                </span>
                 <span
                   className={cn(
-                    'inline-flex h-9 min-w-28 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-sm font-semibold',
+                    'inline-flex h-9 min-w-24 shrink-0 items-center justify-center gap-1.5 rounded-full px-2.5 text-sm font-semibold whitespace-nowrap',
                     style.pill,
                   )}
                 >
@@ -266,11 +282,11 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
             </li>
           ))}
         </ul>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             size="lg"
-            className="shrink-0"
+            className="min-w-0 flex-[1_1_9rem]"
             disabled={!editable}
             onClick={() => controller.markAllPresent()}
           >
@@ -279,7 +295,7 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
           </Button>
           <Button
             size="lg"
-            className="flex-1"
+            className="min-w-0 flex-[2_1_11rem]"
             disabled={!editable || nothingToSend}
             onClick={onSubmit}
             data-testid="register-submit"
@@ -373,16 +389,19 @@ function SyncPill({ sync, onRetry }: { sync: SyncState; onRetry: () => void }) {
       break;
     case 'saved':
       icon = CloudCheckIcon;
-      text = t('syncSaved', { time: formatTime(sync.submittedAt, locale) });
+      // Non-breaking space inside the time ("রাত ১০:৪২"): it wraps as one piece.
+      text = t('syncSaved', { time: formatTime(sync.submittedAt, locale).replace(' ', ' ') });
       tone = 'bg-success-soft text-success';
       break;
   }
   const Icon = icon;
   return (
-    <div className="flex items-center gap-2" aria-live="polite">
+    <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2" aria-live="polite">
       <span
         className={cn(
-          'inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium',
+          // Wraps like a short paragraph when it must (large text on a small phone), so it can't
+          // clip or overlap: no fixed height, no fully round ends.
+          'inline-flex max-w-full min-h-8 min-w-0 items-center gap-1.5 rounded-2xl px-3 py-1 text-sm leading-snug font-medium',
           tone,
         )}
         data-testid="sync-state"

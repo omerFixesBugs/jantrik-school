@@ -8,3 +8,5 @@ export * from './grading.js';
 export * from './health.js';
 export * from './phone.js';
 export * from './sms.js';
+export * from './register.js';
+export * from './reports.js';

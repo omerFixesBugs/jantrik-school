@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addMonths,
   banglaCalendarDate,
+  formatMonth,
   dayPeriod,
   dhakaHour,
   formatBanglaCalendarDate,
@@ -68,12 +70,25 @@ describe('formatTime', () => {
     ['2026-10-18T03:15:00Z', 'সকাল ৯:১৫'],
     ['2026-10-18T08:15:00Z', 'দুপুর ২:১৫'],
     ['2026-10-18T12:20:00Z', 'সন্ধ্যা ৬:২০'],
-    ['2026-10-18T15:10:00Z', 'রাত্রি ৯:১০'],
+    ['2026-10-18T15:10:00Z', 'রাত ৯:১০'], // "রাত", not Intl's "রাত্রি"
+    ['2026-10-18T16:42:00Z', 'রাত ১০:৪২'],
+    ['2026-10-17T19:30:00Z', 'রাত ১:৩০'],
   ])('%s → %s (Dhaka, part of day first)', (iso, text) => {
     expect(formatTime(iso, 'bn')).toBe(text);
   });
 
   it('24-hour in English', () => {
     expect(formatTime('2026-10-18T08:15:00Z', 'en')).toBe('14:15');
+  });
+});
+
+describe('formatMonth / addMonths', () => {
+  it('formats a month in both languages', () => {
+    expect(formatMonth('2026-10', 'bn')).toBe('অক্টোবর ২০২৬');
+    expect(formatMonth('2026-10', 'en')).toBe('October 2026');
+  });
+  it('steps across years', () => {
+    expect(addMonths('2026-01', -1)).toBe('2025-12');
+    expect(addMonths('2026-12', 1)).toBe('2027-01');
   });
 });

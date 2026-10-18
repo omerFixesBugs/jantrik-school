@@ -251,3 +251,48 @@
     }
   }
 }
+
+/*
+ * Printing the month register: only `.print-area` is printed (the app shell is hidden), on
+ * landscape A4, in black on white. Colour fills are kept (print-color-adjust) so the cells read
+ * like the screen; off days get a light hatch so they show even without colour.
+ */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    inset: 0 0 auto 0;
+    color: #000;
+    background: #fff;
+  }
+  .register-table {
+    width: 100%;
+    font-size: 8pt;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .register-table th,
+  .register-table td {
+    border-color: #999 !important;
+    position: static !important;
+  }
+  .register-table thead {
+    display: table-header-group;
+  }
+  .register-table tr {
+    break-inside: avoid;
+  }
+  .register-off {
+    background-image: repeating-linear-gradient(45deg, #ccc 0 1px, transparent 1px 4px);
+  }
+}

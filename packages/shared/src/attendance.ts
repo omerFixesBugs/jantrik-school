@@ -234,6 +234,8 @@ export interface SmsDailyStatus {
   used: number;
   /** Held back today because the cap was reached. */
   held: number;
+  /** SMS segments those held messages take (what releasing them costs). */
+  heldSegments: number;
 }
 
 // ─────────────────────────── Calculations ───────────────────────────

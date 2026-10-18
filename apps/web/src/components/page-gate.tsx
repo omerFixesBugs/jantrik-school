@@ -1,10 +1,9 @@
 'use client';
 
 import { ArrowLeftIcon, HammerIcon, LockIcon, type LucideIcon } from 'lucide-react';
-import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import type { ReactNode } from 'react';
-import { Button } from '@/components/ui/button';
+import { ButtonLink } from '@/components/ui/button';
 import { useMeContext } from '@/lib/hooks';
 import { canSee, navItem, type NavKey } from '@/lib/navigation';
 
@@ -18,15 +17,10 @@ function Notice({ icon: Icon, title, text }: { icon: LucideIcon; title: string; 
       </span>
       <h2 className="text-xl font-semibold">{title}</h2>
       <p className="text-muted-foreground max-w-md">{text}</p>
-      <Button
-        variant="outline"
-        className="mt-2"
-        render={<Link href="/dashboard" />}
-        nativeButton={false}
-      >
+      <ButtonLink variant="outline" className="mt-2" href="/dashboard">
         <ArrowLeftIcon aria-hidden />
         {t('back')}
-      </Button>
+      </ButtonLink>
     </div>
   );
 }

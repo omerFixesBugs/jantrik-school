@@ -407,9 +407,10 @@ export function AppShell({ context, children }: { context: MeContext; children: 
             <h1 className="truncate text-lg leading-tight font-semibold sm:text-xl">{title}</h1>
             {/* Phone: the year sits under the title (no room on the right). */}
             {yearText && (
-              <span className="bg-primary-soft text-accent-foreground mt-1 inline-flex h-6 w-fit items-center gap-1 rounded-full px-2 text-xs font-medium md:hidden">
-                <CalendarDaysIcon aria-hidden className="size-3.5" />
-                {yearText}
+              // One line: on a very narrow screen it ends in "…" instead of wrapping over the title.
+              <span className="bg-primary-soft text-accent-foreground mt-1 inline-flex h-6 w-fit max-w-full min-w-0 items-center gap-1 rounded-full px-2 text-xs font-medium whitespace-nowrap md:hidden">
+                <CalendarDaysIcon aria-hidden className="size-3.5 shrink-0" />
+                <span className="min-w-0 truncate">{yearText}</span>
               </span>
             )}
           </div>

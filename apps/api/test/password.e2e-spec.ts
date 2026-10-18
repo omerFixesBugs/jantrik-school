@@ -67,10 +67,33 @@ describe('password login', () => {
     expect(unknownEmail.body).toEqual(wrong.body);
   });
 
-  it('limits attempts per identifier (5 / 15 min), across IPs', async () => {
+  it('limits failed attempts per identifier (5 / 15 min), across IPs', async () => {
     const { phone } = await addMember(h, tenantId, { password: PASSWORD });
     for (let i = 0; i < 5; i++) await login(phone, 'nope').expect(401);
-    await login(phone, PASSWORD).expect(429);
+    await login(phone, PASSWORD).expect(429); // even the right password, once locked
+  });
+
+  it('a successful login resets the failed attempts', async () => {
+    const { phone } = await addMember(h, tenantId, { password: PASSWORD });
+    for (let i = 0; i < 4; i++) await login(phone, 'nope').expect(401);
+    await login(phone, PASSWORD).expect(200);
+    for (let i = 0; i < 5; i++) await login(phone, 'nope').expect(401); // 5 more allowed
+    await login(phone, 'nope').expect(429);
+  });
+
+  it('successful logins never hit the per-account limit', async () => {
+    const { phone } = await addMember(h, tenantId, { password: PASSWORD });
+    for (let i = 0; i < 8; i++) await login(phone, PASSWORD).expect(200);
+  });
+
+  it('the per-IP limit still counts every attempt, successful ones too', async () => {
+    const { phone } = await addMember(h, tenantId, { password: PASSWORD });
+    const ip = randomIp();
+    await login(phone, PASSWORD, ip).expect(200);
+    await login(phone, PASSWORD, ip).expect(200);
+    await login(phone, 'nope', ip).expect(401);
+    expect(await h.redis.get(`rl:login-ip:${ip}`)).toBe('3');
+    expect(await h.redis.get(`rl:login-id:${phone}`)).toBe('1'); // only the failure since
   });
 
   it('never writes the password or code to the logs', async () => {

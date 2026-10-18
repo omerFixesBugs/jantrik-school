@@ -47,6 +47,8 @@ export default defineConfig({
         REDIS_URL: E2E_REDIS_URL,
         QUEUE_PREFIX: 'jantrik-e2e',
         SMS_PROVIDER: 'outbox',
+        // A developer's .env may enable phone testing (dev only); e2e never runs with it.
+        DEV_LAN: 'false',
         CORS_ORIGINS: 'http://localhost:3000',
       },
     },

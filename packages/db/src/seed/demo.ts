@@ -10,6 +10,7 @@ import { hash } from '@node-rs/argon2';
 import { withContext, withTenant, type TenantTx } from '../tenancy/context.js';
 import { provisionTenant } from '../tenancy/provision.js';
 import { findOrCreateUser } from '../tenancy/users.js';
+import { seedPastAttendance } from './past-attendance.js';
 
 // Two demo tenants for local development. Created through provisionTenant() as the app role,
 // exactly like a real signup. Idempotent: an existing tenant (same slug) is skipped.
@@ -317,6 +318,8 @@ interface SeededUsers {
   staffUserIds: string[];
   /** Bangla-script name per user id (staff and guardians). */
   namesBn: Map<string, string>;
+  /** Past attendance registers created. */
+  sessions: number;
 }
 
 async function seedTenantData(
@@ -460,7 +463,8 @@ async function seedTenantData(
       },
     });
   }
-  return { staffUserIds, namesBn };
+  const sessions = await seedPastAttendance(tx, tenantId);
+  return { staffUserIds, namesBn, sessions };
 }
 
 /** Create the demo tenants. Must run as the app role (RLS applies, as in production). */
@@ -488,13 +492,11 @@ export async function seedDemo(app: PrismaClient): Promise<void> {
       }
       throw error;
     }
-    const { staffUserIds, namesBn } = await withTenant(
+    const { staffUserIds, namesBn, sessions } = await withTenant(
       app,
       tenantId,
       (tx) => seedTenantData(tx, tenantId, def),
-      {
-        timeout: 30_000,
-      },
+      { timeout: 120_000 },
     );
 
     // RLS lets a user update only their own row, so passwords and Bangla names are set as
@@ -511,6 +513,8 @@ export async function seedDemo(app: PrismaClient): Promise<void> {
         }),
       );
     }
-    console.log(`  ${def.slug}: created (${def.students.length} students)`);
+    console.log(
+      `  ${def.slug}: created (${def.students.length} students, ${sessions} past registers)`,
+    );
   }
 }

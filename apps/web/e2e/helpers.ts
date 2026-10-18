@@ -1,5 +1,5 @@
-import { expect, type Page } from '@playwright/test';
-import { normalizeBdPhone, toBanglaDigits } from '@jantrik/shared';
+import { expect, test, type Page } from '@playwright/test';
+import { normalizeBdPhone, toAsciiDigits, toBanglaDigits } from '@jantrik/shared';
 import { Redis } from 'ioredis';
 import { E2E_REDIS_URL } from '../playwright.config';
 
@@ -54,7 +54,20 @@ export async function otpLoginWithBanglaDigits(page: Page, phone: string) {
   await page.goto('/login');
   await page.getByLabel('মোবাইল নম্বর').fill(toBanglaDigits(phone));
   await page.getByRole('button', { name: 'কোড পাঠান' }).click();
-  await expect(page.getByTestId('resend-countdown')).toBeVisible();
+  // Specs share the demo guardian, so its resend cooldown may still be running: wait it out once,
+  // as a person would, rather than touching the rate-limit state.
+  const sent = page.getByTestId('resend-countdown');
+  const limited = page.getByRole('alert').filter({ hasText: 'অনেকবার চেষ্টা করা হয়েছে' });
+  await expect(sent.or(limited)).toBeVisible();
+  if (await limited.isVisible()) {
+    const seconds = Number(toAsciiDigits(await limited.innerText()).match(/\d+/)?.[0] ?? 60);
+    test.info().setTimeout(test.info().timeout + (seconds + 1) * 1000);
+    await page.waitForTimeout((seconds + 1) * 1000);
+    await page.goto('/login');
+    await page.getByLabel('মোবাইল নম্বর').fill(toBanglaDigits(phone));
+    await page.getByRole('button', { name: 'কোড পাঠান' }).click();
+  }
+  await expect(sent).toBeVisible();
   const code = await readOtp(phone);
   await page.getByLabel('যাচাই কোড').pressSequentially(toBanglaDigits(code));
   await page.getByRole('button', { name: 'লগইন', exact: true }).click();

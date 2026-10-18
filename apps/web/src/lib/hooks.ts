@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import type { MeContext } from '@jantrik/shared';
+import { formatCount, type MeContext } from '@jantrik/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
@@ -12,17 +12,19 @@ import { useAuth } from './auth/auth-provider';
 /** Translated, user-facing message for any error thrown by the API client. */
 export function useErrorMessage() {
   const t = useTranslations('errors');
+  const locale = useLocale() as Locale;
   return useCallback(
     (error: unknown): string => {
       if (error instanceof NetworkError) return t('network');
       if (error instanceof ApiError) {
         if (error.status === 401) return t('invalidCredentials');
         if (error.status === 403) return t('forbidden');
-        if (error.status === 429) return t('rateLimited', { seconds: error.retryAfter ?? 60 });
+        if (error.status === 429)
+          return t('rateLimited', { seconds: formatCount(error.retryAfter ?? 60, locale) });
       }
       return t('generic');
     },
-    [t],
+    [t, locale],
   );
 }
 

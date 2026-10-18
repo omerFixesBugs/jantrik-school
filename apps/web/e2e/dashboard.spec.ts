@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
+import type { SmsDailyStatus } from '@jantrik/shared';
 import { DEMO, otpLoginWithBanglaDigits, passwordLogin } from './helpers';
+import { findLayoutProblems } from './layout-check';
 
 test('staff dashboard: Bangla date, student total, getting-started steps', async ({ page }) => {
   await passwordLogin(page, DEMO.shaplaOwner);
@@ -8,21 +10,45 @@ test('staff dashboard: Bangla date, student total, getting-started steps', async
   // users.name_bn in the Bangla UI.
   await expect(page.getByRole('heading', { level: 2, name: /আব্দুল করিম/ })).toBeVisible();
   await expect(page.getByRole('link', { name: /মোট শিক্ষার্থী/ })).toContainText('৩০'); // Bangla digits
-  // The last step ticks itself once any attendance exists; then the whole list goes away.
-  // attendance.spec may have run first in this run (the e2e DB is reset per run, so "taken
-  // today" here means "ever taken"): read which case it is from the attendance card.
-  const card = page.getByTestId('module-card-attendance');
-  await expect(card).toContainText(/\/|এখনো কোনো হাজিরা নেওয়া হয়নি/);
-  const taken = (await card.textContent())!.includes('/');
+  // The seed has a month of past attendance, so only "turn on absent SMS" is left (off by
+  // default); it opens the SMS settings.
   const steps = page.getByTestId('getting-started');
-  if (taken) {
-    await expect(steps).toBeHidden();
-  } else {
-    await expect(steps).toContainText('শুরু করার ধাপ');
-    await expect(steps).toContainText('৫টির মধ্যে ৪টি সম্পন্ন'); // only "first attendance" left
-  }
+  await expect(steps).toContainText('শুরু করার ধাপ');
+  await expect(steps).toContainText('৬টির মধ্যে ৫টি সম্পন্ন');
+  await expect(steps).toContainText('অনুপস্থিতির SMS চালু করুন');
+  await expect(steps.getByRole('link', { name: 'খুলুন' })).toHaveAttribute(
+    'href',
+    '/attendance/settings#settings-sms',
+  );
   await page.getByTestId('quick-attendance').click();
   await expect(page).toHaveURL(/\/attendance$/);
+});
+
+test('held SMS: the confirm dialog shows the messages and total SMS segments', async ({ page }) => {
+  // Only the numbers matter here, so the status is stubbed (no real SMS are held or sent).
+  await page.route('**/attendance/sms/today', async (route) => {
+    const status: SmsDailyStatus = {
+      date: '2026-10-19',
+      cap: 60,
+      used: 60,
+      held: 3,
+      heldSegments: 5,
+    };
+    await route.fulfill({ json: status });
+  });
+  await page.setViewportSize({ width: 360, height: 780 });
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  const held = page.getByTestId('held-sms');
+  await expect(held).toContainText('আজ ৩টি SMS পাঠানো হয়নি');
+  await held.getByRole('button', { name: 'আটকে থাকা SMS পাঠান' }).click();
+  const dialog = page.getByTestId('held-confirm');
+  await expect(dialog.getByRole('heading')).toHaveText('৩টি বার্তা এখন পাঠাবেন?');
+  await expect(dialog.getByTestId('held-confirm-count')).toHaveText('৩টি');
+  await expect(dialog.getByTestId('held-confirm-segments')).toHaveText('৫টি SMS');
+  expect(await findLayoutProblems(page)).toEqual([]);
+  await dialog.getByRole('button', { name: 'এখন না' }).click();
+  await expect(dialog).toBeHidden();
 });
 
 test('guardian dashboard shows only their own children', async ({ page }) => {

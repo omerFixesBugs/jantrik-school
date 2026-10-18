@@ -138,7 +138,8 @@ export function formatBanglaCalendarDate(value: Date | string, locale: UiLocale)
 
 /**
  * A time of day (Asia/Dhaka): "দুপুর ২:১৫" / "14:15". Bangla puts the part of the day (ভোর,
- * সকাল, দুপুর, বিকেল, সন্ধ্যা, রাত্রি) first, as people say it, instead of a Latin "PM".
+ * সকাল, দুপুর, বিকেল, সন্ধ্যা, রাত) first, as people say it, instead of a Latin "PM". Intl says
+ * "রাত্রি"; clock times use the everyday "রাত" ("রাত ১০:৪২"). "শুভ রাত্রি" is only the greeting.
  */
 export function formatTime(value: Date | string, locale: UiLocale): string {
   const date = new Date(value);
@@ -155,7 +156,8 @@ export function formatTime(value: Date | string, locale: UiLocale): string {
     minute: '2-digit',
     dayPeriod: 'short',
   }).formatToParts(date);
-  const period = parts.find((p) => p.type === 'dayPeriod')?.value;
+  const raw = parts.find((p) => p.type === 'dayPeriod')?.value;
+  const period = raw === 'রাত্রি' ? 'রাত' : raw;
   const time = parts
     .filter(
       (p) => p.type === 'hour' || p.type === 'minute' || (p.type === 'literal' && p.value === ':'),
@@ -171,4 +173,20 @@ export function formatTime(value: Date | string, locale: UiLocale): string {
  */
 export function formatIdentifier(value: string | number): string {
   return toAsciiDigits(String(value));
+}
+
+/** A YYYY-MM month: "অক্টোবর ২০২৬" / "October 2026". */
+export function formatMonth(month: string, locale: UiLocale): string {
+  return new Intl.DateTimeFormat(intlLocale(locale), {
+    timeZone: 'UTC',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(`${month}-01T00:00:00Z`));
+}
+
+/** The month before or after a YYYY-MM month. */
+export function addMonths(month: string, delta: number): string {
+  const [y, m] = month.split('-').map(Number) as [number, number];
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return d.toISOString().slice(0, 7);
 }

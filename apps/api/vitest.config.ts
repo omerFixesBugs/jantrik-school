@@ -31,6 +31,8 @@ export default defineConfig({
       OTP_PEPPER: 'test-only-otp-pepper-0123456789abcdefghijklm',
       SMS_PROVIDER: 'memory',
       COOKIE_SECURE: 'true',
+      // A developer's .env may enable phone testing; tests never run with it.
+      DEV_LAN: 'false',
       // Tests send X-Forwarded-For to simulate different client IPs.
       TRUST_PROXY: 'true',
       CORS_ORIGINS: 'http://localhost:3000',

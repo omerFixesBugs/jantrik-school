@@ -20,7 +20,7 @@ import { useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { useEffect, useMemo } from 'react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { listDrafts } from '@/lib/attendance/drafts';
@@ -89,22 +89,17 @@ export function SectionPicker() {
                     date: formatDate(dateToDb(d.date), locale, 'long'),
                   })}
                 </span>
-                <Button
+                <ButtonLink
                   size="sm"
                   variant="outline"
-                  render={
-                    <Link
-                      href={registerHref(
-                        d.sectionId,
-                        d.periodNo,
-                        d.date === mine.data?.today ? undefined : d.date,
-                      )}
-                    />
-                  }
-                  nativeButton={false}
+                  href={registerHref(
+                    d.sectionId,
+                    d.periodNo,
+                    d.date === mine.data?.today ? undefined : d.date,
+                  )}
                 >
                   {t('open')}
-                </Button>
+                </ButtonLink>
               </li>
             ))}
           </ul>

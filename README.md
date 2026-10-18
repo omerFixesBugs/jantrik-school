@@ -91,6 +91,11 @@ Run a command in a single package with a filter, e.g. `pnpm --filter @jantrik/ap
    automatically (port 4000); `localhost` keeps working on the PC.
 
 Staff log in with the demo passwords; a guardian's OTP code appears in the `pnpm dev` terminal.
+
+If the page looks right but nothing reacts to taps, the app's JavaScript isn't running. After
+20 s a red banner says so ("পাতাটি ঠিকমতো চালু হয়নি") and lists the last errors. Restart
+`pnpm dev` after changing `.env`: `next.config.ts` reads it only at startup. `DEV_LAN=true` must
+reach it, or Next refuses the phone's dev connections.
 Remove the rule when done: `Remove-NetFirewallRule -DisplayName "Jantrik dev (LAN)"`.
 
 ## Repository layout

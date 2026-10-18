@@ -6,7 +6,7 @@ import { RequestContext } from '../common/request-context.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
 import { SMS_PROVIDER, type SmsProvider } from './sms.providers.js';
-import { TenantSmsService, type TenantSmsJob } from './tenant-sms.service.js';
+import { EXPIRE_HELD_JOB, TenantSmsService, type TenantSmsJob } from './tenant-sms.service.js';
 
 export const SMS_QUEUE = 'sms';
 
@@ -66,8 +66,29 @@ export class SmsProcessor extends WorkerHost {
   }
 
   async process(job: Job<SmsJob>): Promise<void> {
+    if (job.name === EXPIRE_HELD_JOB) return this.expireHeld();
     if (isTenantJob(job)) return this.processTenant(job);
     return this.processPlatform(job as Job<PlatformSmsJob>);
+  }
+
+  /**
+   * Daily: SMS held over the cap and not released by an admin that day become EXPIRED. Visits
+   * only the tenants recorded as having held SMS, each in its own RLS context.
+   */
+  async expireHeld(): Promise<void> {
+    for (const { key, date, tenantIds } of await this.tenantSms.heldTenants()) {
+      for (const tenantId of tenantIds) {
+        try {
+          const { today, expired } = await this.runner.run(tenantId, () =>
+            this.tenantSms.expireHeldForTenant(),
+          );
+          if (expired > 0) this.logger.log(`expired ${expired} held SMS of tenant ${tenantId}`);
+          if (date < today) await this.tenantSms.forgetHeldTenant(key, tenantId);
+        } catch (error) {
+          this.logger.error(`held SMS expiry failed for ${tenantId}: ${(error as Error).message}`);
+        }
+      }
+    }
   }
 
   private async processPlatform(job: Job<PlatformSmsJob>): Promise<void> {

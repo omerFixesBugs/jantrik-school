@@ -60,6 +60,10 @@ export class AuthService {
   ) {
     const phone = normalizeBdPhone(identifier);
     const email = phone ? null : identifier.toLowerCase();
+    const accountKey = `login-id:${phone ?? email}`;
+    // Counted before the check (race-safe: parallel guesses can't all slip past a read-only
+    // check), then cleared on success: in effect only failed attempts count per account.
+    // The per-IP counter keeps every attempt.
     await this.limiter.consume(
       {
         key: `login-ip:${meta.ip}`,
@@ -67,7 +71,7 @@ export class AuthService {
         windowSec: 900,
       },
       {
-        key: `login-id:${phone ?? email}`,
+        key: accountKey,
         limit: this.config.get('LOGIN_PER_IDENTIFIER_PER_15MIN', { infer: true }),
         windowSec: 900,
       },
@@ -77,6 +81,7 @@ export class AuthService {
     // Always verify (against a dummy hash if needed) so timing doesn't reveal unknown accounts.
     const ok = await this.passwords.verify(user?.password_hash, password);
     if (!user || !ok) throw invalidCredentials();
+    await this.limiter.reset(accountKey);
     return this.completeLogin(user, client, meta);
   }
 

@@ -197,6 +197,17 @@ export class AuthClient {
    * `json` is sent as the body; the parsed JSON response is returned (undefined for 204).
    */
   async api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+    const res = await this.request(path, init);
+    if (res.status === 204) return undefined as T;
+    return (await res.json()) as T;
+  }
+
+  /** Authenticated GET of a file (e.g. a CSV export), as a Blob. */
+  async download(path: string): Promise<Blob> {
+    return (await this.request(path, {})).blob();
+  }
+
+  private async request(path: string, init: RequestInit & { json?: unknown }): Promise<Response> {
     if (this.tenantChanged) throw new TenantChangedError();
     const send = async (session: Session) => {
       const headers = new Headers(init.headers);
@@ -234,8 +245,7 @@ export class AuthClient {
       }
       throw error;
     }
-    if (res.status === 204) return undefined as T;
-    return (await res.json()) as T;
+    return res;
   }
 
   // ── internals ──

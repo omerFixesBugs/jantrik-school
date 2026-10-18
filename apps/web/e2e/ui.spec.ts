@@ -51,4 +51,28 @@ test.describe('on a phone', () => {
     await expect(page.getByTestId('students-cards')).toContainText('ALO-26-001');
     await expect(page.getByTestId('students-table')).toBeHidden();
   });
+
+  test('if the app never starts, the page says so in Bangla instead of looking dead', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as { __jantrikBootTimeoutMs?: number }).__jantrikBootTimeoutMs = 1500;
+    });
+    // A normal start: React hydrates, the watchdog stays quiet.
+    await page.goto('/login');
+    await page.getByRole('tab', { name: 'পাসওয়ার্ড' }).tap();
+    await expect(page.getByRole('tab', { name: 'পাসওয়ার্ড' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await page.waitForTimeout(2500);
+    await expect(page.getByTestId('boot-failure')).toHaveCount(0);
+
+    // The app's JavaScript can't load (as when the dev server refused the phone's origin).
+    await page.route(/\/_next\/static\/chunks\/.*\.js/, (route) => route.abort('blockedbyclient'));
+    await page.reload();
+    const banner = page.getByTestId('boot-failure');
+    await expect(banner).toContainText('পাতাটি ঠিকমতো চালু হয়নি।');
+    await expect(banner.getByRole('button', { name: 'আবার লোড করুন' })).toBeVisible();
+  });
 });
