@@ -7,6 +7,7 @@ import type {
   SubmitAttendanceResponse,
 } from '@jantrik/shared';
 import { ApiError, NetworkError } from '@/lib/api/errors';
+import { randomId } from '@/lib/uuid';
 import {
   latestDraft,
   readDraft,
@@ -62,7 +63,7 @@ const RETRY_DELAYS = [2_000, 4_000, 8_000, 15_000, 30_000, 60_000];
 /** Tap order on a student. */
 export const CYCLE: AttendanceStatus[] = ['PRESENT', 'ABSENT', 'LATE', 'LEAVE'];
 
-const newId = () => crypto.randomUUID();
+const newId = () => randomId();
 const isTransient = (e: unknown) =>
   e instanceof NetworkError || (e instanceof ApiError && (e.status >= 500 || e.status === 429));
 const toDraftStudent = (s: RosterStudent | DraftStudent): DraftStudent => ({

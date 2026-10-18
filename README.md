@@ -73,6 +73,26 @@ in again afterwards. It refuses to run unless all of these hold:
 
 Run a command in a single package with a filter, e.g. `pnpm --filter @jantrik/api test`.
 
+### Testing on a phone (same Wi-Fi)
+
+1. Set `DEV_LAN=true` in `.env` and restart `pnpm dev`. Development only: the API refuses to start
+   with it in any other `NODE_ENV`. It allows CORS from `http://<private IP>:3000` and sends the
+   refresh cookie without `Secure` (the phone uses plain http).
+2. Find the PC's Wi-Fi address: `ipconfig` → "Wireless LAN adapter Wi-Fi" → IPv4 Address.
+3. Once, in an **admin** PowerShell, let the phone reach the dev ports (Private networks only),
+   and make sure Windows treats your Wi-Fi as a _Private_ network (Settings → Network & internet
+   → Wi-Fi → your network → Private):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Jantrik dev (LAN)" -Direction Inbound -Protocol TCP -LocalPort 3000,4000 -Action Allow -Profile Private
+   ```
+
+4. On the phone, open `http://<that IP>:3000`. The web app talks to the API on the same host
+   automatically (port 4000); `localhost` keeps working on the PC.
+
+Staff log in with the demo passwords; a guardian's OTP code appears in the `pnpm dev` terminal.
+Remove the rule when done: `Remove-NetFirewallRule -DisplayName "Jantrik dev (LAN)"`.
+
 ## Repository layout
 
 ```

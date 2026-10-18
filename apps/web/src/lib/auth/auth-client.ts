@@ -19,7 +19,26 @@ import { NetworkError, SignedOutError, TenantChangedError, toApiError } from '..
  *   (switch in another tab), this tab blocks all API calls and asks the user to reload.
  */
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const CONFIGURED_API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+
+/**
+ * The API's address. Production builds use NEXT_PUBLIC_API_URL exactly.
+ *
+ * In development, a localhost API URL follows the page's hostname instead (same port), so the
+ * app also works when opened as http://<PC's LAN IP>:3000 on a phone: the refresh cookie is
+ * SameSite=Strict, and localhost:3000 → 192.168.x.y:4000 would count as cross-site.
+ */
+function resolveApiUrl(): string {
+  if (process.env.NODE_ENV !== 'development' || typeof window === 'undefined') {
+    return CONFIGURED_API_URL;
+  }
+  const url = new URL(CONFIGURED_API_URL);
+  if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') return CONFIGURED_API_URL;
+  url.hostname = window.location.hostname;
+  return url.origin;
+}
+
+export const API_URL = resolveApiUrl();
 
 const LOCK_NAME = 'jantrik-refresh';
 const CHANNEL_NAME = 'jantrik-auth';

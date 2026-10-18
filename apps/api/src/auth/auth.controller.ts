@@ -26,6 +26,7 @@ import type { Env } from '../config/env.js';
 import { AuthService } from './auth.service.js';
 import { OTP_TTL_SEC } from './otp.service.js';
 import { REFRESH_TTL_SEC, type SessionMeta } from './session.service.js';
+import { refreshCookieSecure } from '../config/dev-lan.js';
 
 export class OtpRequestDto extends zodDto(otpRequestSchema) {}
 export class OtpVerifyDto extends zodDto(otpVerifySchema) {}
@@ -139,7 +140,11 @@ export class AuthController {
   private cookieOptions() {
     return {
       httpOnly: true,
-      secure: this.config.get('COOKIE_SECURE', { infer: true }),
+      secure: refreshCookieSecure({
+        NODE_ENV: this.config.get('NODE_ENV', { infer: true }),
+        DEV_LAN: this.config.get('DEV_LAN', { infer: true }),
+        COOKIE_SECURE: this.config.get('COOKIE_SECURE', { infer: true }),
+      }),
       sameSite: 'strict' as const,
       path: '/auth',
     };
