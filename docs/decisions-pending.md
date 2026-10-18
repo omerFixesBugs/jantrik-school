@@ -54,3 +54,11 @@ Each entry: what needed deciding, the default taken (safe and reversible), and h
     - Default: left as is.
     - To change: version the cache key, or check membership status in `RolesGuard` against the request transaction.
 17. **Deactivated staff keep their section assignments** (restored on reactivation); they do not count when choosing a section's class teacher.
+18. **CI: the end-to-end step fails on GitHub (blocked, needs you).**
+    - It already failed on `main` at `5a9fcde` (attendance phase 3), before this run, and fails the same way on every branch push (all other steps pass). Locally every e2e test passes, also with `TZ=UTC CI=1`.
+    - The job logs and the uploaded `playwright-report` artifact need a GitHub login (no `gh` CLI here, and I did not read stored credentials). Likely suspects: Linux-only font metrics tripping the 320 px overflow checks, or a time-of-day dependency.
+    - To do: open the failed run's `playwright-report` artifact (Actions → run → Artifacts) and send me the failing test names.
+19. **Teachers can open any student's profile** (birth registration no., addresses, guardian phones), like the existing list, which already shows guardian phones to teachers.
+    - Default: kept consistent with the list (OWNER/ADMIN/TEACHER read).
+    - To change: limit teachers to their own sections (`section_teachers`) or hide the board-registration fields from them.
+20. **A revoked (DISABLED) GUARDIAN membership is not reactivated** when that person is added as a guardian again; an admin has to restore access deliberately.

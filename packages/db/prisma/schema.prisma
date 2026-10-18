@@ -409,12 +409,14 @@ model Tenant {
   auditLogs        AuditLog[]
   sessions         Session[]
 
-  attendanceSettings AttendanceSettings?
-  holidays           Holiday[]
-  sectionTeachers    SectionTeacher[]
-  attendanceSessions AttendanceSession[]
-  attendanceRecords  AttendanceRecord[]
-  smsLogs            SmsLog[]
+  attendanceSettings  AttendanceSettings?
+  holidays            Holiday[]
+  studentSettings     StudentSettings?
+  studentCodeCounters StudentCodeCounter[]
+  sectionTeachers     SectionTeacher[]
+  attendanceSessions  AttendanceSession[]
+  attendanceRecords   AttendanceRecord[]
+  smsLogs             SmsLog[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -804,6 +806,39 @@ model Enrolment {
   @@index([tenantId, academicYearId, classLevelId, sectionId])
   @@index([tenantId, studentId])
   @@map("enrolments")
+}
+
+/// One row per tenant once an admin saves it; defaults live in code until then (no backfill).
+model StudentSettings {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  tenantId    String   @unique @map("tenant_id") @db.Uuid
+  /// 1–10 uppercase letters/digits, used by {PREFIX}.
+  codePrefix  String   @map("code_prefix")
+  /// Tokens: {PREFIX}, {YEAR}, {YY}, and one {N…} run (zero-padded sequence).
+  codePattern String   @default("{PREFIX}-{YEAR}-{NNNN}") @map("code_pattern")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("student_settings")
+}
+
+/// Next student_code sequence number per tenant and year (atomic upsert ... RETURNING).
+model StudentCodeCounter {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  year      Int
+  nextValue Int      @map("next_value")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, year])
+  @@map("student_code_counters")
 }
 
 // ───────────────────────────── Audit ─────────────────────────────

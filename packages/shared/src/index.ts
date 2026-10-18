@@ -12,3 +12,4 @@ export * from './register.js';
 export * from './reports.js';
 export * from './setup.js';
 export * from './staff.js';
+export * from './students.js';

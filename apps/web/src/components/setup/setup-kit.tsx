@@ -33,7 +33,8 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 
-export type SetupTab = 'years' | 'classes' | 'shifts' | 'subjects' | 'groups' | 'labels';
+export type SetupTab =
+  'years' | 'classes' | 'shifts' | 'subjects' | 'groups' | 'labels' | 'studentCode';
 
 const TABS: { key: SetupTab; href: string }[] = [
   { key: 'years', href: '/setup' },
@@ -42,6 +43,7 @@ const TABS: { key: SetupTab; href: string }[] = [
   { key: 'subjects', href: '/setup/subjects' },
   { key: 'groups', href: '/setup/groups' },
   { key: 'labels', href: '/setup/labels' },
+  { key: 'studentCode', href: '/setup/student-code' },
 ];
 
 /** The setup area's pages, labelled with the institute's own words. Wraps on narrow phones. */
@@ -58,6 +60,7 @@ export function SetupTabs({ active }: { active: SetupTab }) {
     subjects: t('tabSubjects'),
     groups: label('study_group', 'Group'),
     labels: t('tabLabels'),
+    studentCode: t('tabStudentCode', { student: label('student', 'Student', { inText: true }) }),
   };
   return (
     <nav aria-label={t('title')}>
