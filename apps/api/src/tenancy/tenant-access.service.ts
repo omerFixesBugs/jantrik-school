@@ -64,9 +64,19 @@ export class TenantAccessService {
     await this.context.afterCommit(() => this.redis.del(modulesKey(tenantId)));
   }
 
-  /** Replace a member's roles in a tenant (e.g. ADMIN → TEACHER). */
+  /**
+   * Replace a member's roles in a tenant (e.g. ADMIN → TEACHER). Staff roles need a staff profile
+   * (the institute's name for them, decision #5): add new staff through POST /staff instead.
+   */
   async setMemberRoles(tenantId: string, userId: string, roles: Role[]): Promise<void> {
     await this.inTenant(tenantId, async (tx) => {
+      if (roles.some((r) => r !== 'GUARDIAN' && r !== 'STUDENT')) {
+        const profile = await tx.staffProfile.findFirst({
+          where: { userId },
+          select: { id: true },
+        });
+        if (!profile) throw new Error('Staff roles need a staff profile; use POST /staff');
+      }
       await tx.membership.deleteMany({ where: { userId, role: { notIn: roles } } });
       for (const role of roles) {
         await tx.membership.upsert({

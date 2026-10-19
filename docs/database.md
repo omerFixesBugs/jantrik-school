@@ -119,9 +119,17 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   tenant and the roles cache only count `ACTIVE`. The person accepts (`ACTIVE`) or declines
   (`DECLINED`) after logging in. After 14 days (`INVITATION_DAYS`) an unanswered invitation is
   treated as expired; nothing is stored for that, it is computed from `invited_at`.
-- **`staff_profiles`** (tenant table, one row per staff member): the name the institute typed.
-  Staff lists and "updated by" labels read this first, so a person's global name (from another
-  institute) is never shown. No DELETE grant.
+- **`staff_profiles`** (tenant table, one row per staff member): the name and phone the
+  institute typed. `POST /staff`, the demo seed and the test helper `addMember` create one, and
+  `TenantAccessService.setMemberRoles` refuses staff roles for someone without one. Staff lists,
+  section teachers and "updated by" labels read **only** this (`staffNames`, `staffRef`), never
+  `users`: staff added before profiles existed (no backfill) are shown unnamed ("—"). No DELETE
+  grant.
+- **Global names stay private (decision #5).** `users.name`, `name_bn` and `email` are read only
+  by the self endpoints (`/auth/me`, login, refresh: the signed-in person's own account).
+  Guardians are shown by their `guardians` row, students by `students`, staff by
+  `staff_profiles`. `src/common/global-names.spec.ts` fails the build if other code reads them;
+  `test/no-global-names.e2e-spec.ts` checks the raw responses.
 
 ### Student search (`search_student_ids`)
 

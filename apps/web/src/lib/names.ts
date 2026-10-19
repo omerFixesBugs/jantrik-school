@@ -5,11 +5,11 @@ import type { Locale } from '@/i18n/config';
 export const displayName = (bn: string | null, en: string | null, locale: Locale): string =>
   (locale === 'bn' ? (bn ?? en) : (en ?? bn)) ?? '';
 
-/** The signed-in person's name: Bangla script in the Bangla UI when set, else `name`. */
+/** A person's name: Bangla script in the Bangla UI when set, else `name` ("—" when unnamed). */
 export const displayUserName = (
   user: Pick<AuthResponse['user'], 'name' | 'nameBn'> | undefined,
   locale: Locale,
-): string => (user ? (locale === 'bn' ? (user.nameBn ?? user.name) : user.name) : '');
+): string => (user ? (locale === 'bn' ? (user.nameBn ?? user.name) : user.name) || '—' : '');
 
 /** "ষষ্ঠ শ্রেণি" for an enrolment's class level. */
 export const classLevelName = (

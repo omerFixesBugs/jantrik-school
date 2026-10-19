@@ -140,9 +140,10 @@ expiresAt}` and `selectable: false`. `/select-institute` and the dashboard show
 - Admins can `POST /staff/:userId/cancel-invitation` (pending) and `POST /staff/:userId/reinvite`
   (declined or expired). Both are audited; owner invitations are managed by owners only.
 - A cancelled invitation keeps the typed name and phone in `staff_profiles` and the audit log
-  (no DELETE grant, as for other history). The typed name is a guarantee of the staff code paths
-  (`staffNames`, the staff list), not of RLS: once someone is an active member, `users_visible`
-  shows their global row to that institute.
+  (no DELETE grant, as for other history). The typed name is a guarantee of the code, not of RLS:
+  once someone is an active member, `users_visible` lets that institute read their global row,
+  so only the self endpoints may read `users` names or email (see `database.md`, "Global names
+  stay private").
 
 ## The request pipeline
 

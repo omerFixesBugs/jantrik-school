@@ -36,10 +36,13 @@ export class GuardianLinker {
     const existing = await tx.guardian.findFirst({
       where: { phone: g.phone },
       orderBy: { createdAt: 'asc' },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, nameBn: true, nameEn: true },
     });
     if (existing) {
-      const userId = existing.userId ?? (await this.ensureLogin(g));
+      // A login for a known guardian takes the names this institute stored for them.
+      const userId =
+        existing.userId ??
+        (await this.ensureLogin({ ...g, nameBn: existing.nameBn, nameEn: existing.nameEn }));
       if (!existing.userId) {
         await tx.guardian.update({ where: { id: existing.id }, data: { userId } });
       } else {
@@ -90,11 +93,15 @@ export class GuardianLinker {
     return row.id;
   }
 
+  /**
+   * The person's login: found by phone, or created with the typed names (never the phone number
+   * as a name). An existing person's own names are never changed.
+   */
   private async ensureLogin(g: GuardianFields): Promise<string> {
     const userId = await findOrCreateUser(
       this.db.tx,
       g.phone,
-      g.nameEn ?? g.nameBn ?? g.phone,
+      g.nameEn ?? g.nameBn ?? 'Guardian',
       g.nameBn,
     );
     await this.ensureMembership(userId);

@@ -17,8 +17,9 @@ first review) or _Changed_ (done differently, as described).
 4. **_Approved._ Granting OWNER.**
    - Default: Only an OWNER can grant or remove OWNER; ADMINs manage the other roles. Nobody can change their own roles or deactivate themselves.
    - To change: Relax in `StaffService`.
-5. **Guardians added at admission/import.**
+5. **_Approved, and checked after review._ Guardians added at admission/import.**
    - Default: Each gets a login (user + GUARDIAN membership), as the demo seed does, so they can log in with OTP. No SMS is sent.
+   - Checked: no API response returns a person's global `users.name` / `name_bn` / `email` to anyone else; guardians, students and staff are shown by their institute's own rows (`guardians`, `students`, `staff_profiles`). The staff-name fallback to `users` was removed, "updated by" no longer reads the user relation, and a login created for a known guardian takes the guardian's stored names (never the phone number). Only the self endpoints (`/auth/me`, login, refresh) show a person their own name. Tests: `apps/api/test/no-global-names.e2e-spec.ts` (raw JSON/CSV of every endpoint with person data, as admin, assigned teacher and the person) and a code scan, `apps/api/src/common/global-names.spec.ts`.
    - To change: Skip membership creation in `GuardianLinker`.
 6. **Linking a guardian by phone when several guardians in the tenant share that phone.**
    - Default: The oldest one is linked; names are not overwritten.

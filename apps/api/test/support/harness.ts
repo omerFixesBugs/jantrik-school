@@ -94,9 +94,19 @@ export async function addMember(
 ): Promise<{ userId: string; phone: string }> {
   const phone = opts.phone ?? randomPhone();
   const userId = await withTenant(h.prisma, tenantId, async (tx) => {
-    const id = await findOrCreateUser(tx, phone, opts.name ?? 'Test User');
-    for (const role of opts.roles ?? ['TEACHER']) {
+    const name = opts.name ?? 'Test User';
+    const id = await findOrCreateUser(tx, phone, name);
+    const roles = opts.roles ?? ['TEACHER'];
+    for (const role of roles) {
       await tx.membership.create({ data: { tenantId, userId: id, role } });
+    }
+    // Staff are known to the institute by their staff profile (as POST /staff creates one).
+    if (roles.some((r) => r !== 'GUARDIAN' && r !== 'STUDENT')) {
+      await tx.staffProfile.upsert({
+        where: { tenantId_userId: { tenantId, userId: id } },
+        create: { tenantId, userId: id, name, phone },
+        update: {},
+      });
     }
     return id;
   });

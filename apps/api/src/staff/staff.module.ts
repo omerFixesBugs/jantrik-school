@@ -21,6 +21,7 @@ import {
   isStaffRole,
   staffRolesSchema,
   staffSectionsSchema,
+  type PersonRef,
   type StaffMember,
   type StaffRole,
 } from '@jantrik/shared';
@@ -45,9 +46,9 @@ const INVITE_MS = INVITATION_DAYS * 24 * 3600 * 1000;
 type MembershipStatus = 'ACTIVE' | 'DISABLED' | 'INVITED' | 'DECLINED';
 
 /**
- * Names this institute uses for staff: the staff profile (what its admin typed), else, for staff
- * added before profiles existed, the person's own row (visible only once they are a member).
- * Never shows an invited person's global name: their row is hidden by RLS until they accept.
+ * Names this institute uses for staff: the staff profile (what its admin typed). Never the
+ * person's global `users` row, which another institute may have named (decision #5); someone
+ * without a profile (not expected: every staff path creates one) gets an empty name.
  */
 export async function staffNames(
   tx: TenantTx,
@@ -60,15 +61,15 @@ export async function staffNames(
     select: { userId: true, name: true, nameBn: true },
   });
   for (const p of profiles) out.set(p.userId, { name: p.name, nameBn: p.nameBn });
-  const missing = userIds.filter((id) => !out.has(id));
-  if (missing.length > 0) {
-    const users = await tx.user.findMany({
-      where: { id: { in: missing } },
-      select: { id: true, name: true, nameBn: true },
-    });
-    for (const u of users) out.set(u.id, { name: u.name, nameBn: u.nameBn });
-  }
   return out;
+}
+
+/** A staff member as shown to others: id plus the institute's name for them. */
+export function staffRef(
+  names: Map<string, { name: string; nameBn: string | null }>,
+  id: string,
+): PersonRef {
+  return { id, name: names.get(id)?.name ?? '', nameBn: names.get(id)?.nameBn ?? null };
 }
 
 /**
@@ -434,13 +435,8 @@ export class StaffService {
       where: { userId: { in: userIds }, role: { in: STAFF } },
       select: { userId: true, role: true, status: true, invitedAt: true, createdAt: true },
     });
+    // Only the institute's own profile: never the person's global row (decision #5).
     const profiles = await tx.staffProfile.findMany({ where: { userId: { in: userIds } } });
-    // Global rows are visible (RLS) only for ACTIVE/DISABLED members; used for staff added before
-    // staff profiles existed. Invited people are known here only by their profile.
-    const users = await tx.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, name: true, nameBn: true, phone: true },
-    });
     const teaching = await tx.sectionTeacher.findMany({
       where: {
         userId: { in: userIds },
@@ -463,9 +459,6 @@ export class StaffService {
       const mine = memberships.filter((m) => m.userId === id);
       if (mine.length === 0) return [];
       const profile = profiles.find((p) => p.userId === id);
-      const user = users.find((u) => u.id === id);
-      const who = profile ?? user;
-      if (!who) return [];
       const status = statusOf(mine, now);
       // A member's roles are their member rows (a pending extra role is not one yet).
       const member = status === 'ACTIVE' || status === 'DISABLED';
@@ -477,9 +470,9 @@ export class StaffService {
       return [
         {
           userId: id,
-          name: who.name,
-          nameBn: who.nameBn,
-          phone: who.phone,
+          name: profile?.name ?? '',
+          nameBn: profile?.nameBn ?? null,
+          phone: profile?.phone ?? '',
           roles: STAFF_ROLE_VALUES.filter((r) => roles.includes(r)),
           status,
           inviteExpiresAt:

@@ -21,7 +21,7 @@ import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import { TenantSmsService } from '../sms/tenant-sms.service.js';
 import { StudentAccess } from '../students/student-access.service.js';
-import { staffNames } from '../staff/staff.module.js';
+import { staffNames, staffRef } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
 import { AttendanceSettingsService } from './attendance-settings.service.js';
 import { AttendanceService } from './attendance.service.js';
@@ -96,14 +96,14 @@ export class AttendanceReportsService {
         sectionId: true,
         periodNo: true,
         submittedAt: true,
-        updatedBy: { select: { id: true, name: true, nameBn: true } },
+        updatedById: true,
         records: { select: { studentId: true, status: true } },
       },
     });
     const first = new Map<string, (typeof sessions)[number]>();
     for (const s of sessions) if (!first.has(s.sectionId)) first.set(s.sectionId, s);
     const updatedNames = await staffNames(this.db.tx, [
-      ...new Set([...first.values()].map((s) => s.updatedBy.id)),
+      ...new Set([...first.values()].map((s) => s.updatedById)),
     ]);
 
     const totals = emptyCounts();
@@ -137,7 +137,7 @@ export class AttendanceReportsService {
         register: {
           periodNo: s.periodNo,
           submittedAt: s.submittedAt.toISOString(),
-          updatedBy: { ...s.updatedBy, ...updatedNames.get(s.updatedBy.id) },
+          updatedBy: staffRef(updatedNames, s.updatedById),
           counts,
           percent: attendancePercent(counts, tenant.settings.leaveCountsAsAbsent),
           absent,
@@ -344,16 +344,16 @@ export class AttendanceReportsService {
   async staff(): Promise<AttendanceStaffMember[]> {
     const rows = await this.db.tx.membership.findMany({
       where: { status: 'ACTIVE', role: { in: ['OWNER', 'ADMIN', 'TEACHER'] } },
-      select: { role: true, user: { select: { id: true, name: true, nameBn: true } } },
+      select: { role: true, userId: true },
     });
     const rank = { OWNER: 0, ADMIN: 1, TEACHER: 2 } as const;
-    const names = await staffNames(this.db.tx, [...new Set(rows.map((r) => r.user.id))]);
+    const names = await staffNames(this.db.tx, [...new Set(rows.map((r) => r.userId))]);
     const byUser = new Map<string, AttendanceStaffMember>();
     for (const r of rows) {
       const role = r.role as AttendanceStaffMember['role'];
-      const seen = byUser.get(r.user.id);
+      const seen = byUser.get(r.userId);
       if (!seen || rank[role] < rank[seen.role])
-        byUser.set(r.user.id, { ...r.user, ...names.get(r.user.id), role });
+        byUser.set(r.userId, { ...staffRef(names, r.userId), role });
     }
     return [...byUser.values()].sort(
       (a, b) => rank[a.role] - rank[b.role] || a.name.localeCompare(b.name),
