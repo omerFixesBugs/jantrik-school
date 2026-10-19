@@ -28,19 +28,13 @@ Each entry: what needed deciding, the default taken (safe and reversible), and h
    - Default: Skipped and reported as "already exists"; the existing record is not updated.
    - To change: An "update existing" option later.
 10. **Import: formula cells in .xlsx.**
-
-- Default: The value Excel saved is used; formulas are never evaluated.
-- To change: Reject formula cells instead.
-
+    - Default: The value Excel saved is used; formulas are never evaluated.
+    - To change: Reject formula cells instead.
 11. **Student code year.**
-
-- Default: `{YEAR}` = the calendar year the enrolment's academic year starts in.
-
+    - Default: `{YEAR}` = the calendar year the enrolment's academic year starts in.
 12. **Default student code prefix before an admin sets one.**
-
-- Default: Uppercase initials of the tenant slug's words (`shapla-school` → `SS`), falling back to `STU`.
-- To change: Set it in student settings.
-
+    - Default: Uppercase initials of the tenant slug's words (`shapla-school` → `SS`), falling back to `STU`.
+    - To change: Set it in student settings.
 13. **Constraint violations that slip past a service's checks (races).**
     - Default: a global filter maps Prisma P2002 → 409 `DUPLICATE` and P2003 → 409 `REFERENCE_CONFLICT` (both were 500s before, in every module). No constraint names are returned.
     - To change: scope `PrismaErrorFilter` to the new controllers only.
@@ -54,10 +48,7 @@ Each entry: what needed deciding, the default taken (safe and reversible), and h
     - Default: left as is.
     - To change: version the cache key, or check membership status in `RolesGuard` against the request transaction.
 17. **Deactivated staff keep their section assignments** (restored on reactivation); they do not count when choosing a section's class teacher.
-18. **CI: the end-to-end step fails on GitHub (blocked, needs you).**
-    - It already failed on `main` at `5a9fcde` (attendance phase 3), before this run, and fails the same way on every branch push (all other steps pass). Locally every e2e test passes, also with `TZ=UTC CI=1`.
-    - The job logs and the uploaded `playwright-report` artifact need a GitHub login (no `gh` CLI here, and I did not read stored credentials). Likely suspects: Linux-only font metrics tripping the 320 px overflow checks, or a time-of-day dependency.
-    - To do: open the failed run's `playwright-report` artifact (Actions → run → Artifacts) and send me the failing test names.
+18. **CI: the end-to-end step failed on GitHub.** _Resolved after review:_ the logs (`gh run view --log-failed`) showed a test race (`layout.spec.ts` typed into the OTP tab while the password panel was still mounted) and a job hitting the 10-minute limit while waiting out OTP cooldowns. Fixed in the tests; e2e now runs as its own CI job (20-minute limit) next to the checks job.
 19. **Teachers can open any student's profile** (birth registration no., addresses, guardian phones), like the existing list, which already shows guardian phones to teachers.
     - Default: kept consistent with the list (OWNER/ADMIN/TEACHER read).
     - To change: limit teachers to their own sections (`section_teachers`) or hide the board-registration fields from them.
