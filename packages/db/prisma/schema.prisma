@@ -866,24 +866,26 @@ enum StudentImportStatus {
 /// when it finishes or after 7 days unfinished; results keep row numbers, statuses and messages.
 /// History: never deleted by the app.
 model StudentImport {
-  id          String              @id @default(uuid(7)) @db.Uuid
-  tenantId    String              @map("tenant_id") @db.Uuid
+  id                 String              @id @default(uuid(7)) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
   /// Plain FK: users are global. The service checks the uploader is OWNER/ADMIN here.
-  createdById String              @map("created_by_id") @db.Uuid
-  status      StudentImportStatus @default(UPLOADED)
-  fileName    String              @map("file_name")
-  headers     Json                @db.JsonB
+  createdById        String              @map("created_by_id") @db.Uuid
+  status             StudentImportStatus @default(UPLOADED)
+  fileName           String              @map("file_name")
+  headers            Json                @db.JsonB
   /// string[][] data rows; NULL once cleared.
-  rows        Json?               @db.JsonB
-  mapping     Json?               @db.JsonB
-  /// ImportRowResult[] (preview, then the outcome).
-  results     Json?               @db.JsonB
-  rowCount    Int                 @map("row_count")
-  processed   Int                 @default(0)
-  failure     String?
-  finishedAt  DateTime?           @map("finished_at") @db.Timestamptz(3)
-  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  rows               Json?               @db.JsonB
+  mapping            Json?               @db.JsonB
+  /// ImportRowResult[] (preview, then the outcome; kept as history, incl. who a possible duplicate looked like).
+  results            Json?               @db.JsonB
+  /// Rows flagged "possible duplicate" that the admin chose to import anyway (decision #22).
+  duplicateOverrides Int[]               @default([]) @map("duplicate_overrides")
+  rowCount           Int                 @map("row_count")
+  processed          Int                 @default(0)
+  failure            String?
+  finishedAt         DateTime?           @map("finished_at") @db.Timestamptz(3)
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   createdBy User   @relation(fields: [createdById], references: [id], onDelete: Restrict)

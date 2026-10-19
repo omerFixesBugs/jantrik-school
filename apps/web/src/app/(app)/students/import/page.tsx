@@ -9,6 +9,7 @@ import {
   formatDate,
   type ImportField,
   type ImportPreviewPage,
+  type ImportPreviewRow,
   type ImportRowError,
   type StudentImportSummary,
 } from '@jantrik/shared';
@@ -25,7 +26,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { SectionCard } from '@/components/form-kit';
+import { SectionCard, ToggleField } from '@/components/form-kit';
 import { PageGate } from '@/components/page-gate';
 import { ConfirmDialog } from '@/components/setup/setup-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -40,7 +41,7 @@ import { cn } from '@/lib/utils';
 
 /** Fields a row cannot do without (the mapping screen marks them). */
 const REQUIRED: ImportField[] = ['nameBn', 'classLevel', 'guardianPhone'];
-type Filter = 'all' | 'ok' | 'error' | 'exists';
+type Filter = 'all' | 'ok' | 'error' | 'exists' | 'duplicate';
 
 export default function ImportPage() {
   return (
@@ -88,6 +89,7 @@ function useImportError() {
         NO_CURRENT_YEAR: t('errorNoYear'),
         IMPORT_STARTED: t('errorStarted'),
         NOTHING_TO_IMPORT: t('errorNothing'),
+        NOT_IMPORTABLE: t('errorNotImportable'),
       };
       if (e.code && known[e.code]) return known[e.code]!;
       if (e.status === 413) return t('errorFileTooLarge');
@@ -319,6 +321,9 @@ function ImportView({ id, onRestart }: { id: string; onRestart: () => void }) {
       </Alert>
     );
   const busy = s!.status === 'QUEUED' || s!.status === 'RUNNING';
+  // OK rows plus the possible duplicates the admin chose to import anyway.
+  const toAdd = s!.counts.ok + s!.counts.duplicateImport;
+  const duplicatesSkipped = s!.counts.duplicate - s!.counts.duplicateImport;
   const finished = s!.status === 'DONE' || s!.status === 'FAILED';
   const percent = s!.rowCount ? Math.round((s!.processed / s!.rowCount) * 100) : 0;
 
@@ -357,6 +362,11 @@ function ImportView({ id, onRestart }: { id: string; onRestart: () => void }) {
               <Badge variant="secondary">
                 {t('countExists', { count: formatCount(s!.counts.exists, locale) })}
               </Badge>
+              {s!.counts.duplicate > 0 && (
+                <Badge variant="warning">
+                  {t('countDuplicate', { count: formatCount(s!.counts.duplicate, locale) })}
+                </Badge>
+              )}
               <Badge variant="destructive">
                 {t('countError', { count: formatCount(s!.counts.error, locale) })}
               </Badge>
@@ -401,11 +411,11 @@ function ImportView({ id, onRestart }: { id: string; onRestart: () => void }) {
           {s!.status === 'VALIDATED' && (
             <Button
               onClick={() => setConfirm(true)}
-              disabled={s!.counts.ok === 0}
+              disabled={toAdd === 0}
               data-testid="import-run"
             >
               <UploadIcon aria-hidden />
-              {t('run', { count: formatCount(s!.counts.ok, locale) })}
+              {t('run', { count: formatCount(toAdd, locale) })}
             </Button>
           )}
           {finished && (
@@ -448,11 +458,18 @@ function ImportView({ id, onRestart }: { id: string; onRestart: () => void }) {
       <ConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}
-        title={t('runTitle', { count: formatCount(s!.counts.ok, locale) })}
-        body={t('runBody', {
-          exists: formatCount(s!.counts.exists, locale),
-          errors: formatCount(s!.counts.error, locale),
-        })}
+        title={t('runTitle', { count: formatCount(toAdd, locale) })}
+        body={[
+          t('runBody', {
+            exists: formatCount(s!.counts.exists, locale),
+            errors: formatCount(s!.counts.error, locale),
+          }),
+          duplicatesSkipped > 0
+            ? t('runBodyDuplicates', { count: formatCount(duplicatesSkipped, locale) })
+            : '',
+        ]
+          .join(' ')
+          .trim()}
         confirmLabel={t('runConfirm')}
         destructive={false}
         pending={run.isPending}
@@ -601,7 +618,7 @@ function RowsCard({ id, summary }: { id: string; summary: StudentImportSummary }
   });
   const errorText = (e: ImportRowError) =>
     `${fieldLabel(e.field)}: ${t(`err_${e.code}`)}${e.value ? ` (${e.value})` : ''}`;
-  const filters: Filter[] = ['all', 'ok', 'error', 'exists'];
+  const filters: Filter[] = ['all', 'ok', 'error', 'exists', 'duplicate'];
   const pages = Math.ceil((rows.data?.total ?? 0) / 50);
   return (
     <SectionCard id="import-rows" title={t('rowsTitle')}>
@@ -643,10 +660,14 @@ function RowsCard({ id, summary }: { id: string; summary: StudentImportSummary }
                       ? 'destructive'
                       : r.status === 'OK' || r.status === 'IMPORTED'
                         ? 'success'
-                        : 'secondary'
+                        : r.status === 'DUPLICATE'
+                          ? 'warning'
+                          : 'secondary'
                   }
                 >
-                  {t(`row_${r.status}`)}
+                  {r.status === 'SKIPPED' && r.duplicateOf
+                    ? t('row_SKIPPED_DUPLICATE')
+                    : t(`row_${r.status}`)}
                 </Badge>
                 {r.studentCode && (
                   <span
@@ -666,6 +687,13 @@ function RowsCard({ id, summary }: { id: string; summary: StudentImportSummary }
                     </li>
                   ))}
                 </ul>
+              )}
+              {r.duplicateOf && (
+                <DuplicateOf
+                  importId={id}
+                  row={r}
+                  canChange={summary.status === 'VALIDATED' && r.status === 'DUPLICATE'}
+                />
               )}
               {r.notes && r.notes.length > 0 && (
                 <ul
@@ -717,5 +745,60 @@ function RowsCard({ id, summary }: { id: string; summary: StudentImportSummary }
         </div>
       )}
     </SectionCard>
+  );
+}
+
+/** A possible duplicate: who it looks like, and (while checking) "import anyway". */
+function DuplicateOf({
+  importId,
+  row,
+  canChange,
+}: {
+  importId: string;
+  row: ImportPreviewRow;
+  canChange: boolean;
+}) {
+  const t = useTranslations('import');
+  const locale = useLocale() as Locale;
+  const message = useImportError();
+  const { client, session } = useAuth();
+  const queryClient = useQueryClient();
+  // Shown at once; the saved choice comes back with the next rows page (undone on an error).
+  const [wanted, setWanted] = useState<boolean | null>(null);
+  const set = useMutation({
+    mutationFn: (include: boolean) =>
+      client.api<StudentImportSummary>(`/student-imports/${importId}/rows/${row.row}/duplicate`, {
+        method: 'PUT',
+        json: { import: include },
+      }),
+    // The rows list refetches when the summary's counts change.
+    onSuccess: (s) =>
+      queryClient.setQueryData(['student-import', session?.tenant?.id, importId], s),
+    onError: (e) => {
+      setWanted(null);
+      toast.error(message(e));
+    },
+  });
+  const d = row.duplicateOf!;
+  return (
+    <div className="flex flex-col gap-2 text-sm" data-testid="import-row-duplicate">
+      <p className="break-words">
+        {'row' in d
+          ? t('duplicateOfRow', { n: formatCount(d.row, locale) })
+          : t('duplicateOfStudent', { code: d.studentCode, name: d.name ?? '' })}
+      </p>
+      {canChange && (
+        <ToggleField
+          id={`import-anyway-${row.row}`}
+          checked={wanted ?? Boolean(row.importAnyway)}
+          onChange={(v) => {
+            setWanted(v);
+            set.mutate(v);
+          }}
+          label={t('importAnyway')}
+          hint={t('importAnywayHint')}
+        />
+      )}
+    </div>
   );
 }

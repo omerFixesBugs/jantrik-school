@@ -4,11 +4,17 @@ import {
   templateHeader,
   toCsv,
   type ImportPreviewPage,
+  type StudentProfile,
   type StudentImportSummary,
 } from '@jantrik/shared';
 import writeXlsxFile from 'write-excel-file/node';
 import { zipSync } from 'fflate';
 import { assertInflatedSize, assertZipSize } from '../src/imports/spreadsheet.js';
+import { StudentImportProcessor } from '../src/imports/imports.module.js';
+import {
+  RAW_IMPORT_TENANTS_KEY,
+  StudentImportService,
+} from '../src/imports/student-import.service.js';
 import {
   addMember,
   bearer,
@@ -409,6 +415,227 @@ describe('student import', () => {
       .expect(200);
     expect(report.text).toContain('The guardians on this phone changed after the check');
     expect(report.text).not.toContain('named after the student');
+  });
+  it('possible duplicates: same name, class and guardian phone as a student here or an earlier row; skipped unless imported anyway', async () => {
+    const shared = local();
+    const departed = local();
+    const twins = local();
+    const { yearId, c6 } = await withTenant(h.prisma, tenantId, async (tx) => ({
+      yearId: (await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } })).id,
+      c6: (await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_6' } })).id,
+    }));
+    const admitted = async (nameEn: string, phone: string, parent: string) =>
+      (
+        await http(h)
+          .post('/students')
+          .set(bearer(admin))
+          .send({
+            nameEn,
+            guardians: [
+              { phone: `+88${phone}`, nameEn: parent, relation: 'FATHER', isPrimary: true },
+            ],
+            enrolment: { academicYearId: yearId, classLevelId: c6 },
+          })
+          .expect(201)
+      ).body as StudentProfile;
+    const here = await admitted('Rafiul Hasan', shared, 'Hasan Ali');
+    const gone = await admitted('Old Student', departed, 'Old Parent');
+    await http(h).post(`/students/${gone.id}/deactivate`).set(bearer(admin)).expect(200);
+
+    const csv = toCsv([
+      ['Name', 'Class', 'Section', 'Mobile', 'Guardian name'],
+      ['RAFIUL  hasan', 'Class 6', 'ক', shared, 'Hasan Ali'], // 2: like the student here
+      ['Rafiul Hasan', 'Class 7', '', shared, 'Hasan Ali'], // 3: another class → fine
+      ['Rafiul Hasan', 'Class 6', 'ক', local(), 'Someone'], // 4: another phone → fine
+      ['Twin One', 'Class 6', 'ক', twins, 'Twin Parent'], // 5
+      ['twin one', 'Class 6', 'ক', twins, 'Twin Parent'], // 6: like row 5
+      ['Old Student', 'Class 6', 'ক', departed, 'Old Parent'], // 7: the lookalike left → fine
+    ]);
+    const up = (await upload(csv, 'dups.csv').expect(201)).body as StudentImportSummary;
+    expect(up.counts).toMatchObject({ ok: 4, duplicate: 2, duplicateImport: 0, error: 0 });
+    const page = async (filter = 'all') =>
+      (
+        await http(h)
+          .get(`/student-imports/${up.id}/rows`)
+          .query({ filter })
+          .set(bearer(admin))
+          .expect(200)
+      ).body as ImportPreviewPage;
+    expect((await page('duplicate')).rows).toMatchObject([
+      {
+        row: 2,
+        status: 'DUPLICATE',
+        importAnyway: false,
+        duplicateOf: { studentCode: here.studentCode, name: 'Rafiul Hasan' },
+      },
+      { row: 6, status: 'DUPLICATE', importAnyway: false, duplicateOf: { row: 5 } },
+    ]);
+
+    // Only admins of this institute, only while checking, only possible duplicates.
+    const override = (row: number, include: boolean, token = admin) =>
+      http(h)
+        .put(`/student-imports/${up.id}/rows/${row}/duplicate`)
+        .set(bearer(token))
+        .send({ import: include });
+    await override(6, true, teacher).expect(403);
+    await override(6, true, otherAdmin).expect(404);
+    expect((await override(3, true).expect(422)).body.code).toBe('NOT_A_DUPLICATE');
+    expect(
+      ((await override(6, true).expect(200)).body as StudentImportSummary).counts,
+    ).toMatchObject({ duplicateImport: 1 });
+    expect((await page('duplicate')).rows[1]).toMatchObject({ row: 6, importAnyway: true });
+    // A new mapping clears the choices.
+    const remapped = (
+      await http(h)
+        .put(`/student-imports/${up.id}/mapping`)
+        .set(bearer(admin))
+        .send({ mapping: up.mapping })
+        .expect(200)
+    ).body as StudentImportSummary;
+    expect(remapped.counts.duplicateImport).toBe(0);
+    await override(6, true).expect(200);
+
+    await http(h).post(`/student-imports/${up.id}/run`).set(bearer(admin)).expect(202);
+    expect((await waitDone(up.id)).counts).toMatchObject({ imported: 5, skipped: 1, error: 0 });
+    const after = await page();
+    expect(after.rows.find((r) => r.row === 2)).toMatchObject({
+      status: 'SKIPPED',
+      duplicateOf: { studentCode: here.studentCode },
+    });
+    expect(after.rows.find((r) => r.row === 6)).toMatchObject({ status: 'IMPORTED' });
+    expect((await page('duplicate')).rows.map((r) => r.row)).toEqual([2]);
+    await override(2, true).expect(409);
+    const report = await http(h)
+      .get(`/student-imports/${up.id}/report.csv`)
+      .query({ locale: 'en' })
+      .set(bearer(admin))
+      .expect(200);
+    expect(report.text).toContain('Skipped (possible duplicate)');
+    expect(report.text).toContain(`Same name, class and guardian phone as ${here.studentCode}`);
+    expect(report.text).toContain('Same name, class and guardian phone as row 5');
+  });
+
+  it('a duplicate imported anyway takes a seat: not possible when its section is full', async () => {
+    const phone = local();
+    await withTenant(h.prisma, tenantId, async (tx) => {
+      const year = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
+      const c6 = await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_6' } });
+      await tx.section.create({
+        data: { tenantId, academicYearId: year.id, classLevelId: c6.id, name: 'গ', capacity: 1 },
+      });
+    });
+    const csv = toCsv([
+      ['Name', 'Class', 'Section', 'Mobile', 'Guardian name'],
+      ['Seat Kid', 'Class 6', 'গ', phone, 'Seat Parent'],
+      ['Seat Kid', 'Class 6', 'গ', phone, 'Seat Parent'],
+    ]);
+    const up = (await upload(csv, 'seats.csv').expect(201)).body as StudentImportSummary;
+    expect(up.counts).toMatchObject({ ok: 1, duplicate: 1 });
+    const refused = await http(h)
+      .put(`/student-imports/${up.id}/rows/3/duplicate`)
+      .set(bearer(admin))
+      .send({ import: true })
+      .expect(422);
+    expect(refused.body).toMatchObject({
+      code: 'NOT_IMPORTABLE',
+      errors: [{ code: 'SECTION_FULL', field: 'section' }],
+    });
+    const now = (await http(h).get(`/student-imports/${up.id}`).set(bearer(admin)).expect(200))
+      .body as StudentImportSummary;
+    expect(now.counts).toMatchObject({ ok: 1, duplicate: 1, duplicateImport: 0, error: 0 });
+  });
+
+  it('daily sweep: clears raw rows past retention per institute, then forgets the institute', async () => {
+    const institute = async () => {
+      const t = (await createTenant(h)).id;
+      const a = (await otpLogin(h, (await addMember(h, t, { roles: ['ADMIN'] })).phone))
+        .accessToken;
+      return { t, a };
+    };
+    const one = await institute();
+    const two = await institute();
+    const csv = toCsv([
+      ['Name', 'Class', 'Mobile'],
+      ['A Student', 'Class 6', local()],
+    ]);
+    const make = async (token: string) =>
+      ((await upload(csv, 'raw.csv', token).expect(201)).body as StudentImportSummary).id;
+    const old = await make(one.a);
+    const stuck = await make(one.a);
+    const fresh = await make(one.a);
+    const other = await make(two.a);
+    const listed = async (t: string) => h.redis.zscore(RAW_IMPORT_TENANTS_KEY, t);
+    expect(await listed(one.t)).not.toBeNull();
+    expect(await listed(two.t)).not.toBeNull();
+    await withTenant(h.prisma, one.t, async (tx) => {
+      await tx.$executeRaw`UPDATE student_imports SET created_at = now() - interval '8 days' WHERE id = ${old}::uuid`;
+      await tx.$executeRaw`UPDATE student_imports SET status = 'RUNNING', updated_at = now() - interval '2 days' WHERE id = ${stuck}::uuid`;
+    });
+    const state = (t: string, id: string) =>
+      withTenant(h.prisma, t, (tx) =>
+        tx.studentImport.findUniqueOrThrow({
+          where: { id },
+          select: { status: true, failure: true, rows: true },
+        }),
+      );
+
+    await h.app.get(StudentImportProcessor).sweep();
+    for (const id of [old, stuck]) {
+      expect(await state(one.t, id)).toEqual({ status: 'FAILED', failure: 'EXPIRED', rows: null });
+    }
+    expect((await state(one.t, fresh)).rows).not.toBeNull();
+    expect((await state(two.t, other)).rows).not.toBeNull();
+    expect(await listed(one.t)).not.toBeNull(); // still holds a fresh one
+    expect(await listed(two.t)).not.toBeNull();
+
+    // An institute that uploads again after its score was read is not forgotten.
+    const before = (await listed(two.t))!;
+    await h.redis.zadd(RAW_IMPORT_TENANTS_KEY, Number(before) + 1, two.t);
+    await h.app.get(StudentImportService).forgetRawTenant(two.t, before);
+    expect(await listed(two.t)).not.toBeNull();
+
+    for (const [t, id] of [
+      [one.t, fresh],
+      [two.t, other],
+    ] as const) {
+      await withTenant(
+        h.prisma,
+        t,
+        (tx) =>
+          tx.$executeRaw`UPDATE student_imports SET created_at = now() - interval '8 days' WHERE id = ${id}::uuid`,
+      );
+    }
+    await h.app.get(StudentImportProcessor).sweep();
+    expect((await state(one.t, fresh)).rows).toBeNull();
+    expect((await state(two.t, other)).rows).toBeNull();
+    expect(await listed(one.t)).toBeNull();
+    expect(await listed(two.t)).toBeNull();
+  });
+
+  it('the same retention also applies lazily when an institute lists its imports', async () => {
+    const t = (await createTenant(h)).id;
+    const a = (await otpLogin(h, (await addMember(h, t, { roles: ['ADMIN'] })).phone)).accessToken;
+    const id = (
+      (
+        await upload(
+          toCsv([
+            ['Name', 'Class', 'Mobile'],
+            ['B Student', 'Class 6', local()],
+          ]),
+          'x.csv',
+          a,
+        ).expect(201)
+      ).body as StudentImportSummary
+    ).id;
+    await withTenant(
+      h.prisma,
+      t,
+      (tx) =>
+        tx.$executeRaw`UPDATE student_imports SET created_at = now() - interval '8 days' WHERE id = ${id}::uuid`,
+    );
+    const list = (await http(h).get('/student-imports').set(bearer(a)).expect(200))
+      .body as StudentImportSummary[];
+    expect(list.find((i) => i.id === id)).toMatchObject({ status: 'FAILED', failure: 'EXPIRED' });
   });
 });
 

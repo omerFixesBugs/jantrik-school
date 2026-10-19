@@ -112,6 +112,16 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   `fix_definer_function_privileges`. Tests check the _effective_ ACL with
   `acldefault()`, because a NULL `proacl` means "default", and the default grants PUBLIC.
 
+### Student imports
+
+- `student_imports` keeps an import as history (no DELETE grant). `rows` (the raw cells: phones,
+  birth registration numbers) is set to NULL when the import ends, fails or passes retention
+  (7 days unfinished, 1 day stuck); `results` (one entry per row) stays.
+- `duplicate_overrides` (`integer[]`, at most 5000): the "possible duplicate" rows the admin chose
+  to import anyway (decision #22). It is not part of `results`, because re-checking rewrites those.
+- Retention runs daily per institute (`expire-imports` job, institutes taken from the Redis set
+  `imports:raw-tenants`, no cross-tenant query) and lazily on upload and listing (decision #23).
+
 ### Memberships and staff invitations
 
 - `membership_status`: `ACTIVE`, `DISABLED`, `INVITED`, `DECLINED`.

@@ -7,6 +7,7 @@ import {
   Logger,
   Module,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Post,
   Put,
@@ -19,6 +20,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   IMPORT_MAX_BYTES,
+  duplicateOverrideSchema,
   importMappingSchema,
   importRowsQuerySchema,
   type ImportPreviewPage,
@@ -32,10 +34,16 @@ import { zodDto } from '../common/zod.js';
 import { StudentsModule } from '../students/students.module.js';
 import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
 import { templateCsv, templateXlsx } from './spreadsheet.js';
-import { IMPORT_QUEUE, StudentImportService, type ImportJob } from './student-import.service.js';
+import {
+  EXPIRE_IMPORTS_JOB,
+  IMPORT_QUEUE,
+  StudentImportService,
+  type ImportJob,
+} from './student-import.service.js';
 
 class MappingDto extends zodDto(importMappingSchema) {}
 class RowsQueryDto extends zodDto(importRowsQuerySchema) {}
+class DuplicateOverrideDto extends zodDto(duplicateOverrideSchema) {}
 class ReportQueryDto extends zodDto(z.object({ locale: z.enum(['bn', 'en']).default('bn') })) {}
 
 /** Rows per job transaction (each row is a full admission). */
@@ -109,6 +117,16 @@ export class StudentImportsController {
     return this.imports.rows(id, q.filter, q.page);
   }
 
+  /** A possible duplicate: import it anyway (or skip it again). */
+  @Put(':id/rows/:row/duplicate')
+  duplicate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('row', ParseIntPipe) row: number,
+    @Body() dto: DuplicateOverrideDto,
+  ): Promise<StudentImportSummary> {
+    return this.imports.setDuplicateOverride(id, row, dto.import);
+  }
+
   @Post(':id/run')
   @HttpCode(202)
   run(@Param('id', ParseUUIDPipe) id: string): Promise<StudentImportSummary> {
@@ -142,6 +160,8 @@ export class StudentImportProcessor extends WorkerHost {
   }
 
   async process(job: Job<ImportJob>): Promise<void> {
+    if (job.name === EXPIRE_IMPORTS_JOB) return this.sweep();
+    if (job.name !== 'run') return; // nothing else is queued here
     const { tenantId, importId } = job.data;
     try {
       const claim = await this.jobs.run(tenantId, () => this.imports.claim(importId));
@@ -159,6 +179,22 @@ export class StudentImportProcessor extends WorkerHost {
       // Not the message: database errors can contain row values (personal data).
       this.logger.error(`Import ${importId} failed: ${(error as Error).name}`);
       await this.jobs.run(tenantId, () => this.imports.fail(importId, 'ERROR'));
+    }
+  }
+
+  /**
+   * Daily (decision #23): raw rows past retention are cleared, one institute per transaction, and
+   * only for institutes that uploaded (no cross-tenant query). One failing institute does not stop
+   * the others; it is visited again the next day.
+   */
+  async sweep(): Promise<void> {
+    for (const { tenantId, score } of await this.imports.rawTenants()) {
+      try {
+        const left = await this.jobs.run(tenantId, () => this.imports.expireForSweep());
+        if (left === 0) await this.imports.forgetRawTenant(tenantId, score);
+      } catch (error) {
+        this.logger.error(`Import sweep failed for ${tenantId}: ${(error as Error).name}`);
+      }
     }
   }
 }

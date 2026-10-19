@@ -820,6 +820,16 @@
     "note_GUARDIAN_LINKED_BY_PHONE_ONLY": "no name; linked by phone only, please check",
     "note_GUARDIAN_NEW_SAME_PHONE": "name did not match; added as a new guardian with this phone",
     "note_GUARDIAN_NAME_GENERATED": "no name; named after the student, rename later",
-    "err_GUARDIAN_CHANGED": "the guardians on this phone changed after the check; check the file again"
+    "err_GUARDIAN_CHANGED": "the guardians on this phone changed after the check; check the file again",
+    "countDuplicate": "Possible duplicates: {count}",
+    "filter_duplicate": "Possible duplicates",
+    "row_DUPLICATE": "Possible duplicate",
+    "row_SKIPPED_DUPLICATE": "Skipped (possible duplicate)",
+    "duplicateOfStudent": "Same name, class and guardian phone as {code} {name}",
+    "duplicateOfRow": "Same name, class and guardian phone as row {n}",
+    "importAnyway": "Import anyway",
+    "importAnywayHint": "Turn on if this is a different student; otherwise the row is skipped.",
+    "runBodyDuplicates": "{count} possible duplicate rows are skipped too.",
+    "errorNotImportable": "This row can't be added (for example, its section is full); it stays skipped."
   }
 }

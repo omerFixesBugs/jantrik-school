@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { planImportGuardian, type ImportGuardian, type KnownGuardian } from './import.js';
+import {
+  lookalikeKeys,
+  planImportGuardian,
+  type ImportGuardian,
+  type KnownGuardian,
+} from './import.js';
 import { generatedGuardianName, normalizePersonName, sameName } from './people.js';
 import { guardianInputSchema } from './students.js';
 
@@ -118,5 +123,36 @@ describe('guardian input: pick an existing guardian or add a new one', () => {
     expect(
       guardianInputSchema.safeParse({ ...base, guardianId: id, createNew: true }).success,
     ).toBe(false);
+  });
+});
+
+describe('lookalikeKeys (possible duplicates, decision #22)', () => {
+  const base = {
+    nameBn: 'রাফি',
+    nameEn: 'Rafi Ahmed',
+    classLevelId: 'c6',
+    phones: ['+8801711000001'],
+  };
+  const shares = (a: string[], b: string[]) => a.some((k) => b.includes(k));
+  it('the same child: name (either script, any case or spacing), class and a guardian phone', () => {
+    expect(
+      shares(lookalikeKeys(base), lookalikeKeys({ ...base, nameBn: null, nameEn: 'RAFI  ahmed' })),
+    ).toBe(true);
+    expect(
+      shares(
+        lookalikeKeys(base),
+        lookalikeKeys({ ...base, nameEn: null, phones: ['+8801711000002', '+8801711000001'] }),
+      ),
+    ).toBe(true);
+  });
+  it('another class, another phone or another name is not', () => {
+    expect(shares(lookalikeKeys(base), lookalikeKeys({ ...base, classLevelId: 'c7' }))).toBe(false);
+    expect(
+      shares(lookalikeKeys(base), lookalikeKeys({ ...base, phones: ['+8801711000009'] })),
+    ).toBe(false);
+    expect(
+      shares(lookalikeKeys(base), lookalikeKeys({ ...base, nameBn: 'রিফাত', nameEn: 'Rifat' })),
+    ).toBe(false);
+    expect(lookalikeKeys({ ...base, nameBn: null, nameEn: null })).toEqual([]);
   });
 });

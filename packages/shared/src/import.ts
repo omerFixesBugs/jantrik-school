@@ -2,7 +2,13 @@ import { z } from 'zod';
 import type { IsoDate } from './dates.js';
 import { isoDateSchema } from './dates.js';
 import { toAsciiDigits } from './digits.js';
-import { generatedGuardianName, hasPersonName, sameName, type PersonNames } from './people.js';
+import {
+  generatedGuardianName,
+  hasPersonName,
+  normalizePersonName,
+  sameName,
+  type PersonNames,
+} from './people.js';
 import { normalizeBdPhone } from './phone.js';
 import {
   BLOOD_GROUPS,
@@ -585,7 +591,14 @@ export function findInFileDuplicates(rows: ParsedRow[]): Map<number, ImportRowEr
 
 export type ImportStatus = 'UPLOADED' | 'VALIDATED' | 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
 /** OK: will be created; EXISTS: same student_code or birth registration already here (skipped). */
-export type ImportRowStatus = 'OK' | 'ERROR' | 'EXISTS' | 'IMPORTED' | 'SKIPPED';
+/**
+ * DUPLICATE: a possible duplicate (same name and class, and a guardian phone, as a student here or
+ * an earlier row of the file); skipped unless the admin chooses to import it anyway (#22).
+ */
+export type ImportRowStatus = 'OK' | 'ERROR' | 'EXISTS' | 'DUPLICATE' | 'IMPORTED' | 'SKIPPED';
+
+/** What a DUPLICATE row looks like: a student here, or an earlier row of the same file. */
+export type ImportDuplicateOf = { studentCode: string; name: string | null } | { row: number };
 
 export interface ImportRowResult {
   /** 1-based row number in the file (the header is row 1). */
@@ -598,6 +611,22 @@ export interface ImportRowResult {
   name?: string;
   /** How the row's guardians are (or were) linked, for the admin to check. */
   notes?: ImportRowNote[];
+  /** DUPLICATE (and SKIPPED because of it): who the row looks like. */
+  duplicateOf?: ImportDuplicateOf;
+}
+
+/**
+ * Keys under which two students look like the same child: class, a name (Bangla or English,
+ * normalized) and a guardian phone. Rows (or students) sharing a key are possible duplicates.
+ */
+export function lookalikeKeys(s: {
+  nameBn: string | null;
+  nameEn: string | null;
+  classLevelId: string;
+  phones: string[];
+}): string[] {
+  const names = [...new Set([s.nameBn, s.nameEn].map(normalizePersonName).filter(Boolean))];
+  return names.flatMap((n) => s.phones.map((p) => `${s.classLevelId}|${n}|${p}`));
 }
 
 export type ImportRowNoteCode =
@@ -675,7 +704,16 @@ export interface StudentImportSummary {
   headers: string[];
   mapping: Record<ImportField, number | null>;
   rowCount: number;
-  counts: { ok: number; error: number; exists: number; imported: number; skipped: number };
+  counts: {
+    ok: number;
+    error: number;
+    exists: number;
+    /** Possible duplicates, and how many of them the admin chose to import anyway. */
+    duplicate: number;
+    duplicateImport: number;
+    imported: number;
+    skipped: number;
+  };
   /** Rows done while RUNNING. */
   processed: number;
   createdAt: string;
@@ -687,6 +725,8 @@ export interface StudentImportSummary {
 export interface ImportPreviewRow extends ImportRowResult {
   /** The mapped cells (field → text), for showing the row. */
   values: Partial<Record<ImportField, string>>;
+  /** DUPLICATE: the admin chose to import it anyway. */
+  importAnyway?: boolean;
 }
 
 export interface ImportPreviewPage {
@@ -695,6 +735,9 @@ export interface ImportPreviewPage {
 }
 
 export const importRowsQuerySchema = z.object({
-  filter: z.enum(['all', 'ok', 'error', 'exists']).default('all'),
+  filter: z.enum(['all', 'ok', 'error', 'exists', 'duplicate']).default('all'),
   page: z.coerce.number().int().min(0).max(1000).default(0),
 });
+
+/** PUT /student-imports/:id/rows/:row/duplicate: import a possible duplicate anyway (or not). */
+export const duplicateOverrideSchema = z.object({ import: z.boolean() });

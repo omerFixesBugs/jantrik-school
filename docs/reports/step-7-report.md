@@ -110,7 +110,7 @@ see decision #18: the `playwright-report` artifact of a failed run will show whi
 ## Skipped or not done
 
 - Nothing in the brief was skipped. Photo upload, fees, bKash and deployment were out of scope.
-- No scheduled job clears stale import data; it is cleared lazily (decision #23).
+- Stale import data is cleared by a daily job and lazily (decision #23, changed after review).
 - Teachers can read any student's profile, as the list already allows (decision #19).
 
 ## Things to know

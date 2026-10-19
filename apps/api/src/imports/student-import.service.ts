@@ -1,5 +1,11 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  HttpException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  type OnModuleInit,
+} from '@nestjs/common';
 import { Prisma } from '@jantrik/db';
 import {
   IMPORT_FIELDS,
@@ -7,9 +13,11 @@ import {
   detectMapping,
   findInFileDuplicates,
   formatBdPhone,
+  lookalikeKeys,
   parseImportRow,
   planImportGuardian,
   toCsv,
+  type ImportDuplicateOf,
   type ImportField,
   type ImportGuardian,
   type ImportLookups,
@@ -23,9 +31,11 @@ import {
   type StudentImportSummary,
 } from '@jantrik/shared';
 import type { Queue } from 'bullmq';
+import type { Redis } from 'ioredis';
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
+import { REDIS } from '../redis/redis.constants.js';
 import { StudentAdminService } from '../students/student-admin.service.js';
 import { Db } from '../tenancy/db.service.js';
 import { parseUpload } from './spreadsheet.js';
@@ -38,6 +48,15 @@ export interface ImportJob {
 
 const PAGE_SIZE = 50;
 const RETENTION_DAYS = 7;
+export const EXPIRE_IMPORTS_JOB = 'expire-imports';
+/**
+ * Institutes that may hold raw import rows (sorted set, score = last upload, ms). The daily sweep
+ * visits only these, one institute per transaction: no cross-tenant query (decision #23).
+ */
+export const RAW_IMPORT_TENANTS_KEY = 'imports:raw-tenants';
+/** Forget an institute only if it did not upload again since its score was read. */
+const FORGET_IF_UNCHANGED = `if redis.call('ZSCORE', KEYS[1], ARGV[1]) == ARGV[2] then
+  return redis.call('ZREM', KEYS[1], ARGV[1]) end return 0`;
 
 type Row = Prisma.StudentImportGetPayload<object>;
 
@@ -46,14 +65,24 @@ type Row = Prisma.StudentImportGetPayload<object>;
  * Everything here runs in the request (or job) RLS transaction for one tenant.
  */
 @Injectable()
-export class StudentImportService {
+export class StudentImportService implements OnModuleInit {
   constructor(
     private readonly db: Db,
     private readonly context: RequestContext,
     private readonly audit: AuditService,
     private readonly students: StudentAdminService,
     @InjectQueue(IMPORT_QUEUE) private readonly queue: Queue<ImportJob>,
+    @Inject(REDIS) private readonly redis: Redis,
   ) {}
+
+  /** The daily sweep of raw rows past retention (one scheduler for all API instances). */
+  async onModuleInit(): Promise<void> {
+    await this.queue.upsertJobScheduler(
+      'expire-imports',
+      { pattern: '20 0 * * *', tz: 'Asia/Dhaka' },
+      { name: EXPIRE_IMPORTS_JOB, opts: { removeOnComplete: true, removeOnFail: 50 } },
+    );
+  }
 
   private get me() {
     const p = this.context.requirePrincipal();
@@ -68,6 +97,9 @@ export class StudentImportService {
     if (!file) throw apiError(422, 'FILE_MISSING', 'Choose a file');
     const sheet = await parseUpload(file.buffer, file.originalname);
     const tx = this.db.tx;
+    // Before the rows are stored (so they are never left out of the daily sweep), and again
+    // after commit (see FORGET_IF_UNCHANGED).
+    await this.redis.zadd(RAW_IMPORT_TENANTS_KEY, Date.now(), this.me.tenantId);
     await this.clearExpired();
     const mapping = detectMapping(sheet.headers);
     const row = await tx.studentImport.create({
@@ -89,12 +121,37 @@ export class StudentImportService {
       action: 'CREATE',
       newValues: { fileName: row.fileName, rowCount: row.rowCount },
     });
+    const tenantId = this.me.tenantId;
+    await this.context.afterCommit(async () => {
+      await this.redis.zadd(RAW_IMPORT_TENANTS_KEY, Date.now(), tenantId);
+    });
     return this.validate(row.id, mapping);
+  }
+
+  // ─────────────────────────── Retention sweep (job side) ───────────────────────────
+
+  /** Institutes that may hold raw rows, with the score read now (see FORGET_IF_UNCHANGED). */
+  async rawTenants(): Promise<{ tenantId: string; score: string }[]> {
+    const flat = await this.redis.zrange(RAW_IMPORT_TENANTS_KEY, 0, -1, 'WITHSCORES');
+    const out: { tenantId: string; score: string }[] = [];
+    for (let i = 0; i < flat.length; i += 2) out.push({ tenantId: flat[i]!, score: flat[i + 1]! });
+    return out;
+  }
+
+  async forgetRawTenant(tenantId: string, score: string): Promise<void> {
+    await this.redis.eval(FORGET_IF_UNCHANGED, 1, RAW_IMPORT_TENANTS_KEY, tenantId, score);
+  }
+
+  /** In the job's tenant transaction: clear what is past retention; how many still hold rows. */
+  async expireForSweep(): Promise<number> {
+    await this.clearExpired();
+    return this.db.tx.studentImport.count({ where: { rows: { not: Prisma.DbNull } } });
   }
 
   /**
    * Raw rows hold personal data: cleared for imports left unfinished for a week, and for runs
-   * stuck for a day (a lost job). Runs on every upload and listing (lazily, per tenant).
+   * stuck for a day (a lost job). Runs daily per institute (the sweep job), and also on every
+   * upload and listing.
    */
   private async clearExpired(): Promise<void> {
     const tx = this.db.tx;
@@ -146,9 +203,59 @@ export class StudentImportService {
         mapping: mapping as Prisma.InputJsonValue,
         results: results as unknown as Prisma.InputJsonValue,
         status: 'VALIDATED',
+        // Another mapping can change what the rows mean: earlier choices do not carry over.
+        duplicateOverrides: [],
       },
     });
     if (count === 0) throw apiError(409, 'IMPORT_STARTED', 'This import has already started');
+    return this.summary(id);
+  }
+
+  /**
+   * Import a possible duplicate anyway (or not). The rows are checked again, since an imported
+   * duplicate's new guardians change what the rows after it link to. Audited.
+   */
+  async setDuplicateOverride(
+    id: string,
+    row: number,
+    include: boolean,
+  ): Promise<StudentImportSummary> {
+    const tx = this.db.tx;
+    await tx.$queryRaw`SELECT id FROM student_imports WHERE id = ${id}::uuid FOR UPDATE`;
+    const imp = await this.load(id);
+    if (imp.status !== 'VALIDATED') {
+      throw apiError(409, 'IMPORT_STARTED', 'This import has already started');
+    }
+    const results = (imp.results as ImportRowResult[] | null) ?? [];
+    if (results.find((r) => r.row === row)?.status !== 'DUPLICATE') {
+      throw apiError(422, 'NOT_A_DUPLICATE', 'This row is not a possible duplicate');
+    }
+    const overrides = new Set(imp.duplicateOverrides);
+    if (include) overrides.add(row);
+    else overrides.delete(row);
+    const fresh = await this.check(
+      (imp.rows as string[][] | null) ?? [],
+      (imp.mapping as ImportMapping | null) ?? {},
+      overrides,
+    );
+    const status = new Map(fresh.map((r) => [r.row, r.status]));
+    if (include && status.get(row) !== 'DUPLICATE') {
+      // E.g. its section is full: nothing is saved, the row stays a skipped duplicate.
+      throw apiError(422, 'NOT_IMPORTABLE', 'This row cannot be imported', {
+        errors: fresh.find((r) => r.row === row)?.errors ?? [],
+      });
+    }
+    const kept = [...overrides].filter((n) => status.get(n) === 'DUPLICATE').sort((a, b) => a - b);
+    await tx.studentImport.update({
+      where: { id },
+      data: { duplicateOverrides: kept, results: fresh as unknown as Prisma.InputJsonValue },
+    });
+    await this.audit.record({
+      entity: 'student_import',
+      entityId: id,
+      action: 'UPDATE',
+      newValues: { duplicateRow: row, importAnyway: kept.includes(row) },
+    });
     return this.summary(id);
   }
 
@@ -175,8 +282,15 @@ export class StudentImportService {
     return { classLevels, sections, studyGroups, yearId: year.id, yearStart: year.startDate };
   }
 
-  /** Per row: parse, in-file duplicates, then what is already in the database. */
-  private async check(rows: string[][], mapping: ImportMapping): Promise<ImportRowResult[]> {
+  /**
+   * Per row: parse, in-file duplicates, then what is already in the database. `overrides`: the
+   * possible duplicates the admin imports anyway (their new guardians count for later rows).
+   */
+  private async check(
+    rows: string[][],
+    mapping: ImportMapping,
+    overrides: ReadonlySet<number> = new Set(),
+  ): Promise<ImportRowResult[]> {
     const tx = this.db.tx;
     const lookups = await this.lookups();
     const parsed = rows.map((cells) => parseImportRow(cells, mapping, lookups));
@@ -200,14 +314,46 @@ export class StudentImportService {
       select: { sectionId: true, roll: true },
     });
     const takenRolls = new Set(taken.map((t) => `${t.sectionId}:${t.roll}`));
+    const phones = [...new Set(students.flatMap((s) => s.guardians.map((g) => g.phone)))];
     // Guardians with the file's phones (oldest first); rows add the ones they will create.
     const known: KnownGuardian[] = await tx.guardian.findMany({
-      where: {
-        phone: { in: [...new Set(students.flatMap((s) => s.guardians.map((g) => g.phone)))] },
-      },
+      where: { phone: { in: phones } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: { id: true, phone: true, nameBn: true, nameEn: true },
     });
+    // Possible duplicates (#22): active students of this year sharing a guardian phone with the
+    // file, keyed by class + name + phone; rows of the file are added as they are checked.
+    const lookalikes = new Map<string, ImportDuplicateOf>();
+    const lookalikeStudents = await tx.student.findMany({
+      where: {
+        deletedAt: null,
+        status: 'ACTIVE',
+        enrolments: { some: { academicYearId: lookups.yearId } },
+        guardians: { some: { guardian: { phone: { in: phones } } } },
+      },
+      select: {
+        studentCode: true,
+        nameBn: true,
+        nameEn: true,
+        enrolments: { where: { academicYearId: lookups.yearId }, select: { classLevelId: true } },
+        guardians: { select: { guardian: { select: { phone: true } } } },
+      },
+    });
+    for (const st of lookalikeStudents) {
+      for (const e of st.enrolments) {
+        const keys = lookalikeKeys({
+          nameBn: st.nameBn,
+          nameEn: st.nameEn,
+          classLevelId: e.classLevelId,
+          phones: st.guardians.map((g) => g.guardian.phone),
+        });
+        for (const k of keys) {
+          if (!lookalikes.has(k)) {
+            lookalikes.set(k, { studentCode: st.studentCode, name: st.nameBn ?? st.nameEn });
+          }
+        }
+      }
+    }
     const capacity = new Map(
       (
         await tx.section.findMany({
@@ -248,21 +394,39 @@ export class StudentImportService {
       if (s.sectionId && s.roll !== null && takenRolls.has(`${s.sectionId}:${s.roll}`)) {
         errors.push({ code: 'ROLL_TAKEN', field: 'roll', value: String(s.roll) });
       }
-      if (errors.length === 0 && s.sectionId) {
+      if (errors.length > 0) return { row, status: 'ERROR', errors, ...(name ? { name } : {}) };
+      const keys = lookalikeKeys({
+        nameBn: s.nameBn,
+        nameEn: s.nameEn,
+        classLevelId: s.classLevelId,
+        phones: s.guardians.map((g) => g.phone),
+      });
+      const duplicateOf = keys.map((k) => lookalikes.get(k)).find(Boolean);
+      // A possible duplicate is skipped (takes no seat, adds no guardian) unless imported anyway.
+      const importing = !duplicateOf || overrides.has(row);
+      if (importing && s.sectionId) {
         const c = capacity.get(s.sectionId);
         if (c) {
-          if (c.free <= 0) errors.push({ code: 'SECTION_FULL', field: 'section' });
-          else c.free--;
+          if (c.free <= 0) {
+            return {
+              row,
+              status: 'ERROR',
+              errors: [{ code: 'SECTION_FULL', field: 'section' }],
+              ...(name ? { name } : {}),
+            };
+          }
+          c.free--;
         }
       }
-      if (errors.length > 0) return { row, status: 'ERROR', errors, ...(name ? { name } : {}) };
-      known.push(...created); // later rows of this file link to the guardians this one adds
+      for (const k of keys) if (!lookalikes.has(k)) lookalikes.set(k, { row });
+      if (importing) known.push(...created); // later rows link to the guardians this one adds
       return {
         row,
-        status: 'OK',
+        status: duplicateOf ? 'DUPLICATE' : 'OK',
         errors: [],
         ...(name ? { name } : {}),
         ...(notes.length > 0 ? { notes } : {}),
+        ...(duplicateOf ? { duplicateOf } : {}),
       };
     });
   }
@@ -284,13 +448,15 @@ export class StudentImportService {
 
   async rows(
     id: string,
-    filter: 'all' | 'ok' | 'error' | 'exists',
+    filter: 'all' | 'ok' | 'error' | 'exists' | 'duplicate',
     page: number,
   ): Promise<ImportPreviewPage> {
     const imp = await this.load(id);
     const results = (imp.results as ImportRowResult[] | null) ?? [];
     const cells = (imp.rows as string[][] | null) ?? [];
     const mapping = (imp.mapping as ImportMapping | null) ?? {};
+    const overrides = new Set(imp.duplicateOverrides);
+    const skipped = (r: ImportRowResult) => r.status === 'SKIPPED';
     const wanted = results.filter((r) =>
       filter === 'all'
         ? true
@@ -298,13 +464,16 @@ export class StudentImportService {
           ? r.status === 'OK' || r.status === 'IMPORTED'
           : filter === 'error'
             ? r.status === 'ERROR'
-            : r.status === 'EXISTS' || r.status === 'SKIPPED',
+            : filter === 'duplicate'
+              ? r.status === 'DUPLICATE' || (skipped(r) && Boolean(r.duplicateOf))
+              : r.status === 'EXISTS' || (skipped(r) && !r.duplicateOf),
     );
     const slice = wanted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
     return {
       total: wanted.length,
       rows: slice.map((r) => ({
         ...r,
+        ...(r.status === 'DUPLICATE' ? { importAnyway: overrides.has(r.row) } : {}),
         values: Object.fromEntries(
           IMPORT_FIELDS.flatMap((f) => {
             const col = mapping[f];
@@ -329,7 +498,10 @@ export class StudentImportService {
     const tx = this.db.tx;
     const imp = await this.load(id);
     const results = (imp.results as ImportRowResult[] | null) ?? [];
-    if (!results.some((r) => r.status === 'OK'))
+    const overrides = new Set(imp.duplicateOverrides);
+    if (
+      !results.some((r) => r.status === 'OK' || (r.status === 'DUPLICATE' && overrides.has(r.row)))
+    )
       throw apiError(422, 'NOTHING_TO_IMPORT', 'No rows to import');
     const { count } = await tx.studentImport.updateMany({
       where: { id, status: 'VALIDATED' },
@@ -417,10 +589,16 @@ export class StudentImportService {
     const results = [...((imp.results as ImportRowResult[] | null) ?? [])];
     const mapping = (imp.mapping as ImportMapping | null) ?? {};
     const lookups = await this.lookups();
+    const overrides = new Set(imp.duplicateOverrides);
     for (let i = from; i < Math.min(to, rows.length); i++) {
       const found = results[i];
-      if (!found || found.status !== 'OK') {
+      const importAnyway = found?.status === 'DUPLICATE' && overrides.has(found.row);
+      if (!found || (found.status !== 'OK' && !importAnyway)) {
         if (found && found.status === 'EXISTS') results[i] = { ...found, status: 'SKIPPED' };
+        if (found && found.status === 'DUPLICATE') {
+          const { notes: _unused, ...rest } = found; // not imported: no guardian notes
+          results[i] = { ...rest, status: 'SKIPPED' };
+        }
         continue;
       }
       // The preview's notes say what will happen; a row that is not imported keeps none.
@@ -547,11 +725,16 @@ export class StudentImportService {
         : ['Row', 'Result', 'Student ID', 'Name', 'Problems', 'Notes'];
     const lines = results.map((r) => [
       r.row,
-      STATUS_TEXT[locale][r.status],
+      r.status === 'SKIPPED' && r.duplicateOf
+        ? SKIPPED_DUPLICATE_TEXT[locale]
+        : STATUS_TEXT[locale][r.status],
       r.studentCode ?? '',
       r.name ?? '',
       r.errors.map((e) => errorText(e, locale)).join('; '),
-      (r.notes ?? []).map((n) => noteText(n, locale)).join('; '),
+      [
+        ...(r.duplicateOf ? [duplicateText(r.duplicateOf, locale)] : []),
+        ...(r.notes ?? []).map((n) => noteText(n, locale)),
+      ].join('; '),
     ]);
     const stamp = imp.createdAt.toISOString().slice(0, 10);
     return { filename: `student-import-${stamp}.csv`, csv: toCsv([head, ...lines]) };
@@ -561,6 +744,7 @@ export class StudentImportService {
 function toSummary(r: Row): StudentImportSummary {
   const results = (r.results as ImportRowResult[] | null) ?? [];
   const count = (s: ImportRowResult['status']) => results.filter((x) => x.status === s).length;
+  const overrides = new Set(r.duplicateOverrides);
   const mapping =
     (r.mapping as Record<ImportField, number | null> | null) ??
     detectMapping(r.headers as string[]);
@@ -578,6 +762,9 @@ function toSummary(r: Row): StudentImportSummary {
       ok: count('OK'),
       error: count('ERROR'),
       exists: count('EXISTS'),
+      duplicate: count('DUPLICATE'),
+      duplicateImport: results.filter((x) => x.status === 'DUPLICATE' && overrides.has(x.row))
+        .length,
       imported: count('IMPORTED'),
       skipped: count('SKIPPED'),
     },
@@ -653,6 +840,7 @@ const STATUS_TEXT: Record<'bn' | 'en', Record<ImportRowResult['status'], string>
     OK: 'ঠিক আছে',
     ERROR: 'ত্রুটি',
     EXISTS: 'আগে থেকেই আছে',
+    DUPLICATE: 'সম্ভাব্য ডুপ্লিকেট',
     IMPORTED: 'যোগ হয়েছে',
     SKIPPED: 'বাদ (আগে থেকেই আছে)',
   },
@@ -660,6 +848,7 @@ const STATUS_TEXT: Record<'bn' | 'en', Record<ImportRowResult['status'], string>
     OK: 'OK',
     ERROR: 'Error',
     EXISTS: 'Already exists',
+    DUPLICATE: 'Possible duplicate',
     IMPORTED: 'Imported',
     SKIPPED: 'Skipped (already exists)',
   },
@@ -727,6 +916,23 @@ const NOTE_TEXT: Record<ImportRowNote['code'], { bn: string; en: string }> = {
     en: 'no name; named after the student, rename later',
   },
 };
+
+const SKIPPED_DUPLICATE_TEXT = {
+  bn: 'বাদ (সম্ভাব্য ডুপ্লিকেট)',
+  en: 'Skipped (possible duplicate)',
+};
+
+function duplicateText(d: ImportDuplicateOf, locale: 'bn' | 'en'): string {
+  if ('row' in d) {
+    return locale === 'bn'
+      ? `ফাইলের ${d.row} নম্বর সারির মতো একই নাম, শ্রেণি ও অভিভাবকের নম্বর`
+      : `Same name, class and guardian phone as row ${d.row}`;
+  }
+  const who = d.name ? `${d.studentCode} (${d.name})` : d.studentCode;
+  return locale === 'bn'
+    ? `${who}-এর মতো একই নাম, শ্রেণি ও অভিভাবকের নম্বর`
+    : `Same name, class and guardian phone as ${who}`;
+}
 
 function noteText(n: ImportRowNote, locale: 'bn' | 'en'): string {
   const who =

@@ -53,4 +53,22 @@ describe('student_imports', () => {
       ),
     ).rejects.toThrow();
   });
+
+  it('duplicate overrides start empty and are bounded (decision #22)', async () => {
+    const row = await withTenant(app, a, (tx) =>
+      tx.studentImport.findUniqueOrThrow({ where: { id: importId } }),
+    );
+    expect(row.duplicateOverrides).toEqual([]);
+    await withTenant(app, a, (tx) =>
+      tx.studentImport.update({ where: { id: importId }, data: { duplicateOverrides: [2, 5] } }),
+    );
+    await expect(
+      withTenant(app, a, (tx) =>
+        tx.studentImport.update({
+          where: { id: importId },
+          data: { duplicateOverrides: Array.from({ length: 5001 }, (_, i) => i + 2) },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
 });

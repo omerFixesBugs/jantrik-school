@@ -54,3 +54,45 @@ test('import a CSV: auto-matched columns, preview with errors, run, result', asy
   await page.getByRole('searchbox').fill('Import One');
   await expect(page.getByTestId('students-cards')).toContainText('ইমপোর্ট এক');
 });
+
+test('a possible duplicate in the file: flagged, skipped by default, imported anyway', async ({
+  page,
+}) => {
+  const csv = toCsv([
+    ['nameBn', 'nameEn', 'classLevel', 'guardianPhone', 'guardianNameBn'].map((f) =>
+      templateHeader(f as Parameters<typeof templateHeader>[0]),
+    ),
+    ['জমজ এক', 'Twin Alpha', 'Class 8', '01999000011', 'জমজের বাবা'],
+    ['জমজ এক', 'Twin Alpha', 'অষ্টম শ্রেণি', '01999000011', 'জমজের বাবা'],
+  ]);
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.goto('/students/import');
+  await page.getByTestId('import-file').setInputFiles({
+    name: 'twins.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csv),
+  });
+  await page.getByTestId('import-upload-button').tap();
+  const counts = page.getByTestId('import-counts');
+  await expect(counts).toContainText('যোগ হবে: ১');
+  await expect(counts).toContainText('সম্ভাব্য ডুপ্লিকেট: ১');
+
+  await page.getByRole('tab', { name: 'সম্ভাব্য ডুপ্লিকেট' }).tap();
+  const row = page.getByTestId('import-row').first();
+  await expect(row).toContainText('সারি ৩');
+  await expect(row.getByTestId('import-row-duplicate')).toContainText(
+    'ফাইলের ২ নম্বর সারির মতো একই নাম, শ্রেণি ও অভিভাবকের নম্বর',
+  );
+  await expect(row.getByTestId('import-row-notes')).toContainText(
+    'অভিভাবক ১: আগের অভিভাবকের সাথে যুক্ত হবে',
+  );
+  await expectClean(page, 'import duplicates');
+  await row.getByRole('switch', { name: 'তবুও যোগ করুন' }).check();
+  await expect(page.getByTestId('import-run')).toHaveText(/২ জন শিক্ষার্থী যোগ করুন/);
+
+  await page.getByTestId('import-run').tap();
+  await page.getByTestId('confirm-dialog').getByRole('button', { name: 'হ্যাঁ, যোগ করুন' }).tap();
+  await expect(page.getByTestId('import-done')).toBeVisible({ timeout: 20_000 });
+  await expect(counts).toContainText('যোগ হয়েছে: ২');
+});
