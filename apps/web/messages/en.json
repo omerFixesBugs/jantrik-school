@@ -330,7 +330,8 @@
     "calendarCounts": "Present {present}, absent {absent}, late {late}, leave {leave}",
     "future": "Coming day",
     "noRecord": "No attendance",
-    "weekdays": "Sat,Sun,Mon,Tue,Wed,Thu,Fri"
+    "weekdays": "Sat,Sun,Mon,Tue,Wed,Thu,Fri",
+    "callGuardian": "Call {name}’s guardian"
   },
   "attendanceSettings": {
     "title": "Attendance settings",
@@ -638,7 +639,8 @@
     "errorGuardianRequired": "A student needs at least one guardian.",
     "errorDeactivated": "This student is deactivated.",
     "errorNotEnrolled": "Not enrolled in the current year.",
-    "errorCheckForm": "Fix the fields marked in red."
+    "errorCheckForm": "Fix the fields marked in red.",
+    "basicAccess": "Date of birth, birth registration, addresses and guardian details are visible only to admins and the teachers of this {section}."
   },
   "enums": {
     "gender_MALE": "Male",

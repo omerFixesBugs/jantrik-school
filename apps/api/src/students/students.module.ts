@@ -35,6 +35,7 @@ import { zodDto } from '../common/zod.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
 import { StudentAdminService } from './student-admin.service.js';
+import { StudentAccess } from './student-access.service.js';
 import { StudentCodesService } from './student-codes.service.js';
 
 export class StudentsQueryDto extends zodDto(studentsQuerySchema) {}
@@ -58,10 +59,19 @@ function phoneDigits(q: string): string | null {
 
 @Injectable()
 export class StudentsService {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly access: StudentAccess,
+  ) {}
 
+  /**
+   * Everyone who may list students sees the basics; the primary guardian (name + phone) only
+   * where the caller may see the full record (StudentAccess). Searching by a guardian's phone is
+   * for OWNER/ADMIN only (it would tell a teacher whose guardian a number is).
+   */
   async list(query: StudentsQueryDto): Promise<StudentsPage> {
     const tx = this.db.tx;
+    const scope = await this.access.scope();
     const year = await tx.academicYear.findFirst({
       where: { isCurrent: true },
       select: { id: true },
@@ -72,7 +82,10 @@ export class StudentsService {
 
     let ids: string[] | undefined;
     if (query.q) {
-      ids = await searchStudentIds(tx, { term: query.q, phone: phoneDigits(query.q) });
+      ids = await searchStudentIds(tx, {
+        term: query.q,
+        phone: scope.full ? phoneDigits(query.q) : null,
+      });
       if (ids.length === 0) return empty;
     }
 
@@ -128,7 +141,9 @@ export class StudentsService {
     const items: StudentListItem[] = page.map(({ enrolments, guardians, ...s }) => ({
       ...s,
       enrolment: enrolments[0] ?? null,
-      primaryGuardian: guardians[0]?.guardian ?? null,
+      primaryGuardian: StudentAccess.sees(scope, enrolments[0]?.section?.id)
+        ? (guardians[0]?.guardian ?? null)
+        : null,
     }));
     return {
       items,
@@ -202,7 +217,7 @@ export class StudentsController {
 
   @Get(':id')
   profile(@Id() id: string): Promise<StudentProfile> {
-    return this.admin.profile(id);
+    return this.admin.view(id);
   }
 
   @Patch(':id')
@@ -259,7 +274,13 @@ export class StudentsController {
 
 @Module({
   controllers: [StudentsController],
-  providers: [StudentsService, StudentAdminService, StudentCodesService, GuardianLinker],
-  exports: [StudentAdminService, StudentCodesService, GuardianLinker],
+  providers: [
+    StudentsService,
+    StudentAdminService,
+    StudentCodesService,
+    GuardianLinker,
+    StudentAccess,
+  ],
+  exports: [StudentAdminService, StudentCodesService, GuardianLinker, StudentAccess],
 })
 export class StudentsModule {}

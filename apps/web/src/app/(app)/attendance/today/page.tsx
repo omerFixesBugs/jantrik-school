@@ -9,7 +9,7 @@ import {
   formatTime,
   type AttendanceTodayReport,
 } from '@jantrik/shared';
-import { CalendarOffIcon, CheckIcon, ChevronRightIcon } from 'lucide-react';
+import { CalendarOffIcon, CheckIcon, ChevronRightIcon, PhoneIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { AttendanceTabs } from '@/components/attendance/attendance-tabs';
@@ -17,7 +17,7 @@ import { CountChips } from '@/components/attendance/count-chips';
 import { registerHref } from '@/components/attendance/section-picker';
 import { PageGate } from '@/components/page-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button, ButtonLink } from '@/components/ui/button';
+import { Button, ButtonLink, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
@@ -156,11 +156,11 @@ function TodayReport() {
                         {register.absent.map((st) => {
                           const name = displayName(st.nameBn, st.nameEn, locale);
                           return (
-                            <li key={st.id}>
+                            <li key={st.id} className="flex items-center" data-testid="absent-row">
                               <Link
                                 href={`/attendance/students/${st.id}`}
                                 aria-label={t('openStudent', { name })}
-                                className="hover:bg-muted/60 flex min-h-11 items-center gap-3 px-3 py-1.5"
+                                className="hover:bg-muted/60 flex min-h-11 min-w-0 flex-1 items-center gap-3 px-3 py-1.5"
                               >
                                 <span className="text-muted-foreground w-8 shrink-0 text-sm tabular-nums">
                                   {st.roll != null ? formatIdentifier(st.roll) : '—'}
@@ -171,6 +171,20 @@ function TodayReport() {
                                   className="text-muted-foreground size-4 shrink-0"
                                 />
                               </Link>
+                              {/* Only for admins and this section's teachers (the API decides). */}
+                              {st.guardianPhone && (
+                                <a
+                                  href={`tel:${st.guardianPhone}`}
+                                  className={buttonVariants({
+                                    variant: 'ghost',
+                                    size: 'icon',
+                                    className: 'mr-1 shrink-0',
+                                  })}
+                                  aria-label={t('callGuardian', { name })}
+                                >
+                                  <PhoneIcon aria-hidden />
+                                </a>
+                              )}
                             </li>
                           );
                         })}

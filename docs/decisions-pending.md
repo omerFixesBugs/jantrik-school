@@ -49,9 +49,7 @@ Each entry: what needed deciding, the default taken (safe and reversible), and h
     - To change: version the cache key, or check membership status in `RolesGuard` against the request transaction.
 17. **Deactivated staff keep their section assignments** (restored on reactivation); they do not count when choosing a section's class teacher.
 18. **CI: the end-to-end step failed on GitHub.** _Resolved after review:_ the logs (`gh run view --log-failed`) showed a test race (`layout.spec.ts` typed into the OTP tab while the password panel was still mounted) and a job hitting the 10-minute limit while waiting out OTP cooldowns. Fixed in the tests; e2e now runs as its own CI job (20-minute limit) next to the checks job.
-19. **Teachers can open any student's profile** (birth registration no., addresses, guardian phones), like the existing list, which already shows guardian phones to teachers.
-    - Default: kept consistent with the list (OWNER/ADMIN/TEACHER read).
-    - To change: limit teachers to their own sections (`section_teachers`) or hide the board-registration fields from them.
+19. **Teachers and student data.** _Resolved after review:_ teachers list every student with the basics; date of birth, birth registration no., addresses, parents' names and guardians (incl. phones) only for OWNER/ADMIN and the teachers of the student's current-year section (`StudentAccess`), in the list, the profile and today's attendance report (absentees' guardian phones). Search by guardian phone is admin-only. Exports (attendance register CSV) carry no such fields; import reports are admin-only.
 20. **A revoked (DISABLED) GUARDIAN membership is not reactivated** when that person is added as a guardian again; an admin has to restore access deliberately.
 21. **Imports go into the current academic year only.**
     - To change: add a year picker to the upload step.

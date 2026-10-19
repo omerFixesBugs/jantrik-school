@@ -56,8 +56,11 @@ export interface AttendanceTodayReport {
       updatedBy: PersonRef;
       counts: AttendanceCounts;
       percent: number | null;
-      /** Absent on that register, by roll. */
-      absent: RosterStudent[];
+      /**
+       * Absent on that register, by roll, with the primary guardian's phone for calling. The
+       * phone is set only for OWNER/ADMIN and the section's own teachers (null otherwise).
+       */
+      absent: (RosterStudent & { guardianPhone: string | null })[];
     } | null;
   }[];
   totals: {

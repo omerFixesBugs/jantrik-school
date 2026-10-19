@@ -85,7 +85,9 @@ async function school(h: Harness, prefix: string): Promise<Fixture> {
     });
     return { class6: class6.id, class9: class9.id, sectionA: sectionA.id, sectionB: sectionB.id };
   });
-  const { phone } = await addMember(h, tenantId, { roles: ['TEACHER'] });
+  // ADMIN: these tests are about listing and search mechanics; what teachers may see is in
+  // student-privacy.e2e-spec.ts.
+  const { phone } = await addMember(h, tenantId, { roles: ['ADMIN'] });
   const token = (await otpLogin(h, phone)).accessToken;
   return { tenantId, token, ...ids };
 }

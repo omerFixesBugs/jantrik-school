@@ -6,6 +6,7 @@ import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
+import { StudentAccess } from './student-access.service.js';
 import { StudentCodesService } from './student-codes.service.js';
 
 export interface StudentFieldsInput {
@@ -85,6 +86,7 @@ export class StudentAdminService {
     private readonly audit: AuditService,
     private readonly codes: StudentCodesService,
     private readonly guardians: GuardianLinker,
+    private readonly access: StudentAccess,
   ) {}
 
   private get tenantId(): string {
@@ -245,6 +247,39 @@ export class StudentAdminService {
 
   // ─────────────────────────── Profile ───────────────────────────
 
+  /**
+   * GET /students/:id: the full record for OWNER/ADMIN and the teachers of the student's
+   * current-year section; for other teachers (and for deactivated students) only the basics:
+   * name, code, status and the current class/section/roll. The removed fields are not in the
+   * JSON at all (null / empty), not just hidden by the UI.
+   */
+  async view(id: string): Promise<StudentProfile> {
+    const p = await this.profile(id);
+    const scope = await this.access.scope();
+    const current = p.enrolments.find((e) => e.academicYear.isCurrent);
+    // A deactivated student's full record is for OWNER/ADMIN only.
+    if (scope.full || (!p.deletedAt && StudentAccess.sees(scope, current?.section?.id))) return p;
+    return {
+      ...p,
+      access: 'basic',
+      dateOfBirth: null,
+      gender: null,
+      religion: null,
+      bloodGroup: null,
+      birthRegistrationNo: null,
+      fatherNameBn: null,
+      fatherNameEn: null,
+      motherNameBn: null,
+      motherNameEn: null,
+      presentAddress: null,
+      permanentAddress: null,
+      photoUrl: null,
+      guardians: [],
+      // The basics: the current class/section/roll, not the history.
+      enrolments: current ? [current] : [],
+    };
+  }
+
   async profile(id: string): Promise<StudentProfile> {
     const s = await this.db.tx.student.findUnique({
       where: { id },
@@ -303,6 +338,7 @@ export class StudentAdminService {
       status: s.status,
       deletedAt: s.deletedAt?.toISOString() ?? null,
       createdAt: s.createdAt.toISOString(),
+      access: 'full',
       guardians: s.guardians.map((l) => ({
         linkId: l.id,
         guardianId: l.guardian.id,

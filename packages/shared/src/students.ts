@@ -299,6 +299,11 @@ export interface StudentProfile {
   status: 'ACTIVE' | 'INACTIVE' | 'GRADUATED' | 'TRANSFERRED' | 'DROPPED_OUT';
   /** Set when deactivated (soft delete). */
   deletedAt: string | null;
+  /**
+   * 'basic' for a teacher who does not teach the student's section: date of birth, birth
+   * registration no., addresses, parents' names and guardians are left out (null / empty).
+   */
+  access: 'full' | 'basic';
   createdAt: string;
   guardians: StudentGuardianLink[];
   /** Newest year first. */

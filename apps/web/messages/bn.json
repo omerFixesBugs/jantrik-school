@@ -330,7 +330,8 @@
     "calendarCounts": "উপস্থিত {present}, অনুপস্থিত {absent}, দেরি {late}, ছুটি {leave}",
     "future": "সামনের দিন",
     "noRecord": "হাজিরা নেই",
-    "weekdays": "শনি,রবি,সোম,মঙ্গল,বুধ,বৃহঃ,শুক্র"
+    "weekdays": "শনি,রবি,সোম,মঙ্গল,বুধ,বৃহঃ,শুক্র",
+    "callGuardian": "{name}-এর অভিভাবককে কল করুন"
   },
   "attendanceSettings": {
     "title": "হাজিরার সেটিংস",
@@ -638,7 +639,8 @@
     "errorGuardianRequired": "অন্তত একজন অভিভাবক থাকতে হবে।",
     "errorDeactivated": "এই শিক্ষার্থী নিষ্ক্রিয়।",
     "errorNotEnrolled": "চলতি শিক্ষাবর্ষে ভর্তি নেই।",
-    "errorCheckForm": "লাল চিহ্নিত ঘরগুলো ঠিক করুন।"
+    "errorCheckForm": "লাল চিহ্নিত ঘরগুলো ঠিক করুন।",
+    "basicAccess": "জন্ম তারিখ, জন্ম নিবন্ধন, ঠিকানা ও অভিভাবকের তথ্য শুধু প্রশাসক ও এই {section}-এর শিক্ষকেরা দেখতে পান।"
   },
   "enums": {
     "gender_MALE": "ছেলে",

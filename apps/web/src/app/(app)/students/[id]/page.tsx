@@ -14,6 +14,7 @@ import {
   ArrowLeftRightIcon,
   CalendarCheckIcon,
   KeyRoundIcon,
+  LockIcon,
   PencilIcon,
   PhoneIcon,
   PlusIcon,
@@ -150,6 +151,14 @@ function Profile() {
 
   return (
     <div className="flex flex-col gap-5" data-testid="student-profile">
+      {p.access === 'basic' && (
+        <Alert data-testid="basic-access">
+          <LockIcon aria-hidden />
+          <AlertDescription>
+            {t('basicAccess', { section: label('section', 'Section', { inText: true }) })}
+          </AlertDescription>
+        </Alert>
+      )}
       {p.deletedAt && (
         <Alert>
           <PowerOffIcon aria-hidden />
@@ -254,113 +263,117 @@ function Profile() {
           )}
         </SectionCard>
 
-        <SectionCard
-          id="profile-guardians"
-          title={t('guardians')}
-          actions={
-            writable && p.guardians.length < 4 ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setDialog('guardian')}
-                data-testid="add-guardian-profile"
-              >
-                <PlusIcon aria-hidden />
-                {t('addGuardian')}
-              </Button>
-            ) : undefined
-          }
-        >
-          <ul
-            className="flex flex-col divide-y rounded-lg border"
-            data-testid="profile-guardians-list"
+        {p.access === 'full' && (
+          <SectionCard
+            id="profile-guardians"
+            title={t('guardians')}
+            actions={
+              writable && p.guardians.length < 4 ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setDialog('guardian')}
+                  data-testid="add-guardian-profile"
+                >
+                  <PlusIcon aria-hidden />
+                  {t('addGuardian')}
+                </Button>
+              ) : undefined
+            }
           >
-            {p.guardians.map((g) => {
-              const gName = displayName(g.nameBn, g.nameEn, locale);
-              return (
-                <li key={g.linkId} className="flex flex-col gap-2 px-3 py-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium break-words">{gName}</span>
-                    <span className="text-muted-foreground text-sm">
-                      ({tEnum(`relation_${g.relation}`)})
-                    </span>
-                    {g.isPrimary && (
-                      <Badge variant="warm">
-                        <StarIcon aria-hidden />
-                        {t('primary')}
-                      </Badge>
-                    )}
-                    {g.canLogIn && (
-                      <Badge variant="soft">
-                        <KeyRoundIcon aria-hidden />
-                        {t('canLogIn')}
-                      </Badge>
-                    )}
-                  </div>
-                  <a
-                    href={`tel:${g.phone}`}
-                    className="text-primary inline-flex w-fit items-center gap-1 text-sm tabular-nums"
-                    dir="ltr"
-                  >
-                    <PhoneIcon aria-hidden className="size-3.5" />
-                    {formatBdPhone(g.phone)}
-                  </a>
-                  {writable && (
-                    <div className="flex flex-wrap gap-2">
-                      {!g.isPrimary && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => makePrimary.mutate(g.linkId)}
-                          disabled={makePrimary.isPending}
-                        >
+            <ul
+              className="flex flex-col divide-y rounded-lg border"
+              data-testid="profile-guardians-list"
+            >
+              {p.guardians.map((g) => {
+                const gName = displayName(g.nameBn, g.nameEn, locale);
+                return (
+                  <li key={g.linkId} className="flex flex-col gap-2 px-3 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium break-words">{gName}</span>
+                      <span className="text-muted-foreground text-sm">
+                        ({tEnum(`relation_${g.relation}`)})
+                      </span>
+                      {g.isPrimary && (
+                        <Badge variant="warm">
                           <StarIcon aria-hidden />
-                          {t('makePrimary')}
-                        </Button>
+                          {t('primary')}
+                        </Badge>
                       )}
-                      {!g.isPrimary && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setDialog({ removeLink: g.linkId, name: gName })}
-                        >
-                          <Trash2Icon aria-hidden />
-                          {t('removeGuardian')}
-                        </Button>
+                      {g.canLogIn && (
+                        <Badge variant="soft">
+                          <KeyRoundIcon aria-hidden />
+                          {t('canLogIn')}
+                        </Badge>
                       )}
                     </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-          <p className="text-muted-foreground text-sm">{t('primaryHint')}</p>
-        </SectionCard>
+                    <a
+                      href={`tel:${g.phone}`}
+                      className="text-primary inline-flex w-fit items-center gap-1 text-sm tabular-nums"
+                      dir="ltr"
+                    >
+                      <PhoneIcon aria-hidden className="size-3.5" />
+                      {formatBdPhone(g.phone)}
+                    </a>
+                    {writable && (
+                      <div className="flex flex-wrap gap-2">
+                        {!g.isPrimary && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => makePrimary.mutate(g.linkId)}
+                            disabled={makePrimary.isPending}
+                          >
+                            <StarIcon aria-hidden />
+                            {t('makePrimary')}
+                          </Button>
+                        )}
+                        {!g.isPrimary && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setDialog({ removeLink: g.linkId, name: gName })}
+                          >
+                            <Trash2Icon aria-hidden />
+                            {t('removeGuardian')}
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="text-muted-foreground text-sm">{t('primaryHint')}</p>
+          </SectionCard>
+        )}
       </div>
 
-      <SectionCard id="profile-details" title={t('details')}>
-        <dl
-          className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3"
-          data-testid="profile-details-list"
-        >
-          <Item label={t('dateOfBirth')}>
-            {p.dateOfBirth ? formatDate(dateToDb(p.dateOfBirth), locale, 'long') : null}
-          </Item>
-          <Item label={t('gender')}>{p.gender ? tEnum(`gender_${p.gender}`) : null}</Item>
-          <Item label={t('religion')}>{p.religion ? tEnum(`religion_${p.religion}`) : null}</Item>
-          <Item label={t('bloodGroup')}>
-            {p.bloodGroup ? BLOOD_GROUP_LABEL[p.bloodGroup] : null}
-          </Item>
-          <Item label={t('birthReg')} ltr>
-            {p.birthRegistrationNo ? formatIdentifier(p.birthRegistrationNo) : null}
-          </Item>
-          <Item label={t('father')}>{both(p.fatherNameBn, p.fatherNameEn)}</Item>
-          <Item label={t('mother')}>{both(p.motherNameBn, p.motherNameEn)}</Item>
-          <Item label={t('presentAddress')}>{p.presentAddress}</Item>
-          <Item label={t('permanentAddress')}>{p.permanentAddress}</Item>
-          <Item label={t('admitted')}>{formatDate(new Date(p.createdAt), locale, 'long')}</Item>
-        </dl>
-      </SectionCard>
+      {p.access === 'full' && (
+        <SectionCard id="profile-details" title={t('details')}>
+          <dl
+            className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3"
+            data-testid="profile-details-list"
+          >
+            <Item label={t('dateOfBirth')}>
+              {p.dateOfBirth ? formatDate(dateToDb(p.dateOfBirth), locale, 'long') : null}
+            </Item>
+            <Item label={t('gender')}>{p.gender ? tEnum(`gender_${p.gender}`) : null}</Item>
+            <Item label={t('religion')}>{p.religion ? tEnum(`religion_${p.religion}`) : null}</Item>
+            <Item label={t('bloodGroup')}>
+              {p.bloodGroup ? BLOOD_GROUP_LABEL[p.bloodGroup] : null}
+            </Item>
+            <Item label={t('birthReg')} ltr>
+              {p.birthRegistrationNo ? formatIdentifier(p.birthRegistrationNo) : null}
+            </Item>
+            <Item label={t('father')}>{both(p.fatherNameBn, p.fatherNameEn)}</Item>
+            <Item label={t('mother')}>{both(p.motherNameBn, p.motherNameEn)}</Item>
+            <Item label={t('presentAddress')}>{p.presentAddress}</Item>
+            <Item label={t('permanentAddress')}>{p.permanentAddress}</Item>
+            <Item label={t('admitted')}>{formatDate(new Date(p.createdAt), locale, 'long')}</Item>
+          </dl>
+        </SectionCard>
+      )}
 
       {dialog === 'edit' && <EditDialog profile={p} onClose={close} />}
       {dialog === 'transfer' && current && <TransferDialog profile={p} onClose={close} />}

@@ -59,13 +59,31 @@ test('admission with Bangla digits → profile → deactivate', async ({ page })
   await expect(page.getByTestId('enrolment-row').first()).not.toContainText('রোল');
 });
 
-test('teachers see the list and profiles, but no admission', async ({ page }) => {
+test('teachers: full profile for their own section, basics for others; no admission', async ({
+  page,
+}) => {
+  // Nasrin Akter teaches Class 6 ক: Tasnim (SHS-2026-0001) is hers; SHS-2026-0002 is in Class 9.
   await passwordLogin(page, DEMO.shaplaTeacher);
   await expect(page).toHaveURL(/\/dashboard$/);
   await page.goto('/students');
   await expect(page.getByTestId('students-cards')).toBeVisible();
   await expect(page.getByTestId('admit-student')).toHaveCount(0);
-  await page.getByTestId('students-cards').getByRole('link').first().tap();
-  await expect(page.getByTestId('student-profile')).toBeVisible();
+
+  const open = async (code: string) => {
+    await page.goto('/students');
+    await page.getByRole('searchbox').fill(code);
+    const card = page.getByTestId('students-cards').getByRole('listitem').filter({ hasText: code });
+    await card.getByRole('link').first().tap();
+    await expect(page.getByTestId('student-profile')).toBeVisible();
+  };
+
+  await open('SHS-2026-0001');
+  await expect(page.getByTestId('profile-guardians-list')).toContainText('01811-000101');
+  await expect(page.getByTestId('basic-access')).toHaveCount(0);
   await expect(page.getByTestId('edit-student')).toHaveCount(0);
+
+  await open('SHS-2026-0002');
+  await expect(page.getByTestId('basic-access')).toBeVisible();
+  await expect(page.getByTestId('profile-guardians-list')).toHaveCount(0);
+  await expectClean(page, 'basic profile');
 });
