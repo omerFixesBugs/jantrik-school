@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { HttpException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { withContext, withTenant, type ModuleKey, type Role, type TenantTx } from '@jantrik/db';
 import type { Redis } from 'ioredis';
 import { RequestContext } from '../common/request-context.js';
@@ -63,6 +63,71 @@ export class TenantAccessService {
       }
     });
     await this.context.afterCommit(() => this.redis.del(rolesKey(tenantId, userId)));
+  }
+
+  /**
+   * The caller answers their own staff invitation to `tenantId`. Runs in its own transaction with
+   * that tenant + the caller's user context, but only after finding INVITED rows for the caller
+   * there; it changes only those rows (never anyone else's, never other statuses). The rows are
+   * locked first (staff changes lock them too), and an accept must name exactly the roles the
+   * invitee was shown. Audited.
+   */
+  async respondToInvitation(
+    userId: string,
+    tenantId: string,
+    accept: boolean,
+    expiresAfterMs: number,
+    shownRoles: readonly string[] = [],
+  ): Promise<void> {
+    await withContext(this.prisma.client, { tenantId, userId }, async (tx) => {
+      await tx.$queryRaw`
+        SELECT id FROM memberships
+        WHERE user_id = ${userId}::uuid AND status = 'INVITED'
+        ORDER BY id
+        FOR UPDATE`;
+      // A fresh read after the lock: it also sees rows a concurrent role change committed.
+      const rows = await tx.membership.findMany({
+        where: { userId, status: 'INVITED' },
+        select: { id: true, role: true, invitedAt: true },
+      });
+      if (rows.length === 0) throw new NotFoundException('No invitation');
+      const sent = Math.max(...rows.map((r) => r.invitedAt?.getTime() ?? 0));
+      if (sent + expiresAfterMs < Date.now()) {
+        throw new HttpException(
+          { statusCode: 410, code: 'INVITATION_EXPIRED', message: 'Expired' },
+          410,
+        );
+      }
+      const roles = rows.map((r) => r.role as string);
+      if (
+        accept &&
+        (roles.length !== shownRoles.length || roles.some((r) => !shownRoles.includes(r)))
+      ) {
+        throw new HttpException(
+          { statusCode: 409, code: 'INVITATION_CHANGED', message: 'The invitation changed' },
+          409,
+        );
+      }
+      const status = accept ? 'ACTIVE' : 'DECLINED';
+      const { count } = await tx.membership.updateMany({
+        where: { id: { in: rows.map((r) => r.id) }, userId, status: 'INVITED' },
+        data: { status },
+      });
+      if (count !== rows.length) throw new NotFoundException('No invitation');
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          actorUserId: userId,
+          entity: 'membership',
+          entityId: userId,
+          action: 'UPDATE',
+          oldValues: { status: 'INVITED', roles: rows.map((r) => r.role) },
+          newValues: { status, roles: rows.map((r) => r.role), by: 'invitee' },
+        },
+        select: { id: true },
+      });
+    });
+    await this.redis.del(rolesKey(tenantId, userId));
   }
 
   /** Drop a member's cached roles once the current request commits (after a direct write). */

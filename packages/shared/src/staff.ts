@@ -33,6 +33,12 @@ export type AddStaffInput = z.input<typeof addStaffSchema>;
 /** PUT /staff/:userId/roles: the full set of staff roles. */
 export const staffRolesSchema = z.object({ roles: rolesSchema });
 
+/**
+ * POST /me/invitations/:tenantId/accept: the roles the invitee was shown. Accepting fails with
+ * 409 INVITATION_CHANGED when the institute changed them meanwhile.
+ */
+export const acceptInvitationSchema = z.object({ roles: rolesSchema });
+
 /** PUT /staff/:userId/sections: the current-year sections this person teaches. */
 export const staffSectionsSchema = z.object({
   sectionIds: z
@@ -55,8 +61,13 @@ export interface StaffMember {
   /** E.164. */
   phone: string;
   roles: StaffRole[];
-  /** All staff memberships share one status. */
-  status: 'ACTIVE' | 'DISABLED';
+  /**
+   * ACTIVE / DISABLED; INVITED (pending), EXPIRED (invited over 14 days ago) or DECLINED until
+   * the person accepts.
+   */
+  status: 'ACTIVE' | 'DISABLED' | 'INVITED' | 'EXPIRED' | 'DECLINED';
+  /** Pending invitation: when it expires. */
+  inviteExpiresAt: string | null;
   /** The caller (cannot change their own roles or status). */
   isSelf: boolean;
   /** Current-year sections they teach. */

@@ -19,7 +19,9 @@ import {
   PlusIcon,
   PowerIcon,
   PowerOffIcon,
+  SendIcon,
   ShieldIcon,
+  XCircleIcon,
 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
@@ -52,6 +54,7 @@ type Dialog =
   | { kind: 'roles'; member: StaffMember }
   | { kind: 'sections'; member: StaffMember }
   | { kind: 'status'; member: StaffMember }
+  | { kind: 'cancel'; member: StaffMember }
   | null;
 
 function useStaffError() {
@@ -67,6 +70,7 @@ function useStaffError() {
         INVALID_SECTIONS: t('errorSections'),
         NO_CURRENT_YEAR: t('errorNoYear'),
       };
+      if (e.status === 429) return t('errorRateLimit');
       if (e.code && known[e.code]) return known[e.code]!;
       if (e.status === 403) return t('errorOwnerOnly');
       if (e.status === 400) return t('errorCheckForm');
@@ -118,6 +122,7 @@ export default function StaffPage() {
                 onRoles={() => setDialog({ kind: 'roles', member: m })}
                 onSections={() => setDialog({ kind: 'sections', member: m })}
                 onStatus={() => setDialog({ kind: 'status', member: m })}
+                onCancel={() => setDialog({ kind: 'cancel', member: m })}
               />
             ))}
           </ul>
@@ -129,6 +134,7 @@ export default function StaffPage() {
       )}
       {dialog?.kind === 'sections' && <SectionsDialog member={dialog.member} onClose={close} />}
       {dialog?.kind === 'status' && <StatusDialog member={dialog.member} onClose={close} />}
+      {dialog?.kind === 'cancel' && <CancelDialog member={dialog.member} onClose={close} />}
     </PageGate>
   );
 }
@@ -139,12 +145,14 @@ function StaffCard({
   onRoles,
   onSections,
   onStatus,
+  onCancel,
 }: {
   member: StaffMember;
   callerIsOwner: boolean;
   onRoles: () => void;
   onSections: () => void;
   onStatus: () => void;
+  onCancel: () => void;
 }) {
   const t = useTranslations('staff');
   const tRoles = useTranslations('roles');
@@ -152,6 +160,14 @@ function StaffCard({
   const label = useLabel();
   const name = displayUserName(m, locale);
   const active = m.status === 'ACTIVE';
+  const member = m.status === 'ACTIVE' || m.status === 'DISABLED';
+  const pending = m.status === 'INVITED';
+  const { client } = useAuth();
+  const reinvite = useStaffMutation(
+    () => client.api(`/staff/${m.userId}/reinvite`, { method: 'POST' }),
+    () => {},
+    t('added'),
+  );
   // Owners are managed by owners only (the API enforces it too).
   const canManage = !m.isSelf && (callerIsOwner || !m.roles.includes('OWNER'));
   const teaches = m.roles.some((r) => TEACHING.includes(r));
@@ -191,6 +207,18 @@ function StaffCard({
                   <ShieldIcon aria-hidden />
                   {t('changeRoles')}
                 </DropdownMenuItem>
+                {!member && !pending && (
+                  <DropdownMenuItem onClick={() => reinvite.mutate(undefined)}>
+                    <SendIcon aria-hidden />
+                    {t('reinvite')}
+                  </DropdownMenuItem>
+                )}
+                {!member && (
+                  <DropdownMenuItem onClick={onCancel} variant="destructive">
+                    <XCircleIcon aria-hidden />
+                    {t('cancelInvitation')}
+                  </DropdownMenuItem>
+                )}
                 {teaches && active && (
                   <DropdownMenuItem onClick={onSections}>
                     <BookOpenIcon aria-hidden />
@@ -199,10 +227,12 @@ function StaffCard({
                     })}
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={onStatus} variant={active ? 'destructive' : 'default'}>
-                  {active ? <PowerOffIcon aria-hidden /> : <PowerIcon aria-hidden />}
-                  {active ? t('deactivate') : t('activate')}
-                </DropdownMenuItem>
+                {member && (
+                  <DropdownMenuItem onClick={onStatus} variant={active ? 'destructive' : 'default'}>
+                    {active ? <PowerOffIcon aria-hidden /> : <PowerIcon aria-hidden />}
+                    {active ? t('deactivate') : t('activate')}
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -213,8 +243,18 @@ function StaffCard({
               {tRoles(r)}
             </Badge>
           ))}
-          {!active && <Badge variant="warning">{t('inactive')}</Badge>}
+          {m.status === 'DISABLED' && <Badge variant="warning">{t('inactive')}</Badge>}
+          {!member && (
+            <Badge variant={pending ? 'soft' : 'warning'} data-testid="invite-status">
+              {t(`status${m.status}`)}
+            </Badge>
+          )}
         </div>
+        {pending && m.inviteExpiresAt && (
+          <p className="text-muted-foreground text-sm">
+            {t('inviteUntil', { date: formatDate(new Date(m.inviteExpiresAt), locale, 'long') })}
+          </p>
+        )}
         {m.sections.length > 0 && (
           <p className="text-muted-foreground text-sm break-words">
             {m.sections
@@ -225,9 +265,11 @@ function StaffCard({
               .join(', ')}
           </p>
         )}
-        <p className="text-muted-foreground text-xs">
-          {t('since', { date: formatDate(new Date(m.since), locale, 'medium') })}
-        </p>
+        {member && (
+          <p className="text-muted-foreground text-xs">
+            {t('since', { date: formatDate(new Date(m.since), locale, 'medium') })}
+          </p>
+        )}
       </div>
     </li>
   );
@@ -530,6 +572,28 @@ function StatusDialog({ member, onClose }: { member: StaffMember; onClose: () =>
       body={active ? t('deactivateBody') : t('activateBody')}
       confirmLabel={active ? t('deactivate') : t('activate')}
       destructive={active}
+      pending={save.isPending}
+      onConfirm={() => save.mutate(undefined)}
+    />
+  );
+}
+
+function CancelDialog({ member, onClose }: { member: StaffMember; onClose: () => void }) {
+  const t = useTranslations('staff');
+  const locale = useLocale() as Locale;
+  const { client } = useAuth();
+  const save = useStaffMutation(
+    () => client.api(`/staff/${member.userId}/cancel-invitation`, { method: 'POST' }),
+    onClose,
+    t('cancelled'),
+  );
+  return (
+    <ConfirmDialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={t('cancelTitle', { name: displayUserName(member, locale) })}
+      body={t('cancelBody')}
+      confirmLabel={t('cancelInvitation')}
       pending={save.isPending}
       onConfirm={() => save.mutate(undefined)}
     />

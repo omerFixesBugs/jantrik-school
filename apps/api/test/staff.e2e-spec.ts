@@ -51,7 +51,7 @@ describe('staff management', () => {
     });
   });
 
-  it('adds staff by phone (Bangla digits) with a Bangla name; they can log in with OTP', async () => {
+  it('invites staff by phone (Bangla digits) with a Bangla name; access after they accept', async () => {
     const local = randomPhone().slice(3); // 01XXXXXXXXX
     const bangla = local.replace(/\d/g, (d) => '০১২৩৪৫৬৭৮৯'[Number(d)]!);
     const member = (
@@ -65,13 +65,26 @@ describe('staff management', () => {
       phone: `+88${local}`,
       nameBn: 'করিম উদ্দিন',
       roles: ['TEACHER'],
-      status: 'ACTIVE',
+      status: 'INVITED',
     });
     expect(h.sms.sentTo(`+88${local}`)).toEqual([]); // no invite SMS
-    const token = (await otpLogin(h, `+88${local}`)).accessToken;
-    const ctx = (await http(h).get('/me/context').set(bearer(token)).expect(200)).body as {
-      roles: string[];
-    };
+    const login = await otpLogin(h, `+88${local}`);
+    await http(h)
+      .post(`/me/invitations/${tenantId}/accept`)
+      .set(bearer(login.accessToken))
+      .send({ roles: ['TEACHER'] })
+      .expect(204);
+    const switched = await http(h)
+      .post('/auth/switch-tenant')
+      .set(bearer(login.accessToken))
+      .send({ tenantId })
+      .expect(200);
+    const ctx = (
+      await http(h)
+        .get('/me/context')
+        .set(bearer(switched.body.accessToken as string))
+        .expect(200)
+    ).body as { roles: string[] };
     expect(ctx.roles).toEqual(['TEACHER']);
 
     // Again: 409.
@@ -83,7 +96,7 @@ describe('staff management', () => {
     expect(again.body.code).toBe('ALREADY_STAFF');
   });
 
-  it("a guardian here can become staff; their guardian membership stays; others' names never change", async () => {
+  it('a guardian here can be invited as staff; the guardian membership stays; the typed name is used', async () => {
     const guardian = await addMember(h, tenantId, { roles: ['GUARDIAN'], name: 'Guardian Name' });
     const m = (
       await http(h)
@@ -92,7 +105,8 @@ describe('staff management', () => {
         .send({ phone: guardian.phone, name: 'Renamed', nameBn: 'নতুন নাম', roles: ['STAFF'] })
         .expect(201)
     ).body as StaffMember;
-    expect(m).toMatchObject({ userId: guardian.userId, name: 'Guardian Name', nameBn: null });
+    // The institute's own (typed) name, never the person's global one.
+    expect(m).toMatchObject({ userId: guardian.userId, name: 'Renamed', nameBn: 'নতুন নাম' });
     const roles = await withTenant(h.prisma, tenantId, (tx) =>
       tx.membership.findMany({ where: { userId: guardian.userId }, select: { role: true } }),
     );
@@ -248,10 +262,5 @@ describe('staff management', () => {
     expect([...kinds].sort()).toEqual(
       ['membership:CREATE', 'membership:UPDATE', 'section_teachers:UPDATE'].sort(),
     );
-    // Whether a new person was created or an existing one (the guardian) linked.
-    const created = rows
-      .filter((r) => r.entity === 'membership' && r.action === 'CREATE')
-      .map((r) => (r.newValues as { newPerson: boolean }).newPerson);
-    expect(created.sort()).toEqual([false, true]);
   });
 });

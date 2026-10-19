@@ -37,6 +37,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
+import { InvitationsBanner } from '@/components/invitations-banner';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -61,9 +62,18 @@ import { cn } from '@/lib/utils';
 export default function DashboardPage() {
   const { data: context } = useMeContext();
   if (!context) return null;
-  if (isStaff(context.roles)) return <StaffDashboard context={context} />;
-  if (context.roles.includes('GUARDIAN')) return <GuardianDashboard context={context} />;
-  return <Greeting subtitle={null} />;
+  return (
+    <>
+      <InvitationsBanner />
+      {isStaff(context.roles) ? (
+        <StaffDashboard context={context} />
+      ) : context.roles.includes('GUARDIAN') ? (
+        <GuardianDashboard context={context} />
+      ) : (
+        <Greeting subtitle={null} />
+      )}
+    </>
+  );
 }
 
 const GREETING = {

@@ -376,6 +376,18 @@ async function seedTenantData(
   for (const member of def.staff) {
     const userId = await findOrCreateUser(tx, phone(member.phone), member.name);
     await tx.membership.create({ data: { tenantId, userId, role: member.role } });
+    // How this institute names its staff (shown instead of the global name).
+    await tx.staffProfile.upsert({
+      where: { tenantId_userId: { tenantId, userId } },
+      create: {
+        tenantId,
+        userId,
+        name: member.name,
+        nameBn: member.nameBn,
+        phone: phone(member.phone),
+      },
+      update: {},
+    });
     staffUserIds.push(userId);
     namesBn.set(userId, member.nameBn);
   }

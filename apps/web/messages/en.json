@@ -53,7 +53,12 @@
     "subtitle": "You belong to more than one institute. Which one do you want to work in?",
     "none": "You don't have access to any active institute.",
     "unavailable": "Temporarily unavailable",
-    "switching": "Switching…"
+    "switching": "Switching…",
+    "invitationsTitle": "Invitations",
+    "invited": "{institute} added you as {roles}.",
+    "invitedUntil": "You can accept until {date}. Access starts when you accept.",
+    "accept": "Accept",
+    "decline": "Decline"
   },
   "shell": {
     "openMenu": "Open menu",
@@ -136,7 +141,11 @@
     "heldConfirmNo": "Not now",
     "heldDone": "Sending {queued} SMS.",
     "heldDoneCancelled": "Sending {queued} SMS. {cancelled} skipped because the student is now present.",
-    "heldFailed": "The SMS could not be sent. Try again."
+    "heldFailed": "The SMS could not be sent. Try again.",
+    "inviteBanner": "{institute} added you as {roles}.",
+    "inviteAccept": "Accept",
+    "inviteDecline": "Decline",
+    "inviteAccepted": "Accepted. Switch institute to go there."
   },
   "students": {
     "title": "{student} list",
@@ -499,7 +508,7 @@
     "hint": "Who works here and in which roles. Add someone by their mobile number.",
     "add": "Add staff",
     "addSubmit": "Add",
-    "added": "Added",
+    "added": "Invitation sent",
     "saved": "Saved",
     "save": "Save",
     "you": "you",
@@ -520,7 +529,7 @@
     "nameBn": "Name (Bangla)",
     "nameBnHint": "Optional; shown in the Bangla app for a new person",
     "errorNoRole": "Choose at least one role.",
-    "otpNote": "No SMS is sent. They can log in with OTP on this number.",
+    "otpNote": "No SMS is sent. When they log in with OTP on this number they see the invitation; access starts only when they accept (within 14 days).",
     "rolesTitle": "Roles of {name}",
     "sectionsTitle": "{name}: which {section}",
     "sectionsHint": "The sections of the current academic year they teach and take attendance for.",
@@ -535,7 +544,17 @@
     "errorSections": "Some sections were not found or are inactive. Reload the page.",
     "errorNoYear": "There is no current academic year. Make one current in institute setup first.",
     "errorOwnerOnly": "Only an owner can make changes involving owners.",
-    "errorCheckForm": "Fix the fields marked in red."
+    "errorCheckForm": "Fix the fields marked in red.",
+    "statusINVITED": "Invited, waiting for an answer",
+    "statusEXPIRED": "Invitation expired",
+    "statusDECLINED": "Declined the invitation",
+    "inviteUntil": "Can accept until {date}",
+    "cancelInvitation": "Cancel invitation",
+    "reinvite": "Invite again",
+    "cancelTitle": "Cancel the invitation for {name}?",
+    "cancelBody": "Cancel it if it went to a wrong number. You can add them again later.",
+    "cancelled": "Invitation cancelled",
+    "errorRateLimit": "Many staff were added in the last hour. Try again a little later."
   },
   "admission": {
     "title": "Admit a new {student}",

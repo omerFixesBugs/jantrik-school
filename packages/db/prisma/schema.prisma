@@ -68,6 +68,10 @@ enum Role {
 enum MembershipStatus {
   ACTIVE
   DISABLED
+  /// Added by staff; no access until the person accepts (expires after 14 days).
+  INVITED
+  /// The person declined the invitation.
+  DECLINED
 
   @@map("membership_status")
 }
@@ -372,6 +376,7 @@ model User {
   attendanceSessionsUpdated AttendanceSession[] @relation("AttendanceUpdatedBy")
   holidaysCreated           Holiday[]
   studentImports            StudentImport[]
+  staffProfiles             StaffProfile[]
 
   @@map("users")
 }
@@ -419,6 +424,7 @@ model Tenant {
   attendanceRecords   AttendanceRecord[]
   smsLogs             SmsLog[]
   studentImports      StudentImport[]
+  staffProfiles       StaffProfile[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -680,6 +686,8 @@ model Membership {
   userId    String           @map("user_id") @db.Uuid
   role      Role
   status    MembershipStatus @default(ACTIVE)
+  /// When the (latest) invitation was sent; INVITED rows older than 14 days have expired.
+  invitedAt DateTime?        @map("invited_at") @db.Timestamptz(3)
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -883,6 +891,28 @@ model StudentImport {
   @@unique([tenantId, id])
   @@index([tenantId, createdAt(sort: Desc)])
   @@map("student_imports")
+}
+
+/// How this institute knows a staff member: the name and phone its admin typed. Shown instead
+/// of the person's global name (which another institute, or the person, may have set).
+model StaffProfile {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  /// Plain FK: users are global. The service only creates profiles with a staff membership.
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  nameBn    String?  @map("name_bn")
+  /// E.164, as typed (the person's own row is invisible to the institute while invited).
+  phone     String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, userId])
+  @@map("staff_profiles")
 }
 
 // ───────────────────────────── Audit ─────────────────────────────

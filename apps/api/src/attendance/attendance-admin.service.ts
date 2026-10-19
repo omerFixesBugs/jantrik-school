@@ -9,6 +9,7 @@ import {
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
+import { staffNames } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
 
 interface HolidayInput {
@@ -111,7 +112,12 @@ export class AttendanceAdminService {
         user: { select: { id: true, name: true, nameBn: true } },
       },
     });
-    return rows;
+    // The names this institute gave its staff (staff_profiles), not their global names.
+    const names = await staffNames(
+      this.db.tx,
+      rows.map((r) => r.user.id),
+    );
+    return rows.map((r) => ({ ...r, user: { ...r.user, ...names.get(r.user.id) } }));
   }
 
   /** Replace the section's teacher list. Every user must be an active staff member here. */

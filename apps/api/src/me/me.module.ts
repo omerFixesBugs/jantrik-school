@@ -6,9 +6,21 @@ import {
   HttpCode,
   Injectable,
   Module,
+  Param,
+  ParseUUIDPipe,
   Patch,
+  Post,
 } from '@nestjs/common';
-import { preferencesSchema, todayIn, type GuardianChild, type MeContext } from '@jantrik/shared';
+import {
+  acceptInvitationSchema,
+  INVITATION_DAYS,
+  preferencesSchema,
+  todayIn,
+  type GuardianChild,
+  type MeContext,
+  type StaffInvitation,
+} from '@jantrik/shared';
+import { listMemberships } from '../auth/login-lookup.js';
 import { CurrentUser, RequireModule, Roles, UserScoped } from '../common/decorators.js';
 import type { Principal } from '../common/request-context.js';
 import { zodDto } from '../common/zod.js';
@@ -16,6 +28,7 @@ import { Db } from '../tenancy/db.service.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 
 export class PreferencesDto extends zodDto(preferencesSchema) {}
+export class AcceptInvitationDto extends zodDto(acceptInvitationSchema) {}
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 
@@ -118,6 +131,40 @@ export class MeService {
     });
   }
 
+  /** The caller's pending (not expired) staff invitations, from the membership definer function. */
+  async invitations(): Promise<StaffInvitation[]> {
+    const memberships = await listMemberships(this.db.tx);
+    return memberships.flatMap((m) =>
+      m.invitation
+        ? [
+            {
+              tenant: { id: m.tenant.id, name: m.tenant.name },
+              roles: m.invitation.roles,
+              expiresAt: m.invitation.expiresAt,
+              invitedAt: new Date(
+                new Date(m.invitation.expiresAt).getTime() - INVITATION_DAYS * 24 * 3600 * 1000,
+              ).toISOString(),
+            },
+          ]
+        : [],
+    );
+  }
+
+  async respond(
+    principal: Principal,
+    tenantId: string,
+    accept: boolean,
+    shownRoles: readonly string[] = [],
+  ): Promise<void> {
+    await this.access.respondToInvitation(
+      principal.userId,
+      tenantId,
+      accept,
+      INVITATION_DAYS * 24 * 3600 * 1000,
+      shownRoles,
+    );
+  }
+
   /** RLS lets a user update only their own row. */
   async setLocale(principal: Principal, locale: 'bn' | 'en'): Promise<void> {
     await this.db.tx.user.update({ where: { id: principal.userId }, data: { locale } });
@@ -138,6 +185,35 @@ export class MeController {
   @Roles('GUARDIAN')
   children(@CurrentUser() principal: Principal): Promise<GuardianChild[]> {
     return this.me.children(principal);
+  }
+
+  /** Pending staff invitations (no institute needs to be selected). */
+  @Get('invitations')
+  @UserScoped()
+  invitations(): Promise<StaffInvitation[]> {
+    return this.me.invitations();
+  }
+
+  /** Access to that institute starts here (the invited memberships become ACTIVE). */
+  @Post('invitations/:tenantId/accept')
+  @UserScoped()
+  @HttpCode(204)
+  async accept(
+    @CurrentUser() principal: Principal,
+    @Param('tenantId', ParseUUIDPipe) tenantId: string,
+    @Body() body: AcceptInvitationDto,
+  ): Promise<void> {
+    await this.me.respond(principal, tenantId, true, body.roles);
+  }
+
+  @Post('invitations/:tenantId/decline')
+  @UserScoped()
+  @HttpCode(204)
+  async decline(
+    @CurrentUser() principal: Principal,
+    @Param('tenantId', ParseUUIDPipe) tenantId: string,
+  ): Promise<void> {
+    await this.me.respond(principal, tenantId, false);
   }
 
   @Patch('preferences')

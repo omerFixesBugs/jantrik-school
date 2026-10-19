@@ -51,6 +51,8 @@ export const envSchema = z
     OTP_PER_PHONE_PER_DAY: positiveInt(10),
     LOGIN_PER_IP_PER_15MIN: positiveInt(300),
     LOGIN_PER_IDENTIFIER_PER_15MIN: positiveInt(5),
+    // Staff invitations (POST /staff and re-invites) per institute and hour.
+    STAFF_INVITES_PER_TENANT_PER_HOUR: positiveInt(30),
   })
   .superRefine((env, ctx) => {
     // Loosened settings must never leave a developer's machine.

@@ -121,7 +121,28 @@ so the access token dies immediately rather than after up to 15 minutes.
   membership is active and the tenant is ACTIVE or TRIAL.
 - `POST /auth/switch-tenant {tenantId}` returns an access token with `tid`. It is allowed only
   for a selectable membership, and it also stores the choice on the session, so refreshes keep it.
-- A user with exactly one selectable tenant is switched into it automatically at login.
+- A user with exactly one selectable tenant is switched into it automatically at login,
+  unless they have a pending invitation.
+
+### Staff invitations
+
+- `POST /staff` creates an `INVITED` membership; no SMS is sent. The response is built from the
+  typed input only, so it is the same whether the phone already belongs to someone or not.
+  Additions are rate-limited per tenant (`STAFF_INVITES_PER_TENANT_PER_HOUR`, default 30).
+- After OTP login, `GET /auth/memberships` shows the institute with `invitation: {roles,
+expiresAt}` and `selectable: false`. `/select-institute` and the dashboard show
+  "<institute> added you as <role>" with accept / decline.
+- `POST /me/invitations/:tenantId/accept|decline` (user-scoped, own rows only): 404 when there is
+  no pending invitation, 410 `INVITATION_EXPIRED` after 14 days. Audited. Accept sends
+  `{roles}`, the roles the person was shown; the rows are locked and a mismatch (the institute
+  changed the roles meanwhile) is 409 `INVITATION_CHANGED`, so nobody accepts roles they did not
+  see.
+- Admins can `POST /staff/:userId/cancel-invitation` (pending) and `POST /staff/:userId/reinvite`
+  (declined or expired). Both are audited; owner invitations are managed by owners only.
+- A cancelled invitation keeps the typed name and phone in `staff_profiles` and the audit log
+  (no DELETE grant, as for other history). The typed name is a guarantee of the staff code paths
+  (`staffNames`, the staff list), not of RLS: once someone is an active member, `users_visible`
+  shows their global row to that institute.
 
 ## The request pipeline
 

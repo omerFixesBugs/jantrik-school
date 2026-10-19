@@ -12,8 +12,10 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { findOrCreateUser, type Role } from '@jantrik/db';
+import { ConfigService } from '@nestjs/config';
+import { findOrCreateUser, type Role, type TenantTx } from '@jantrik/db';
 import {
+  INVITATION_DAYS,
   STAFF_ROLE_VALUES,
   addStaffSchema,
   isStaffRole,
@@ -27,6 +29,8 @@ import { apiError } from '../common/api-error.js';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { RequestContext } from '../common/request-context.js';
 import { zodDto } from '../common/zod.js';
+import type { Env } from '../config/env.js';
+import { RateLimiter } from '../redis/rate-limiter.service.js';
 import { Db } from '../tenancy/db.service.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 
@@ -37,6 +41,35 @@ class StaffSectionsDto extends zodDto(staffSectionsSchema) {}
 const STAFF = [...STAFF_ROLE_VALUES] as Role[];
 /** Roles that may be given a section to teach (same as attendance's section teachers). */
 const TEACHING: StaffRole[] = ['OWNER', 'ADMIN', 'TEACHER'];
+const INVITE_MS = INVITATION_DAYS * 24 * 3600 * 1000;
+type MembershipStatus = 'ACTIVE' | 'DISABLED' | 'INVITED' | 'DECLINED';
+
+/**
+ * Names this institute uses for staff: the staff profile (what its admin typed), else, for staff
+ * added before profiles existed, the person's own row (visible only once they are a member).
+ * Never shows an invited person's global name: their row is hidden by RLS until they accept.
+ */
+export async function staffNames(
+  tx: TenantTx,
+  userIds: string[],
+): Promise<Map<string, { name: string; nameBn: string | null }>> {
+  const out = new Map<string, { name: string; nameBn: string | null }>();
+  if (userIds.length === 0) return out;
+  const profiles = await tx.staffProfile.findMany({
+    where: { userId: { in: userIds } },
+    select: { userId: true, name: true, nameBn: true },
+  });
+  for (const p of profiles) out.set(p.userId, { name: p.name, nameBn: p.nameBn });
+  const missing = userIds.filter((id) => !out.has(id));
+  if (missing.length > 0) {
+    const users = await tx.user.findMany({
+      where: { id: { in: missing } },
+      select: { id: true, name: true, nameBn: true },
+    });
+    for (const u of users) out.set(u.id, { name: u.name, nameBn: u.nameBn });
+  }
+  return out;
+}
 
 /**
  * Staff of the current institute. Rules: only an OWNER may change the roles or status of someone
@@ -53,6 +86,8 @@ export class StaffService {
     private readonly context: RequestContext,
     private readonly audit: AuditService,
     private readonly access: TenantAccessService,
+    private readonly limiter: RateLimiter,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   private get me() {
@@ -76,42 +111,131 @@ export class StaffService {
     );
   }
 
-  async add(input: { phone: string; name: string; nameBn: string | null; roles: StaffRole[] }) {
+  /**
+   * Invite someone by phone. The person is found or created, gets INVITED memberships and a staff
+   * profile with the typed name/phone; access starts only when they accept (14 days). The response
+   * is built only from the typed values, so it is the same whether or not the phone already
+   * belonged to someone (user ids are random v4 UUIDs). No SMS. Rate-limited per institute.
+   */
+  async add(input: {
+    phone: string;
+    name: string;
+    nameBn: string | null;
+    roles: StaffRole[];
+  }): Promise<StaffMember> {
     const tx = this.db.tx;
     const { tenantId } = this.me;
+    await this.rateLimit();
     if (input.roles.includes('OWNER')) requireOwner(await this.lockOwners(), this.me.userId);
     const userId = await findOrCreateUser(tx, input.phone, input.name, input.nameBn);
     const existing = await tx.membership.findMany({
       where: { userId, role: { in: STAFF } },
-      select: { status: true },
+      select: { id: true, role: true, status: true, invitedAt: true },
     });
+    const now = new Date();
+    const previous = existing.length > 0 ? statusOf(existing, now) : null;
+    if (existing.some((m) => statusOf([m], now) !== 'EXPIRED' && m.status !== 'DECLINED')) {
+      throw apiError(409, 'ALREADY_STAFF', 'This person is already staff or invited here');
+    }
+    // Declined or expired before: this is a new invitation with the roles given now.
     if (existing.length > 0) {
-      throw apiError(409, 'ALREADY_STAFF', 'This person is already staff here', {
-        userId,
-        status: existing[0]!.status,
-      });
+      await tx.membership.deleteMany({ where: { id: { in: existing.map((m) => m.id) } } });
     }
     await tx.membership.createMany({
-      data: input.roles.map((role) => ({ tenantId, userId, role })),
+      data: input.roles.map((role) => ({
+        tenantId,
+        userId,
+        role,
+        status: 'INVITED' as const,
+        invitedAt: now,
+      })),
     });
-    // Visible now that they have a membership here. created_at equals now() (at its stored
-    // precision) only for a person inserted by this transaction.
-    const [fresh] = await tx.$queryRaw<{ created: boolean }[]>`
-      SELECT created_at = now()::timestamptz(3) AS created FROM users WHERE id = ${userId}::uuid`;
+    await tx.staffProfile.upsert({
+      where: { tenantId_userId: { tenantId, userId } },
+      create: { tenantId, userId, name: input.name, nameBn: input.nameBn, phone: input.phone },
+      update: { name: input.name, nameBn: input.nameBn, phone: input.phone },
+    });
     await this.audit.record({
       entity: 'membership',
       entityId: userId,
       action: 'CREATE',
-      newValues: {
-        roles: input.roles,
-        status: 'ACTIVE',
-        phone: input.phone,
-        // false: an existing person (e.g. a guardian here, or known to another institute) was linked.
-        newPerson: fresh?.created ?? false,
-      },
+      oldValues: previous ? { status: previous, roles: existing.map((m) => m.role) } : undefined,
+      newValues: { roles: input.roles, status: 'INVITED', phone: input.phone, name: input.name },
     });
-    await this.access.invalidateRolesAfterCommit(tenantId, userId);
+    return {
+      userId,
+      name: input.name,
+      nameBn: input.nameBn,
+      phone: input.phone,
+      roles: STAFF_ROLE_VALUES.filter((r) => input.roles.includes(r)),
+      status: 'INVITED',
+      inviteExpiresAt: new Date(now.getTime() + INVITE_MS).toISOString(),
+      isSelf: false,
+      sections: [],
+      since: now.toISOString(),
+    };
+  }
+
+  /** Send a declined or expired invitation again (14 more days). */
+  async reinvite(userId: string): Promise<StaffMember> {
+    const tx = this.db.tx;
+    this.assertNotSelf(userId);
+    await this.rateLimit();
+    const owners = await this.lockOwners();
+    const current = await this.lockStaffRows(userId);
+    const roles = current.map((m) => m.role as StaffRole);
+    if (roles.includes('OWNER')) requireOwner(owners, this.me.userId);
+    const status = statusOf(current, new Date());
+    if (status !== 'DECLINED' && status !== 'EXPIRED') {
+      throw apiError(
+        409,
+        'NOT_REINVITABLE',
+        'Only a declined or expired invitation can be sent again',
+      );
+    }
+    await tx.membership.updateMany({
+      where: { userId, role: { in: STAFF } },
+      data: { status: 'INVITED', invitedAt: new Date() },
+    });
+    await this.audit.record({
+      entity: 'membership',
+      entityId: userId,
+      action: 'UPDATE',
+      oldValues: { status, roles },
+      newValues: { status: 'INVITED', roles, reason: 'reinvite' },
+    });
     return this.member(userId);
+  }
+
+  /** Withdraw an invitation (e.g. a wrong number): the invited rows are removed. */
+  async cancelInvitation(userId: string): Promise<void> {
+    const tx = this.db.tx;
+    this.assertNotSelf(userId);
+    const owners = await this.lockOwners();
+    const current = await this.lockStaffRows(userId);
+    const roles = current.map((m) => m.role as StaffRole);
+    if (roles.includes('OWNER')) requireOwner(owners, this.me.userId);
+    const status = statusOf(current, new Date());
+    if (status === 'ACTIVE' || status === 'DISABLED') {
+      throw apiError(409, 'NOT_INVITED', 'This person is already staff; deactivate them instead');
+    }
+    await tx.membership.deleteMany({ where: { userId, role: { in: STAFF } } });
+    await this.audit.record({
+      entity: 'membership',
+      entityId: userId,
+      action: 'DELETE',
+      oldValues: { status, roles },
+      newValues: { reason: 'invitation_cancelled' },
+    });
+  }
+
+  /** Staff additions and re-invitations per institute and hour. */
+  private async rateLimit(): Promise<void> {
+    await this.limiter.consume({
+      key: `staff-invite:${this.me.tenantId}`,
+      limit: this.config.get('STAFF_INVITES_PER_TENANT_PER_HOUR', { infer: true }),
+      windowSec: 3600,
+    });
   }
 
   async setRoles(userId: string, roles: StaffRole[]): Promise<StaffMember> {
@@ -122,7 +246,11 @@ export class StaffService {
     const current = await this.lockStaffRows(userId);
     const before = current.map((m) => m.role as StaffRole);
     if (before.includes('OWNER') || roles.includes('OWNER')) requireOwner(owners, this.me.userId);
-    const status = current.some((m) => m.status === 'ACTIVE') ? 'ACTIVE' : 'DISABLED';
+    // New rows join the person's current state (an invitation stays an invitation).
+    const status: MembershipStatus = current.some((m) => m.status === 'ACTIVE')
+      ? 'ACTIVE'
+      : (current[0]!.status as MembershipStatus);
+    const invitedAt = current.find((m) => m.invited_at)?.invited_at ?? null;
     if (before.includes('OWNER') && !roles.includes('OWNER') && status === 'ACTIVE') {
       assertNotLastOwner(owners, userId);
     }
@@ -134,7 +262,7 @@ export class StaffService {
     }
     if (added.length > 0) {
       await tx.membership.createMany({
-        data: added.map((role) => ({ tenantId, userId, role, status })),
+        data: added.map((role) => ({ tenantId, userId, role, status, invitedAt })),
       });
     }
     // No longer a teaching role: drop their section assignments.
@@ -161,10 +289,18 @@ export class StaffService {
     const current = await this.lockStaffRows(userId);
     const roles = current.map((m) => m.role as StaffRole);
     if (roles.includes('OWNER')) requireOwner(owners, this.me.userId);
-    const before = current.some((m) => m.status === 'ACTIVE') ? 'ACTIVE' : 'DISABLED';
-    if (current.every((m) => m.status === status)) return this.member(userId);
+    const before = statusOf(current, new Date());
+    if (before !== 'ACTIVE' && before !== 'DISABLED') {
+      throw apiError(409, 'NOT_A_MEMBER_YET', 'An invitation: cancel or re-send it instead');
+    }
+    // Only the member rows; a pending extra role stays pending.
+    const memberRows = current.filter((m) => m.status === 'ACTIVE' || m.status === 'DISABLED');
+    if (memberRows.every((m) => m.status === status)) return this.member(userId);
     if (status === 'DISABLED' && roles.includes('OWNER')) assertNotLastOwner(owners, userId);
-    await tx.membership.updateMany({ where: { userId, role: { in: STAFF } }, data: { status } });
+    await tx.membership.updateMany({
+      where: { userId, role: { in: STAFF }, status: { in: ['ACTIVE', 'DISABLED'] } },
+      data: { status },
+    });
     await this.audit.record({
       entity: 'membership',
       entityId: userId,
@@ -266,13 +402,15 @@ export class StaffService {
 
   /** Lock and read the person's staff memberships here (404 when they are not staff). */
   private async lockStaffRows(userId: string) {
-    const rows = await this.db.tx.$queryRaw<{ role: Role; status: 'ACTIVE' | 'DISABLED' }[]>`
-      SELECT role::text AS role, status::text AS status FROM memberships
+    const rows = await this.db.tx.$queryRaw<
+      { role: Role; status: MembershipStatus; invited_at: Date | null; invitedAt?: Date | null }[]
+    >`
+      SELECT role::text AS role, status::text AS status, invited_at FROM memberships
       WHERE user_id = ${userId}::uuid AND role::text = ANY(${STAFF as string[]})
       ORDER BY id
       FOR UPDATE`;
     if (rows.length === 0) throw new NotFoundException('Staff member not found');
-    return rows;
+    return rows.map((r) => ({ ...r, invitedAt: r.invited_at }));
   }
 
   private async member(userId: string): Promise<StaffMember> {
@@ -284,22 +422,21 @@ export class StaffService {
   private async members(userIds: string[]): Promise<StaffMember[]> {
     if (userIds.length === 0) return [];
     const tx = this.db.tx;
+    const now = new Date();
     const year = await tx.academicYear.findFirst({
       where: { isCurrent: true },
       select: { id: true },
     });
+    const memberships = await tx.membership.findMany({
+      where: { userId: { in: userIds }, role: { in: STAFF } },
+      select: { userId: true, role: true, status: true, invitedAt: true, createdAt: true },
+    });
+    const profiles = await tx.staffProfile.findMany({ where: { userId: { in: userIds } } });
+    // Global rows are visible (RLS) only for ACTIVE/DISABLED members; used for staff added before
+    // staff profiles existed. Invited people are known here only by their profile.
     const users = await tx.user.findMany({
       where: { id: { in: userIds } },
-      select: {
-        id: true,
-        name: true,
-        nameBn: true,
-        phone: true,
-        memberships: {
-          where: { role: { in: STAFF } },
-          select: { role: true, status: true, createdAt: true },
-        },
-      },
+      select: { id: true, name: true, nameBn: true, phone: true },
     });
     const teaching = await tx.sectionTeacher.findMany({
       where: {
@@ -319,28 +456,59 @@ export class StaffService {
         },
       },
     });
-    return users
-      .filter((u) => u.memberships.length > 0)
-      .map((u) => {
-        const roles = u.memberships.map((m) => m.role).filter(isStaffRole);
-        return {
-          userId: u.id,
-          name: u.name,
-          nameBn: u.nameBn,
-          phone: u.phone,
+    return userIds.flatMap((id) => {
+      const mine = memberships.filter((m) => m.userId === id);
+      if (mine.length === 0) return [];
+      const profile = profiles.find((p) => p.userId === id);
+      const user = users.find((u) => u.id === id);
+      const who = profile ?? user;
+      if (!who) return [];
+      const status = statusOf(mine, now);
+      // A member's roles are their member rows (a pending extra role is not one yet).
+      const member = status === 'ACTIVE' || status === 'DISABLED';
+      const roles = mine
+        .filter((m) => !member || m.status === 'ACTIVE' || m.status === 'DISABLED')
+        .map((m) => m.role)
+        .filter(isStaffRole);
+      const invitedAt = mine.find((m) => m.invitedAt)?.invitedAt ?? null;
+      return [
+        {
+          userId: id,
+          name: who.name,
+          nameBn: who.nameBn,
+          phone: who.phone,
           roles: STAFF_ROLE_VALUES.filter((r) => roles.includes(r)),
-          status: u.memberships.some((m) => m.status === 'ACTIVE') ? 'ACTIVE' : 'DISABLED',
-          isSelf: u.id === this.me.userId,
+          status,
+          inviteExpiresAt:
+            status === 'INVITED' && invitedAt
+              ? new Date(invitedAt.getTime() + INVITE_MS).toISOString()
+              : null,
+          isSelf: id === this.me.userId,
           sections: teaching
-            .filter((t) => t.userId === u.id)
+            .filter((t) => t.userId === id)
             .map((t) => ({ ...t.section, isClassTeacher: t.isClassTeacher })),
-          since: u.memberships
+          since: mine
             .map((m) => m.createdAt)
-            .sort((a, b) => a.getTime() - b.getTime())[0]!
+            .sort((x, y) => x.getTime() - y.getTime())[0]!
             .toISOString(),
-        } satisfies StaffMember;
-      });
+        } satisfies StaffMember,
+      ];
+    });
   }
+}
+
+/** One status for a person's staff rows: ACTIVE wins, then DISABLED, then the invitation state. */
+function statusOf(
+  rows: { status: string; invitedAt?: Date | null }[],
+  now: Date,
+): StaffMember['status'] {
+  if (rows.some((r) => r.status === 'ACTIVE')) return 'ACTIVE';
+  if (rows.some((r) => r.status === 'DISABLED')) return 'DISABLED';
+  if (rows.some((r) => r.status === 'INVITED')) {
+    const sent = Math.max(...rows.map((r) => r.invitedAt?.getTime() ?? 0));
+    return sent + INVITE_MS > now.getTime() ? 'INVITED' : 'EXPIRED';
+  }
+  return 'DECLINED';
 }
 
 /** The caller must be among the (locked) active owners. */
@@ -394,6 +562,18 @@ export class StaffController {
     return this.staff.setStatus(userId, 'ACTIVE');
   }
 
+  @Post(':userId/reinvite')
+  @HttpCode(200)
+  reinvite(@Param('userId', ParseUUIDPipe) userId: string): Promise<StaffMember> {
+    return this.staff.reinvite(userId);
+  }
+
+  @Post(':userId/cancel-invitation')
+  @HttpCode(204)
+  async cancelInvitation(@Param('userId', ParseUUIDPipe) userId: string): Promise<void> {
+    await this.staff.cancelInvitation(userId);
+  }
+
   @Put(':userId/sections')
   setSections(
     @Param('userId', ParseUUIDPipe) userId: string,
@@ -403,5 +583,5 @@ export class StaffController {
   }
 }
 
-@Module({ controllers: [StaffController], providers: [StaffService] })
+@Module({ controllers: [StaffController], providers: [StaffService], exports: [StaffService] })
 export class StaffModule {}

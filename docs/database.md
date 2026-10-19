@@ -83,7 +83,9 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
 `app_current_user_id()` works like the tenant helper, reading `app.user_id`.
 
 - **`users`** (RLS enabled + forced):
-  - **Visible:** yourself (`id = app.user_id`), or anyone with a membership in the current tenant.
+  - **Visible:** yourself (`id = app.user_id`), or anyone with a membership in the current tenant
+    that is not `INVITED` or `DECLINED` (the `users_visible` view). An invited person stays hidden
+    until they accept.
   - **Updatable:** your own row only. One person can belong to several tenants, so staff of
     tenant A must not edit them.
   - **No INSERT or DELETE for the app.** Create people with `findOrCreateUser(tx, phone, name)`,
@@ -94,7 +96,8 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   functions:
   - Each is owned by `jantrik_auth`, pins `search_path`, and is executable only by `jantrik_app`.
   - `auth_find_user_for_login(phone, email)`
-  - `auth_list_my_memberships()`: uses `app.user_id`, with no user parameter.
+  - `auth_list_my_memberships()`: uses `app.user_id`, with no user parameter. It also returns
+    `invited_at`, so the login flow can show pending invitations.
   - `auth_resolve_tenant(slug)`
   - `auth_find_refresh_token(hash)`
   - `app_find_or_create_user(phone, name, name_bn)`: `name_bn` is written only for a new person
@@ -108,6 +111,17 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   anyone else is a silent no-op, which left PUBLIC with EXECUTE until migration
   `fix_definer_function_privileges`. Tests check the _effective_ ACL with
   `acldefault()`, because a NULL `proacl` means "default", and the default grants PUBLIC.
+
+### Memberships and staff invitations
+
+- `membership_status`: `ACTIVE`, `DISABLED`, `INVITED`, `DECLINED`.
+- Adding staff creates `INVITED` rows with `invited_at`. They give no access: roles, switching
+  tenant and the roles cache only count `ACTIVE`. The person accepts (`ACTIVE`) or declines
+  (`DECLINED`) after logging in. After 14 days (`INVITATION_DAYS`) an unanswered invitation is
+  treated as expired; nothing is stored for that, it is computed from `invited_at`.
+- **`staff_profiles`** (tenant table, one row per staff member): the name the institute typed.
+  Staff lists and "updated by" labels read this first, so a person's global name (from another
+  institute) is never shown. No DELETE grant.
 
 ### Student search (`search_student_ids`)
 

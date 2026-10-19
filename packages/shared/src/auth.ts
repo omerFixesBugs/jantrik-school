@@ -70,4 +70,17 @@ export interface MembershipSummary {
   roles: Role[];
   /** Membership active and tenant ACTIVE or TRIAL. */
   selectable: boolean;
+  /** A pending (not expired) invitation to staff roles here: accept or decline. */
+  invitation: { roles: Role[]; expiresAt: string } | null;
+}
+
+/** Invitations expire this many days after they were sent (or re-sent). */
+export const INVITATION_DAYS = 14;
+
+/** GET /me/invitations: the caller's pending staff invitations. */
+export interface StaffInvitation {
+  tenant: { id: string; name: string };
+  roles: Role[];
+  invitedAt: string;
+  expiresAt: string;
 }
