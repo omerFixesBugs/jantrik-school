@@ -2,16 +2,19 @@
 
 Each entry: what needed deciding, the default taken (safe and reversible), and how to change it.
 
-1. **CI did not run on pushed feature branches (only `main` and PRs).**
+**Review (2026-10-20):** each entry is marked _Approved_ (kept as is), _Resolved_ (fixed after the
+first review) or _Changed_ (done differently, as described).
+
+1. **_Approved._ CI did not run on pushed feature branches (only `main` and PRs).**
    - Default: Added `feature/**` to the `push` trigger in `.github/workflows/ci.yml`.
    - To change: Remove the line, or open a PR instead.
-2. **Disk: C: had ~3 GB free at the start (Docker's data lives there).**
+2. **_Noted (environment only, no code)._ Disk: C: had ~3 GB free at the start (Docker's data lives there).**
    - Default: Kept going; nothing deleted outside this repo. If Docker stops, the phase is marked blocked here.
    - To change: Free space on C:.
-3. **Staff Bangla name: RLS lets the app update only the user's own row, so a new staff member's `name_bn` could not be stored.**
+3. **_Approved._ Staff Bangla name: RLS lets the app update only the user's own row, so a new staff member's `name_bn` could not be stored.**
    - Default: `app_find_or_create_user` gets an optional `p_name_bn`, written only when the person is new. An existing person's names are never changed (they may belong to other institutes).
    - To change: Drop the parameter; staff then set their own Bangla name.
-4. **Granting OWNER.**
+4. **_Approved._ Granting OWNER.**
    - Default: Only an OWNER can grant or remove OWNER; ADMINs manage the other roles. Nobody can change their own roles or deactivate themselves.
    - To change: Relax in `StaffService`.
 5. **Guardians added at admission/import.**
@@ -19,36 +22,34 @@ Each entry: what needed deciding, the default taken (safe and reversible), and h
    - To change: Skip membership creation in `GuardianLinker`.
 6. **Linking a guardian by phone when several guardians in the tenant share that phone.**
    - Default: The oldest one is linked; names are not overwritten.
-7. **Deactivating a student frees their roll (set to NULL) so the number can be given to someone else; the old roll is in the audit log.**
+7. **_Approved._ Deactivating a student frees their roll (set to NULL) so the number can be given to someone else; the old roll is in the audit log.**
    - Default: As described.
    - To change: Keep the roll and require a new number for newcomers.
-8. **Inactive class levels/sections/subjects/shifts/groups.**
+8. **_Approved._ Inactive class levels/sections/subjects/shifts/groups.**
    - Default: Hidden from pickers for new admissions, transfers and imports; existing records and attendance keep working.
-9. **Import: a row matching an existing student (student_code, then birth registration no.).**
+9. **_Approved._ Import: a row matching an existing student (student_code, then birth registration no.).**
    - Default: Skipped and reported as "already exists"; the existing record is not updated.
    - To change: An "update existing" option later.
-10. **Import: formula cells in .xlsx.**
+10. **_Approved._ Import: formula cells in .xlsx.**
     - Default: The value Excel saved is used; formulas are never evaluated.
     - To change: Reject formula cells instead.
-11. **Student code year.**
+11. **_Approved._ Student code year.**
     - Default: `{YEAR}` = the calendar year the enrolment's academic year starts in.
-12. **Default student code prefix before an admin sets one.**
+12. **_Approved._ Default student code prefix before an admin sets one.**
     - Default: Uppercase initials of the tenant slug's words (`shapla-school` → `SS`), falling back to `STU`.
     - To change: Set it in student settings.
-13. **Constraint violations that slip past a service's checks (races).**
+13. **_Approved._ Constraint violations that slip past a service's checks (races).**
     - Default: a global filter maps Prisma P2002 → 409 `DUPLICATE` and P2003 → 409 `REFERENCE_CONFLICT` (both were 500s before, in every module). No constraint names are returned.
     - To change: scope `PrismaErrorFilter` to the new controllers only.
-14. **Port 3000 is taken on this machine by another project (`hishab-nikash`'s Next dev server).**
+14. **_Approved._ Port 3000 is taken on this machine by another project (`hishab-nikash`'s Next dev server).**
     - Default: left it running; local dev checks ran on 3100/4100 and e2e on 3200/4200 with an uncommitted copy of the Playwright config (`apps/web/playwright.alt.config.ts`, listed in `.git/info/exclude`). CI uses the normal config.
 15. **Adding staff by phone.** _Resolved after review:_ staff are invited, not linked. The institute only ever sees the name it typed (`staff_profiles`); the response is identical whether the phone exists or not; the person sees "<institute> added you as <role>: accept / decline" after their next login and gets access only on accept (no SMS). Invitations expire after 14 days; admins can cancel a pending one and re-invite. Additions are rate-limited per institute. See `auth.md` (Staff invitations).
-16. **Roles cache race (pre-existing pattern).** A request by the target that loads roles just before a change commits can re-cache the old roles for up to the 5-minute TTL. Pure staff are still cut off at once (memberships are re-checked every request); someone who is also an active guardian keeps their old staff roles until the TTL.
-    - Default: left as is.
-    - To change: version the cache key, or check membership status in `RolesGuard` against the request transaction.
-17. **Deactivated staff keep their section assignments** (restored on reactivation); they do not count when choosing a section's class teacher.
+16. **Roles cache race.** _Changed after review:_ the roles cache is versioned per member (`tenant:{tid}:user:{uid}:roles:v{n}`). Every role or status change bumps the version after commit, and readers take the version before loading, so a request that loaded the old roles just before the change can only re-cache them under a version nobody reads. A demoted or deactivated person loses the role on their next request, also when they are still an active guardian (before, any demotion, pure staff included, could last up to the 5-minute TTL). Tests: `apps/api/test/roles-cache.e2e-spec.ts`.
+17. **_Approved._ Deactivated staff keep their section assignments** (restored on reactivation); they do not count when choosing a section's class teacher.
 18. **CI: the end-to-end step failed on GitHub.** _Resolved after review:_ the logs (`gh run view --log-failed`) showed a test race (`layout.spec.ts` typed into the OTP tab while the password panel was still mounted) and a job hitting the 10-minute limit while waiting out OTP cooldowns. Fixed in the tests; e2e now runs as its own CI job (20-minute limit) next to the checks job.
 19. **Teachers and student data.** _Resolved after review:_ teachers list every student with the basics; date of birth, birth registration no., addresses, parents' names and guardians (incl. phones) only for OWNER/ADMIN and the teachers of the student's current-year section (`StudentAccess`), in the list, the profile and today's attendance report (absentees' guardian phones). Search by guardian phone is admin-only. Exports (attendance register CSV) carry no such fields; import reports are admin-only.
-20. **A revoked (DISABLED) GUARDIAN membership is not reactivated** when that person is added as a guardian again; an admin has to restore access deliberately.
-21. **Imports go into the current academic year only.**
+20. **_Approved._ A revoked (DISABLED) GUARDIAN membership is not reactivated** when that person is added as a guardian again; an admin has to restore access deliberately.
+21. **_Approved._ Imports go into the current academic year only.**
     - To change: add a year picker to the upload step.
 22. **Import rows without a student ID or birth registration number cannot be matched**, so importing the same file twice creates them twice (rows with either are skipped as "already exists").
     - Default: kept; the template asks for birth registration numbers.

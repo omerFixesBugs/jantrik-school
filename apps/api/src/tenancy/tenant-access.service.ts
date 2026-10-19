@@ -1,4 +1,4 @@
-import { HttpException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { HttpException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { withContext, withTenant, type ModuleKey, type Role, type TenantTx } from '@jantrik/db';
 import type { Redis } from 'ioredis';
 import { RequestContext } from '../common/request-context.js';
@@ -7,15 +7,27 @@ import { REDIS } from '../redis/redis.constants.js';
 
 const CACHE_TTL_SEC = 300;
 const modulesKey = (tenantId: string) => `tenant:${tenantId}:modules`;
-const rolesKey = (tenantId: string, userId: string) => `tenant:${tenantId}:user:${userId}:roles`;
+/**
+ * The member's roles-cache version, bumped after every committed role/status change. It has no
+ * expiry (one small counter per member): a counter that expired could start again at a number
+ * whose stale entry is still cached.
+ */
+export const rolesVersionKey = (tenantId: string, userId: string) =>
+  `tenant:${tenantId}:user:${userId}:roles:ver`;
+export const rolesKey = (tenantId: string, userId: string, version: string) =>
+  `tenant:${tenantId}:user:${userId}:roles:v${version}`;
 
 /**
  * Enabled modules per tenant and roles per member, cached in Redis for the guards.
- * Every write goes through this service and invalidates the cache *after commit* (so a
- * concurrent read cannot re-cache the old value). The TTL is only a safety net.
+ * Module writes invalidate after commit. Roles are cached under a per-member version that every
+ * change bumps after commit: a request that loaded the old roles just before the change can only
+ * write them under the old version, which nobody reads any more (no stale re-cache). The TTL is
+ * only a safety net.
  */
 @Injectable()
 export class TenantAccessService {
+  private readonly logger = new Logger(TenantAccessService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly context: RequestContext,
@@ -31,7 +43,9 @@ export class TenantAccessService {
   }
 
   async getRoles(tenantId: string, userId: string): Promise<Role[]> {
-    return this.cached(rolesKey(tenantId, userId), () =>
+    // The version is read before loading: see the class comment.
+    const version = (await this.redis.get(rolesVersionKey(tenantId, userId))) ?? '0';
+    return this.cached(rolesKey(tenantId, userId, version), () =>
       withContext(this.prisma.client, { tenantId, userId }, async (tx) =>
         (await tx.membership.findMany({ where: { userId, status: 'ACTIVE' } })).map((m) => m.role),
       ),
@@ -62,7 +76,7 @@ export class TenantAccessService {
         });
       }
     });
-    await this.context.afterCommit(() => this.redis.del(rolesKey(tenantId, userId)));
+    await this.invalidateRolesAfterCommit(tenantId, userId);
   }
 
   /**
@@ -127,12 +141,25 @@ export class TenantAccessService {
         select: { id: true },
       });
     });
-    await this.redis.del(rolesKey(tenantId, userId));
+    // Its own transaction has committed: a failed bump must not turn the answer into an error.
+    await this.bumpRoles(tenantId, userId).catch(() => undefined);
   }
 
-  /** Drop a member's cached roles once the current request commits (after a direct write). */
+  /** Retire a member's cached roles once the current request commits (after any membership write). */
   async invalidateRolesAfterCommit(tenantId: string, userId: string): Promise<void> {
-    await this.context.afterCommit(() => this.redis.del(rolesKey(tenantId, userId)));
+    await this.context.afterCommit(() => this.bumpRoles(tenantId, userId));
+  }
+
+  /** Errors are logged and rethrown; the old roles then last at most the cache TTL. */
+  private async bumpRoles(tenantId: string, userId: string): Promise<void> {
+    try {
+      await this.redis.incr(rolesVersionKey(tenantId, userId));
+    } catch (error) {
+      this.logger.error(
+        `roles cache bump failed for tenant ${tenantId} user ${userId}: ${(error as Error).message}`,
+      );
+      throw error;
+    }
   }
 
   /** Use the request transaction when it is for this tenant; otherwise open one. */

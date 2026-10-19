@@ -150,7 +150,7 @@ expiresAt}` and `selectable: false`. `/select-institute` and the dashboard show
 nestjs-cls middleware     AsyncLocalStorage for the request
 JwtAuthGuard              @Public() skips; verify JWT + session not revoked → principal
 RateLimitGuard            per user (authenticated) or per IP
-RolesGuard                @Roles(...)        → current roles from Redis (tenant:{tid}:user:{uid}:roles)
+RolesGuard                @Roles(...)        → current roles from Redis (tenant:{tid}:user:{uid}:roles:v{n})
 ModuleGuard               @RequireModule(…)  → enabled modules from Redis (tenant:{tid}:modules)
 TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the handler:
                             - re-checks tenant ACTIVE/TRIAL + active membership (immediate suspension)
@@ -159,8 +159,20 @@ TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the
 ```
 
 - **Role and module changes apply on the next request.** Change them through
-  `TenantAccessService` (`setMemberRoles`, `setModuleEnabled`). It writes the row and invalidates
-  the cache _after commit_. The 5-minute TTL is only a safety net.
+  `TenantAccessService` (`setMemberRoles`, `setModuleEnabled`), or call
+  `invalidateRolesAfterCommit` after writing memberships directly. The 5-minute TTL is only a
+  safety net.
+  - **Roles are cached per version.** Each member has a counter `tenant:{tid}:user:{uid}:roles:ver`
+    (no expiry: a counter that expired could restart at a number whose stale entry is still
+    cached), bumped _after commit_ by every role or status change (staff roles, activate /
+    deactivate, invitations sent, answered, re-sent or cancelled, guardian links). `getRoles` reads
+    the counter _before_ loading and caches under `…:roles:v{n}`. A request that loaded the old
+    roles just before a change committed can only write them under the old version, which is
+    never read again, so a demoted person (also one who is still an active guardian) loses the
+    role on their next request. A failed bump is logged; the old roles then last at most the TTL.
+  - Modules are changed only by the platform; their key is deleted after commit.
+  - **Production Redis must use `maxmemory-policy noeviction`.** Evicting these counters, revoked
+    sessions or rate-limit keys would silently weaken the checks above.
 - **`@UserScoped()`** runs a route with the user context only. Used by `/auth/*`, so account
   routes such as logout work even when the selected tenant is suspended.
 - **`@Public()`** routes get no request transaction.

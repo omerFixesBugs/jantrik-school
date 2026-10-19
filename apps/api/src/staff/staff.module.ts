@@ -76,8 +76,8 @@ export async function staffNames(
  * who holds (or held) OWNER here, or grant OWNER; the last active OWNER can never be removed or
  * deactivated; nobody changes their own roles or status. Role and status changes lock, in one
  * fixed order, every active OWNER row and then the target's staff rows, and decide on the locked
- * rows, so concurrent requests serialise. Roles are cached for the guards: every change drops
- * the cache after commit. Everything is audited.
+ * rows, so concurrent requests serialise. Roles are cached for the guards: every change bumps
+ * the member's cache version after commit. Everything is audited.
  */
 @Injectable()
 export class StaffService {
@@ -162,6 +162,7 @@ export class StaffService {
       oldValues: previous ? { status: previous, roles: existing.map((m) => m.role) } : undefined,
       newValues: { roles: input.roles, status: 'INVITED', phone: input.phone, name: input.name },
     });
+    await this.access.invalidateRolesAfterCommit(tenantId, userId);
     return {
       userId,
       name: input.name,
@@ -204,6 +205,7 @@ export class StaffService {
       oldValues: { status, roles },
       newValues: { status: 'INVITED', roles, reason: 'reinvite' },
     });
+    await this.access.invalidateRolesAfterCommit(this.me.tenantId, userId);
     return this.member(userId);
   }
 
@@ -227,6 +229,7 @@ export class StaffService {
       oldValues: { status, roles },
       newValues: { reason: 'invitation_cancelled' },
     });
+    await this.access.invalidateRolesAfterCommit(this.me.tenantId, userId);
   }
 
   /** Staff additions and re-invitations per institute and hour. */
