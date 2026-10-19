@@ -12,6 +12,7 @@ import {
 import {
   EllipsisVerticalIcon,
   EyeIcon,
+  FileSpreadsheetIcon,
   PhoneIcon,
   SearchIcon,
   SearchXIcon,
@@ -142,7 +143,10 @@ function Students() {
             <UserPlusIcon aria-hidden />
             {t('admit', { student: studentLabel })}
           </ButtonLink>
-          {/* Import (phase E) links here once the page exists. */}
+          <ButtonLink href="/students/import" variant="outline" data-testid="import-students">
+            <FileSpreadsheetIcon aria-hidden />
+            {t('import')}
+          </ButtonLink>
         </div>
       )}
       <div

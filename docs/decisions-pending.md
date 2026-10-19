@@ -62,3 +62,10 @@ Each entry: what needed deciding, the default taken (safe and reversible), and h
     - Default: kept consistent with the list (OWNER/ADMIN/TEACHER read).
     - To change: limit teachers to their own sections (`section_teachers`) or hide the board-registration fields from them.
 20. **A revoked (DISABLED) GUARDIAN membership is not reactivated** when that person is added as a guardian again; an admin has to restore access deliberately.
+21. **Imports go into the current academic year only.**
+    - To change: add a year picker to the upload step.
+22. **Import rows without a student ID or birth registration number cannot be matched**, so importing the same file twice creates them twice (rows with either are skipped as "already exists").
+    - Default: kept; the template asks for birth registration numbers.
+    - To change: also match on name + class + guardian phone, or warn in the preview.
+23. **Import data retention.** Raw rows (phones, birth registration numbers) are cleared when an import finishes or fails, after 7 days unfinished, or after a day stuck in a run. The clearing runs lazily when that institute uploads or lists imports (no scheduled job). The per-row results (row number, status, name, the offending value) are kept as history.
+    - To change: add a daily sweep job, and/or drop names and values from results after N days.

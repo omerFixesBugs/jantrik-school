@@ -17,6 +17,7 @@ import { PrismaErrorFilter } from './common/prisma-error.filter.js';
 import { ZodValidationPipe } from './common/zod.js';
 import { validateEnv, type Env } from './config/env.js';
 import { HealthModule } from './health/health.module.js';
+import { ImportsModule } from './imports/imports.module.js';
 import { MeModule } from './me/me.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { RedisModule } from './redis/redis.module.js';
@@ -55,6 +56,7 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     StudentsModule,
     SetupModule,
     StaffModule,
+    ImportsModule,
     AttendanceModule,
   ],
   providers: [
