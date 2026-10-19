@@ -250,6 +250,7 @@ describe('global names never leave the API', () => {
     const paths: [string, Record<string, string>?][] = [
       ['/students'],
       ['/students', { q: 'Leak' }],
+      ['/guardians', { phone: person.phone }],
       [`/students/${studentId}`],
       ['/staff'],
       ['/attendance/staff'],

@@ -76,8 +76,9 @@ see decision #18: the `playwright-report` artifact of a failed run will show whi
 
 - **Admission** (`/students/new`): every field, including board registration (17-digit birth
   registration, parents' names in both languages, addresses with "same as present"); Bangla
-  digits in phone, roll, dates and numbers; 1–4 guardians, exactly one primary, each found by phone
-  (siblings share) or created, each with an OTP login (decision #5).
+  digits in phone, roll, dates and numbers; 1–4 guardians, exactly one primary, each picked from
+  this institute's guardians on that phone (siblings share) or created, each with an OTP login
+  (decisions #5, #6).
 - **Enrolment:** year, active class, a section of that year and class, optional group, roll that
   must be free in the section, capacity enforced (section row locked).
 - **Student ID:** `{PREFIX}-{YEAR}-{NNNN}` by default, per-tenant prefix and pattern, an atomic

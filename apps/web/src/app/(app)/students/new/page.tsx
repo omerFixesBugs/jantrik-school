@@ -127,6 +127,8 @@ function Admission() {
       router.push(`/students/${p.id}`);
     },
     onError: (e) => {
+      // Someone may have added a guardian on the same phone meanwhile: show the choices again.
+      void queryClient.invalidateQueries({ queryKey: ['guardian-matches'] });
       if (!(e instanceof ApiError) || (e.status !== 400 && e.status !== 409 && e.status !== 422)) {
         toast.error(describe(e));
       } else toast.error(t('errorCheckForm'));
@@ -152,11 +154,13 @@ function Admission() {
       const m = /^guardians\.(\d+)\.(\w+)$/.exec(path);
       if (m && Number(m[1]) === i) fromServer[m[2]!] = msg;
     }
-    // GUARDIAN_NAME_REQUIRED names the guardian by phone.
-    if (server['guardians'] && admit.error instanceof ApiError) {
+    // GUARDIAN_NAME_REQUIRED / GUARDIAN_CHOICE_REQUIRED name the guardian by phone.
+    if (admit.error instanceof ApiError) {
       const body = admit.error.body as { phone?: string } | null;
-      if (body?.phone && body.phone === normalizeBdPhone(g.phone))
-        fromServer['nameBn'] = server['guardians'];
+      if (body?.phone && body.phone === normalizeBdPhone(g.phone)) {
+        if (server['guardians']) fromServer['nameBn'] = server['guardians'];
+        if (server['guardianChoice']) fromServer['choice'] = server['guardianChoice'];
+      }
     }
     guardianErrors[g.key] = { ...fromServer, ...(touched ? guardianProblems(g) : {}) };
   });

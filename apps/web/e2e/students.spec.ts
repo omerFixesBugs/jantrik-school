@@ -59,6 +59,52 @@ test('admission with Bangla digits → profile → deactivate', async ({ page })
   await expect(page.getByTestId('enrolment-row').first()).not.toContainText('রোল');
 });
 
+test('a sibling: the known guardian phone shows the existing guardian to pick', async ({
+  page,
+}) => {
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  const admit = async (
+    nameBn: string,
+    fill: (g: ReturnType<Page['getByTestId']>) => Promise<void>,
+  ) => {
+    await page.goto('/students/new');
+    await page.locator('#st-name-bn').fill(nameBn);
+    await page.locator('#enrol-class').selectOption({ label: 'নবম শ্রেণি' });
+    await fill(page.getByTestId('guardian-row').first());
+  };
+
+  // The first child brings a new guardian.
+  await admit('রুমানা আক্তার', async (g) => {
+    await g.getByLabel(/^মোবাইল নম্বর/).fill('০১৮১১০০০৮৮৮');
+    await g.getByLabel('নাম (বাংলায়)').fill('রহিমা খাতুন');
+    await expect(g.getByTestId('guardian-matches')).toHaveCount(0);
+  });
+  await page.getByTestId('admit').tap();
+  await expect(page.getByTestId('student-profile')).toContainText('রুমানা আক্তার');
+
+  // The sibling: the same phone lists her (with the child) to pick, or add a new guardian.
+  await admit('রায়হান আহমেদ', async (g) => {
+    await g.getByLabel(/^মোবাইল নম্বর/).fill('01811000888');
+    const matches = g.getByTestId('guardian-matches');
+    await expect(matches).toContainText('রহিমা খাতুন');
+    await expect(matches).toContainText('অভিভাবক: রুমানা আক্তার (নবম শ্রেণি)');
+    await expect(g.getByTestId('guardian-match-new')).toBeVisible();
+  });
+  await page.getByTestId('admit').tap();
+  await expect(page.getByTestId('admission-form')).toContainText(
+    'আগের একজনকে বেছে নিন, অথবা নতুন অভিভাবক হিসেবে যোগ করুন',
+  );
+  await expectClean(page, 'guardian choice');
+  const guardian = page.getByTestId('guardian-row').first();
+  await guardian.getByTestId('guardian-match').first().tap();
+  await expect(guardian.getByLabel('নাম (বাংলায়)')).toHaveCount(0); // her stored names are kept
+  await page.getByTestId('admit').tap();
+  await expect(page.getByTestId('student-profile')).toContainText('রায়হান আহমেদ');
+  await expect(page.getByTestId('profile-guardians-list')).toContainText('রহিমা খাতুন');
+  await expect(page.getByTestId('profile-guardians-list')).toContainText('01811-000888');
+});
+
 test('teachers: full profile for their own section, basics for others; no admission', async ({
   page,
 }) => {

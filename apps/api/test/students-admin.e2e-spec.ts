@@ -1,5 +1,10 @@
 import { withTenant } from '@jantrik/db';
-import type { GuardianChild, StudentProfile, StudentSettings } from '@jantrik/shared';
+import type {
+  GuardianChild,
+  GuardianMatch,
+  StudentProfile,
+  StudentSettings,
+} from '@jantrik/shared';
 import {
   addMember,
   bearer,
@@ -128,13 +133,87 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
     ).expect(400);
   });
 
-  it('a new guardian needs a name; a known one (by phone) does not', async () => {
+  it('a new guardian needs a name; a known phone needs a choice: pick one or add a new guardian', async () => {
     const phone = randomPhone();
     const nameless = { phone, relation: 'FATHER', isPrimary: true };
     const r = await admit(admission({ guardians: [nameless] })).expect(422);
     expect(r.body.code).toBe('GUARDIAN_NAME_REQUIRED');
-    await admit(admission({ guardians: [{ ...nameless, nameEn: 'Father' }] })).expect(201);
-    await admit(admission({ guardians: [nameless] })).expect(201);
+    const first = (
+      await admit(admission({ guardians: [{ ...nameless, nameEn: 'Father' }] })).expect(201)
+    ).body as StudentProfile;
+    const existing = first.guardians[0]!.guardianId;
+
+    // Never linked silently.
+    const choice = await admit(admission({ guardians: [nameless] })).expect(409);
+    expect(choice.body).toMatchObject({
+      code: 'GUARDIAN_CHOICE_REQUIRED',
+      field: 'guardians',
+      phone,
+    });
+    // Picked: no name needed.
+    const picked = (
+      await admit(admission({ guardians: [{ ...nameless, guardianId: existing }] })).expect(201)
+    ).body as StudentProfile;
+    expect(picked.guardians[0]!.guardianId).toBe(existing);
+    // A new guardian on the same phone: needs a name; shares the phone's login.
+    const unnamed = await admit(admission({ guardians: [{ ...nameless, createNew: true }] }));
+    expect(unnamed.status).toBe(422);
+    const added = (
+      await admit(
+        admission({ guardians: [{ ...nameless, createNew: true, nameEn: 'Uncle' }] }),
+      ).expect(201)
+    ).body as StudentProfile;
+    expect(added.guardians[0]!.guardianId).not.toBe(existing);
+    expect(added.guardians[0]).toMatchObject({ nameEn: 'Uncle', canLogIn: true });
+    // Not both.
+    await admit(
+      admission({ guardians: [{ ...nameless, guardianId: existing, createNew: true }] }),
+    ).expect(400);
+  });
+
+  it('guardian lookup by phone: admins only, this institute only, its own names and the children', async () => {
+    const phone = randomPhone();
+    await admit(
+      admission({
+        nameEn: 'Child One',
+        guardians: [{ phone, nameBn: 'বাবা', nameEn: 'Dad', relation: 'FATHER', isPrimary: true }],
+      }),
+    ).expect(201);
+    await admit(
+      admission({
+        nameEn: 'Child Two',
+        guardians: [
+          { phone, nameEn: 'Uncle', relation: 'UNCLE', isPrimary: true, createNew: true },
+        ],
+      }),
+    ).expect(201);
+    const local = `0${phone.slice(4)}`; // 01XXXXXXXXX, as typed in the form
+    const found = (
+      await http(h).get('/guardians').query({ phone: local }).set(bearer(admin)).expect(200)
+    ).body as GuardianMatch[];
+    expect(found).toMatchObject([
+      { nameBn: 'বাবা', nameEn: 'Dad', children: [{ nameEn: 'Child One', classLevel: {} }] },
+      { nameEn: 'Uncle', children: [{ nameEn: 'Child Two' }] },
+    ]);
+    // A deactivated child is not listed.
+    const two = found[1]!;
+    const child = await withTenant(h.prisma, tenantId, (tx) =>
+      tx.studentGuardian.findFirstOrThrow({ where: { guardianId: two.id } }),
+    );
+    await http(h).post(`/students/${child.studentId}/deactivate`).set(bearer(admin)).expect(200);
+    const later = (
+      await http(h).get('/guardians').query({ phone: local }).set(bearer(admin)).expect(200)
+    ).body as GuardianMatch[];
+    expect(later[1]).toMatchObject({ nameEn: 'Uncle', children: [] });
+    await http(h).get('/guardians').query({ phone: local }).set(bearer(teacher)).expect(403);
+    await http(h).get('/guardians').query({ phone: '0171' }).set(bearer(admin)).expect(400);
+    const other = (await createTenant(h)).id;
+    const otherAdmin = (await otpLogin(h, (await addMember(h, other, { roles: ['ADMIN'] })).phone))
+      .accessToken;
+    expect(
+      (await http(h).get('/guardians').query({ phone: local }).set(bearer(otherAdmin)).expect(200))
+        .body,
+    ).toEqual([]);
   });
 
   it('roll unique in the section; birth registration and code unique; section must match', async () => {
@@ -198,15 +277,32 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
     await http(h).post(`/students/${mine.id}/deactivate`).set(bearer(otherAdmin)).expect(404);
   });
 
-  it('siblings share a guardian found by phone; names are not overwritten', async () => {
+  it('siblings share the guardian the admin picks; names are not overwritten', async () => {
     const phone = randomPhone();
     const g = { phone, nameBn: 'মা', nameEn: 'Mother', relation: 'MOTHER', isPrimary: true };
     const a = (await admit(admission({ guardians: [g] })).expect(201)).body as StudentProfile;
+    const guardianId = a.guardians[0]!.guardianId;
     const b = (
-      await admit(admission({ guardians: [{ ...g, nameEn: 'Someone else' }] })).expect(201)
+      await admit(admission({ guardians: [{ ...g, nameEn: 'Someone else', guardianId }] })).expect(
+        201,
+      )
     ).body as StudentProfile;
-    expect(b.guardians[0]!.guardianId).toBe(a.guardians[0]!.guardianId);
+    expect(b.guardians[0]!.guardianId).toBe(guardianId);
     expect(b.guardians[0]!.nameEn).toBe('Mother');
+    // A guardian with another phone cannot be picked.
+    const wrong = await admit(
+      admission({ guardians: [{ ...g, phone: randomPhone(), guardianId }] }),
+    ).expect(422);
+    expect(wrong.body.code).toBe('GUARDIAN_MISMATCH');
+    // Nor one of another institute, even with the same phone (RLS: not found there).
+    const other = (await createTenant(h)).id;
+    const theirs = await withTenant(h.prisma, other, (tx) =>
+      tx.guardian.create({ data: { tenantId: other, phone, nameEn: 'Elsewhere' } }),
+    );
+    const foreign = await admit(admission({ guardians: [{ ...g, guardianId: theirs.id }] })).expect(
+      422,
+    );
+    expect(foreign.body.code).toBe('GUARDIAN_MISMATCH');
   });
 
   it('edits, guardians (primary swap, rules), transfer, deactivate', async () => {

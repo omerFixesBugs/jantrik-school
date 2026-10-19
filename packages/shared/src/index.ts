@@ -6,6 +6,7 @@ export * from './digits.js';
 export * from './format.js';
 export * from './grading.js';
 export * from './health.js';
+export * from './people.js';
 export * from './phone.js';
 export * from './sms.js';
 export * from './register.js';

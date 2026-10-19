@@ -18,11 +18,13 @@ import {
   addGuardianSchema,
   admissionSchema,
   createEnrolmentSchema,
+  guardianLookupQuerySchema,
   normalizeBdPhone,
   studentSettingsSchema,
   transferSchema,
   updateGuardianLinkSchema,
   updateStudentSchema,
+  type GuardianMatch,
   type StudentProfile,
   type StudentSettings,
   studentsQuerySchema,
@@ -46,6 +48,7 @@ class UpdateGuardianLinkDto extends zodDto(updateGuardianLinkSchema) {}
 class TransferDto extends zodDto(transferSchema) {}
 class CreateEnrolmentDto extends zodDto(createEnrolmentSchema) {}
 class StudentSettingsDto extends zodDto(studentSettingsSchema) {}
+class GuardianLookupDto extends zodDto(guardianLookupQuerySchema) {}
 
 const Id = () => Param('id', ParseUUIDPipe);
 
@@ -272,8 +275,21 @@ export class StudentsController {
   }
 }
 
+/** Admission helpers: this institute's guardians with a phone (pick one or add a new one). */
+@Controller('guardians')
+@RequireModule('CORE')
+@Roles('OWNER', 'ADMIN')
+export class GuardiansController {
+  constructor(private readonly guardians: GuardianLinker) {}
+
+  @Get()
+  lookup(@Query() query: GuardianLookupDto): Promise<GuardianMatch[]> {
+    return this.guardians.matches(query.phone);
+  }
+}
+
 @Module({
-  controllers: [StudentsController],
+  controllers: [StudentsController, GuardiansController],
   providers: [
     StudentsService,
     StudentAdminService,

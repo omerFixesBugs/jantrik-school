@@ -122,15 +122,48 @@ const studentFields = {
 const hasName = (s: { nameBn: string | null; nameEn: string | null }) =>
   Boolean(s.nameBn || s.nameEn);
 
-export const guardianInputSchema = z.object({
-  phone: bdPhoneSchema,
-  nameBn: optionalText(120),
-  nameEn: optionalText(120),
-  relation: z.enum(GUARDIAN_RELATIONS),
-  isPrimary: z.boolean().default(false),
-  occupation: optionalText(120),
-});
+/**
+ * A guardian at admission (or added later). When guardians of this institute already have the
+ * phone, the admin picks one (`guardianId`) or adds a new guardian (`createNew`); without a choice
+ * the API answers 409 GUARDIAN_CHOICE_REQUIRED (decision #6).
+ */
+export const guardianInputSchema = z
+  .object({
+    phone: bdPhoneSchema,
+    nameBn: optionalText(120),
+    nameEn: optionalText(120),
+    relation: z.enum(GUARDIAN_RELATIONS),
+    isPrimary: z.boolean().default(false),
+    occupation: optionalText(120),
+    /** Link this guardian of the institute (it must have this phone). */
+    guardianId: z
+      .uuid()
+      .nullish()
+      .transform((v) => v ?? null),
+    /** Add a new guardian although others here have this phone. */
+    createNew: z.boolean().default(false),
+  })
+  .refine((g) => !(g.guardianId && g.createNew), {
+    message: 'Pick an existing guardian or a new one, not both',
+    path: ['guardianId'],
+  });
 export type GuardianInput = z.input<typeof guardianInputSchema>;
+
+/** GET /guardians?phone= (OWNER/ADMIN): this institute's guardians with that phone. */
+export const guardianLookupQuerySchema = z.object({ phone: bdPhoneSchema });
+
+/** A guardian of this institute with the typed phone (its own names, never a login's). */
+export interface GuardianMatch {
+  id: string;
+  nameBn: string | null;
+  nameEn: string | null;
+  /** Their students, with this year's class (to tell guardians on one phone apart). */
+  children: {
+    nameBn: string | null;
+    nameEn: string | null;
+    classLevel: { nameBn: string; nameEn: string } | null;
+  }[];
+}
 
 export const enrolmentInputSchema = z.object({
   academicYearId: z.uuid(),

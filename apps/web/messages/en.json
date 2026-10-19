@@ -613,7 +613,14 @@
     "errorAlreadyLinked": "This guardian is already linked",
     "errorInvalid": "Check this",
     "errorRequired": "Required",
-    "errorCheckForm": "Fix the fields marked in red."
+    "errorCheckForm": "Fix the fields marked in red.",
+    "matchTitle": "Guardians with this number are already here. Who is this?",
+    "matchChildren": "Guardian of {names}",
+    "matchNoChildren": "Not linked to a student now",
+    "matchNew": "Add as a new guardian",
+    "errorChooseGuardian": "Pick one of them, or add a new guardian",
+    "errorGuardianMismatch": "The chosen guardian doesn't have this number; pick again",
+    "matchNewHint": "Guardians on one number share one login: whoever has this phone sees all their children in the app."
   },
   "profile": {
     "saved": "Saved",
@@ -806,6 +813,13 @@
     "row_IMPORTED": "Imported",
     "row_SKIPPED": "Skipped",
     "mappingSummary": "Matched columns: {count} (show / change)",
-    "err_ROW_REJECTED": "this row could not be added; check it and try again"
+    "err_ROW_REJECTED": "this row could not be added; check it and try again",
+    "err_GUARDIAN_NAME_NEEDED": "several guardians have this phone; add the guardian name to pick one",
+    "noteGuardian": "Guardian {n}",
+    "note_GUARDIAN_LINKED": "linked to an existing guardian",
+    "note_GUARDIAN_LINKED_BY_PHONE_ONLY": "no name; linked by phone only, please check",
+    "note_GUARDIAN_NEW_SAME_PHONE": "name did not match; added as a new guardian with this phone",
+    "note_GUARDIAN_NAME_GENERATED": "no name; named after the student, rename later",
+    "err_GUARDIAN_CHANGED": "the guardians on this phone changed after the check; check the file again"
   }
 }

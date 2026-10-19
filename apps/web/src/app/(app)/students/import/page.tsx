@@ -667,6 +667,25 @@ function RowsCard({ id, summary }: { id: string; summary: StudentImportSummary }
                   ))}
                 </ul>
               )}
+              {r.notes && r.notes.length > 0 && (
+                <ul
+                  className="text-muted-foreground list-disc pl-5 text-sm"
+                  data-testid="import-row-notes"
+                >
+                  {r.notes.map((n, i) => (
+                    <li
+                      key={i}
+                      className={cn(
+                        'break-words',
+                        n.code === 'GUARDIAN_LINKED_BY_PHONE_ONLY' && 'text-foreground font-medium',
+                      )}
+                    >
+                      {t('noteGuardian', { n: formatCount(n.guardian, locale) })}:{' '}
+                      {t(`note_${n.code}`)}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
           ))}
         </ul>

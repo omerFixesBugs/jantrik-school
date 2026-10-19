@@ -8,13 +8,17 @@ import {
   findInFileDuplicates,
   formatBdPhone,
   parseImportRow,
+  planImportGuardian,
   toCsv,
   type ImportField,
+  type ImportGuardian,
   type ImportLookups,
   type ImportMapping,
   type ImportPreviewPage,
   type ImportRowError,
+  type ImportRowNote,
   type ImportRowResult,
+  type KnownGuardian,
   type ImportStudent,
   type StudentImportSummary,
 } from '@jantrik/shared';
@@ -196,19 +200,14 @@ export class StudentImportService {
       select: { sectionId: true, roll: true },
     });
     const takenRolls = new Set(taken.map((t) => `${t.sectionId}:${t.roll}`));
-    // A guardian found by phone keeps their name; a new one needs a name in the row.
-    const nameless = [
-      ...new Set(
-        students.flatMap((s) =>
-          s.guardians.filter((g) => !g.nameBn && !g.nameEn).map((g) => g.phone),
-        ),
-      ),
-    ];
-    const knownPhones = new Set(
-      (
-        await tx.guardian.findMany({ where: { phone: { in: nameless } }, select: { phone: true } })
-      ).map((g) => g.phone),
-    );
+    // Guardians with the file's phones (oldest first); rows add the ones they will create.
+    const known: KnownGuardian[] = await tx.guardian.findMany({
+      where: {
+        phone: { in: [...new Set(students.flatMap((s) => s.guardians.map((g) => g.phone)))] },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, phone: true, nameBn: true, nameEn: true },
+    });
     const capacity = new Map(
       (
         await tx.section.findMany({
@@ -233,12 +232,17 @@ export class StudentImportService {
       if (match)
         return { row, status: 'EXISTS', errors: [], studentCode: match, ...(name ? { name } : {}) };
       const errors: ImportRowError[] = [...(dups.get(i) ?? [])];
+      const notes: ImportRowNote[] = [];
+      const created: KnownGuardian[] = [];
       s.guardians.forEach((g, gi) => {
-        if (!g.nameBn && !g.nameEn && !knownPhones.has(g.phone)) {
-          errors.push({
-            code: 'GUARDIAN_NAME_MISSING',
-            field: gi === 0 ? 'guardianNameBn' : 'guardian2NameBn',
-          });
+        const plan = planImportGuardian(g, s, known);
+        if (plan.kind === 'ambiguous') {
+          errors.push({ code: 'GUARDIAN_NAME_NEEDED', field: guardianNameField(gi) });
+          return;
+        }
+        if (plan.note) notes.push({ code: plan.note, guardian: gi === 0 ? 1 : 2 });
+        if (plan.kind === 'new') {
+          created.push({ id: null, phone: g.phone, nameBn: plan.nameBn, nameEn: plan.nameEn });
         }
       });
       if (s.sectionId && s.roll !== null && takenRolls.has(`${s.sectionId}:${s.roll}`)) {
@@ -251,9 +255,15 @@ export class StudentImportService {
           else c.free--;
         }
       }
-      return errors.length > 0
-        ? { row, status: 'ERROR', errors, ...(name ? { name } : {}) }
-        : { row, status: 'OK', errors: [], ...(name ? { name } : {}) };
+      if (errors.length > 0) return { row, status: 'ERROR', errors, ...(name ? { name } : {}) };
+      known.push(...created); // later rows of this file link to the guardians this one adds
+      return {
+        row,
+        status: 'OK',
+        errors: [],
+        ...(name ? { name } : {}),
+        ...(notes.length > 0 ? { notes } : {}),
+      };
     });
   }
 
@@ -408,11 +418,13 @@ export class StudentImportService {
     const mapping = (imp.mapping as ImportMapping | null) ?? {};
     const lookups = await this.lookups();
     for (let i = from; i < Math.min(to, rows.length); i++) {
-      const r = results[i];
-      if (!r || r.status !== 'OK') {
-        if (r && r.status === 'EXISTS') results[i] = { ...r, status: 'SKIPPED' };
+      const found = results[i];
+      if (!found || found.status !== 'OK') {
+        if (found && found.status === 'EXISTS') results[i] = { ...found, status: 'SKIPPED' };
         continue;
       }
+      // The preview's notes say what will happen; a row that is not imported keeps none.
+      const { notes: previewNotes, ...r } = found;
       // Parsed again: names/sections may have changed since the preview.
       const parsed = parseImportRow(rows[i]!, mapping, lookups);
       if (!parsed.ok) {
@@ -433,8 +445,40 @@ export class StudentImportService {
         results[i] = { ...r, status: 'SKIPPED', studentCode: existing.studentCode };
         continue;
       }
+      // The guardians, decided again on what is in the database now (earlier rows included).
+      const known = await tx.guardian.findMany({
+        where: { phone: { in: s.guardians.map((g) => g.phone) } },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true, phone: true, nameBn: true, nameEn: true },
+      });
+      const notes: ImportRowNote[] = [];
+      const guardians: AdmissionGuardian[] = [];
+      let ambiguous: ImportRowError | null = null;
+      for (const [gi, g] of s.guardians.entries()) {
+        const plan = planImportGuardian(g, s, known);
+        if (plan.kind === 'ambiguous') {
+          ambiguous = { code: 'GUARDIAN_NAME_NEEDED', field: guardianNameField(gi) };
+          break;
+        }
+        // Never link (or add) differently from what the admin saw in the preview.
+        const shown = previewNotes?.find((n) => n.guardian === gi + 1)?.code ?? null;
+        if ((plan.note ?? null) !== shown) {
+          ambiguous = { code: 'GUARDIAN_CHANGED', field: guardianNameField(gi) };
+          break;
+        }
+        if (plan.note) notes.push({ code: plan.note, guardian: gi === 0 ? 1 : 2 });
+        guardians.push(
+          plan.kind === 'link'
+            ? { ...g, guardianId: plan.guardian.id, createNew: false }
+            : { ...g, nameBn: plan.nameBn, nameEn: plan.nameEn, guardianId: null, createNew: true },
+        );
+      }
+      if (ambiguous) {
+        results[i] = { ...r, status: 'ERROR', errors: [ambiguous] };
+        continue;
+      }
       // Through the same schema as a form admission: no limit can be skipped.
-      const checked = admissionSchema.safeParse(toAdmission(s, lookups.yearId));
+      const checked = admissionSchema.safeParse(toAdmission(s, lookups.yearId, guardians));
       if (!checked.success) {
         results[i] = { ...r, status: 'ERROR', errors: [{ code: 'ROW_REJECTED', field: 'nameBn' }] };
         continue;
@@ -443,7 +487,12 @@ export class StudentImportService {
       try {
         const profile = await this.students.admit(checked.data);
         await tx.$executeRawUnsafe('RELEASE SAVEPOINT import_row');
-        results[i] = { ...r, status: 'IMPORTED', studentCode: profile.studentCode };
+        results[i] = {
+          ...r,
+          status: 'IMPORTED',
+          studentCode: profile.studentCode,
+          ...(notes.length > 0 ? { notes } : {}),
+        };
       } catch (error) {
         await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT import_row');
         results[i] = { ...r, status: 'ERROR', errors: [rowErrorFrom(error)] };
@@ -494,14 +543,15 @@ export class StudentImportService {
     const results = (imp.results as ImportRowResult[] | null) ?? [];
     const head =
       locale === 'bn'
-        ? ['সারি', 'ফলাফল', 'শিক্ষার্থী আইডি', 'নাম', 'সমস্যা']
-        : ['Row', 'Result', 'Student ID', 'Name', 'Problems'];
+        ? ['সারি', 'ফলাফল', 'শিক্ষার্থী আইডি', 'নাম', 'সমস্যা', 'মন্তব্য']
+        : ['Row', 'Result', 'Student ID', 'Name', 'Problems', 'Notes'];
     const lines = results.map((r) => [
       r.row,
       STATUS_TEXT[locale][r.status],
       r.studentCode ?? '',
       r.name ?? '',
       r.errors.map((e) => errorText(e, locale)).join('; '),
+      (r.notes ?? []).map((n) => noteText(n, locale)).join('; '),
     ]);
     const stamp = imp.createdAt.toISOString().slice(0, 10);
     return { filename: `student-import-${stamp}.csv`, csv: toCsv([head, ...lines]) };
@@ -538,7 +588,12 @@ function toSummary(r: Row): StudentImportSummary {
   };
 }
 
-function toAdmission(s: ImportStudent, academicYearId: string) {
+type AdmissionGuardian = ImportGuardian & { guardianId: string | null; createNew: boolean };
+
+const guardianNameField = (gi: number): ImportField =>
+  gi === 0 ? 'guardianNameBn' : 'guardian2NameBn';
+
+function toAdmission(s: ImportStudent, academicYearId: string, guardians: AdmissionGuardian[]) {
   return {
     studentCode: s.studentCode,
     nameBn: s.nameBn,
@@ -554,7 +609,7 @@ function toAdmission(s: ImportStudent, academicYearId: string) {
     motherNameEn: s.motherNameEn,
     presentAddress: s.presentAddress,
     permanentAddress: s.permanentAddress,
-    guardians: s.guardians,
+    guardians,
     enrolment: {
       academicYearId,
       classLevelId: s.classLevelId,
@@ -573,6 +628,7 @@ function rowErrorFrom(error: unknown): ImportRowError {
       ROLL_TAKEN: { code: 'ROLL_TAKEN', field: 'roll' },
       SECTION_FULL: { code: 'SECTION_FULL', field: 'section' },
       GUARDIAN_NAME_REQUIRED: { code: 'GUARDIAN_NAME_MISSING', field: 'guardianNameBn' },
+      GUARDIAN_CHOICE_REQUIRED: { code: 'GUARDIAN_NAME_NEEDED', field: 'guardianNameBn' },
       INACTIVE: { code: 'CLASS_UNKNOWN', field: 'classLevel' },
       DUPLICATE:
         body.field === 'birthRegistrationNo'
@@ -646,7 +702,37 @@ const ERROR_TEXT: Record<ImportRowError['code'], { bn: string; en: string }> = {
     en: 'This row could not be added; check it and try again',
   },
   GUARDIAN_PHONE_TWICE: { bn: 'দুই অভিভাবকের একই নম্বর', en: 'Both guardians have the same phone' },
+  GUARDIAN_NAME_NEEDED: {
+    bn: 'এই নম্বরে একাধিক অভিভাবক আছেন; কোন জন, তা বোঝাতে অভিভাবকের নাম দিন',
+    en: 'Several guardians have this phone; add the guardian name to pick one',
+  },
+  GUARDIAN_CHANGED: {
+    bn: 'যাচাইয়ের পরে এই নম্বরের অভিভাবক বদলেছে; ফাইলটি আবার যাচাই করে যোগ করুন',
+    en: 'The guardians on this phone changed after the check; check the file again',
+  },
 };
+
+const NOTE_TEXT: Record<ImportRowNote['code'], { bn: string; en: string }> = {
+  GUARDIAN_LINKED: { bn: 'আগের অভিভাবকের সাথে যুক্ত', en: 'linked to an existing guardian' },
+  GUARDIAN_LINKED_BY_PHONE_ONLY: {
+    bn: 'নাম ছাড়া শুধু নম্বর মিলিয়ে আগের অভিভাবকের সাথে যুক্ত; দেখে নিন',
+    en: 'no name in the list; linked by phone only, please check',
+  },
+  GUARDIAN_NEW_SAME_PHONE: {
+    bn: 'নাম মেলেনি; এই নম্বরে নতুন অভিভাবক যোগ হয়েছে',
+    en: 'name did not match; added as a new guardian with this phone',
+  },
+  GUARDIAN_NAME_GENERATED: {
+    bn: 'নাম ছিল না; শিক্ষার্থীর নামে নাম দেওয়া হয়েছে, পরে বদলানো যাবে',
+    en: 'no name; named after the student, rename later',
+  },
+};
+
+function noteText(n: ImportRowNote, locale: 'bn' | 'en'): string {
+  const who =
+    locale === 'bn' ? `অভিভাবক ${n.guardian === 1 ? '১' : '২'}` : `Guardian ${n.guardian}`;
+  return `${who}: ${NOTE_TEXT[n.code][locale]}`;
+}
 
 function errorText(e: ImportRowError, locale: 'bn' | 'en'): string {
   const text = ERROR_TEXT[e.code][locale];

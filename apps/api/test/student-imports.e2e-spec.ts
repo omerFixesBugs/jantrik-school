@@ -1,4 +1,4 @@
-import { withTenant } from '@jantrik/db';
+import { withContext, withTenant } from '@jantrik/db';
 import {
   IMPORT_FIELDS,
   templateHeader,
@@ -279,6 +279,136 @@ describe('student import', () => {
     const theirs = (await http(h).get('/student-imports').set(bearer(otherAdmin)).expect(200))
       .body as StudentImportSummary[];
     expect(theirs.map((i) => i.id)).not.toContain(up.id);
+  });
+  it('guardians: phone + name links; nameless links only one known guardian; never guessed', async () => {
+    const e164 = (l: string) => `+88${l}`;
+    const linked = local();
+    const otherName = local();
+    const solo = local();
+    const two = local();
+    const fresh = local();
+    const named = local();
+    const ids = await withTenant(h.prisma, tenantId, async (tx) => {
+      const mk = (phone: string, nameEn: string) =>
+        tx.guardian.create({
+          data: { tenantId, phone: e164(phone), nameEn },
+          select: { id: true },
+        });
+      return {
+        karim: (await mk(linked, 'Karim Uddin')).id,
+        other: (await mk(otherName, 'Karim Uddin')).id,
+        solo: (await mk(solo, 'Solo Parent')).id,
+        twoA: (await mk(two, 'Parent A')).id,
+        twoB: (await mk(two, 'Parent B')).id,
+      };
+    });
+    const csv = toCsv([
+      ['Name', 'Class', 'Section', 'Mobile', 'Guardian name'],
+      ['Rafi', 'Class 6', 'ক', linked, 'karim  uddin'], // 2: same name (case, spaces) → linked
+      ['Mim', 'Class 6', 'ক', otherName, 'Someone Else'], // 3: name differs → new guardian
+      ['Nila', 'Class 6', 'ক', solo, ''], // 4: no name, one guardian → linked by phone
+      ['Tuli', 'Class 6', 'ক', two, ''], // 5: no name, two guardians → error
+      ['Joy', 'Class 6', 'ক', fresh, ''], // 6: no name, unknown → generated name
+      ['Joya', 'Class 6', 'ক', fresh, ''], // 7: sibling of Joy → linked by phone (row 6's)
+      ['Rumi', 'Class 6', 'ক', named, 'Father Six'], // 8: new
+      ['Rumki', 'Class 6', 'ক', named, 'Father Six'], // 9: sibling → linked (row 8's)
+    ]);
+    const up = (await upload(csv, 'guardians.csv').expect(201)).body as StudentImportSummary;
+    const preview = (
+      await http(h).get(`/student-imports/${up.id}/rows`).set(bearer(admin)).expect(200)
+    ).body as ImportPreviewPage;
+    const byRow = new Map(preview.rows.map((r) => [r.row, r]));
+    const note = (row: number) => byRow.get(row)!.notes?.map((n) => n.code) ?? [];
+    expect(note(2)).toEqual(['GUARDIAN_LINKED']);
+    expect(note(3)).toEqual(['GUARDIAN_NEW_SAME_PHONE']);
+    expect(note(4)).toEqual(['GUARDIAN_LINKED_BY_PHONE_ONLY']);
+    expect(byRow.get(5)).toMatchObject({
+      status: 'ERROR',
+      errors: [{ code: 'GUARDIAN_NAME_NEEDED', field: 'guardianNameBn' }],
+    });
+    expect(note(6)).toEqual(['GUARDIAN_NAME_GENERATED']);
+    expect(note(7)).toEqual(['GUARDIAN_LINKED_BY_PHONE_ONLY']);
+    expect(note(8)).toEqual([]);
+    expect(note(9)).toEqual(['GUARDIAN_LINKED']);
+
+    await http(h).post(`/student-imports/${up.id}/run`).set(bearer(admin)).expect(202);
+    const done = await waitDone(up.id);
+    expect(done.counts).toMatchObject({ imported: 7, error: 1 });
+    const guardianOf = async (nameEn: string) =>
+      withTenant(h.prisma, tenantId, async (tx) => {
+        const st = await tx.student.findFirstOrThrow({
+          where: { nameEn },
+          orderBy: { createdAt: 'desc' },
+          select: { guardians: { select: { guardian: true } } },
+        });
+        return st.guardians[0]!.guardian;
+      });
+    expect((await guardianOf('Rafi')).id).toBe(ids.karim);
+    const mim = await guardianOf('Mim');
+    expect(mim.id).not.toBe(ids.other);
+    expect(mim.nameEn).toBe('Someone Else');
+    expect((await guardianOf('Nila')).id).toBe(ids.solo);
+    const joy = await guardianOf('Joy');
+    expect(joy).toMatchObject({ nameBn: 'Joy-এর অভিভাবক', nameEn: 'Guardian of Joy' });
+    // The child's name is the institute's label only, never the person's own (global) name.
+    const own = await withContext(h.prisma, { userId: joy.userId! }, (tx) =>
+      tx.user.findUniqueOrThrow({
+        where: { id: joy.userId! },
+        select: { name: true, nameBn: true },
+      }),
+    );
+    expect(own).toEqual({ name: 'Guardian', nameBn: null });
+    expect((await guardianOf('Joya')).id).toBe(joy.id);
+    expect((await guardianOf('Rumki')).id).toBe((await guardianOf('Rumi')).id);
+    // Notes and the error are in the report too.
+    const report = await http(h)
+      .get(`/student-imports/${up.id}/report.csv`)
+      .query({ locale: 'en' })
+      .set(bearer(admin))
+      .expect(200);
+    for (const text of [
+      'Notes',
+      'Guardian 1: linked to an existing guardian',
+      'Guardian 1: name did not match; added as a new guardian with this phone',
+      'Guardian 1: no name in the list; linked by phone only, please check',
+      'Guardian 1: no name; named after the student, rename later',
+      'Several guardians have this phone; add the guardian name to pick one',
+    ]) {
+      expect(report.text).toContain(text);
+    }
+  });
+  it('guardians that changed between the check and the run: the row is not imported', async () => {
+    const phone = local();
+    const csv = toCsv([
+      ['Name', 'Class', 'Section', 'Mobile', 'Guardian name'],
+      ['Shanto', 'Class 6', 'ক', phone, ''], // preview: unknown phone → a generated guardian
+    ]);
+    const up = (await upload(csv, 'changed.csv').expect(201)).body as StudentImportSummary;
+    const preview = (
+      await http(h).get(`/student-imports/${up.id}/rows`).set(bearer(admin)).expect(200)
+    ).body as ImportPreviewPage;
+    expect(preview.rows[0]!.notes?.map((n) => n.code)).toEqual(['GUARDIAN_NAME_GENERATED']);
+    // Meanwhile someone adds a guardian on that phone.
+    await withTenant(h.prisma, tenantId, (tx) =>
+      tx.guardian.create({ data: { tenantId, phone: `+88${phone}`, nameEn: 'Neighbour' } }),
+    );
+    await http(h).post(`/student-imports/${up.id}/run`).set(bearer(admin)).expect(202);
+    expect((await waitDone(up.id)).counts).toMatchObject({ imported: 0, error: 1 });
+    const after = (
+      await http(h).get(`/student-imports/${up.id}/rows`).set(bearer(admin)).expect(200)
+    ).body as ImportPreviewPage;
+    expect(after.rows[0]).toMatchObject({
+      status: 'ERROR',
+      errors: [{ code: 'GUARDIAN_CHANGED', field: 'guardianNameBn' }],
+    });
+    expect(after.rows[0]!.notes).toBeUndefined(); // the preview's "will be named" is gone
+    const report = await http(h)
+      .get(`/student-imports/${up.id}/report.csv`)
+      .query({ locale: 'en' })
+      .set(bearer(admin))
+      .expect(200);
+    expect(report.text).toContain('The guardians on this phone changed after the check');
+    expect(report.text).not.toContain('named after the student');
   });
 });
 

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { IsoDate } from './dates.js';
 import { isoDateSchema } from './dates.js';
 import { toAsciiDigits } from './digits.js';
+import { generatedGuardianName, hasPersonName, sameName, type PersonNames } from './people.js';
 import { normalizeBdPhone } from './phone.js';
 import {
   BLOOD_GROUPS,
@@ -330,7 +331,11 @@ export type ImportErrorCode =
   | 'BLOOD_GROUP_UNKNOWN'
   | 'SECTION_FULL'
   | 'ROW_REJECTED'
-  | 'GUARDIAN_PHONE_TWICE';
+  | 'GUARDIAN_PHONE_TWICE'
+  /** No guardian name, and several guardians here have the phone: we cannot tell which one. */
+  | 'GUARDIAN_NAME_NEEDED'
+  /** At the run, the guardians on this phone were not what the preview showed: check again. */
+  | 'GUARDIAN_CHANGED';
 
 export interface ImportRowError {
   code: ImportErrorCode;
@@ -591,6 +596,76 @@ export interface ImportRowResult {
   studentCode?: string;
   /** For the preview and the report. */
   name?: string;
+  /** How the row's guardians are (or were) linked, for the admin to check. */
+  notes?: ImportRowNote[];
+}
+
+export type ImportRowNoteCode =
+  /** Phone and name match a guardian here: linked to them. */
+  | 'GUARDIAN_LINKED'
+  /** No name in the row; the one guardian here with the phone was linked (please check). */
+  | 'GUARDIAN_LINKED_BY_PHONE_ONLY'
+  /** Guardians here have the phone but not the name: a new guardian was added. */
+  | 'GUARDIAN_NEW_SAME_PHONE'
+  /** No name and an unknown phone: a new guardian named after the student (rename later). */
+  | 'GUARDIAN_NAME_GENERATED';
+
+export interface ImportRowNote {
+  code: ImportRowNoteCode;
+  /** The row's first or second guardian. */
+  guardian: 1 | 2;
+}
+
+/** A guardian already here (or, in the preview, created by an earlier row: `id` null). */
+export interface KnownGuardian {
+  id: string | null;
+  phone: string;
+  nameBn: string | null;
+  nameEn: string | null;
+}
+
+export type GuardianPlan =
+  | {
+      kind: 'link';
+      guardian: KnownGuardian;
+      note: 'GUARDIAN_LINKED' | 'GUARDIAN_LINKED_BY_PHONE_ONLY';
+    }
+  | {
+      kind: 'new';
+      nameBn: string | null;
+      nameEn: string | null;
+      note: 'GUARDIAN_NEW_SAME_PHONE' | 'GUARDIAN_NAME_GENERATED' | null;
+    }
+  | { kind: 'ambiguous' };
+
+/**
+ * How an imported row's guardian is linked (decision #6), the same in the preview and the run.
+ * `known`: guardians with these phones, oldest first.
+ * - With a name: link only when the phone and a name match; otherwise a new guardian.
+ * - No name: the one guardian with the phone is linked; several: an error; none: a new guardian
+ *   named after the student.
+ */
+export function planImportGuardian(
+  g: ImportGuardian,
+  student: PersonNames,
+  known: KnownGuardian[],
+): GuardianPlan {
+  const samePhone = known.filter((k) => k.phone === g.phone);
+  if (hasPersonName(g)) {
+    const match = samePhone.find((k) => sameName(g, k));
+    if (match) return { kind: 'link', guardian: match, note: 'GUARDIAN_LINKED' };
+    return {
+      kind: 'new',
+      nameBn: g.nameBn,
+      nameEn: g.nameEn,
+      note: samePhone.length > 0 ? 'GUARDIAN_NEW_SAME_PHONE' : null,
+    };
+  }
+  if (samePhone.length === 1) {
+    return { kind: 'link', guardian: samePhone[0]!, note: 'GUARDIAN_LINKED_BY_PHONE_ONLY' };
+  }
+  if (samePhone.length > 1) return { kind: 'ambiguous' };
+  return { kind: 'new', ...generatedGuardianName(student), note: 'GUARDIAN_NAME_GENERATED' };
 }
 
 export interface StudentImportSummary {

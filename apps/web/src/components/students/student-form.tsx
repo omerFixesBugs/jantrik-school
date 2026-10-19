@@ -8,14 +8,20 @@ import {
   RELIGIONS,
   normalizeBdPhone,
   normalizeBirthRegistration,
+  type GuardianMatch,
   type GuardianRelation,
   type StudentProfile,
 } from '@jantrik/shared';
+import { useQuery } from '@tanstack/react-query';
 import { PlusIcon, StarIcon, Trash2Icon } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
+import { useEffect } from 'react';
 import { SelectField, TextField, ToggleField } from '@/components/form-kit';
 import { Button } from '@/components/ui/button';
+import type { Locale } from '@/i18n/config';
 import { ApiError } from '@/lib/api/errors';
+import { useAuth } from '@/lib/auth/auth-provider';
+import { displayName } from '@/lib/names';
 import { cn } from '@/lib/utils';
 
 /** The student's own fields as the form holds them (strings; '' = empty). */
@@ -43,6 +49,11 @@ export interface GuardianFormValues {
   relation: GuardianRelation;
   occupation: string;
   isPrimary: boolean;
+  /** This institute's guardians with the phone (null: not looked up yet). */
+  existing: GuardianMatch[] | null;
+  /** The one picked from `existing`, or `createNew` for a new guardian on that phone. */
+  guardianId: string | null;
+  createNew: boolean;
 }
 
 export const emptyStudent = (): StudentFormValues => ({
@@ -98,7 +109,10 @@ export const studentPayload = (v: StudentFormValues) => {
 };
 
 let guardianKey = 0;
-export const newGuardian = (isPrimary: boolean, relation: GuardianRelation = 'FATHER') => ({
+export const newGuardian = (
+  isPrimary: boolean,
+  relation: GuardianRelation = 'FATHER',
+): GuardianFormValues => ({
   key: `g${++guardianKey}`,
   phone: '',
   nameBn: '',
@@ -106,6 +120,9 @@ export const newGuardian = (isPrimary: boolean, relation: GuardianRelation = 'FA
   relation,
   occupation: '',
   isPrimary,
+  existing: null,
+  guardianId: null,
+  createNew: false,
 });
 
 /** Problems we can see before sending (the API checks everything again). */
@@ -125,6 +142,8 @@ export function useGuardianProblems() {
   return (g: GuardianFormValues): Record<string, string> => {
     const p: Record<string, string> = {};
     if (!normalizeBdPhone(g.phone)) p['phone'] = t('errorPhone');
+    // Guardians here already have this phone: never linked silently (decision #6).
+    if (g.existing?.length && !g.guardianId && !g.createNew) p['choice'] = t('errorChooseGuardian');
     return p;
   };
 }
@@ -151,7 +170,13 @@ export function useServerFieldErrors() {
         GUARDIAN_NAME_REQUIRED: t('errorGuardianName'),
         ALREADY_LINKED: t('errorAlreadyLinked'),
       };
-      out[body.field] = known[body.code ?? ''] ?? t('errorInvalid');
+      const choice: Record<string, string> = {
+        GUARDIAN_CHOICE_REQUIRED: t('errorChooseGuardian'),
+        GUARDIAN_MISMATCH: t('errorGuardianMismatch'),
+      };
+      // The guardian is named by `phone` in the body; the form puts this next to the choices.
+      if (choice[body.code ?? '']) out['guardianChoice'] = choice[body.code ?? '']!;
+      else out[body.field] = known[body.code ?? ''] ?? t('errorInvalid');
     }
     return out;
   };
@@ -400,7 +425,9 @@ export function GuardianFields({
               id={`${g.key}-phone`}
               label={t('phone')}
               value={g.phone}
-              onChange={(v) => update(g.key, { phone: v })}
+              onChange={(v) =>
+                update(g.key, { phone: v, existing: null, guardianId: null, createNew: false })
+              }
               required
               inputMode="tel"
               dir="ltr"
@@ -415,31 +442,40 @@ export function GuardianFields({
               onChange={(v) => update(g.key, { relation: v as GuardianRelation })}
               options={GUARDIAN_RELATIONS.map((r) => ({ value: r, label: tEnum(`relation_${r}`) }))}
             />
-            <TextField
-              id={`${g.key}-name-bn`}
-              label={t('nameBn')}
-              value={g.nameBn}
-              onChange={(v) => update(g.key, { nameBn: v })}
-              lang="bn"
-              maxLength={120}
-              error={errors[g.key]?.['nameBn']}
+            <GuardianMatches
+              g={g}
+              onChange={(patch) => update(g.key, patch)}
+              error={errors[g.key]?.['choice']}
             />
-            <TextField
-              id={`${g.key}-name-en`}
-              label={t('nameEn')}
-              value={g.nameEn}
-              onChange={(v) => update(g.key, { nameEn: v })}
-              lang="en"
-              maxLength={120}
-            />
-            <TextField
-              id={`${g.key}-occupation`}
-              label={t('occupation')}
-              value={g.occupation}
-              onChange={(v) => update(g.key, { occupation: v })}
-              maxLength={120}
-              className="sm:col-span-2"
-            />
+            {!g.guardianId && (
+              <>
+                <TextField
+                  id={`${g.key}-name-bn`}
+                  label={t('nameBn')}
+                  value={g.nameBn}
+                  onChange={(v) => update(g.key, { nameBn: v })}
+                  lang="bn"
+                  maxLength={120}
+                  error={errors[g.key]?.['nameBn']}
+                />
+                <TextField
+                  id={`${g.key}-name-en`}
+                  label={t('nameEn')}
+                  value={g.nameEn}
+                  onChange={(v) => update(g.key, { nameEn: v })}
+                  lang="en"
+                  maxLength={120}
+                />
+                <TextField
+                  id={`${g.key}-occupation`}
+                  label={t('occupation')}
+                  value={g.occupation}
+                  onChange={(v) => update(g.key, { occupation: v })}
+                  maxLength={120}
+                  className="sm:col-span-2"
+                />
+              </>
+            )}
           </div>
         </fieldset>
       ))}
@@ -470,9 +506,117 @@ export function GuardianFields({
 
 export const guardianPayload = (g: GuardianFormValues) => ({
   phone: g.phone,
-  nameBn: g.nameBn.trim() || null,
-  nameEn: g.nameEn.trim() || null,
+  // A picked guardian keeps their stored names.
+  nameBn: (!g.guardianId && g.nameBn.trim()) || null,
+  nameEn: (!g.guardianId && g.nameEn.trim()) || null,
   relation: g.relation,
   isPrimary: g.isPrimary,
-  occupation: g.occupation.trim() || null,
+  occupation: (!g.guardianId && g.occupation.trim()) || null,
+  guardianId: g.guardianId,
+  createNew: g.createNew,
 });
+
+/**
+ * Guardians of this institute with the typed phone: pick one of them or add a new guardian
+ * (decision #6). Shows the institute's own names and their children, nothing else.
+ */
+function GuardianMatches({
+  g,
+  onChange,
+  error,
+}: {
+  g: GuardianFormValues;
+  onChange: (patch: Partial<GuardianFormValues>) => void;
+  error?: string;
+}) {
+  const t = useTranslations('admission');
+  const locale = useLocale() as Locale;
+  const { client } = useAuth();
+  const phone = normalizeBdPhone(g.phone);
+  const matches = useQuery({
+    queryKey: ['guardian-matches', phone],
+    queryFn: () =>
+      client.api<GuardianMatch[]>(`/guardians?phone=${encodeURIComponent(phone ?? '')}`),
+    enabled: Boolean(phone),
+    staleTime: 30_000,
+  });
+  const found = phone ? (matches.data ?? null) : null;
+  useEffect(() => {
+    if (found !== g.existing) onChange({ existing: found });
+  }, [found, g.existing, onChange]);
+
+  if (!g.existing?.length) {
+    return error ? (
+      <p className="text-destructive text-sm sm:col-span-2" role="alert">
+        {error}
+      </p>
+    ) : null;
+  }
+  const children = (m: GuardianMatch) =>
+    m.children.length === 0
+      ? t('matchNoChildren')
+      : t('matchChildren', {
+          names: m.children
+            .map((c) => {
+              const name = displayName(c.nameBn, c.nameEn, locale);
+              return c.classLevel
+                ? `${name} (${displayName(c.classLevel.nameBn, c.classLevel.nameEn, locale)})`
+                : name;
+            })
+            .join(', '),
+        });
+  return (
+    <div
+      role="radiogroup"
+      aria-labelledby={`${g.key}-matches`}
+      className="flex flex-col gap-1 rounded-lg border border-dashed p-3 sm:col-span-2"
+      data-testid="guardian-matches"
+    >
+      <p id={`${g.key}-matches`} className="text-sm font-medium">
+        {t('matchTitle')}
+      </p>
+      {g.existing.map((m) => (
+        <label
+          key={m.id}
+          className="has-[:checked]:bg-primary-soft/40 flex cursor-pointer items-start gap-2 rounded-md p-2"
+          data-testid="guardian-match"
+        >
+          <input
+            type="radio"
+            name={`${g.key}-match`}
+            className="accent-primary mt-1 size-4 shrink-0"
+            checked={g.guardianId === m.id}
+            onChange={() => onChange({ guardianId: m.id, createNew: false })}
+          />
+          <span className="flex min-w-0 flex-col">
+            <span className="font-medium break-words">
+              {displayName(m.nameBn, m.nameEn, locale) || '—'}
+            </span>
+            <span className="text-muted-foreground text-sm break-words">{children(m)}</span>
+          </span>
+        </label>
+      ))}
+      <label
+        className="has-[:checked]:bg-primary-soft/40 flex cursor-pointer items-start gap-2 rounded-md p-2"
+        data-testid="guardian-match-new"
+      >
+        <input
+          type="radio"
+          name={`${g.key}-match`}
+          className="accent-primary mt-1 size-4 shrink-0"
+          checked={g.createNew}
+          onChange={() => onChange({ guardianId: null, createNew: true })}
+        />
+        <span className="flex min-w-0 flex-col">
+          <span className="font-medium">{t('matchNew')}</span>
+          <span className="text-muted-foreground text-sm break-words">{t('matchNewHint')}</span>
+        </span>
+      </label>
+      {error && (
+        <p className="text-destructive text-sm" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}

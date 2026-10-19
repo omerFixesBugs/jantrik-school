@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { useParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { SectionCard, SelectField, TextField } from '@/components/form-kit';
 import { PageGate } from '@/components/page-gate';
@@ -545,12 +545,18 @@ function AddGuardianDialog({ profile, onClose }: { profile: StudentProfile; onCl
       }),
     onClose,
   );
+  const queryClient = useQueryClient();
+  // Someone may have added a guardian on the same phone meanwhile: show the choices again.
+  useEffect(() => {
+    if (save.isError) void queryClient.invalidateQueries({ queryKey: ['guardian-matches'] });
+  }, [save.isError, queryClient]);
   const g = value[0]!;
   const server = serverErrors(save.error);
   const errors = {
     [g.key]: {
       ...(server['phone'] ? { phone: server['phone'] } : {}),
       ...(server['guardians'] ? { nameBn: server['guardians'] } : {}),
+      ...(server['guardianChoice'] ? { choice: server['guardianChoice'] } : {}),
       ...(touched ? problems(g) : {}),
     },
   };

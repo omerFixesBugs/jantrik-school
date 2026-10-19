@@ -42,6 +42,9 @@ export interface GuardianInput {
   relation: GuardianRelation;
   isPrimary: boolean;
   occupation: string | null;
+  /** Pick this guardian of the institute, or add a new one on a phone others have (#6). */
+  guardianId?: string | null;
+  createNew?: boolean;
 }
 
 export interface EnrolmentInput {
@@ -120,10 +123,12 @@ export class StudentAdminService {
       const guardian = await this.guardians.findOrCreate(g);
       await this.guardians.link(student.id, guardian.id, g.relation, g.isPrimary);
       linked.push({
+        guardianId: guardian.id,
         phone: g.phone,
         relation: g.relation,
         isPrimary: g.isPrimary,
         newGuardian: guardian.created,
+        picked: Boolean(g.guardianId),
       });
     }
     await this.audit.record({

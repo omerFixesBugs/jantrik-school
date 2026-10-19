@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { findOrCreateUser, type GuardianRelation } from '@jantrik/db';
+import { isGeneratedGuardianName, type GuardianMatch } from '@jantrik/shared';
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
@@ -12,13 +13,19 @@ export interface GuardianFields {
   nameBn: string | null;
   nameEn: string | null;
   occupation: string | null;
+  /** Link this guardian of the institute (it must have this phone). */
+  guardianId?: string | null;
+  /** Add a new guardian although others here have this phone. */
+  createNew?: boolean;
 }
 
 /**
- * Guardians are people of this tenant, found by phone and shared between siblings. A guardian
- * found by phone keeps their stored names (the oldest record wins when several share a phone).
- * Each gets a login, as the demo seed does: a user (find-or-create by phone) and a GUARDIAN
- * membership, so they can sign in with OTP. No SMS is sent here.
+ * Guardians are people of this tenant, shared between siblings. A phone that guardians here
+ * already have is never linked silently (decision #6): the admin picks one of them (`guardianId`)
+ * or adds a new guardian (`createNew`); without a choice: 409 GUARDIAN_CHOICE_REQUIRED. A linked
+ * guardian keeps their stored names. Each gets a login, as the demo seed does: a user
+ * (find-or-create by phone, so guardians on one phone share it) and a GUARDIAN membership, so
+ * they can sign in with OTP. No SMS is sent here.
  */
 @Injectable()
 export class GuardianLinker {
@@ -29,26 +36,83 @@ export class GuardianLinker {
     private readonly audit: AuditService,
   ) {}
 
-  /** The guardian id for this phone, creating the guardian (and their login) if new. */
+  /** This institute's guardians with the phone (oldest first), for the admin to pick from. */
+  async matches(phone: string): Promise<GuardianMatch[]> {
+    const rows = await this.db.tx.guardian.findMany({
+      where: { phone },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: 20,
+      select: {
+        id: true,
+        nameBn: true,
+        nameEn: true,
+        students: {
+          where: { student: { deletedAt: null } },
+          orderBy: { createdAt: 'asc' },
+          take: 5,
+          select: {
+            student: {
+              select: {
+                nameBn: true,
+                nameEn: true,
+                enrolments: {
+                  where: { academicYear: { isCurrent: true } },
+                  take: 1,
+                  select: { classLevel: { select: { nameBn: true, nameEn: true } } },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      nameBn: r.nameBn,
+      nameEn: r.nameEn,
+      children: r.students.map(({ student }) => ({
+        nameBn: student.nameBn,
+        nameEn: student.nameEn,
+        classLevel: student.enrolments[0]?.classLevel ?? null,
+      })),
+    }));
+  }
+
+  /** The guardian to link: the chosen one, or a new guardian (and their login). */
   async findOrCreate(g: GuardianFields): Promise<{ id: string; created: boolean }> {
     const tx = this.db.tx;
     const tenantId = this.context.requirePrincipal().tenantId!;
-    const existing = await tx.guardian.findFirst({
-      where: { phone: g.phone },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, userId: true, nameBn: true, nameEn: true },
-    });
-    if (existing) {
-      // A login for a known guardian takes the names this institute stored for them.
-      const userId =
-        existing.userId ??
-        (await this.ensureLogin({ ...g, nameBn: existing.nameBn, nameEn: existing.nameEn }));
-      if (!existing.userId) {
-        await tx.guardian.update({ where: { id: existing.id }, data: { userId } });
-      } else {
-        await this.ensureMembership(userId);
+    if (g.guardianId) {
+      const chosen = await tx.guardian.findFirst({
+        where: { id: g.guardianId },
+        select: { id: true, userId: true, phone: true, nameBn: true, nameEn: true },
+      });
+      if (!chosen || chosen.phone !== g.phone) {
+        throw apiError(422, 'GUARDIAN_MISMATCH', 'That guardian does not have this phone', {
+          field: 'guardians',
+          phone: g.phone,
+        });
       }
-      return { id: existing.id, created: false };
+      if (chosen.userId) await this.ensureMembership(chosen.userId);
+      else {
+        // A login for a known guardian takes the names this institute stored for them.
+        const userId = await this.ensureLogin({
+          phone: chosen.phone,
+          nameBn: chosen.nameBn,
+          nameEn: chosen.nameEn,
+          occupation: null,
+        });
+        await tx.guardian.update({ where: { id: chosen.id }, data: { userId } });
+      }
+      return { id: chosen.id, created: false };
+    }
+    if (!g.createNew && (await tx.guardian.count({ where: { phone: g.phone } })) > 0) {
+      throw apiError(
+        409,
+        'GUARDIAN_CHOICE_REQUIRED',
+        'Guardians here have this phone: pick one of them or add a new guardian',
+        { field: 'guardians', phone: g.phone },
+      );
     }
     if (!g.nameBn && !g.nameEn) {
       throw apiError(422, 'GUARDIAN_NAME_REQUIRED', 'A new guardian needs a name', {
@@ -98,11 +162,13 @@ export class GuardianLinker {
    * as a name). An existing person's own names are never changed.
    */
   private async ensureLogin(g: GuardianFields): Promise<string> {
+    // A name made from the student's ("Guardian of …") never becomes the person's own name.
+    const own = isGeneratedGuardianName(g) ? { nameBn: null, nameEn: null } : g;
     const userId = await findOrCreateUser(
       this.db.tx,
       g.phone,
-      g.nameEn ?? g.nameBn ?? 'Guardian',
-      g.nameBn,
+      own.nameEn ?? own.nameBn ?? 'Guardian',
+      own.nameBn,
     );
     await this.ensureMembership(userId);
     return userId;
