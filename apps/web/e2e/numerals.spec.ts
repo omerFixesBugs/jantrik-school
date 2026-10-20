@@ -89,12 +89,15 @@ test('every text style has one width per digit, and ১ is drawn whole', async (
     for (const cls of styles) {
       widths[cls || 'body'] = [];
       for (const d of digits) {
+        // One digit per probe, large: its advance alone (no kerning between neighbours) and big
+        // enough that a platform rounding glyph advances to whole pixels (Linux CI) can't matter.
         const span = document.createElement('span');
         span.className = cls;
         span.style.whiteSpace = 'pre';
-        span.textContent = d.repeat(10);
+        span.style.fontSize = '100px';
+        span.textContent = d;
         host.appendChild(span);
-        widths[cls || 'body']!.push(span.getBoundingClientRect().width / 10);
+        widths[cls || 'body']!.push(span.getBoundingClientRect().width);
         span.remove();
       }
     }
@@ -129,8 +132,9 @@ test('every text style has one width per digit, and ১ is drawn whole', async (
 
   for (const [style, ws] of Object.entries(report.widths)) {
     const spread = Math.max(...ws) - Math.min(...ws);
+    // At 100 px: Noto's digits are all 59.2 px; Hind Siliguri's ranged from 48.7 to 68.7.
     expect(spread, `${style}: digit widths ${ws.map((w) => w.toFixed(1)).join(', ')}`).toBeLessThan(
-      0.5,
+      1,
     );
   }
   for (const [weight, s] of Object.entries(report.shapes)) {
