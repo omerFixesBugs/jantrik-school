@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { STUDENTS_PAGE_SIZE, studentsQuerySchema } from './api.js';
 import {
   admissionSchema,
   defaultCodePrefix,
@@ -94,4 +95,35 @@ describe('admission', () => {
     expect(a.enrolment.roll).toBe(12);
     expect(admissionSchema.safeParse({ ...base, dateOfBirth: '2999-01-01' }).success).toBe(false);
   });
+});
+
+describe('studentsQuerySchema (GET /students)', () => {
+  it('pages of 50 by code by default; Bangla digits in the search become ASCII', () => {
+    expect(studentsQuerySchema.parse({ q: 'A-০০৩' })).toEqual({
+      q: 'A-003',
+      sort: 'code',
+      dir: 'asc',
+      locale: 'bn',
+      page: 1,
+      pageSize: STUDENTS_PAGE_SIZE,
+    });
+    expect(STUDENTS_PAGE_SIZE).toBe(50);
+  });
+
+  it('sort, direction, status and page come from the URL as text', () => {
+    expect(
+      studentsQuerySchema.parse({
+        sort: 'roll',
+        dir: 'desc',
+        status: 'INACTIVE',
+        page: '3',
+        pageSize: '100',
+      }),
+    ).toMatchObject({ sort: 'roll', dir: 'desc', status: 'INACTIVE', page: 3, pageSize: 100 });
+  });
+
+  it.each([{ pageSize: '101' }, { page: '0' }, { sort: 'phone' }, { status: 'DELETED' }])(
+    'rejects %o',
+    (q) => expect(studentsQuerySchema.safeParse(q).success).toBe(false),
+  );
 });

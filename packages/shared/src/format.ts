@@ -196,3 +196,8 @@ export function addMonths(month: string, delta: number): string {
   const d = new Date(Date.UTC(y, m - 1 + delta, 1));
   return d.toISOString().slice(0, 7);
 }
+
+/** The `n` months up to and including `month` (YYYY-MM), oldest first. */
+export function recentMonths(month: string, n: number): string[] {
+  return Array.from({ length: n }, (_, i) => addMonths(month, i - (n - 1)));
+}

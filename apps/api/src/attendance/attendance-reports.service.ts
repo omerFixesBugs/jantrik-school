@@ -1,18 +1,26 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  absenceStreak,
+  addDays,
   attendancePercent,
   buildRegister,
+  buildTrend,
   dateFromDb,
   dateToDb,
   monthDates,
   registerCsv,
+  STREAK_CAP,
+  STREAK_LOOKBACK_DAYS,
+  trendFrom,
   type AttendanceCounts,
   type AttendanceRegisterReport,
   type AttendanceStaffMember,
   type AttendanceStatus,
   type AttendanceTodayReport,
+  type AttendanceTrendReport,
   type ChildAttendanceMonth,
   type IsoDate,
+  type SectionRef,
   type SendHeldSmsResult,
   type StudentAttendanceReport,
 } from '@jantrik/shared';
@@ -27,6 +35,9 @@ import { AttendanceSettingsService } from './attendance-settings.service.js';
 import { AttendanceService } from './attendance.service.js';
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/** Absence streaks are read back this many days at a time. */
+const STREAK_STEP_DAYS = 7;
 
 const STATUS_KEY = {
   PRESENT: 'present',
@@ -105,6 +116,13 @@ export class AttendanceReportsService {
     const updatedNames = await staffNames(this.db.tx, [
       ...new Set([...first.values()].map((s) => s.updatedById)),
     ]);
+    const streaks = await this.absenceStreaks(
+      [...first.values()].flatMap((s) =>
+        s.records.filter((r) => r.status === 'ABSENT').map((r) => r.studentId),
+      ),
+      tenant.today,
+      tenant.settings.leaveCountsAsAbsent,
+    );
 
     const totals = emptyCounts();
     const sections: AttendanceTodayReport['sections'] = [];
@@ -130,6 +148,7 @@ export class AttendanceReportsService {
       const absent = absentRoster.map((st) => ({
         ...st,
         guardianPhone: phones.get(st.id) ?? null,
+        streak: streaks.get(st.id) ?? 1,
       }));
       sections.push({
         section: ref,
@@ -159,6 +178,57 @@ export class AttendanceReportsService {
     };
   }
 
+  /**
+   * School days absent in a row up to today, per student (absenceStreak), from each day's first
+   * record. Read back a week at a time, and only for students whose run has not ended yet (most
+   * end within days); never before the year's start or STREAK_LOOKBACK_DAYS.
+   */
+  private async absenceStreaks(
+    studentIds: string[],
+    today: IsoDate,
+    leaveCountsAsAbsent: boolean,
+  ): Promise<Map<string, number>> {
+    if (studentIds.length === 0) return new Map();
+    const year = await this.db.tx.academicYear.findFirst({
+      where: { isCurrent: true },
+      select: { startDate: true },
+    });
+    const lookback = addDays(today, -(STREAK_LOOKBACK_DAYS - 1));
+    const yearStart = year ? dateFromDb(year.startDate) : lookback;
+    const start = yearStart > today ? today : yearStart > lookback ? yearStart : lookback;
+
+    const statuses = new Map(studentIds.map((id) => [id, [] as AttendanceStatus[]]));
+    const pending = new Set(studentIds);
+    for (let to = today; pending.size > 0 && to >= start; to = addDays(to, -STREAK_STEP_DAYS)) {
+      const stepFrom = addDays(to, -(STREAK_STEP_DAYS - 1));
+      const rows = await this.db.tx.attendanceRecord.findMany({
+        where: {
+          studentId: { in: [...pending] },
+          session: {
+            date: { gte: dateToDb(stepFrom < start ? start : stepFrom), lte: dateToDb(to) },
+          },
+        },
+        orderBy: [{ session: { date: 'desc' } }, { session: { periodNo: 'asc' } }],
+        select: { studentId: true, status: true, session: { select: { date: true } } },
+      });
+      const seen = new Set<string>();
+      for (const r of rows) {
+        const day = `${r.studentId}|${r.session.date.getTime()}`;
+        if (seen.has(day)) continue; // the day's first record only
+        seen.add(day);
+        statuses.get(r.studentId)!.push(r.status);
+      }
+      for (const id of pending) {
+        const days = statuses.get(id)!;
+        const run = absenceStreak(days, leaveCountsAsAbsent);
+        if (run < days.length || run >= STREAK_CAP) pending.delete(id); // ended, or at the cap
+      }
+    }
+    return new Map(
+      [...statuses].map(([id, days]) => [id, absenceStreak(days, leaveCountsAsAbsent)]),
+    );
+  }
+
   /** Primary guardian phone per student. */
   private async primaryPhones(studentIds: string[]): Promise<Map<string, string>> {
     if (studentIds.length === 0) return new Map();
@@ -167,6 +237,83 @@ export class AttendanceReportsService {
       select: { studentId: true, guardian: { select: { phone: true } } },
     });
     return new Map(rows.map((r) => [r.studentId, r.guardian.phone]));
+  }
+
+  // ─────────────────────────── Trend ───────────────────────────
+
+  /**
+   * Present % per day over the last `days` (from the year's start at most): the caller's
+   * sections (teachers: their own), or one section they may mark.
+   */
+  async trend(query: {
+    days: number;
+    sectionId?: string;
+    bySection?: boolean;
+  }): Promise<AttendanceTrendReport> {
+    const tenant = await this.settings.load();
+    let scope: SectionRef[];
+    if (query.sectionId) {
+      const section = await this.attendance.currentSection(query.sectionId);
+      await this.attendance.assertMayMark(section.id, await this.attendance.caller());
+      scope = [section.ref];
+    } else {
+      scope = (await this.attendance.mySections()).sections.map((s) => ({
+        id: s.id,
+        name: s.name,
+        classLevel: s.classLevel,
+      }));
+    }
+    const year = await this.db.tx.academicYear.findFirst({
+      where: { isCurrent: true },
+      select: { startDate: true },
+    });
+    const to = tenant.today;
+    const from = trendFrom(to, query.days, year ? dateFromDb(year.startDate) : null);
+    const dates: IsoDate[] = [];
+    for (let d = from; d <= to; d = addDays(d, 1)) dates.push(d);
+
+    const sessions =
+      scope.length === 0
+        ? []
+        : await this.db.tx.attendanceSession.findMany({
+            where: {
+              sectionId: { in: scope.map((s) => s.id) },
+              date: { gte: dateToDb(from), lte: dateToDb(to) },
+            },
+            orderBy: [{ date: 'asc' }, { periodNo: 'asc' }],
+            select: { id: true, sectionId: true, date: true },
+          });
+    const bySection = new Map(scope.map((s) => [s.id, new Map<IsoDate, AttendanceCounts>()]));
+    const first = new Map<string, AttendanceCounts>(); // session id -> its counts
+    for (const s of sessions) {
+      const days = bySection.get(s.sectionId)!;
+      const date = dateFromDb(s.date);
+      if (days.has(date)) continue; // the day's first register only
+      const counts = emptyCounts();
+      days.set(date, counts);
+      first.set(s.id, counts);
+    }
+    if (first.size > 0) {
+      const rows = await this.db.tx.attendanceRecord.groupBy({
+        by: ['sessionId', 'status'],
+        where: { sessionId: { in: [...first.keys()] } },
+        _count: { _all: true },
+      });
+      for (const r of rows) first.get(r.sessionId)![STATUS_KEY[r.status]] += r._count._all;
+    }
+    return {
+      today: tenant.today,
+      from,
+      to,
+      leaveCountsAsAbsent: tenant.settings.leaveCountsAsAbsent,
+      ...buildTrend({
+        dates,
+        nonWorking: await this.settings.nonWorkingDays(from, to, tenant.settings),
+        sections: scope.map((section) => ({ section, byDate: bySection.get(section.id)! })),
+        leaveCountsAsAbsent: tenant.settings.leaveCountsAsAbsent,
+        bySection: query.bySection ?? false,
+      }),
+    };
   }
 
   // ─────────────────────────── Monthly register ───────────────────────────

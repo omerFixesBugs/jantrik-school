@@ -236,7 +236,7 @@ export function AppCommands({
     queryKey: ['palette-students', tenantId, debounced],
     enabled: open && seesStudents && debounced.length >= 2,
     queryFn: () =>
-      client.api<StudentsPage>(`/students?${new URLSearchParams({ q: debounced, limit: '8' })}`),
+      client.api<StudentsPage>(`/students?${new URLSearchParams({ q: debounced, pageSize: '8' })}`),
     staleTime: 10_000,
   });
 

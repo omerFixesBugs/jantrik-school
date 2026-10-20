@@ -49,7 +49,7 @@ export function useSetupChecklist(context: MeContext) {
 
   const students = useQuery({
     queryKey: ['students-total', tenantId],
-    queryFn: () => client.api<StudentsPage>('/students?limit=1'),
+    queryFn: () => client.api<StudentsPage>('/students?pageSize=1'),
   });
   const filters = useQuery({
     queryKey: ['student-filters', tenantId],

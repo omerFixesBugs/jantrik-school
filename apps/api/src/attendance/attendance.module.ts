@@ -17,6 +17,7 @@ import {
   childAttendanceQuerySchema,
   registerQuerySchema,
   studentReportQuerySchema,
+  trendQuerySchema,
   attendanceSheetQuerySchema,
   holidaySchema,
   mySectionsQuerySchema,
@@ -26,6 +27,7 @@ import {
   type AttendanceSettings,
   type AttendanceStaffMember,
   type AttendanceTodayReport,
+  type AttendanceTrendReport,
   type ChildAttendanceMonth,
   type SendHeldSmsResult,
   type StudentAttendanceReport,
@@ -55,6 +57,7 @@ export class HolidayDto extends zodDto(holidaySchema) {}
 export class SectionTeachersDto extends zodDto(sectionTeachersSchema) {}
 export class RegisterQueryDto extends zodDto(registerQuerySchema) {}
 export class StudentReportQueryDto extends zodDto(studentReportQuerySchema) {}
+export class TrendQueryDto extends zodDto(trendQuerySchema) {}
 export class ChildAttendanceQueryDto extends zodDto(childAttendanceQuerySchema) {}
 export class HolidayQueryDto extends zodDto(
   z.object({ year: z.coerce.number().int().min(2000).max(2100).optional() }),
@@ -108,6 +111,12 @@ export class AttendanceController {
   @Get('reports/today')
   todayReport(): Promise<AttendanceTodayReport> {
     return this.reports.today();
+  }
+
+  /** Present % per day for the last days (the dashboard line; teachers: their sections). */
+  @Get('reports/trend')
+  trend(@Query() query: TrendQueryDto): Promise<AttendanceTrendReport> {
+    return this.reports.trend(query);
   }
 
   /** The month register for one section (students × days). */

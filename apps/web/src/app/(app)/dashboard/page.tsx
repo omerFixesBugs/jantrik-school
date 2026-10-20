@@ -139,7 +139,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
 
   const students = useQuery({
     queryKey: ['students-total', tenantId],
-    queryFn: () => client.api<StudentsPage>('/students?limit=1'),
+    queryFn: () => client.api<StudentsPage>('/students?pageSize=1'),
     enabled: canSeeStudents,
   });
 

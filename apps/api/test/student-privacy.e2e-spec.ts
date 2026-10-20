@@ -71,7 +71,7 @@ describe('student data: teachers see full details only for their own sections', 
 
   const list = async (token: string, q?: string) =>
     http(h)
-      .get(`/students?limit=100${q ? `&q=${encodeURIComponent(q)}` : ''}`)
+      .get(`/students?pageSize=100${q ? `&q=${encodeURIComponent(q)}` : ''}`)
       .set(bearer(token))
       .expect(200);
 

@@ -95,16 +95,16 @@ function Students() {
 
   const students = useInfiniteQuery({
     queryKey: ['students', tenantId, q, classLevelId, sectionId],
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: 1,
     queryFn: ({ pageParam }) => {
-      const params = new URLSearchParams({ limit: '25' });
+      const params = new URLSearchParams({ page: String(pageParam), pageSize: '25' });
       if (q) params.set('q', q);
       if (classLevelId !== ALL) params.set('classLevelId', classLevelId);
       if (sectionId !== ALL) params.set('sectionId', sectionId);
-      if (pageParam) params.set('cursor', pageParam);
       return client.api<StudentsPage>(`/students?${params}`);
     },
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    getNextPageParam: (last) =>
+      last.page * last.pageSize < last.total ? last.page + 1 : undefined,
   });
   const items = students.data?.pages.flatMap((p) => p.items) ?? [];
   const total = students.data?.pages[0]?.total ?? items.length;

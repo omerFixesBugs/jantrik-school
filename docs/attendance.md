@@ -84,6 +84,7 @@ the dashboard. Present % = (PRESENT + LATE) / (all − LEAVE), or with LEAVE as 
 | Screen                                                                     | Endpoint                                                      | Who                                             |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------- |
 | Today (`/attendance/today`): every section, counts, absent students        | `GET /attendance/reports/today`                               | teachers (their sections), admins (all)         |
+| Trend (dashboard): present % per day, the last 7–90 days                   | `GET /attendance/reports/trend?days[&sectionId][&bySection]`  | teachers (their sections), admins (all)         |
 | Monthly register (`/attendance/register`): students × days, totals, print  | `GET /attendance/reports/register?sectionId&month[&periodNo]` | the section's teachers, admins                  |
 | CSV of the register                                                        | `GET /attendance/reports/register/csv?…&locale=bn\|en`        | same                                            |
 | One student over a date range (`/attendance/students/:id`), at most a year | `GET /attendance/reports/students/:id?from&to`                | the section's teachers, admins                  |
@@ -95,6 +96,16 @@ the dashboard. Present % = (PRESENT + LATE) / (all − LEAVE), or with LEAVE as 
 - **Print:** only the register is printed (`.print-area`), A4 landscape, with the institute,
   section and month as a heading; off days are hatched so they show without colour.
 - **Calendar:** Saturday first; weekly off days and holidays greyed; future days dimmed.
+- **Absence streak:** each absent student on the today report has `streak`, the school days
+  absent in a row up to today (`absenceStreak`). Days without a register are skipped, so a
+  holiday never breaks it; PRESENT or LATE ends it, and so does LEAVE unless leave counts as
+  absent. It stops at 30 and looks back at most 60 calendar days, never before the year's start
+  (so after a long closure it can be shorter than the real run).
+- **Trend:** every date from `days` back (today included, never before the year's start), each
+  with the day's first registers added up, `null` where none was taken, and the off day or
+  holiday marked. `bySection=1` adds each section's own line over the same dates (`buildTrend`).
+  `sectionId` must be a section the caller takes attendance for (403 otherwise; 422 when it is
+  not in the current year).
 
 ## Settings (`/attendance/settings`, owner/admin)
 

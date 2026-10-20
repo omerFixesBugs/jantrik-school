@@ -644,7 +644,7 @@ function StudentsStep(actions: StepActionsProps) {
   const { client, session } = useAuth();
   const students = useQuery({
     queryKey: ['students-total', session?.tenant?.id],
-    queryFn: () => client.api<StudentsPage>('/students?limit=1'),
+    queryFn: () => client.api<StudentsPage>('/students?pageSize=1'),
   });
   const student = label('student', 'Student', { inText: true });
   return (
