@@ -33,12 +33,11 @@ GRANT jantrik_search TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 CREATE ROLE jantrik_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT jantrik_platform TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 
--- Runtime role of the API's platform module only (DATABASE_PLATFORM_URL). It alone may run the
--- platform_* functions; it inherits jantrik_app (still under RLS) so a platform action that
--- touches an institute (e.g. provisioning) runs in one transaction with its audit entry. An SQL
--- injection anywhere in the institute API (jantrik_app) can therefore not reach the platform.
+-- Runtime role of the API's platform module only (DATABASE_PLATFORM_URL). It may run the
+-- platform_* functions and nothing else: no table grants and NOT a member of jantrik_app, so it
+-- can never read an institute's rows. jantrik_app in turn cannot run the platform functions, so
+-- an SQL injection on either side stays on that side. Schema USAGE comes from a migration.
 CREATE ROLE jantrik_platform_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD :'platform_pw';
-GRANT jantrik_app TO jantrik_platform_app;
 
 CREATE DATABASE jantrik OWNER jantrik_owner;
 CREATE DATABASE jantrik_test OWNER jantrik_owner;

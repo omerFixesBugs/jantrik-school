@@ -77,17 +77,20 @@ API returns nothing about an institute's students, guardians or attendance beyon
   the rest of the API uses, has no EXECUTE on any `platform_*` function. An SQL injection anywhere
   in the institute API therefore cannot reach platform logins, sessions or the audit log.
   - `jantrik_platform_app` is an ordinary runtime role (LOGIN, NOSUPERUSER, NOBYPASSRLS, owns
-    nothing, no grants on the platform tables).
-  - **It is also a member of `jantrik_app`**, so it has every right `jantrik_app` has, under the
-    same RLS. With `app.tenant_id` set, it could read that institute's rows, as `jantrik_app` can.
-    The database does not stop that; the code does: platform code opens no institute context
-    and reads institute data only through the `platform_*` functions.
-    `platform-isolation.spec.ts` fails if a file in `src/platform` opens a tenant or user
-    context, or if a file outside it uses the platform login or calls a platform function.
+    nothing). It may run the `platform_*` functions and nothing else beyond what PUBLIC has
+    (connect, temporary tables, ordinary non-definer functions): it is not a member of
+    `jantrik_app`, has no table, column or sequence grants and can run no other definer function. So even SQL access
+    as this role cannot read an institute's students, guardians or attendance; the functions
+    return only metadata and counts.
+  - Platform actions that change an institute (provisioning, part 2) run through the API's main
+    role in their own transaction, in a small service in `src/tenancy/`.
+  - `platform-isolation.spec.ts` keeps the code apart as well: it fails if a file in
+    `src/platform` opens a tenant or user context, or if a file outside it uses the platform
+    login or calls a platform function.
   - At startup the API refuses to run when the two URLs are mixed up (the platform login must be
     able to run `platform_me()`, the main login must not).
   - Tested: `jantrik_app` gets "permission denied" on every platform function; the platform role
-    owns nothing and cannot read the platform tables. `schema-safety.test.ts` checks, by owner,
+    owns nothing, belongs to no role, and can read no table (platform or institute). `schema-safety.test.ts` checks, by owner,
     that only `jantrik_platform_app` may run any function owned by `jantrik_platform`.
   - **Before a session exists (login):**
     - `platform_find_admin_for_login(phone, email)`
@@ -133,8 +136,13 @@ API returns nothing about an institute's students, guardians or attendance beyon
 | `LOGIN` (with the method: ENROL, TOTP, BACKUP), `LOGIN_FAILED` (with the reason), `LOGOUT` | the login functions                                |
 | `ADMIN_CREATE`, `ADMIN_PASSWORD`, `ADMIN_DISABLE`, `ADMIN_ENABLE`, `ADMIN_RESET_2FA`       | the CLI (`actor = CLI`, with the OS user and host) |
 
-Platform actions on institutes (part 2 onwards) are written in the same transaction as the action.
-The web shows the log at `/platform/audit`.
+Platform actions on institutes (part 2 onwards): a change made by a platform function (status,
+modules, limits) writes its audit entries, platform and institute side, in the same transaction.
+Creating an institute runs in two steps (see "Database"): the institute, its owner invitation and
+its own audit entry (which names the platform admin) commit first; the platform audit entry and
+the plan follow in the platform request's transaction. If that second step fails, the institute
+exists without a plan and without a platform audit entry, and its own audit entry still records
+who created it. The web shows the log at `/platform/audit`.
 
 ## Managing platform admins: `pnpm platform:admin`
 

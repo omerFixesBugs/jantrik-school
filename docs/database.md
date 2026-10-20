@@ -32,7 +32,7 @@ the template.
 | `jantrik_auth`         | Owner of the auth `SECURITY DEFINER` functions             | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything). |
 | `jantrik_search`       | Owner of `search_student_ids()`                            | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                 |
 | `jantrik_platform`     | Owner of the `platform_*` functions (Jantrik's own admins) | Same rules as `jantrik_auth`. Grants on the platform tables and explicit `TO jantrik_platform` policies for institute metadata only, never student/guardian/attendance rows. See [platform.md](platform.md).                                                                       |
-| `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)        | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none). Inherits `jantrik_app` (RLS still applies) for platform actions on one institute.                                                            |
+| `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)        | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                               |
 
 The roles and databases (`jantrik`, `jantrik_test`) are created by
 [`docker/postgres/init/01-roles.sh`](../docker/postgres/init/01-roles.sh). That script only runs
@@ -51,12 +51,15 @@ docker compose exec postgres psql -U postgres \
   -c "CREATE ROLE jantrik_platform NOLOGIN NOSUPERUSER NOBYPASSRLS" \
   -c "GRANT jantrik_platform TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
   -c "CREATE ROLE jantrik_platform_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'platform_dev_password'" \
-  -c "GRANT jantrik_app TO jantrik_platform_app" \
   -c "CREATE DATABASE jantrik_e2e OWNER jantrik_owner"
+# A volume that already granted jantrik_app to jantrik_platform_app (early step 8): take it back.
+docker compose exec postgres psql -U postgres -c "REVOKE jantrik_app FROM jantrik_platform_app"
 docker compose exec postgres psql -U postgres -d jantrik_e2e \
   -c "ALTER SCHEMA public OWNER TO jantrik_owner" \
   -c "REVOKE ALL ON SCHEMA public FROM PUBLIC" \
   -c "GRANT USAGE ON SCHEMA public TO jantrik_app"
+# Then apply the migrations (they grant the new roles what they need, e.g. schema USAGE):
+pnpm db:deploy
 ```
 
 ## Global tables of the platform

@@ -96,7 +96,8 @@ There is no UPDATE or DELETE path on the audit log.
 - No function returns students, guardians or attendance rows.
 - **Writes:**
   - Billing tables, limits, status and modules change only through definer functions, which also audit.
-  - Provisioning reuses `provisionTenant`. The owner invitation is created in the new institute's own context by a small service in `src/tenancy/`, the only place allowed to open tenant transactions.
+  - Provisioning reuses `provisionTenant`. It runs, with the owner invitation and the institute's own audit entry, in one transaction of the API's main role (`jantrik_app`, in the new institute's context), through a small service in `src/tenancy/`. The platform login cannot do it: it reaches nothing but the `platform_*` functions (decision 9).
+  - After that transaction commits, the platform request's own transaction records the plan and limits and the platform audit entry, through a definer function. If that step fails, the institute exists without a plan (shown as such, and the plan can be set later) and without a platform audit entry; its institute-side audit entry, written in the first transaction, names the platform admin who created it.
 - **Hardening:**
   - Revoke `jantrik_app`'s UPDATE on `tenants` and its UPDATE/DELETE on `tenant_modules`. Provisioning still INSERTs.
   - Result: an institute can't un-suspend itself or switch modules on, even through a bug.
@@ -259,3 +260,4 @@ There is no UPDATE or DELETE path on the audit log.
 6. When the trial ends, the institute stays in trial with a warning.
 7. Billing per enabled module; CORE has its own price (can be 0).
 8. The wizard appears only for institutes created through the platform.
+9. (After the part 1 review) The platform module's login `jantrik_platform_app` is not a member of `jantrik_app`: it can run the `platform_*` functions and nothing else.

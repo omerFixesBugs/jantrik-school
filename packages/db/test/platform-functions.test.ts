@@ -157,6 +157,37 @@ describe('platform tables and functions', () => {
     }
   });
 
+  it('the platform role reaches no institute data: no role membership, no table, no other definer function', async () => {
+    const [rights] = await platform.$queryRaw<
+      { memberships: bigint; tables: string[]; sequences: string[]; functions: string[] }[]
+    >`
+      SELECT
+        (SELECT count(*) FROM pg_auth_members m WHERE m.member = current_user::regrole)
+          AS memberships,
+        ARRAY(SELECT c.relname::text FROM pg_class c
+              WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
+                AND (has_table_privilege(c.oid,
+                       'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                  OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES')))
+          AS tables,
+        ARRAY(SELECT c.relname::text FROM pg_class c
+              WHERE c.relnamespace = 'public'::regnamespace
+                -- CASE: has_sequence_privilege raises on a non-sequence, whatever the order.
+                AND CASE WHEN c.relkind = 'S'
+                         THEN has_sequence_privilege(c.oid, 'USAGE, SELECT, UPDATE') END)
+          AS sequences,
+        ARRAY(SELECT p.proname::text FROM pg_proc p
+              WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
+                AND p.proowner <> 'jantrik_platform'::regrole
+                AND has_function_privilege(p.oid, 'EXECUTE')) AS functions`;
+    expect(rights).toEqual({ memberships: 0n, tables: [], sequences: [], functions: [] });
+    for (const table of ['tenants', 'students', 'guardians', 'memberships', 'users']) {
+      await expect(platform.$queryRawUnsafe(`SELECT 1 FROM ${table} LIMIT 1`)).rejects.toThrow(
+        /permission denied/i,
+      );
+    }
+  });
+
   it('a temp table named like a platform table cannot fake a session (pg_temp is searched last)', async () => {
     const fake = '00000000-0000-4000-8000-000000000001';
     await expect(
