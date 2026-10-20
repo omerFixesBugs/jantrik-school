@@ -626,6 +626,14 @@ function HeldSmsBanner() {
         cancelled: formatCount(r.cancelled, locale),
       };
       toast.success(r.cancelled > 0 ? t('heldDoneCancelled', n) : t('heldDone', n));
+      if (r.stillHeld > 0 && r.platformLimit !== null) {
+        toast.warning(
+          t('heldPlatformLimit', {
+            held: formatCount(r.stillHeld, locale),
+            limit: formatCount(r.platformLimit, locale),
+          }),
+        );
+      }
       void queryClient.invalidateQueries({ queryKey: key });
     },
     onError: (e) => toast.error(`${t('heldFailed')} ${describe(e)}`),

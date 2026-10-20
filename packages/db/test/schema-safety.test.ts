@@ -27,6 +27,7 @@ describe('schema safety net', () => {
         'student_code_counters',
         'student_imports',
         'staff_profiles',
+        'tenant_subscriptions',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

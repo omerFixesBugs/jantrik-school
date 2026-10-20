@@ -60,6 +60,9 @@ export type AdmissionData = StudentFieldsInput & {
   enrolment: EnrolmentInput;
 };
 
+/** pg_advisory_xact_lock class for the per-institute student limit (with hashtext(tenant id)). */
+const STUDENT_LIMIT_LOCK = 4201;
+
 const STUDENT_COLUMNS = [
   'nameBn',
   'nameEn',
@@ -100,6 +103,7 @@ export class StudentAdminService {
 
   async admit(input: AdmissionData): Promise<StudentProfile> {
     const tx = this.db.tx;
+    await this.assertStudentLimit();
     const { year } = await this.checkEnrolment(input.enrolment, null);
     await this.checkUnique(input.birthRegistrationNo ?? null, input.studentCode ?? null, null);
     const studentCode =
@@ -145,6 +149,24 @@ export class StudentAdminService {
       },
     });
     return this.profile(student.id);
+  }
+
+  /**
+   * The plan's student limit (set by Jantrik, tenant_subscriptions): no admission once active
+   * students reach it. A per-institute lock (held to the end of the transaction) makes two
+   * admissions, or an admission and an import row, take the last place one at a time.
+   */
+  private async assertStudentLimit(): Promise<void> {
+    const tx = this.db.tx;
+    const plan = await tx.tenantSubscription.findFirst({ select: { studentLimit: true } });
+    if (plan?.studentLimit == null) return;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${STUDENT_LIMIT_LOCK}::int, hashtext(${this.tenantId}))`;
+    const active = await tx.student.count({ where: { status: 'ACTIVE', deletedAt: null } });
+    if (active >= plan.studentLimit) {
+      throw apiError(422, 'STUDENT_LIMIT', 'The institute has reached its student limit', {
+        limit: plan.studentLimit,
+      });
+    }
   }
 
   /**

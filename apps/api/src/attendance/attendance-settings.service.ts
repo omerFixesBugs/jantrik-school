@@ -125,11 +125,25 @@ export class AttendanceSettingsService {
     return this.toResponse(data);
   }
 
-  /** The SMS cap in force: the tenant's own, or 2 × active students. */
+  /**
+   * The SMS cap in force: the tenant's own (or 2 × active students), but never above the ceiling
+   * Jantrik set on the plan (decision 2 of step 8).
+   */
   async effectiveDailySmsCap(settings: StoredSettings): Promise<number> {
-    if (settings.dailySmsCap !== null) return settings.dailySmsCap;
-    const active = await this.db.tx.student.count({ where: { status: 'ACTIVE', deletedAt: null } });
-    return active * 2;
+    const own = settings.dailySmsCap ?? (await this.automaticSmsCap());
+    const ceiling = await this.platformSmsCap();
+    return ceiling === null ? own : Math.min(own, ceiling);
+  }
+
+  /** 2 × active students. */
+  private async automaticSmsCap(): Promise<number> {
+    return (await this.db.tx.student.count({ where: { status: 'ACTIVE', deletedAt: null } })) * 2;
+  }
+
+  /** The plan's SMS ceiling (tenant_subscriptions, written only by the platform). */
+  async platformSmsCap(): Promise<number | null> {
+    const plan = await this.db.tx.tenantSubscription.findFirst({ select: { smsDailyCap: true } });
+    return plan?.smsDailyCap ?? null;
   }
 
   /** Why `date` is not a working day, or null when it is. */
@@ -169,6 +183,8 @@ export class AttendanceSettingsService {
     return {
       ...s,
       effectiveAbsentSmsTemplate: s.absentSmsTemplate ?? DEFAULT_ABSENT_SMS_TEMPLATE,
+      automaticSmsCap: await this.automaticSmsCap(),
+      platformSmsCap: await this.platformSmsCap(),
       effectiveDailySmsCap: await this.effectiveDailySmsCap(s),
     };
   }

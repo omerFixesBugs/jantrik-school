@@ -1,14 +1,16 @@
 import { v7 as uuidv7 } from 'uuid';
-import type {
-  Locale,
+import {
   ModuleKey,
-  PrismaClient,
-  Tenant,
-  TenantStatus,
+  type Locale,
+  type PrismaClient,
+  type Tenant,
+  type TenantStatus,
 } from '../generated/prisma/client.js';
-import { withTenant } from './context.js';
+import { withTenant, type TenantTx } from './context.js';
 
 export interface ProvisionTenantInput {
+  /** The new tenant's id (generated when omitted). */
+  id?: string;
   slug: string;
   name: string;
   /** `institute_types.key`, e.g. COACHING, NCTB_SCHOOL_BN. */
@@ -31,10 +33,13 @@ export interface ProvisionTenantInput {
  * (with `source_template_id` for traceability), so each institute can customise them freely.
  *
  * Runs as the app role inside the new tenant's RLS context, in a single transaction.
+ * `inTransaction` runs last in that same transaction (e.g. the owner invitation and the audit
+ * entry of a platform-created institute), so either everything exists or nothing does.
  */
 export async function provisionTenant(
   prisma: PrismaClient,
   input: ProvisionTenantInput,
+  inTransaction?: (tx: TenantTx, tenant: Tenant) => Promise<void>,
 ): Promise<Tenant> {
   const type = await prisma.instituteType.findUnique({
     where: { key: input.instituteTypeKey },
@@ -49,7 +54,7 @@ export async function provisionTenant(
     throw new Error(`Unknown or inactive institute type: ${input.instituteTypeKey}`);
   }
 
-  const tenantId = uuidv7();
+  const tenantId = input.id ?? uuidv7();
   const now = new Date();
   const modules = [...new Set<ModuleKey>(['CORE', ...(input.modules ?? [])])];
 
@@ -73,8 +78,13 @@ export async function provisionTenant(
         data: { tenantId, name: input.mainBranchName ?? input.name, isMain: true },
       });
 
+      // A row for every module, the ones not chosen switched off: the institute's own role may
+      // insert module rows only now (no module rows yet), so none can be added later.
       await tx.tenantModule.createMany({
-        data: modules.map((moduleKey) => ({ tenantId, moduleKey, enabled: true, enabledAt: now })),
+        data: Object.values(ModuleKey).map((moduleKey) => {
+          const enabled = modules.includes(moduleKey);
+          return { tenantId, moduleKey, enabled, enabledAt: enabled ? now : null };
+        }),
       });
 
       await tx.tenantLabel.createMany({
@@ -167,6 +177,7 @@ export async function provisionTenant(
         });
       }
 
+      if (inTransaction) await inTransaction(tx, tenant);
       return tenant;
     },
     { timeout: 30_000 },

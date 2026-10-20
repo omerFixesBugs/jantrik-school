@@ -247,3 +247,39 @@ export function useFieldErrors() {
     return out;
   };
 }
+
+/** A pill-shaped radio or checkbox (big tap target). */
+export function ChoiceChip({
+  type,
+  name,
+  checked,
+  onChange,
+  children,
+}: {
+  type: 'radio' | 'checkbox';
+  name: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <label
+      className={cn(
+        'flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors',
+        'has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-3',
+        checked
+          ? 'border-primary bg-primary-soft text-accent-foreground'
+          : 'bg-card hover:border-primary/40',
+      )}
+    >
+      <input
+        type={type}
+        name={name}
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="accent-primary size-4"
+      />
+      {children}
+    </label>
+  );
+}

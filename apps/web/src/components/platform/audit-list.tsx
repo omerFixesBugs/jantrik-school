@@ -15,13 +15,24 @@ const KNOWN_ACTIONS = new Set([
   'ADMIN_DISABLE',
   'ADMIN_ENABLE',
   'ADMIN_RESET_2FA',
+  'INSTITUTE_CREATE',
+  'INSTITUTE_SUSPEND',
+  'INSTITUTE_REACTIVATE',
+  'INSTITUTE_MODULE_ON',
+  'INSTITUTE_MODULE_OFF',
+  'INSTITUTE_LIMITS',
+  'INSTITUTE_OWNER_INVITE',
+  'INSTITUTE_OWNER_REINVITE',
+  'INSTITUTE_OWNER_CANCEL',
 ]);
+const MODULES = new Set(['ATTENDANCE', 'FEES', 'EXAMS']);
 
 const KNOWN_REASONS = new Set(['BAD_CODE', 'CODE_REUSED', 'BAD_BACKUP_CODE', 'TOO_MANY_ATTEMPTS']);
 
 /** Platform audit entries: who did what, when (cards: they read well at 360 px and 1440 px). */
 export function AuditList({ entries }: { entries: PlatformAuditEntry[] }) {
   const t = useTranslations('platform');
+  const tModules = useTranslations('platformInstitutes.modules');
   const locale = useLocale() as Locale;
   const label = (action: string) => (KNOWN_ACTIONS.has(action) ? t(`action_${action}`) : action);
   const detail = (e: PlatformAuditEntry): string | null => {
@@ -31,6 +42,7 @@ export function AuditList({ entries }: { entries: PlatformAuditEntry[] }) {
       return KNOWN_REASONS.has(reason) ? t(`reason_${reason}`) : t('auditReason', { reason }); // free text, e.g. from the CLI
     }
     if (typeof d['method'] === 'string') return t(`method_${d['method']}`);
+    if (typeof d['module'] === 'string' && MODULES.has(d['module'])) return tModules(d['module']);
     if (typeof d['phone'] === 'string') return formatBdPhone(d['phone']);
     return null;
   };

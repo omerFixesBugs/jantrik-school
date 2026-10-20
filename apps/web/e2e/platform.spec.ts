@@ -1,6 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
-import { DEMO, totpNow } from './helpers';
+import { toBanglaDigits } from '@jantrik/shared';
+import { DEMO, otpLoginWithBanglaDigits, totpNow } from './helpers';
 import { findLayoutProblems } from './layout-check';
+
+/** The owner the platform invites (not a seeded person). */
+const OWNER_PHONE = '01711000777';
+const NEW_INSTITUTE = 'নতুন আলো বিদ্যালয়';
 
 async function expectClean(page: Page, where: string) {
   await page.waitForLoadState('networkidle');
@@ -11,7 +16,10 @@ async function expectClean(page: Page, where: string) {
 // Step 8, part 1: the platform area for Jantrik's own staff. Password, then an authenticator app
 // (set up with a QR code on the first sign-in), 10 backup codes shown once, its own shell.
 test.describe.serial('platform sign-in', () => {
+  // Sign-in plus the institute flows (and an owner's OTP sign-in): longer than one screen.
+  test.describe.configure({ timeout: 120_000 });
   let secret = '';
+  let institutePath = '';
 
   const contextOptions = (baseURL: string | undefined) => ({
     baseURL,
@@ -56,6 +64,30 @@ test.describe.serial('platform sign-in', () => {
     await expect(page.getByTestId('platform-me')).toContainText('থেকে চালু');
     await expect(page.getByTestId('platform-audit-list')).toContainText('লগইন');
     await expectClean(page, 'platform overview 360');
+
+    // Part 2 at 360 px: institutes as cards, then add one; its owner is invited.
+    await page.getByRole('link', { name: 'প্রতিষ্ঠান', exact: true }).tap();
+    await expect(page).toHaveURL(/\/platform\/institutes$/);
+    await expect(page.getByTestId('institute-cards')).toContainText(DEMO.shaplaName);
+    await expectClean(page, 'platform institutes 360');
+    await page.getByTestId('add-institute').tap();
+    await expect(page).toHaveURL(/\/platform\/institutes\/new$/);
+    await expectClean(page, 'new institute 360');
+    await page.getByTestId('institute-name').fill(NEW_INSTITUTE);
+    await page.getByTestId('institute-slug').fill(`notun-alo-${Date.now().toString(36)}`);
+    await page.getByRole('combobox', { name: 'ধরন', exact: true }).selectOption('NCTB_SCHOOL_BN');
+    await page.getByTestId('owner-name').fill('Nasima Akter');
+    await page.getByLabel('বাংলায় নাম (ঐচ্ছিক)').fill('নাসিমা আক্তার');
+    await page.getByTestId('owner-phone').fill(toBanglaDigits(OWNER_PHONE)); // Bangla keyboard
+    await page.getByLabel('মূল অংশ, প্রতি শিক্ষার্থী মাসে').fill('10');
+    await page.getByTestId('create-institute').tap();
+    await expect(page).toHaveURL(/\/platform\/institutes\/[0-9a-f-]{36}$/);
+    institutePath = new URL(page.url()).pathname;
+    const owner = page.getByTestId('owner-row');
+    await expect(owner).toContainText('নাসিমা আক্তার');
+    await expect(owner.getByTestId('owner-status')).toHaveText('আমন্ত্রিত');
+    await expectClean(page, 'institute detail 360');
+
     await page.getByTestId('platform-logout').tap();
     await expect(page).toHaveURL(/\/platform\/login$/);
     await page.goto('/platform');
@@ -91,7 +123,59 @@ test.describe.serial('platform sign-in', () => {
     const log = page.getByTestId('platform-audit-list');
     await expect(log).toContainText('Signed in');
     await expect(log).toContainText('Signed out');
+    await expect(log).toContainText('Institute added');
     await expectClean(page, 'platform audit 1440');
+
+    // Part 2 at 1440 px: the institutes table and the new institute's page.
+    await page.getByRole('link', { name: 'Institutes', exact: true }).click();
+    await expect(page.getByTestId('institute-table')).toContainText(NEW_INSTITUTE);
+    await expectClean(page, 'platform institutes 1440');
+    await page.goto(institutePath);
+    await expect(page.getByTestId('owner-row')).toContainText('Nasima Akter');
+    await expectClean(page, 'institute detail 1440');
+
+    // The owner signs in with an OTP (360 px, Bangla), accepts and is in.
+    const ownerContext = await browser.newContext({
+      ...contextOptions(baseURL),
+      viewport: { width: 360, height: 780 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    const ownerPage = await ownerContext.newPage();
+    await otpLoginWithBanglaDigits(ownerPage, OWNER_PHONE);
+    await expect(ownerPage).toHaveURL(/\/select-institute$/);
+    const invitation = ownerPage.getByTestId('invitation');
+    await expect(invitation).toContainText(
+      `${NEW_INSTITUTE} আপনাকে প্রতিষ্ঠান প্রধান হিসেবে যুক্ত করেছে।`,
+    );
+    await invitation.getByTestId('invitation-accept').tap();
+    await expect(ownerPage).toHaveURL(/\/dashboard$/);
+    await expect(ownerPage.getByTestId('institute-name')).toHaveText(NEW_INSTITUTE);
+    await page.reload();
+    await expect(page.getByTestId('owner-row').getByTestId('owner-status')).toHaveText('Owner');
+
+    // Suspended by the platform: the owner is out at the next request; reactivated: back in.
+    await page.getByTestId('suspend-institute').click();
+    const dialog = page.getByTestId('status-dialog');
+    await dialog.getByTestId('status-reason').fill('Invoice unpaid');
+    await expectClean(page, 'suspend dialog 1440');
+    await dialog.getByRole('button', { name: 'Suspend' }).click();
+    await expect(page.getByTestId('institute-suspended')).toBeVisible();
+    await expectClean(page, 'suspended institute 1440');
+    // The owner's next request is refused: back to the picker, the institute marked unavailable.
+    await ownerPage.reload();
+    await expect(ownerPage).toHaveURL(/\/select-institute$/);
+    await expect(ownerPage.getByText('সাময়িকভাবে বন্ধ')).toBeVisible();
+    await expect(ownerPage.getByRole('button', { name: new RegExp(NEW_INSTITUTE) })).toBeDisabled();
+    await expectClean(ownerPage, 'owner while suspended');
+    await page.getByTestId('reactivate-institute').click();
+    await dialog.getByTestId('status-reason').fill('Paid in cash');
+    await dialog.getByRole('button', { name: 'Reactivate' }).click();
+    await expect(page.getByTestId('institute-suspended')).toHaveCount(0);
+    await ownerPage.reload();
+    await expect(ownerPage).toHaveURL(/\/dashboard$/);
+    await expect(ownerPage.getByTestId('institute-name')).toHaveText(NEW_INSTITUTE);
+    await ownerContext.close();
     await context.close();
   });
 });

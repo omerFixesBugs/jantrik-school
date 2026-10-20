@@ -46,6 +46,7 @@ export const platform = (h: Harness, cookie?: string) => {
   return {
     get: (path: string) => withHeaders(http(h).get(path)),
     post: (path: string) => withHeaders(http(h).post(path)),
+    put: (path: string) => withHeaders(http(h).put(path)),
   };
 };
 
@@ -87,4 +88,14 @@ export async function platformLogin(
     cookie: cookieFrom(step2.headers['set-cookie']),
     ...(step2.body.backupCodes ? { backupCodes: step2.body.backupCodes as string[] } : {}),
   };
+}
+
+/** A new platform admin, signed in: the session cookie for platform(h, cookie). */
+export async function platformAdminCookie(h: Harness): Promise<string> {
+  const owner = ownerClient();
+  try {
+    return (await platformLogin(h, await createPlatformAdmin(owner))).cookie;
+  } finally {
+    await owner.$disconnect();
+  }
 }

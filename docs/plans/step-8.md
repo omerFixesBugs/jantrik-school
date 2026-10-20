@@ -261,3 +261,10 @@ There is no UPDATE or DELETE path on the audit log.
 7. Billing per enabled module; CORE has its own price (can be 0).
 8. The wizard appears only for institutes created through the platform.
 9. (After the part 1 review) The platform module's login `jantrik_platform_app` is not a member of `jantrik_app`: it can run the `platform_*` functions and nothing else.
+
+## Part 2 notes
+
+- `tenant_subscriptions` is created in part 2 (create takes the plan, and the limits live there); part 3 adds plan editing, invoices and payments.
+- `jantrik_platform` reads institute tables through column grants only (counting columns, owner names and phones), so no platform function can return a student's or guardian's data.
+- Suspension remembers the status to return to (`tenants.suspended_from`): a suspended trial goes back to TRIAL (decision 6).
+- Moving an institute from TRIAL to ACTIVE comes with billing (part 3).

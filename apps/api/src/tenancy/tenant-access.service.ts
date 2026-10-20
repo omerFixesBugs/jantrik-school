@@ -6,7 +6,9 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { REDIS } from '../redis/redis.constants.js';
 
 const CACHE_TTL_SEC = 300;
-const modulesKey = (tenantId: string) => `tenant:${tenantId}:modules`;
+/** The institute's modules-cache version, bumped after the platform switches a module. */
+export const modulesVersionKey = (tenantId: string) => `tenant:${tenantId}:modules:ver`;
+const modulesKey = (tenantId: string, version: string) => `tenant:${tenantId}:modules:v${version}`;
 /**
  * The member's roles-cache version, bumped after every committed role/status change. It has no
  * expiry (one small counter per member): a counter that expired could start again at a number
@@ -19,10 +21,10 @@ export const rolesKey = (tenantId: string, userId: string, version: string) =>
 
 /**
  * Enabled modules per tenant and roles per member, cached in Redis for the guards.
- * Module writes invalidate after commit. Roles are cached under a per-member version that every
- * change bumps after commit: a request that loaded the old roles just before the change can only
- * write them under the old version, which nobody reads any more (no stale re-cache). The TTL is
- * only a safety net.
+ * Modules and roles are cached under a version (per institute, per member) that every change
+ * bumps after commit (modules change only through the platform): a request that loaded the old
+ * values just before the change can only write them under the old version, which nobody reads
+ * any more (no stale re-cache). The TTL is only a safety net.
  */
 @Injectable()
 export class TenantAccessService {
@@ -35,7 +37,9 @@ export class TenantAccessService {
   ) {}
 
   async getEnabledModules(tenantId: string): Promise<ModuleKey[]> {
-    return this.cached(modulesKey(tenantId), () =>
+    // Version first, as for roles: a load that raced a change caches under the old version.
+    const version = (await this.redis.get(modulesVersionKey(tenantId))) ?? '0';
+    return this.cached(modulesKey(tenantId, version), () =>
       withTenant(this.prisma.client, tenantId, async (tx) =>
         (await tx.tenantModule.findMany({ where: { enabled: true } })).map((m) => m.moduleKey),
       ),
@@ -52,16 +56,12 @@ export class TenantAccessService {
     );
   }
 
-  async setModuleEnabled(tenantId: string, moduleKey: ModuleKey, enabled: boolean): Promise<void> {
-    const enabledAt = enabled ? new Date() : null;
-    await this.inTenant(tenantId, (tx) =>
-      tx.tenantModule.upsert({
-        where: { tenantId_moduleKey: { tenantId, moduleKey } },
-        create: { tenantId, moduleKey, enabled, enabledAt },
-        update: { enabled, enabledAt },
-      }),
-    );
-    await this.context.afterCommit(() => this.redis.del(modulesKey(tenantId)));
+  /**
+   * Drop the institute's cached modules once the current request commits (the platform switched
+   * one on or off; tenant_modules is written only by the platform functions).
+   */
+  async invalidateModulesAfterCommit(tenantId: string): Promise<void> {
+    await this.context.afterCommit(() => this.redis.incr(modulesVersionKey(tenantId)));
   }
 
   /**

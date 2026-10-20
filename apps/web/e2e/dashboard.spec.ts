@@ -57,7 +57,8 @@ test('guardian dashboard shows only their own children', async ({ page }) => {
   await expect(page).toHaveURL(/\/dashboard$/);
 
   const children = page.getByTestId('children');
-  await expect(children.getByRole('listitem')).toHaveCount(2);
+  // One card per child (each card also lists the days of its attendance calendar).
+  await expect(children.locator(':scope > li')).toHaveCount(2);
   await expect(children).toContainText('তাসনিম রহমান');
   await expect(children).toContainText('তাহমিদ রহমান');
   await expect(children).toContainText('SHS-2026-0001'); // IDs stay ASCII

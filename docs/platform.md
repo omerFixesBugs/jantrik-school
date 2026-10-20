@@ -109,13 +109,73 @@ API returns nothing about an institute's students, guardians or attendance beyon
     - `platform_end_session()`
     - `platform_audit(...)`
     - `platform_list_audit(before, before_id, limit)`: newest first, keyset paging
-- **What `jantrik_platform` may read:**
-  - Institute names (for the audit log). More metadata comes in part 2.
-  - **Never** student, guardian or attendance rows.
+    - Institutes (part 2): `platform_institute_options()`, `platform_list_institutes(...)`,
+      `platform_get_institute(id)`, `platform_register_institute(...)`,
+      `platform_set_institute_status(id, action, reason, ip)`, `platform_set_module(...)`,
+      `platform_set_limits(...)`
+- **What `jantrik_platform` may read** (column grants, so a function body cannot read more):
+  - Institute metadata: `tenants`, `institute_types`, `tenant_modules`, `tenant_subscriptions`.
+  - Owner names and phones: `staff_profiles (name, name_bn, phone)` and
+    `memberships (role, status, invited_at, ...)`.
+  - For counts only: `students (status, deleted_at)`, `sms_logs (status, segments, local_date,
+created_at)`, `student_imports (status, created_at)`, `attendance_sessions (updated_at)`,
+    `audit_logs (created_at)`.
+  - **Never** a student's or guardian's name, phone or address, an SMS text, import rows or
+    attendance records: there is no grant on those columns or tables (`platform-institutes.test.ts`
+    checks it).
+- **What it may write:** `tenants (status, suspended_from, suspended_at, updated_at)`,
+  `tenant_modules`,
+  `tenant_subscriptions`, and audit entries (`platform_audit_logs`; `audit_logs` without an
+  actor).
 - **`schema-safety.test.ts`:**
   - It checks that every `platform_*` function is owned by `jantrik_platform`, and that all but
     the four login functions call `app_current_platform_admin_id()`.
   - These are the only definer functions allowed to take an id parameter.
+
+## Institutes (part 2)
+
+- **List** (`GET /platform/institutes`): search by name or link name (wildcards are literal),
+  filters for type, status, plan and "trial ended", 25 a page. Name, type, status, plan, trial
+  end, owner (name, phone, invitation state), active students, SMS this month.
+- **Detail** (`GET /platform/institutes/:id`): metadata, modules, plan and limits, owners, and
+  counts (active students and staff, SMS and segments this month, imports, last activity).
+- **Create** (`POST /platform/institutes`), in two steps:
+  1. As the API's main role, in the new institute's own context and one transaction
+     (`InstituteProvisioning` in `src/tenancy`): `provisionTenant` (TRIAL, the type's template,
+     the first academic year), the owner's INVITED OWNER membership and staff profile (the typed
+     name; 14 days), and the institute's own audit entry naming the platform admin.
+  2. In the platform request's transaction: `platform_register_institute` writes the plan, the
+     limits and the platform audit entry. If this step fails, the institute exists without a plan
+     and without a platform audit entry; its own audit entry still says who created it. (The route
+     allows its platform transaction 60 s, more than provisioning's 30 s, so a slow provisioning
+     cannot leave it expired.)
+  - The response is built from what was typed, the same whether or not the owner's phone was
+    known. A taken link name is 409 `SLUG_TAKEN`; reserved names (`platform`, `api`, `www`, ...)
+    are refused.
+  - No SMS is sent: the owner sees "<institute> added you as Owner" after signing in with an OTP,
+    and accepts as with any staff invitation.
+- **Owner invitation:** while the institute has no active owner, the platform can cancel a
+  pending invitation (a wrong number), invite someone else, and send an expired or declined one
+  again. One pending owner invitation at a time; the platform's owner changes of one institute
+  run one after another (an advisory lock). Once an owner has accepted, the institute manages its
+  staff itself: invite, resend and cancel are refused (409 `INSTITUTE_HAS_OWNER`).
+- **Suspend / reactivate** (a reason is required): access ends or returns on the institute's next
+  request (the tenant interceptor checks the status on every request). Reactivation returns to the
+  status it had (TRIAL or ACTIVE). Data is kept.
+- **Modules:** ATTENDANCE, FEES and EXAMS on or off (CORE always on). The modules cache is
+  versioned like the roles cache and bumped after commit, so a request that raced the change
+  cannot cache the old modules again. An institute cannot change its own status or modules,
+  even through a bug: `jantrik_app` has no UPDATE or DELETE on `tenants` and `tenant_modules`,
+  provisioning writes a row for every module (off unless chosen), and a restrictive policy lets
+  `jantrik_app` insert module rows only while its institute has none (the provisioning insert).
+- **Limits** (`tenant_subscriptions`; the institute reads its own row):
+  - **Student limit:** admissions and import rows are refused with 422 `STUDENT_LIMIT` once
+    active students reach it, under a per-institute advisory lock.
+  - **SMS ceiling:** the effective daily cap is the lower of the institute's own (or 2 × active
+    students) and the ceiling. The attendance settings page says so. "Send held SMS" may go past
+    the institute's own cap, never past the ceiling: only what still fits is released (oldest
+    first), the rest stay held, and the dashboard says why.
+- Institutes created before part 2 have no `tenant_subscriptions` row: no plan, no limits.
 
 ## What remains trusted
 

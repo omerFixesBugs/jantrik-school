@@ -76,6 +76,25 @@ transaction sets `app.platform_session` (the session token's hash);
 `app_current_platform_admin_id()` turns it into the admin or raises. See
 [platform.md](platform.md).
 
+### What the platform may change in an institute (step 8, part 2)
+
+- **`tenant_subscriptions`** (tenant table, at most one row per institute): Jantrik's plan
+  (pricing in paisa, cycle, yearly discount, days to pay, trial end) and limits (student limit,
+  SMS ceiling). `jantrik_app` may only SELECT its own row (admissions and the SMS cap read it);
+  only the platform functions write it. Institutes created before part 2 have none: no plan, no
+  limits.
+- **`tenants` and `tenant_modules`:** `jantrik_app` has no UPDATE or DELETE (provisioning still
+  INSERTs), so an institute cannot un-suspend itself or switch a module on. Provisioning writes a
+  `tenant_modules` row for every module, and the restrictive policy `provisioning_only` lets
+  `jantrik_app` insert module rows only while its institute has none, so no module can be added
+  later either. `jantrik_platform`
+  may UPDATE only `tenants (status, suspended_from, suspended_at, updated_at)`.
+  `tenants.suspended_from` keeps the status a suspension returns to.
+- **`jantrik_platform` reads institute tables by column** (counts, owner names and phones), never
+  a student's, guardian's or SMS's content; see [platform.md](platform.md).
+- Tests that suspend an institute or switch a module go through the platform API
+  (`platformAdminCookie` in `apps/api/test/support/platform.ts`).
+
 ## Row-Level Security
 
 Every tenant-owned table has the same policy (the `tenants` table uses `id` instead of `tenant_id`):

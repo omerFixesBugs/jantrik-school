@@ -385,15 +385,18 @@ model User {
 
 /// An institute. RLS: a tenant can only see its own row (policy on `id`).
 model Tenant {
-  id              String       @id @default(uuid(7)) @db.Uuid
-  slug            String       @unique
+  id              String        @id @default(uuid(7)) @db.Uuid
+  slug            String        @unique
   name            String
-  instituteTypeId String       @map("institute_type_id") @db.Uuid
-  status          TenantStatus @default(TRIAL)
-  timezone        String       @default("Asia/Dhaka")
-  defaultLocale   Locale       @default(bn) @map("default_locale")
-  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  instituteTypeId String        @map("institute_type_id") @db.Uuid
+  status          TenantStatus  @default(TRIAL)
+  timezone        String        @default("Asia/Dhaka")
+  defaultLocale   Locale        @default(bn) @map("default_locale")
+  /// While SUSPENDED: the status to return to on reactivation (TRIAL or ACTIVE). Platform only.
+  suspendedFrom   TenantStatus? @map("suspended_from")
+  suspendedAt     DateTime?     @map("suspended_at") @db.Timestamptz(3)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   instituteType    InstituteType     @relation(fields: [instituteTypeId], references: [id], onDelete: Restrict)
   modules          TenantModule[]
@@ -425,6 +428,7 @@ model Tenant {
   smsLogs             SmsLog[]
   studentImports      StudentImport[]
   staffProfiles       StaffProfile[]
+  subscription        TenantSubscription?
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -1264,4 +1268,54 @@ model PlatformAuditLog {
   @@index([createdAt(sort: Desc)])
   @@index([targetTenantId, createdAt(sort: Desc)])
   @@map("platform_audit_logs")
+}
+
+/// How a plan charges: per active student per month for each enabled module, or a flat price.
+enum PlanPricing {
+  PER_STUDENT
+  FLAT
+
+  @@map("plan_pricing")
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+
+  @@map("billing_cycle")
+}
+
+/// Jantrik's plan and limits for one institute. The institute may read its own row (the limits are
+/// enforced in its requests); only the platform functions (jantrik_platform) write it. Institutes
+/// created before step 8 have none: no plan, no limits. Amounts in paisa.
+model TenantSubscription {
+  id                    String       @id @default(uuid(7)) @db.Uuid
+  tenantId              String       @unique @map("tenant_id") @db.Uuid
+  /// NULL: no plan yet (nothing is invoiced).
+  planName              String?      @map("plan_name")
+  pricing               PlanPricing  @default(PER_STUDENT)
+  /// PER_STUDENT: paisa per active student per month, per enabled module (CORE is always on).
+  corePaisa             Int          @default(0) @map("core_paisa")
+  attendancePaisa       Int          @default(0) @map("attendance_paisa")
+  feesPaisa             Int          @default(0) @map("fees_paisa")
+  examsPaisa            Int          @default(0) @map("exams_paisa")
+  /// FLAT: paisa per month.
+  flatPaisa             Int          @default(0) @map("flat_paisa")
+  cycle                 BillingCycle @default(MONTHLY)
+  /// YEARLY: 12 × monthly minus this percentage.
+  yearlyDiscountPercent Int          @default(0) @map("yearly_discount_percent") @db.SmallInt
+  /// Invoices are due this many days after they are issued.
+  dueDays               Int          @default(10) @map("due_days") @db.SmallInt
+  trialEndsOn           DateTime?    @map("trial_ends_on") @db.Date
+  /// Admissions and imports stop once active students reach it. NULL: no limit.
+  studentLimit          Int?         @map("student_limit")
+  /// A ceiling on the institute's daily SMS cap (the lower of the two applies). NULL: none.
+  smsDailyCap           Int?         @map("sms_daily_cap")
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("tenant_subscriptions")
 }

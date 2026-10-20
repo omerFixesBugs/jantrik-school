@@ -363,16 +363,20 @@ export class AttendanceReportsService {
   /** Send today's SMS that were held back by the daily cap (after the admin confirms). */
   async sendHeld(): Promise<SendHeldSmsResult> {
     const tenant = await this.settings.load();
-    const { queued, cancelled } = await this.sms.releaseHeld(tenant.today);
+    const platformLimit = await this.settings.platformSmsCap();
+    const { queued, cancelled, stillHeld } = await this.sms.releaseHeld(
+      tenant.today,
+      platformLimit,
+    );
     if (queued.length + cancelled.length > 0) {
       await this.audit.record({
         entity: 'sms_logs',
         entityId: tenant.id,
         action: 'UPDATE',
-        newValues: { releasedHeld: tenant.today, queued, cancelled },
+        newValues: { releasedHeld: tenant.today, queued, cancelled, stillHeld },
       });
     }
-    return { queued: queued.length, cancelled: cancelled.length };
+    return { queued: queued.length, cancelled: cancelled.length, stillHeld, platformLimit };
   }
 
   // ─────────────────────────── Data ───────────────────────────

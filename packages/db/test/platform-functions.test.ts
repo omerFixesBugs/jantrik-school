@@ -316,14 +316,23 @@ describe('platform tables and functions', () => {
         await tx.$queryRaw`SELECT platform_audit('TEST_ACTION', NULL, 'thing', ${`k${i}`}, '{"a":1}'::jsonb, '127.0.0.1')`;
       }
       // One transaction: the three rows share created_at, yet keyset paging returns each once.
-      const first = await tx.$queryRaw<
-        { id: string; created_at: Date; entity_id: string }[]
-      >`SELECT * FROM platform_list_audit(NULL, NULL, 2)`;
-      const last = first.at(-1)!;
-      const next = await tx.$queryRaw<
-        { entity_id: string }[]
-      >`SELECT * FROM platform_list_audit(${last.created_at}::timestamptz, ${last.id}::uuid, 1)`;
-      expect([...first, ...next].map((r) => r.entity_id).sort()).toEqual(['k0', 'k1', 'k2']);
+      // The log is global and other test files write to it meanwhile: page (2 at a time) until
+      // all three are seen, and check that no row ever comes twice.
+      type Row = { id: string; created_at: Date; action: string; entity_id: string | null };
+      const seen: Row[] = [];
+      let cursor: Row | undefined;
+      for (let page = 0; page < 100; page++) {
+        const rows = await tx.$queryRaw<Row[]>`
+          SELECT * FROM platform_list_audit(${cursor?.created_at ?? null}::timestamptz,
+            ${cursor?.id ?? null}::uuid, 2)`;
+        seen.push(...rows);
+        cursor = rows.at(-1);
+        const mine = seen.filter((r) => r.action === 'TEST_ACTION' && r.entity_id?.startsWith('k'));
+        if (mine.length >= 3 || !cursor) break;
+      }
+      expect(new Set(seen.map((r) => r.id)).size).toBe(seen.length);
+      const mine = seen.filter((r) => r.action === 'TEST_ACTION' && r.entity_id?.startsWith('k'));
+      expect(mine.map((r) => r.entity_id).sort()).toEqual(['k0', 'k1', 'k2']);
     });
     const [grants] = await owner.$queryRaw<{ upd: boolean; del: boolean }[]>`
       SELECT has_table_privilege('jantrik_platform', 'platform_audit_logs', 'UPDATE') AS upd,

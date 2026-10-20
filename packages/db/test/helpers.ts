@@ -1,8 +1,9 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import {
   PrismaClient,
   createPrismaClient,
+  hashPlatformToken,
   provisionTenant,
   withTenant,
   type ProvisionTenantInput,
@@ -18,6 +19,34 @@ export const randomPhone = (): string =>
 export const ownerClient = (): PrismaClient => createPrismaClient(OWNER_URL);
 /** The API platform module's role: the only one that may run the platform_* functions. */
 export const platformClient = (): PrismaClient => createPrismaClient(PLATFORM_URL);
+
+/**
+ * A live platform session of a new admin, made directly as the owner role (the login itself is
+ * tested in platform-functions.test.ts). Pass `tokenHash` to withPlatformSession.
+ */
+export async function newPlatformSession(
+  owner: PrismaClient,
+): Promise<{ adminId: string; tokenHash: string }> {
+  const admin = await owner.platformAdmin.create({
+    data: {
+      name: 'Platform Tester',
+      phone: randomPhone(),
+      passwordHash: 'not-a-real-hash',
+      totpSecret: 'v1.test',
+      totpEnabledAt: new Date(),
+    },
+  });
+  const tokenHash = hashPlatformToken(randomBytes(32).toString('base64url'));
+  await owner.platformSession.create({
+    data: {
+      adminId: admin.id,
+      tokenHash,
+      idleExpiresAt: new Date(Date.now() + 30 * 60_000),
+      expiresAt: new Date(Date.now() + 8 * 3600_000),
+    },
+  });
+  return { adminId: admin.id, tokenHash };
+}
 
 /** App-role client with a single pooled connection, to test connection reuse. */
 export const singleConnectionAppClient = (): PrismaClient =>

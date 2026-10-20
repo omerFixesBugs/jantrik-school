@@ -1,17 +1,5 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Injectable,
-  Module,
-  Post,
-  Query,
-  Req,
-  Res,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Module, Post, Query, Req, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { TenantTx } from '@jantrik/db';
 import {
   platformAuditQuerySchema,
   platformLoginSchema,
@@ -24,30 +12,18 @@ import {
 import type { Request, Response } from 'express';
 import { AuthModule } from '../auth/auth.module.js';
 import { PlatformRoute } from '../common/decorators.js';
-import { RequestContext } from '../common/request-context.js';
 import { zodDto } from '../common/zod.js';
 import { refreshCookieSecure } from '../config/dev-lan.js';
 import type { Env } from '../config/env.js';
 import { PlatformAuthService } from './platform-auth.service.js';
+import { PlatformDb } from './platform-db.js';
+import { PlatformInstitutesController, PlatformInstitutesService } from './platform-institutes.js';
 import { PlatformPrismaService } from './platform-prisma.service.js';
 import { PLATFORM_COOKIE, PLATFORM_COOKIE_PATH, PLATFORM_MAX_SEC } from './platform.constants.js';
 
 class PlatformLoginDto extends zodDto(platformLoginSchema) {}
 class PlatformVerifyDto extends zodDto(platformVerifySchema) {}
 class PlatformAuditQueryDto extends zodDto(platformAuditQuerySchema) {}
-
-/** The platform request's transaction (app.platform_session set by PlatformContextInterceptor). */
-@Injectable()
-export class PlatformDb {
-  constructor(private readonly context: RequestContext) {}
-
-  get tx(): TenantTx {
-    this.context.requirePlatform();
-    const tx = this.context.tx;
-    if (!tx) throw new Error('No platform transaction');
-    return tx;
-  }
-}
 
 /**
  * /platform: Jantrik's own admins. Separate from institute auth in every way. Every route is a
@@ -128,8 +104,8 @@ export class PlatformController {
 
 @Module({
   imports: [AuthModule],
-  controllers: [PlatformController],
-  providers: [PlatformAuthService, PlatformDb, PlatformPrismaService],
+  controllers: [PlatformController, PlatformInstitutesController],
+  providers: [PlatformAuthService, PlatformDb, PlatformPrismaService, PlatformInstitutesService],
   // The global PlatformAuthGuard and PlatformContextInterceptor (registered in AppModule) need it.
   exports: [PlatformDb, PlatformPrismaService],
 })

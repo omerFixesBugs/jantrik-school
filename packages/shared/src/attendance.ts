@@ -106,7 +106,11 @@ export interface AttendanceSettings {
   effectiveAbsentSmsTemplate: string;
   absentSmsDelayMinutes: number;
   dailySmsCap: number | null;
-  /** The cap in force today (dailySmsCap, or 2 × active students). */
+  /** The automatic cap: 2 × active students (used when dailySmsCap is null). */
+  automaticSmsCap: number;
+  /** A ceiling set by Jantrik (the plan); null when there is none. */
+  platformSmsCap: number | null;
+  /** The cap in force today: dailySmsCap (or 2 × active students), at most platformSmsCap. */
   effectiveDailySmsCap: number;
 }
 

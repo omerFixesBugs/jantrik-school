@@ -4,8 +4,10 @@ import {
   type ExecutionContext,
   type NestInterceptor,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { withPlatformSession } from '@jantrik/db';
 import { from, lastValueFrom, type Observable } from 'rxjs';
+import { PLATFORM_TX_TIMEOUT } from '../common/decorators.js';
 import { RequestContext } from '../common/request-context.js';
 import { PlatformPrismaService } from './platform-prisma.service.js';
 
@@ -21,15 +23,21 @@ export class PlatformContextInterceptor implements NestInterceptor {
   constructor(
     private readonly prisma: PlatformPrismaService,
     private readonly context: RequestContext,
+    private readonly reflector: Reflector,
   ) {}
 
-  intercept(_ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
+  intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
     const platform = this.context.platform;
     if (!platform) return next.handle();
-    return from(this.run(platform.tokenHash, next));
+    const timeout =
+      this.reflector.getAllAndOverride<number>(PLATFORM_TX_TIMEOUT, [
+        ctx.getHandler(),
+        ctx.getClass(),
+      ]) ?? REQUEST_TX_TIMEOUT_MS;
+    return from(this.run(platform.tokenHash, next, timeout));
   }
 
-  private async run(tokenHash: string, next: CallHandler): Promise<unknown> {
+  private async run(tokenHash: string, next: CallHandler, timeout: number): Promise<unknown> {
     let committed: (() => unknown)[] = [];
     const result = await withPlatformSession(
       this.prisma.client,
@@ -45,7 +53,7 @@ export class PlatformContextInterceptor implements NestInterceptor {
           throw error;
         }
       },
-      { timeout: REQUEST_TX_TIMEOUT_MS, maxWait: 5_000 },
+      { timeout, maxWait: 5_000 },
     );
     await this.context.runAfterCommit(committed);
     return result;
