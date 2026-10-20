@@ -54,6 +54,7 @@ export function OwnerStatusBadge({ status }: { status: PlatformOwnerStatus }) {
 /** API refusals on the platform institute screens, in the reader's language. */
 export function usePlatformError() {
   const t = useTranslations('platformInstitutes');
+  const tBilling = useTranslations('platformBilling');
   const describe = useErrorMessage();
   return (e: unknown): string => {
     if (e instanceof ApiError) {
@@ -67,6 +68,11 @@ export function usePlatformError() {
         NOT_INVITED: t('errorNotInvited'),
         BAD_STATUS: t('errorBadStatus'),
         REASON_REQUIRED: t('errorReason'),
+        BAD_AMOUNT: tBilling('errorAmount'),
+        BAD_DATE: tBilling('errorDate'),
+        INVOICE_CLOSED: tBilling('errorClosed'),
+        HAS_PAYMENTS: tBilling('errorHasPayments'),
+        BAD_MONTH: tBilling('errorMonth'),
       };
       if (e.code && known[e.code]) return known[e.code]!;
       if (e.status === 400) return t('errorCheckForm');
@@ -85,6 +91,12 @@ export function fieldErrorsOf(e: unknown): Set<string> {
   if (body?.field) out.add(body.field);
   return out;
 }
+
+/**
+ * A YYYY-MM-DD date as a Date that shows as that same day in any time zone (UTC noon), for
+ * formatDate (which formats in Asia/Dhaka).
+ */
+export const calendarDate = (d: string): Date => new Date(`${d.slice(0, 10)}T12:00:00Z`);
 
 /** "120.50" (taka, as typed) → 12050 paisa; null when empty or not a number. */
 export function takaToPaisa(value: string): number | null {

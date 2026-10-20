@@ -2,12 +2,17 @@
 
 import {
   PLATFORM_MODULES,
+  addMonths,
   formatBdPhone,
   formatCount,
   formatDate,
+  formatMonth,
   formatTaka,
   normalizeBdPhone,
+  todayIn,
+  type IsoDate,
   type PlatformInstituteDetail,
+  type PlatformInvoicePage,
   type PlatformInstituteOwner,
   type PlatformModule,
 } from '@jantrik/shared';
@@ -15,8 +20,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ActivityIcon,
   ArrowLeftIcon,
+  BadgeCheckIcon,
   CheckIcon,
   GraduationCapIcon,
+  PencilIcon,
   MessageSquareTextIcon,
   PauseCircleIcon,
   PlayCircleIcon,
@@ -31,17 +38,27 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Field, SectionCard, TextField } from '@/components/form-kit';
+import { Field, SectionCard, SelectField, TextField } from '@/components/form-kit';
+import { InvoiceDialog, InvoiceList } from '@/components/platform/billing-kit';
 import {
   InstituteStatusBadge,
   OwnerStatusBadge,
+  calendarDate,
   fieldErrorsOf,
   parseLimit,
   usePlatformError,
 } from '@/components/platform/institute-kit';
+import {
+  PlanFields,
+  newPlanForm,
+  planFormOf,
+  planFromForm,
+  type PlanForm,
+} from '@/components/platform/plan-fields';
 import { FormDialog } from '@/components/setup/setup-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { platformApi } from '@/lib/platform/platform-api';
@@ -104,11 +121,7 @@ export default function PlatformInstitutePage() {
         <Alert data-testid="institute-trial-ended">
           <AlertDescription>
             {t('trialEndedAlert', {
-              date: formatDate(
-                new Date(`${d.subscription.trialEndsOn}T00:00:00`),
-                locale,
-                'medium',
-              ),
+              date: formatDate(calendarDate(d.subscription.trialEndsOn), locale, 'medium'),
             })}
           </AlertDescription>
         </Alert>
@@ -121,9 +134,10 @@ export default function PlatformInstitutePage() {
           <Modules d={d} />
         </div>
         <div className="flex min-w-0 flex-col gap-5">
-          <Plan d={d} locale={locale} />
-          <Limits d={d} />
           <Status d={d} />
+          <Plan d={d} locale={locale} />
+          <Billing d={d} locale={locale} />
+          <Limits d={d} />
         </div>
       </div>
     </div>
@@ -520,11 +534,20 @@ function Limits({ d }: { d: PlatformInstituteDetail }) {
 function Plan({ d, locale }: { d: PlatformInstituteDetail; locale: Locale }) {
   const t = useTranslations('platformInstitutes');
   const tModules = useTranslations('platformInstitutes.modules');
+  const [editing, setEditing] = useState(false);
   const s = d.subscription;
+  const edit = (
+    <Button variant="outline" onClick={() => setEditing(true)} data-testid="edit-plan">
+      <PencilIcon aria-hidden />
+      {s?.planName ? t('editPlan') : t('setPlan')}
+    </Button>
+  );
+  const dialog = editing && <PlanDialog d={d} onClose={() => setEditing(false)} />;
   if (!s || !s.planName) {
     return (
-      <SectionCard id="institute-plan" title={t('planTitle')}>
+      <SectionCard id="institute-plan" title={t('planTitle')} actions={edit}>
         <p className="text-muted-foreground">{t('noPlanText')}</p>
+        {dialog}
       </SectionCard>
     );
   }
@@ -556,13 +579,15 @@ function Plan({ d, locale }: { d: PlatformInstituteDetail; locale: Locale }) {
     [t('dueDays'), formatCount(s.dueDays, locale)],
     [
       t('trialEndsOn'),
-      s.trialEndsOn
-        ? formatDate(new Date(`${s.trialEndsOn}T00:00:00`), locale, 'medium')
-        : t('noTrialEnd'),
+      s.trialEndsOn ? formatDate(calendarDate(s.trialEndsOn), locale, 'medium') : t('noTrialEnd'),
+    ],
+    [
+      t('billingStartsOn'),
+      s.billingStartsOn ? formatMonth(s.billingStartsOn.slice(0, 7), locale) : t('notBilledYet'),
     ],
   ];
   return (
-    <SectionCard id="institute-plan" title={t('planTitle')}>
+    <SectionCard id="institute-plan" title={t('planTitle')} actions={edit}>
       <dl className="flex flex-col divide-y rounded-lg border">
         {rows.map(([label, value]) => (
           <div
@@ -574,34 +599,190 @@ function Plan({ d, locale }: { d: PlatformInstituteDetail; locale: Locale }) {
           </div>
         ))}
       </dl>
+      {dialog}
     </SectionCard>
   );
 }
 
+function PlanDialog({ d, onClose }: { d: PlatformInstituteDetail; onClose: () => void }) {
+  const t = useTranslations('platformInstitutes');
+  const locale = useLocale() as Locale;
+  const s = d.subscription;
+  const [plan, setPlan] = useState<PlanForm>(() => (s?.planName ? planFormOf(s) : newPlanForm()));
+  const [trialEndsOn, setTrialEndsOn] = useState<string>(s?.trialEndsOn ?? '');
+  const [billingStartsOn, setBillingStartsOn] = useState<string>(s?.billingStartsOn ?? '');
+  const [problems, setProblems] = useState<Set<string>>(new Set());
+  const thisMonth = todayIn('Asia/Dhaka').slice(0, 7);
+  const months = Array.from({ length: 19 }, (_, i) => `${addMonths(thisMonth, i - 12)}-01`);
+  if (billingStartsOn && !months.includes(billingStartsOn)) months.unshift(billingStartsOn);
+  const save = useInstituteAction(
+    d.id,
+    (body: Record<string, unknown>) =>
+      platformApi<PlatformInstituteDetail>(`/platform/institutes/${d.id}/plan`, {
+        method: 'PUT',
+        json: body,
+      }),
+    t('planSaved'),
+    onClose,
+  );
+  const err = (path: string, message: string) => (problems.has(path) ? message : null);
+  const submit = () => {
+    const invalid = new Set<string>();
+    const built = planFromForm(plan, invalid);
+    setProblems(invalid);
+    if (invalid.size > 0) return;
+    save.mutate(
+      {
+        ...built,
+        trialEndsOn: (trialEndsOn || null) as IsoDate | null,
+        billingStartsOn: (billingStartsOn || null) as IsoDate | null,
+      },
+      {
+        // The body is flat (`corePaisa`); the fields are named `plan.corePaisa`.
+        onError: (e) =>
+          setProblems(
+            new Set(
+              [...fieldErrorsOf(e)].map((path) =>
+                path.startsWith('plan.') ? path : `plan.${path}`,
+              ),
+            ),
+          ),
+      },
+    );
+  };
+  return (
+    <FormDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title={t('editPlanTitle', { name: d.name })}
+      description={t('editPlanHint')}
+      submitLabel={t('savePlan')}
+      pending={save.isPending}
+      onSubmit={submit}
+      testId="plan-dialog"
+    >
+      <PlanFields form={plan} onChange={setPlan} err={err} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field id="plan-trial-ends" label={t('trialEndsOn')}>
+          <Input
+            id="plan-trial-ends"
+            type="date"
+            value={trialEndsOn}
+            onChange={(e) => setTrialEndsOn(e.target.value)}
+          />
+        </Field>
+        <SelectField
+          id="plan-billing-start"
+          label={t('billingStartsOn')}
+          hint={t('billingStartsHint')}
+          value={billingStartsOn}
+          onChange={setBillingStartsOn}
+          placeholder={t('notBilledYet')}
+          options={months.map((m) => ({ value: m, label: formatMonth(m.slice(0, 7), locale) }))}
+        />
+      </div>
+    </FormDialog>
+  );
+}
+
+/** What the institute owes: open and overdue amounts, its latest invoices. */
+function Billing({ d, locale }: { d: PlatformInstituteDetail; locale: Locale }) {
+  const t = useTranslations('platformBilling');
+  const [open, setOpen] = useState<string | null>(null);
+  const q = useQuery({
+    queryKey: ['platform-invoices', 'institute', d.id],
+    queryFn: () =>
+      platformApi<PlatformInvoicePage>(`/platform/invoices?tenantId=${d.id}&pageSize=6`),
+  });
+  const b = d.billing;
+  return (
+    <SectionCard
+      id="institute-billing"
+      title={t('billingTitle')}
+      actions={
+        <ButtonLink href="/platform/billing" variant="outline" size="sm">
+          {t('allBilling')}
+        </ButtonLink>
+      }
+    >
+      {b.overdueCount > 0 ? (
+        <Alert variant="destructive" data-testid="institute-overdue">
+          <AlertDescription>
+            {t('overdueSummary', {
+              count: formatCount(b.overdueCount, locale),
+              n: b.overdueCount,
+              amount: formatTaka(b.overduePaisa, locale),
+            })}
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <p className="text-muted-foreground text-sm">
+          {b.openCount > 0
+            ? t('openSummary', {
+                count: formatCount(b.openCount, locale),
+                n: b.openCount,
+                amount: formatTaka(b.openPaisa, locale),
+              })
+            : t('nothingOpen')}
+        </p>
+      )}
+      {q.data && q.data.items.length > 0 && (
+        <InvoiceList items={q.data.items} showInstitute={false} onOpen={setOpen} />
+      )}
+      {open && <InvoiceDialog id={open} onClose={() => setOpen(null)} />}
+    </SectionCard>
+  );
+}
+
+type StatusAction = 'suspend' | 'reactivate' | 'activate';
+
 function Status({ d }: { d: PlatformInstituteDetail }) {
   const t = useTranslations('platformInstitutes');
-  const [open, setOpen] = useState(false);
+  const [action, setAction] = useState<StatusAction | null>(null);
   const [reason, setReason] = useState('');
   const [invalid, setInvalid] = useState(false);
-  const suspended = d.status === 'SUSPENDED';
+  const done: Record<StatusAction, string> = {
+    suspend: t('suspended'),
+    reactivate: t('reactivated'),
+    activate: t('activated'),
+  };
   const change = useInstituteAction(
     d.id,
-    (body: { reason: string }) =>
-      platformApi<PlatformInstituteDetail>(
-        `/platform/institutes/${d.id}/${suspended ? 'reactivate' : 'suspend'}`,
-        { method: 'POST', json: body },
-      ),
-    suspended ? t('reactivated') : t('suspended'),
+    ({ to, reason }: { to: StatusAction; reason: string }) =>
+      platformApi<PlatformInstituteDetail>(`/platform/institutes/${d.id}/${to}`, {
+        method: 'POST',
+        json: { reason },
+      }),
+    action ? done[action] : '',
     () => {
-      setOpen(false);
+      setAction(null);
       setReason('');
     },
   );
   if (d.status === 'ARCHIVED') return null;
+  const suspended = d.status === 'SUSPENDED';
+  const back = t(`status_${d.suspendedFrom ?? 'ACTIVE'}`);
+  const copy: Record<StatusAction, { title: string; hint: string; button: string }> = {
+    suspend: {
+      title: t('suspendTitle', { name: d.name }),
+      hint: t('suspendHint'),
+      button: t('suspend'),
+    },
+    reactivate: {
+      title: t('reactivateTitle', { name: d.name }),
+      hint: t('reactivateHint', { status: back }),
+      button: t('reactivate'),
+    },
+    activate: {
+      title: t('activateTitle', { name: d.name }),
+      hint: t('activateHint'),
+      button: t('activate'),
+    },
+  };
   const submit = () => {
     const ok = reason.trim().length >= 3;
     setInvalid(!ok);
-    if (ok) change.mutate({ reason: reason.trim() });
+    if (ok && action) change.mutate({ to: action, reason: reason.trim() });
   };
   return (
     <SectionCard
@@ -609,31 +790,41 @@ function Status({ d }: { d: PlatformInstituteDetail }) {
       title={t('statusTitle')}
       hint={
         suspended
-          ? t('reactivateHint', { status: t(`status_${d.suspendedFrom ?? 'ACTIVE'}`) })
-          : t('suspendHint')
+          ? t('reactivateHint', { status: back })
+          : d.status === 'TRIAL'
+            ? t('trialHint')
+            : t('suspendHint')
       }
     >
-      <Button
-        variant={suspended ? 'default' : 'destructive'}
-        className="w-fit"
-        onClick={() => setOpen(true)}
-        data-testid={suspended ? 'reactivate-institute' : 'suspend-institute'}
-      >
-        {suspended ? <PlayCircleIcon aria-hidden /> : <PauseCircleIcon aria-hidden />}
-        {suspended ? t('reactivate') : t('suspend')}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        {d.status === 'TRIAL' && (
+          <Button onClick={() => setAction('activate')} data-testid="activate-institute">
+            <BadgeCheckIcon aria-hidden />
+            {t('activate')}
+          </Button>
+        )}
+        {suspended ? (
+          <Button onClick={() => setAction('reactivate')} data-testid="reactivate-institute">
+            <PlayCircleIcon aria-hidden />
+            {t('reactivate')}
+          </Button>
+        ) : (
+          <Button
+            variant="destructive"
+            onClick={() => setAction('suspend')}
+            data-testid="suspend-institute"
+          >
+            <PauseCircleIcon aria-hidden />
+            {t('suspend')}
+          </Button>
+        )}
+      </div>
       <FormDialog
-        open={open}
-        onOpenChange={setOpen}
-        title={
-          suspended ? t('reactivateTitle', { name: d.name }) : t('suspendTitle', { name: d.name })
-        }
-        description={
-          suspended
-            ? t('reactivateHint', { status: t(`status_${d.suspendedFrom ?? 'ACTIVE'}`) })
-            : t('suspendHint')
-        }
-        submitLabel={suspended ? t('reactivate') : t('suspend')}
+        open={action !== null}
+        onOpenChange={(open) => !open && setAction(null)}
+        title={action ? copy[action].title : ''}
+        description={action ? copy[action].hint : undefined}
+        submitLabel={action ? copy[action].button : ''}
         pending={change.isPending}
         onSubmit={submit}
         testId="status-dialog"

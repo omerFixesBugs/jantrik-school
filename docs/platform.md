@@ -177,6 +177,43 @@ created_at)`, `student_imports (status, created_at)`, `attendance_sessions (upda
     first), the rest stay held, and the dashboard says why.
 - Institutes created before part 2 have no `tenant_subscriptions` row: no plan, no limits.
 
+## Subscriptions and billing (part 3)
+
+- **Plan** (`PUT /platform/institutes/:id/plan`): name, pricing (per active student per month for
+  each module, CORE always on; or a flat monthly price), cycle (monthly or yearly with an optional
+  discount), days to pay (default 10), trial end, and the first month invoiced. Audited on both
+  sides. Changes apply to invoices issued afterwards.
+- **Activate** (`POST /platform/institutes/:id/activate`, a reason required): TRIAL → ACTIVE. The
+  first month invoiced becomes the next month unless the plan already has one (an institute
+  without a plan row gets none: set the plan, with its first month, afterwards). Institutes still in
+  trial are never invoiced (decision 6: a trial past its end date stays in trial, with a warning).
+- **Invoices for a month** (`POST /platform/invoices/generate {month, issuedOn?}`, at most next
+  month): one call for all institutes, idempotent. An institute gets one when it is ACTIVE, has a
+  plan, its billing has started, and no live invoice overlaps the new invoice's range (one month,
+  or 12 on a yearly plan): those months are invoiced already. So a yearly invoice can start in any
+  month not covered yet (a skipped month, e.g. no students yet, only moves the year), and changing
+  the cycle or the first month never bills a month twice. Skipped otherwise, and counted by reason
+  (trial, suspended or archived, no plan, not started, already invoiced, nothing to pay, amount too
+  large); one mispriced institute does not stop the others. An institute that may be invoiced is
+  locked and re-read while it is checked and invoiced.
+  - **Amounts** (integer paisa): per student = active students now × each enabled module's price
+    (one line per module); flat = the flat price; yearly = 12 × that, minus the discount (a
+    DISCOUNT line). A total of 0 issues nothing.
+  - **Issue date:** today in the institute's timezone, or a date the admin picks (not in the
+    future, at most about a year back) for invoices issued late. Due = issue date + days to pay.
+- **Payments** (`POST /platform/invoices/:id/payments`): cash, bKash or bank, with an optional
+  reference and the date paid (not in the future). Never more than is left; the invoice is PAID
+  once payments reach its total. Recorded by the signed-in admin, append-only.
+- **Void** (`POST /platform/invoices/:id/void`, a reason required): only an unpaid invoice with
+  no payments. The period can then be invoiced again.
+- **Overdue** = ISSUED and past its due date (computed). The institute list can filter on it and
+  shows the amount; the detail and the billing page show it. No automatic suspension.
+- **The owner's notice:** `GET /me/billing-notice` (institute API, OWNER only) reads the
+  institute's own invoices under RLS; the dashboard shows "Jantrik's invoice of ৳… was due on …"
+  until it is paid.
+- **Tables** (tenant tables; the institute may read its own; only the platform functions write;
+  no DELETE): `platform_invoices`, `platform_invoice_lines`, `platform_payments`.
+
 ## What remains trusted
 
 - The login functions run before a session exists, and the platform module checks the password

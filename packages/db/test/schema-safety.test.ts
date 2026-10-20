@@ -28,6 +28,9 @@ describe('schema safety net', () => {
         'student_imports',
         'staff_profiles',
         'tenant_subscriptions',
+        'platform_invoices',
+        'platform_invoice_lines',
+        'platform_payments',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

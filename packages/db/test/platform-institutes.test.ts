@@ -62,7 +62,7 @@ describe('platform institute functions', () => {
           total: bigint;
         }[]
       >`SELECT * FROM platform_list_institutes(${filters.search ?? null}, ${filters.type ?? null},
-          ${filters.status ?? null}, NULL, ${filters.trialEnded ?? null}::boolean, 0, 100)`,
+          ${filters.status ?? null}, NULL, ${filters.trialEnded ?? null}::boolean, NULL, 0, 100)`,
     );
 
   beforeAll(async () => {
@@ -157,7 +157,7 @@ describe('platform institute functions', () => {
     const id = randomUUID();
     const calls = [
       `SELECT platform_institute_options()`,
-      `SELECT * FROM platform_list_institutes(NULL, NULL, NULL, NULL, NULL, 0, 10)`,
+      `SELECT * FROM platform_list_institutes(NULL, NULL, NULL, NULL, NULL, NULL, 0, 10)`,
       `SELECT platform_get_institute('${id}')`,
       `SELECT platform_register_institute('${id}', NULL, 'FLAT', 0, 0, 0, 0, 0, 'MONTHLY', 0, 10, NULL, NULL, NULL, NULL, NULL)`,
       `SELECT platform_set_institute_status('${id}', 'SUSPEND', 'a reason', NULL)`,

@@ -1,7 +1,13 @@
 'use client';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { Building2Icon, HistoryIcon, LayoutDashboardIcon, LogOutIcon } from 'lucide-react';
+import {
+  Building2Icon,
+  HistoryIcon,
+  LayoutDashboardIcon,
+  LogOutIcon,
+  ReceiptTextIcon,
+} from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -18,6 +24,7 @@ import { cn } from '@/lib/utils';
 const NAV = [
   { href: '/platform', key: 'navOverview', icon: LayoutDashboardIcon },
   { href: '/platform/institutes', key: 'navInstitutes', icon: Building2Icon },
+  { href: '/platform/billing', key: 'navBilling', icon: ReceiptTextIcon },
   { href: '/platform/audit', key: 'navAudit', icon: HistoryIcon },
 ] as const;
 

@@ -429,6 +429,9 @@ model Tenant {
   studentImports      StudentImport[]
   staffProfiles       StaffProfile[]
   subscription        TenantSubscription?
+  invoices            PlatformInvoice[]
+  invoiceLines        PlatformInvoiceLine[]
+  payments            PlatformPayment[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -1209,6 +1212,7 @@ model PlatformAdmin {
   backupCodes PlatformAdminBackupCode[]
   sessions    PlatformSession[]
   auditLogs   PlatformAuditLog[]
+  payments    PlatformPayment[]
 
   @@map("platform_admins")
 }
@@ -1311,6 +1315,8 @@ model TenantSubscription {
   studentLimit          Int?         @map("student_limit")
   /// A ceiling on the institute's daily SMS cap (the lower of the two applies). NULL: none.
   smsDailyCap           Int?         @map("sms_daily_cap")
+  /// The first month invoiced (its first day). Set on activation (the next month); NULL: not yet.
+  billingStartsOn       DateTime?    @map("billing_starts_on") @db.Date
   createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1318,4 +1324,102 @@ model TenantSubscription {
 
   @@unique([tenantId, id])
   @@map("tenant_subscriptions")
+}
+
+enum InvoiceStatus {
+  ISSUED
+  PAID
+  VOID
+
+  @@map("invoice_status")
+}
+
+/// A line of a platform invoice: a module (per active student), the flat price, or the yearly
+/// discount (a negative amount).
+enum InvoiceLineKind {
+  CORE
+  ATTENDANCE
+  FEES
+  EXAMS
+  FLAT
+  DISCOUNT
+
+  @@map("invoice_line_kind")
+}
+
+enum PaymentMethod {
+  CASH
+  BKASH
+  BANK
+
+  @@map("payment_method")
+}
+
+/// Jantrik's invoice to an institute for one period (a month, or 12 months on a yearly plan).
+/// The institute may read its own; only the platform functions write. Overdue = ISSUED and past
+/// due_on (computed, not stored). History: no DELETE for anyone.
+model PlatformInvoice {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  tenantId    String        @map("tenant_id") @db.Uuid
+  periodStart DateTime      @map("period_start") @db.Date
+  periodEnd   DateTime      @map("period_end") @db.Date
+  cycle       BillingCycle
+  issuedOn    DateTime      @map("issued_on") @db.Date
+  dueOn       DateTime      @map("due_on") @db.Date
+  status      InvoiceStatus @default(ISSUED)
+  totalPaisa  Int           @map("total_paisa")
+  paidPaisa   Int           @default(0) @map("paid_paisa")
+  voidReason  String?       @map("void_reason")
+  voidedAt    DateTime?     @map("voided_at") @db.Timestamptz(3)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  lines    PlatformInvoiceLine[]
+  payments PlatformPayment[]
+
+  @@unique([tenantId, id])
+  /// One live invoice per institute and period (a voided one can be issued again).
+  @@unique([tenantId, periodStart], map: "platform_invoices_tenant_period", where: raw("status <> 'VOID'"))
+  @@index([tenantId, dueOn])
+  @@map("platform_invoices")
+}
+
+model PlatformInvoiceLine {
+  id             String          @id @default(uuid(7)) @db.Uuid
+  tenantId       String          @map("tenant_id") @db.Uuid
+  invoiceId      String          @map("invoice_id") @db.Uuid
+  kind           InvoiceLineKind
+  /// Per-student lines: the active students counted when the invoice was made.
+  activeStudents Int?            @map("active_students")
+  unitPaisa      Int             @map("unit_paisa")
+  months         Int             @db.SmallInt
+  amountPaisa    Int             @map("amount_paisa")
+  sortOrder      Int             @default(0) @map("sort_order") @db.SmallInt
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice PlatformInvoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+
+  @@index([tenantId, invoiceId])
+  @@map("platform_invoice_lines")
+}
+
+/// A payment recorded by a platform admin (cash, bKash or bank). Append-only.
+model PlatformPayment {
+  id           String        @id @default(uuid(7)) @db.Uuid
+  tenantId     String        @map("tenant_id") @db.Uuid
+  invoiceId    String        @map("invoice_id") @db.Uuid
+  amountPaisa  Int           @map("amount_paisa")
+  method       PaymentMethod
+  reference    String?
+  paidOn       DateTime      @map("paid_on") @db.Date
+  recordedById String        @map("recorded_by_id") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice    PlatformInvoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+  recordedBy PlatformAdmin   @relation(fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, invoiceId])
+  @@map("platform_payments")
 }

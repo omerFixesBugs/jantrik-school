@@ -81,6 +81,9 @@ Recorded during step 8; to be done when the production setup is built.
    `DATABASE_PLATFORM_URL` and `PLATFORM_TOTP_KEY` for the API.
    - The roles must exist **before** the first `prisma migrate deploy`: migrations grant to them,
      and migration `20261021020000` fails without `jantrik_platform_app`.
+   - Deploy order: migrations first, then restart the API. A platform function's signature can
+     change between versions (e.g. `platform_list_institutes` in part 3), so an old API instance
+     still running after the migration gets errors on that screen until it restarts.
    - Optional hardening: `REVOKE TEMPORARY ON DATABASE <db> FROM PUBLIC`. The definer functions
      already ignore temporary tables (`pg_temp` last), but the app's own raw SQL (e.g. the
      per-request tenant check) does not name its schema; a temporary table created through an SQL

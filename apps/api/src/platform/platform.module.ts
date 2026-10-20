@@ -16,6 +16,7 @@ import { zodDto } from '../common/zod.js';
 import { refreshCookieSecure } from '../config/dev-lan.js';
 import type { Env } from '../config/env.js';
 import { PlatformAuthService } from './platform-auth.service.js';
+import { PlatformBillingController, PlatformBillingService } from './platform-billing.js';
 import { PlatformDb } from './platform-db.js';
 import { PlatformInstitutesController, PlatformInstitutesService } from './platform-institutes.js';
 import { PlatformPrismaService } from './platform-prisma.service.js';
@@ -104,8 +105,14 @@ export class PlatformController {
 
 @Module({
   imports: [AuthModule],
-  controllers: [PlatformController, PlatformInstitutesController],
-  providers: [PlatformAuthService, PlatformDb, PlatformPrismaService, PlatformInstitutesService],
+  controllers: [PlatformController, PlatformInstitutesController, PlatformBillingController],
+  providers: [
+    PlatformAuthService,
+    PlatformDb,
+    PlatformPrismaService,
+    PlatformInstitutesService,
+    PlatformBillingService,
+  ],
   // The global PlatformAuthGuard and PlatformContextInterceptor (registered in AppModule) need it.
   exports: [PlatformDb, PlatformPrismaService],
 })

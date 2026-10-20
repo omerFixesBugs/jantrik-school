@@ -5,6 +5,7 @@ import {
   formatBdPhone,
   formatCount,
   formatDate,
+  formatTaka,
   type PlatformInstituteListItem,
   type PlatformInstituteOptions,
   type PlatformInstitutePage,
@@ -23,6 +24,7 @@ import { useState } from 'react';
 import { SelectField } from '@/components/form-kit';
 import { InstituteStatusBadge, OwnerStatusBadge } from '@/components/platform/institute-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -45,8 +47,9 @@ export default function PlatformInstitutesPage() {
   const [status, setStatus] = useState('');
   const [plan, setPlan] = useState('');
   const [trialEnded, setTrialEnded] = useState(false);
+  const [overdue, setOverdue] = useState(false);
   // The page belongs to one set of filters: any change starts again at page 1.
-  const filterKey = JSON.stringify([debounced, type, status, plan, trialEnded]);
+  const filterKey = JSON.stringify([debounced, type, status, plan, trialEnded, overdue]);
   const [paging, setPaging] = useState({ key: filterKey, page: 1 });
   const page = paging.key === filterKey ? paging.page : 1;
   const setPage = (next: number) => setPaging({ key: filterKey, page: next });
@@ -62,12 +65,13 @@ export default function PlatformInstitutesPage() {
   if (status) params.set('status', status);
   if (plan) params.set('plan', plan);
   if (trialEnded) params.set('trialEnded', 'true');
+  if (overdue) params.set('overdue', 'true');
   const list = useQuery({
     queryKey: ['platform-institutes', params.toString()],
     queryFn: () => platformApi<PlatformInstitutePage>(`/platform/institutes?${params}`),
     placeholderData: keepPreviousData,
   });
-  const filtered = Boolean(debounced || type || status || plan || trialEnded);
+  const filtered = Boolean(debounced || type || status || plan || trialEnded || overdue);
   const typeName = (key: string) => {
     const found = options.data?.types.find((x) => x.key === key);
     return found ? (locale === 'bn' ? found.nameBn : found.nameEn) : key;
@@ -135,16 +139,28 @@ export default function PlatformInstitutesPage() {
           placeholder={t('anyPlan')}
           options={(options.data?.plans ?? []).map((p) => ({ value: p, label: p }))}
         />
-        <label className="flex h-11 items-center gap-2 text-sm font-medium md:h-10">
-          <input
-            type="checkbox"
-            className="accent-primary size-5"
-            checked={trialEnded}
-            onChange={(e) => setTrialEnded(e.target.checked)}
-            data-testid="filter-trial-ended"
-          />
-          {t('trialEndedOnly')}
-        </label>
+        <div className="flex flex-col gap-1 lg:gap-0">
+          <label className="flex min-h-10 items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              className="accent-primary size-5"
+              checked={trialEnded}
+              onChange={(e) => setTrialEnded(e.target.checked)}
+              data-testid="filter-trial-ended"
+            />
+            {t('trialEndedOnly')}
+          </label>
+          <label className="flex min-h-10 items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              className="accent-primary size-5"
+              checked={overdue}
+              onChange={(e) => setOverdue(e.target.checked)}
+              data-testid="filter-overdue"
+            />
+            {t('overdueOnly')}
+          </label>
+        </div>
       </div>
 
       {list.isPending ? (
@@ -239,7 +255,10 @@ function InstituteCards({ items, locale, typeName }: ListProps) {
                 {i.slug}
               </span>
             </div>
-            <InstituteStatusBadge status={i.status} trialEnded={i.trialEnded} />
+            <span className="flex flex-col items-end gap-1">
+              <InstituteStatusBadge status={i.status} trialEnded={i.trialEnded} />
+              <OverdueBadge item={i} />
+            </span>
           </div>
           <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
             <Pair label={t('type')}>{typeName(i.type.key)}</Pair>
@@ -256,6 +275,18 @@ function InstituteCards({ items, locale, typeName }: ListProps) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** What is overdue, when anything is. */
+function OverdueBadge({ item }: { item: PlatformInstituteListItem }) {
+  const t = useTranslations('platformInstitutes');
+  const locale = useLocale() as Locale;
+  if (item.overdueCount === 0) return null;
+  return (
+    <Badge variant="destructive" data-testid="institute-overdue-badge">
+      {t('overdueBadge', { amount: formatTaka(item.overduePaisa, locale) })}
+    </Badge>
   );
 }
 
@@ -309,7 +340,10 @@ function InstituteTable({ items, locale, typeName }: ListProps) {
               </td>
               <td className="px-4 py-3">{typeName(i.type.key)}</td>
               <td className="px-4 py-3">
-                <InstituteStatusBadge status={i.status} trialEnded={i.trialEnded} />
+                <span className="flex flex-col items-start gap-1">
+                  <InstituteStatusBadge status={i.status} trialEnded={i.trialEnded} />
+                  <OverdueBadge item={i} />
+                </span>
               </td>
               <td className="px-4 py-3">
                 {i.planName ?? <span className="text-muted-foreground">{t('noPlan')}</span>}

@@ -37,6 +37,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
+import { BillingNoticeBanner } from '@/components/billing-notice';
 import { InvitationsBanner } from '@/components/invitations-banner';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -65,6 +66,7 @@ export default function DashboardPage() {
   return (
     <>
       <InvitationsBanner />
+      {context.roles.includes('OWNER') && <BillingNoticeBanner />}
       {isStaff(context.roles) ? (
         <StaffDashboard context={context} />
       ) : context.roles.includes('GUARDIAN') ? (

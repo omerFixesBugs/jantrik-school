@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { isoDateSchema, type IsoDate } from './dates.js';
 import { bdPhoneSchema } from './phone.js';
+import { monthSchema } from './reports.js';
 
 // Platform area (/platform): Jantrik's own staff. Separate login (password + TOTP), separate
 // session (an httpOnly cookie), never an institute user. See docs/platform.md.
@@ -180,6 +181,8 @@ export const platformInstituteListQuerySchema = z.object({
   plan: z.string().trim().max(60).optional(),
   /** Still in TRIAL after the trial end date. */
   trialEnded: z.stringbool().optional(),
+  /** Has an invoice past its due date. */
+  overdue: z.stringbool().optional(),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -224,6 +227,9 @@ export interface PlatformInstituteListItem {
   owner: Omit<PlatformInstituteOwner, 'userId' | 'inviteExpiresAt'> | null;
   activeStudents: number;
   smsThisMonth: number;
+  /** Invoices past their due date, and what is still owed on them. */
+  overdueCount: number;
+  overduePaisa: number;
 }
 
 export interface PlatformInstitutePage {
@@ -247,6 +253,8 @@ export interface PlatformSubscription {
   trialEndsOn: IsoDate | null;
   studentLimit: number | null;
   smsDailyCap: number | null;
+  /** The first month invoiced (its first day); null until activation. */
+  billingStartsOn: IsoDate | null;
 }
 
 export interface PlatformInstituteDetail {
@@ -265,6 +273,8 @@ export interface PlatformInstituteDetail {
   /** Null: created before plans existed (no plan, no limits). */
   subscription: PlatformSubscription | null;
   trialEnded: boolean;
+  /** Unpaid invoices (ISSUED), and those past their due date. */
+  billing: { openCount: number; openPaisa: number; overdueCount: number; overduePaisa: number };
   owners: PlatformInstituteOwner[];
   counts: {
     activeStudents: number;
@@ -275,4 +285,122 @@ export interface PlatformInstituteDetail {
     importsTotal: number;
     lastActivityAt: string | null;
   };
+}
+
+// ─────────────────────────── Billing (part 3) ───────────────────────────
+
+/** PUT /platform/institutes/:id/plan: the plan, its trial end and the first month invoiced. */
+export const platformSetPlanSchema = platformPlanSchema.extend({
+  trialEndsOn: isoDateSchema.nullable(),
+  /** The first day of a month, or null (not billed yet). */
+  billingStartsOn: isoDateSchema
+    .refine((d) => d.endsWith('-01'), 'The first day of a month')
+    .nullable(),
+});
+export type PlatformSetPlanInput = z.input<typeof platformSetPlanSchema>;
+
+export const INVOICE_STATUS_VALUES = ['ISSUED', 'PAID', 'VOID'] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUS_VALUES)[number];
+export const PAYMENT_METHOD_VALUES = ['CASH', 'BKASH', 'BANK'] as const;
+export type PaymentMethod = (typeof PAYMENT_METHOD_VALUES)[number];
+
+/** POST /platform/invoices/generate: one month's invoices (idempotent). */
+export const platformGenerateInvoicesSchema = z.object({
+  month: monthSchema,
+  /** The issue date; today when omitted. Never in the future. */
+  issuedOn: isoDateSchema.nullable().default(null),
+});
+
+export interface PlatformGenerateResult {
+  created: number;
+  /**
+   * Why institutes got none: trial, suspended (or archived), noPlan, notStarted, exists (a live
+   * invoice already covers those months), free (nothing to pay), tooLarge (check the prices).
+   */
+  skipped: Partial<
+    Record<'trial' | 'suspended' | 'noPlan' | 'notStarted' | 'exists' | 'free' | 'tooLarge', number>
+  >;
+}
+
+/** GET /platform/invoices. */
+export const platformInvoiceListQuerySchema = z.object({
+  tenantId: z.uuid().optional(),
+  status: z.enum(INVOICE_STATUS_VALUES).optional(),
+  overdue: z.stringbool().optional(),
+  month: monthSchema.optional(),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+});
+export type PlatformInvoiceListQuery = z.input<typeof platformInvoiceListQuerySchema>;
+
+/** POST /platform/invoices/:id/payments. */
+export const platformPaymentSchema = z.object({
+  /** Up to what an invoice can hold; the API refuses more than is left to pay. */
+  amountPaisa: z.number().int().min(1).max(2_147_483_647),
+  method: z.enum(PAYMENT_METHOD_VALUES),
+  reference: z
+    .string()
+    .trim()
+    .max(100)
+    .nullish()
+    .transform((v) => v || null),
+  paidOn: isoDateSchema,
+});
+export type PlatformPaymentInput = z.input<typeof platformPaymentSchema>;
+
+/** POST /platform/invoices/:id/void. */
+export const platformVoidSchema = z.object({ reason: z.string().trim().min(3).max(500) });
+
+export interface PlatformInvoiceListItem {
+  id: string;
+  tenant: { id: string; name: string; slug: string };
+  periodStart: IsoDate;
+  periodEnd: IsoDate;
+  cycle: 'MONTHLY' | 'YEARLY';
+  issuedOn: IsoDate;
+  dueOn: IsoDate;
+  status: InvoiceStatus;
+  totalPaisa: number;
+  paidPaisa: number;
+  /** ISSUED and past its due date (computed). */
+  overdue: boolean;
+}
+
+export interface PlatformInvoicePage {
+  items: PlatformInvoiceListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PlatformInvoiceLine {
+  kind: 'CORE' | 'ATTENDANCE' | 'FEES' | 'EXAMS' | 'FLAT' | 'DISCOUNT';
+  /** Per-student lines: the active students counted when the invoice was made. */
+  activeStudents: number | null;
+  unitPaisa: number;
+  months: number;
+  /** Negative for the yearly discount. */
+  amountPaisa: number;
+}
+
+export interface PlatformPayment {
+  id: string;
+  amountPaisa: number;
+  method: PaymentMethod;
+  reference: string | null;
+  paidOn: IsoDate;
+  recordedBy: string | null;
+  createdAt: string;
+}
+
+export interface PlatformInvoiceDetail extends PlatformInvoiceListItem {
+  voidReason: string | null;
+  voidedAt: string | null;
+  lines: PlatformInvoiceLine[];
+  payments: PlatformPayment[];
+}
+
+/** GET /me/billing-notice (OWNER): Jantrik's invoices past their due date, if any. */
+export interface BillingNotice {
+  overdue: { count: number; duePaisa: number; oldestDueOn: IsoDate } | null;
 }

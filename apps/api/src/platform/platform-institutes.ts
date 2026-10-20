@@ -5,7 +5,6 @@ import {
   Get,
   HttpCode,
   Injectable,
-  NotFoundException,
   Param,
   ParseUUIDPipe,
   Post,
@@ -19,6 +18,7 @@ import {
   platformCreateInstituteSchema,
   platformInstituteListQuerySchema,
   platformLimitsSchema,
+  platformSetPlanSchema,
   platformModuleSchema,
   platformOwnerSchema,
   platformStatusChangeSchema,
@@ -35,19 +35,19 @@ import {
 } from '@jantrik/shared';
 import type { Request } from 'express';
 import type { z } from 'zod';
-import { apiError } from '../common/api-error.js';
 import { PlatformRoute, PlatformTxTimeout } from '../common/decorators.js';
 import { RequestContext } from '../common/request-context.js';
 import { zodDto } from '../common/zod.js';
 import { InstituteProvisioning } from '../tenancy/institute-provisioning.service.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
-import { PlatformDb } from './platform-db.js';
+import { PlatformDb, platformDbError } from './platform-db.js';
 
 class CreateInstituteDto extends zodDto(platformCreateInstituteSchema) {}
 class InstituteListQueryDto extends zodDto(platformInstituteListQuerySchema) {}
 class StatusChangeDto extends zodDto(platformStatusChangeSchema) {}
 class ModuleDto extends zodDto(platformModuleSchema) {}
 class LimitsDto extends zodDto(platformLimitsSchema) {}
+class SetPlanDto extends zodDto(platformSetPlanSchema) {}
 class OwnerDto extends zodDto(platformOwnerSchema) {}
 
 const INVITE_MS = INVITATION_DAYS * 24 * 3600 * 1000;
@@ -72,6 +72,8 @@ interface ListRow {
   owner_invited_at: Date | null;
   active_students: bigint;
   sms_this_month: bigint;
+  overdue_count: bigint;
+  overdue_paisa: bigint;
   total: bigint;
 }
 
@@ -105,6 +107,7 @@ export class PlatformInstitutesService {
     const query = (offset: number, limit: number) => this.db.tx.$queryRaw<ListRow[]>`
       SELECT * FROM platform_list_institutes(${q.search || null}, ${q.type || null},
         ${q.status ?? null}, ${q.plan || null}, ${q.trialEnded ?? null}::boolean,
+        ${q.overdue ?? null}::boolean,
         ${offset}::int, ${limit}::int)`;
     const rows = await query((q.page - 1) * q.pageSize, q.pageSize);
     // Past the last page: still report the total.
@@ -134,6 +137,8 @@ export class PlatformInstitutesService {
             : null,
           activeStudents: Number(r.active_students),
           smsThisMonth: Number(r.sms_this_month),
+          overdueCount: Number(r.overdue_count),
+          overduePaisa: Number(r.overdue_paisa),
         };
       }),
       total: Number(total),
@@ -200,7 +205,12 @@ export class PlatformInstitutesService {
     };
   }
 
-  async setStatus(id: string, action: 'SUSPEND' | 'REACTIVATE', reason: string, ip: string) {
+  async setStatus(
+    id: string,
+    action: 'SUSPEND' | 'REACTIVATE' | 'ACTIVATE',
+    reason: string,
+    ip: string,
+  ) {
     await this.db.tx.$queryRaw`
       SELECT platform_set_institute_status(${id}::uuid, ${action}, ${reason}, ${ip})::text AS s`.catch(
       platformDbError,
@@ -214,6 +224,17 @@ export class PlatformInstitutesService {
       platformDbError,
     );
     if (row?.changed) await this.access.invalidateModulesAfterCommit(id);
+    return this.detail(id);
+  }
+
+  /** The plan (pricing, cycle, trial end, first month invoiced); limits are separate. */
+  async setPlan(id: string, plan: z.output<typeof platformSetPlanSchema>, ip: string) {
+    await this.db.tx.$executeRaw`
+      SELECT platform_set_plan(${id}::uuid, ${plan.planName}, ${plan.pricing},
+        ${plan.corePaisa}::int, ${plan.attendancePaisa}::int, ${plan.feesPaisa}::int,
+        ${plan.examsPaisa}::int, ${plan.flatPaisa}::int, ${plan.cycle},
+        ${plan.yearlyDiscountPercent}::int, ${plan.dueDays}::int, ${plan.trialEndsOn}::date,
+        ${plan.billingStartsOn}::date, ${ip})`.catch(platformDbError);
     return this.detail(id);
   }
 
@@ -325,25 +346,6 @@ function calendarYear(today: IsoDate) {
   return { name: y, startDate: `${y}-01-01` as IsoDate, endDate: `${y}-12-31` as IsoDate };
 }
 
-/** Errors the platform functions raise, as API errors. */
-function platformDbError(error: unknown): never {
-  const message = error instanceof Error ? error.message : '';
-  if (/PLATFORM_NOT_FOUND/.test(message)) throw new NotFoundException('Institute not found');
-  if (/PLATFORM_BAD_STATUS/.test(message)) {
-    throw apiError(409, 'BAD_STATUS', 'Not possible in the institute’s current status');
-  }
-  if (/PLATFORM_REASON_REQUIRED/.test(message)) {
-    throw apiError(422, 'REASON_REQUIRED', 'A reason is required', { field: 'reason' });
-  }
-  if (/PLATFORM_CORE_REQUIRED/.test(message)) {
-    throw apiError(422, 'CORE_REQUIRED', 'The core module is always on');
-  }
-  if (/PLATFORM_ALREADY_REGISTERED/.test(message)) {
-    throw apiError(409, 'ALREADY_REGISTERED', 'The institute already has a plan');
-  }
-  throw error;
-}
-
 const parseModule = (value: string): PlatformModule => {
   if (!(PLATFORM_MODULES as readonly string[]).includes(value)) {
     throw new BadRequestException('Unknown module');
@@ -397,6 +399,26 @@ export class PlatformInstitutesController {
     @Req() req: Request,
   ): Promise<PlatformInstituteDetail> {
     return this.institutes.setStatus(id, 'REACTIVATE', dto.reason, ipOf(req));
+  }
+
+  /** TRIAL → ACTIVE: invoices start with the next month (unless the plan says otherwise). */
+  @Post(':id/activate')
+  @HttpCode(200)
+  activate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: StatusChangeDto,
+    @Req() req: Request,
+  ): Promise<PlatformInstituteDetail> {
+    return this.institutes.setStatus(id, 'ACTIVATE', dto.reason, ipOf(req));
+  }
+
+  @Put(':id/plan')
+  setPlan(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetPlanDto,
+    @Req() req: Request,
+  ): Promise<PlatformInstituteDetail> {
+    return this.institutes.setPlan(id, dto, ipOf(req));
   }
 
   @Put(':id/modules/:module')

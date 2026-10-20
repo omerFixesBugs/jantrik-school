@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { toBanglaDigits } from '@jantrik/shared';
+import { addMonths, todayIn, toBanglaDigits } from '@jantrik/shared';
 import { DEMO, otpLoginWithBanglaDigits, totpNow } from './helpers';
 import { findLayoutProblems } from './layout-check';
 
@@ -175,6 +175,60 @@ test.describe.serial('platform sign-in', () => {
     await ownerPage.reload();
     await expect(ownerPage).toHaveURL(/\/dashboard$/);
     await expect(ownerPage.getByTestId('institute-name')).toHaveText(NEW_INSTITUTE);
+
+    // Part 3: the trial ends (activate), a flat plan billed from two months ago, that month's
+    // invoice issued 30 days ago: overdue. A part payment; the owner sees a gentle notice.
+    const billedMonth = addMonths(todayIn('Asia/Dhaka').slice(0, 7), -2);
+    const issued = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+    await page.getByTestId('activate-institute').click();
+    await dialog.getByTestId('status-reason').fill('Trial over');
+    await dialog.getByRole('button', { name: 'Activate' }).click();
+    await expect(page.getByTestId('activate-institute')).toHaveCount(0);
+    await page.getByTestId('edit-plan').click();
+    const planDialog = page.getByTestId('plan-dialog');
+    await planDialog.getByLabel('Flat price', { exact: true }).check();
+    await planDialog.getByLabel('Flat price a month').fill('500');
+    await planDialog
+      .getByRole('combobox', { name: 'First month invoiced' })
+      .selectOption(`${billedMonth}-01`);
+    await expectClean(page, 'plan dialog 1440');
+    await planDialog.getByRole('button', { name: 'Save plan' }).click();
+    await expect(planDialog).toHaveCount(0);
+
+    await page.getByRole('link', { name: 'Billing', exact: true }).click();
+    await expect(page).toHaveURL(/\/platform\/billing$/);
+    await page.locator('#generate-month').selectOption(billedMonth);
+    await page.locator('#generate-issued').fill(issued);
+    await page.getByTestId('generate').click();
+    await expect(page.getByTestId('generate-result')).toContainText('issued');
+    await page.getByTestId('filter-overdue').check();
+    const row = page
+      .getByTestId('invoice-table')
+      .getByRole('row', { name: new RegExp(NEW_INSTITUTE) });
+    await expect(row).toContainText('Overdue');
+    await expectClean(page, 'billing 1440');
+    await row.getByRole('button', { name: 'Open' }).click();
+    const invoice = page.getByTestId('invoice-dialog');
+    await expect(invoice.getByTestId('invoice-lines')).toContainText('৳500');
+    await invoice.getByTestId('record-payment').click();
+    await invoice.getByTestId('payment-amount').fill('200');
+    await invoice.getByRole('button', { name: 'Save payment' }).click();
+    await expect(invoice.getByTestId('invoice-payments')).toContainText('৳200');
+    await expectClean(page, 'invoice dialog 1440');
+    await page.keyboard.press('Escape');
+
+    // The owner's dashboard (360 px, Bangla): still ৳300 overdue.
+    await ownerPage.reload();
+    const notice = ownerPage.getByTestId('billing-notice');
+    await expect(notice).toContainText('৩০০');
+    await expectClean(ownerPage, 'owner billing notice 360');
+
+    // The billing page at 360 px in Bangla (same admin session).
+    await page.setViewportSize({ width: 360, height: 780 });
+    await context.addCookies([{ name: 'NEXT_LOCALE', value: 'bn', url: baseURL! }]);
+    await page.reload();
+    await expect(page.getByTestId('invoice-cards')).toContainText(NEW_INSTITUTE);
+    await expectClean(page, 'billing 360 bn');
     await ownerContext.close();
     await context.close();
   });

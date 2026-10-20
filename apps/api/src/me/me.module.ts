@@ -15,8 +15,11 @@ import {
   acceptInvitationSchema,
   INVITATION_DAYS,
   preferencesSchema,
+  dateToDb,
   todayIn,
+  type BillingNotice,
   type GuardianChild,
+  type IsoDate,
   type MeContext,
   type StaffInvitation,
 } from '@jantrik/shared';
@@ -38,6 +41,28 @@ export class MeService {
     private readonly db: Db,
     private readonly access: TenantAccessService,
   ) {}
+
+  /**
+   * Jantrik's invoices to this institute that are past their due date (OWNER only; the dashboard
+   * shows a gentle notice). The institute's own rows, under RLS.
+   */
+  async billingNotice(): Promise<BillingNotice> {
+    const tx = this.db.tx;
+    const tenant = await tx.tenant.findFirstOrThrow({ select: { timezone: true } });
+    const overdue = await tx.platformInvoice.findMany({
+      where: { status: 'ISSUED', dueOn: { lt: dateToDb(todayIn(tenant.timezone)) } },
+      orderBy: { dueOn: 'asc' },
+      select: { totalPaisa: true, paidPaisa: true, dueOn: true },
+    });
+    if (overdue.length === 0) return { overdue: null };
+    return {
+      overdue: {
+        count: overdue.length,
+        duePaisa: overdue.reduce((sum, i) => sum + i.totalPaisa - i.paidPaisa, 0),
+        oldestDueOn: isoDate(overdue[0]!.dueOn) as IsoDate,
+      },
+    };
+  }
 
   /** Everything the web shell needs for the selected tenant, in one call. */
   async context(principal: Principal): Promise<MeContext> {
@@ -178,6 +203,13 @@ export class MeController {
   @Get('context')
   context(@CurrentUser() principal: Principal): Promise<MeContext> {
     return this.me.context(principal);
+  }
+
+  @Get('billing-notice')
+  @RequireModule('CORE')
+  @Roles('OWNER')
+  billingNotice(): Promise<BillingNotice> {
+    return this.me.billingNotice();
   }
 
   @Get('children')

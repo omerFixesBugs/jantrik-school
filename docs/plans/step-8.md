@@ -268,3 +268,12 @@ There is no UPDATE or DELETE path on the audit log.
 - `jantrik_platform` reads institute tables through column grants only (counting columns, owner names and phones), so no platform function can return a student's or guardian's data.
 - Suspension remembers the status to return to (`tenants.suspended_from`): a suspended trial goes back to TRIAL (decision 6).
 - Moving an institute from TRIAL to ACTIVE comes with billing (part 3).
+
+## Part 3 notes (details settled while building, within the approved plan)
+
+- **Activate** is its own action (TRIAL → ACTIVE, reason required). Billing then starts with the next month (`tenant_subscriptions.billing_starts_on`), editable in the plan.
+- **Yearly plans:** an invoice covers 12 months from any month not invoiced yet (no live invoice may overlap its range), so after a year the next one follows, and a skipped month only moves the year. The discount is its own (negative) DISCOUNT line.
+- **Issue date:** today by default; the admin may pick an earlier one (invoices issued late), never a future one.
+- **Payments** may not exceed what is left; a partial payment is fine.
+- **Void** only an invoice nobody has paid on; that month can then be invoiced again.
+- **A total of 0** (free plan) issues no invoice.

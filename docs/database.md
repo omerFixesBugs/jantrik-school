@@ -90,6 +90,11 @@ transaction sets `app.platform_session` (the session token's hash);
   later either. `jantrik_platform`
   may UPDATE only `tenants (status, suspended_from, suspended_at, updated_at)`.
   `tenants.suspended_from` keeps the status a suspension returns to.
+- **Billing** (part 3): `platform_invoices`, `platform_invoice_lines` and `platform_payments`
+  are tenant tables. `jantrik_app` may only SELECT its own rows (the owner's overdue notice);
+  `jantrik_platform` inserts, and updates invoices only (status, paid amount, void). No DELETE for
+  anyone: billing is history. One live invoice per institute and period is a partial unique index
+  (`WHERE status <> 'VOID'`), so a voided month can be invoiced again.
 - **`jantrik_platform` reads institute tables by column** (counts, owner names and phones), never
   a student's, guardian's or SMS's content; see [platform.md](platform.md).
 - Tests that suspend an institute or switch a module go through the platform API
