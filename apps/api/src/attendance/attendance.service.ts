@@ -22,6 +22,7 @@ import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import { TenantSmsService } from '../sms/tenant-sms.service.js';
+import { staffNames, staffRef } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 import {
@@ -525,16 +526,17 @@ export class AttendanceService implements OnModuleInit {
         id: true,
         version: true,
         submittedAt: true,
-        updatedBy: { select: { id: true, name: true, nameBn: true } },
+        updatedById: true,
         records: { select: { studentId: true, status: true, note: true } },
       },
     });
     if (!s) return null;
+    const names = await staffNames(this.db.tx, [s.updatedById]);
     return {
       id: s.id,
       version: s.version,
       submittedAt: s.submittedAt.toISOString(),
-      updatedBy: s.updatedBy,
+      updatedBy: staffRef(names, s.updatedById),
       records: s.records,
     };
   }

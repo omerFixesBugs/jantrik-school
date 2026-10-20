@@ -167,6 +167,12 @@ export function formatTime(value: Date | string, locale: UiLocale): string {
   return period ? `${period} ${time}` : time;
 }
 
+/** A local wall-clock time "HH:MM" (e.g. a shift's start), formatted like formatTime. */
+export function formatWallClock(hhmm: string, locale: UiLocale): string {
+  // Asia/Dhaka has no DST, so the same clock time on any date reads the same.
+  return formatTime(`1970-01-01T${hhmm}:00+06:00`, locale);
+}
+
 /**
  * Identifiers (student code, roll, birth registration no., IDs): always ASCII, whatever the
  * UI language, and whatever digits the value was typed with.

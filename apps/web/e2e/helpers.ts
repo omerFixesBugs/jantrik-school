@@ -14,6 +14,8 @@ export const DEMO = {
   aloName: 'আলো কোচিং সেন্টার',
   // Guardian (OTP only) of two Shapla students.
   shaplaGuardian: '01811000101',
+  // Tasnim's mother (OTP only): a second guardian, so specs don't share one OTP cooldown.
+  shaplaGuardian2: '01811000102',
 };
 
 export const API_URL = process.env['E2E_API_URL'] ?? 'http://localhost:4000';
@@ -49,10 +51,18 @@ export async function passwordLogin(page: Page, identifier: string, password = D
   await page.getByRole('button', { name: 'লগইন', exact: true }).click();
 }
 
+/**
+ * The phone input of the OTP tab. Scoped to that tab panel and matched exactly: right after a
+ * tab switch the password panel ("মোবাইল নম্বর বা ইমেইল") can still be mounted for a moment, which
+ * a slow CI runner hits (strict-mode violation).
+ */
+export const otpPhoneInput = (page: Page) =>
+  page.getByRole('tabpanel', { name: 'ওটিপি কোড' }).getByLabel('মোবাইল নম্বর', { exact: true });
+
 /** OTP login typed entirely with a Bangla keyboard (Bangla digits). */
 export async function otpLoginWithBanglaDigits(page: Page, phone: string) {
   await page.goto('/login');
-  await page.getByLabel('মোবাইল নম্বর').fill(toBanglaDigits(phone));
+  await otpPhoneInput(page).fill(toBanglaDigits(phone));
   await page.getByRole('button', { name: 'কোড পাঠান' }).click();
   // Specs share the demo guardian, so its resend cooldown may still be running: wait it out once,
   // as a person would, rather than touching the rate-limit state.
@@ -64,7 +74,7 @@ export async function otpLoginWithBanglaDigits(page: Page, phone: string) {
     test.info().setTimeout(test.info().timeout + (seconds + 1) * 1000);
     await page.waitForTimeout((seconds + 1) * 1000);
     await page.goto('/login');
-    await page.getByLabel('মোবাইল নম্বর').fill(toBanglaDigits(phone));
+    await otpPhoneInput(page).fill(toBanglaDigits(phone));
     await page.getByRole('button', { name: 'কোড পাঠান' }).click();
   }
   await expect(sent).toBeVisible();

@@ -21,6 +21,8 @@ export const config = {
     '/dashboard/:path*',
     '/students/:path*',
     '/sections/:path*',
+    '/setup/:path*',
+    '/staff/:path*',
     '/attendance/:path*',
     '/fees/:path*',
     '/exams/:path*',

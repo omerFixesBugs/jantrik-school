@@ -55,11 +55,10 @@ export function useNavLabel() {
     switch (key) {
       case 'students':
         return t('students.title', { student: label('student', 'Student') });
-      case 'sections':
-        return t('nav.classesAndSections', {
-          classLevel: label('class_level', 'Class'),
-          section: label('section', 'Section', { inText: true }),
-        });
+      case 'setup':
+        return t('nav.setup');
+      case 'staff':
+        return t('nav.staff');
       default:
         return t(`nav.${key}`);
     }

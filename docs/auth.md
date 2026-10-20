@@ -121,7 +121,29 @@ so the access token dies immediately rather than after up to 15 minutes.
   membership is active and the tenant is ACTIVE or TRIAL.
 - `POST /auth/switch-tenant {tenantId}` returns an access token with `tid`. It is allowed only
   for a selectable membership, and it also stores the choice on the session, so refreshes keep it.
-- A user with exactly one selectable tenant is switched into it automatically at login.
+- A user with exactly one selectable tenant is switched into it automatically at login,
+  unless they have a pending invitation.
+
+### Staff invitations
+
+- `POST /staff` creates an `INVITED` membership; no SMS is sent. The response is built from the
+  typed input only, so it is the same whether the phone already belongs to someone or not.
+  Additions are rate-limited per tenant (`STAFF_INVITES_PER_TENANT_PER_HOUR`, default 30).
+- After OTP login, `GET /auth/memberships` shows the institute with `invitation: {roles,
+expiresAt}` and `selectable: false`. `/select-institute` and the dashboard show
+  "<institute> added you as <role>" with accept / decline.
+- `POST /me/invitations/:tenantId/accept|decline` (user-scoped, own rows only): 404 when there is
+  no pending invitation, 410 `INVITATION_EXPIRED` after 14 days. Audited. Accept sends
+  `{roles}`, the roles the person was shown; the rows are locked and a mismatch (the institute
+  changed the roles meanwhile) is 409 `INVITATION_CHANGED`, so nobody accepts roles they did not
+  see.
+- Admins can `POST /staff/:userId/cancel-invitation` (pending) and `POST /staff/:userId/reinvite`
+  (declined or expired). Both are audited; owner invitations are managed by owners only.
+- A cancelled invitation keeps the typed name and phone in `staff_profiles` and the audit log
+  (no DELETE grant, as for other history). The typed name is a guarantee of the code, not of RLS:
+  once someone is an active member, `users_visible` lets that institute read their global row,
+  so only the self endpoints may read `users` names or email (see `database.md`, "Global names
+  stay private").
 
 ## The request pipeline
 
@@ -129,7 +151,7 @@ so the access token dies immediately rather than after up to 15 minutes.
 nestjs-cls middleware     AsyncLocalStorage for the request
 JwtAuthGuard              @Public() skips; verify JWT + session not revoked → principal
 RateLimitGuard            per user (authenticated) or per IP
-RolesGuard                @Roles(...)        → current roles from Redis (tenant:{tid}:user:{uid}:roles)
+RolesGuard                @Roles(...)        → current roles from Redis (tenant:{tid}:user:{uid}:roles:v{n})
 ModuleGuard               @RequireModule(…)  → enabled modules from Redis (tenant:{tid}:modules)
 TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the handler:
                             - re-checks tenant ACTIVE/TRIAL + active membership (immediate suspension)
@@ -138,8 +160,20 @@ TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the
 ```
 
 - **Role and module changes apply on the next request.** Change them through
-  `TenantAccessService` (`setMemberRoles`, `setModuleEnabled`). It writes the row and invalidates
-  the cache _after commit_. The 5-minute TTL is only a safety net.
+  `TenantAccessService` (`setMemberRoles`, `setModuleEnabled`), or call
+  `invalidateRolesAfterCommit` after writing memberships directly. The 5-minute TTL is only a
+  safety net.
+  - **Roles are cached per version.** Each member has a counter `tenant:{tid}:user:{uid}:roles:ver`
+    (no expiry: a counter that expired could restart at a number whose stale entry is still
+    cached), bumped _after commit_ by every role or status change (staff roles, activate /
+    deactivate, invitations sent, answered, re-sent or cancelled, guardian links). `getRoles` reads
+    the counter _before_ loading and caches under `…:roles:v{n}`. A request that loaded the old
+    roles just before a change committed can only write them under the old version, which is
+    never read again, so a demoted person (also one who is still an active guardian) loses the
+    role on their next request. A failed bump is logged; the old roles then last at most the TTL.
+  - Modules are changed only by the platform; their key is deleted after commit.
+  - **Production Redis must use `maxmemory-policy noeviction`.** Evicting these counters, revoked
+    sessions or rate-limit keys would silently weaken the checks above.
 - **`@UserScoped()`** runs a route with the user context only. Used by `/auth/*`, so account
   routes such as logout work even when the selected tenant is suspended.
 - **`@Public()`** routes get no request transaction.

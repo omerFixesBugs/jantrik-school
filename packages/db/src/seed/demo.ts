@@ -63,6 +63,8 @@ interface DemoTenant {
   slug: string;
   name: string;
   instituteTypeKey: string;
+  /** student_code settings matching the demo codes below. */
+  studentCode: { prefix: string; pattern: string };
   shifts: { nameBn: string; nameEn: string; start: string; end: string }[];
   sections: DemoSection[];
   staff: { phone: string; name: string; nameBn: string; role: Role }[];
@@ -142,6 +144,7 @@ const DEMO_TENANTS: DemoTenant[] = [
     slug: 'shapla-school',
     name: 'শাপলা উচ্চ বিদ্যালয়',
     instituteTypeKey: 'NCTB_SCHOOL_BN',
+    studentCode: { prefix: 'SHS', pattern: '{PREFIX}-{YEAR}-{NNNN}' },
     shifts: [
       { nameBn: 'প্রভাতী', nameEn: 'Morning', start: '07:00', end: '12:00' },
       { nameBn: 'দিবা', nameEn: 'Day', start: '12:30', end: '17:00' },
@@ -245,6 +248,7 @@ const DEMO_TENANTS: DemoTenant[] = [
     slug: 'alo-coaching',
     name: 'আলো কোচিং সেন্টার',
     instituteTypeKey: 'COACHING',
+    studentCode: { prefix: 'ALO', pattern: '{PREFIX}-{YY}-{NNN}' },
     shifts: [],
     sections: [
       { classLevel: 'CLASS_10', name: 'SSC Batch A (Sat-Mon-Wed)', capacity: 30 },
@@ -372,6 +376,18 @@ async function seedTenantData(
   for (const member of def.staff) {
     const userId = await findOrCreateUser(tx, phone(member.phone), member.name);
     await tx.membership.create({ data: { tenantId, userId, role: member.role } });
+    // How this institute names its staff (shown instead of the global name).
+    await tx.staffProfile.upsert({
+      where: { tenantId_userId: { tenantId, userId } },
+      create: {
+        tenantId,
+        userId,
+        name: member.name,
+        nameBn: member.nameBn,
+        phone: phone(member.phone),
+      },
+      update: {},
+    });
     staffUserIds.push(userId);
     namesBn.set(userId, member.nameBn);
   }
@@ -463,6 +479,9 @@ async function seedTenantData(
       },
     });
   }
+  await tx.studentSettings.create({
+    data: { tenantId, codePrefix: def.studentCode.prefix, codePattern: def.studentCode.pattern },
+  });
   const sessions = await seedPastAttendance(tx, tenantId);
   return { staffUserIds, namesBn, sessions };
 }

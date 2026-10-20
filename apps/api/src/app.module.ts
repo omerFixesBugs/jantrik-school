@@ -1,7 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ClsModule } from 'nestjs-cls';
 import { AttendanceModule } from './attendance/attendance.module.js';
 import { AuditModule } from './audit/audit.module.js';
@@ -13,13 +13,17 @@ import {
   RolesGuard,
   TenantHeaderGuard,
 } from './common/guards.js';
+import { PrismaErrorFilter } from './common/prisma-error.filter.js';
 import { ZodValidationPipe } from './common/zod.js';
 import { validateEnv, type Env } from './config/env.js';
 import { HealthModule } from './health/health.module.js';
+import { ImportsModule } from './imports/imports.module.js';
 import { MeModule } from './me/me.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { SmsModule } from './sms/sms.module.js';
+import { SetupModule } from './setup/setup.module.js';
+import { StaffModule } from './staff/staff.module.js';
 import { StudentsModule } from './students/students.module.js';
 import { TenancyModule } from './tenancy/tenancy.module.js';
 import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.js';
@@ -50,6 +54,9 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     HealthModule,
     MeModule,
     StudentsModule,
+    SetupModule,
+    StaffModule,
+    ImportsModule,
     AttendanceModule,
   ],
   providers: [
@@ -62,6 +69,7 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: ModuleGuard },
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
+    { provide: APP_FILTER, useClass: PrismaErrorFilter },
   ],
 })
 export class AppModule {}

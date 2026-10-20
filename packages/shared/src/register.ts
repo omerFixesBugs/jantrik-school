@@ -4,6 +4,7 @@ import {
   type AttendanceStatus,
   type NonWorkingDay,
 } from './attendance.js';
+import { csvCell } from './csv.js';
 import { addDays, isoWeekday, type IsoDate } from './dates.js';
 
 /**
@@ -133,7 +134,8 @@ export function registerCsv(
 ): string {
   const codes = REGISTER_CODES[locale];
   const taken = reg.days.filter((d) => d.taken);
-  const esc = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  // Quoted and formula-safe: names come from user input.
+  const esc = (v: string) => csvCell(v);
   const header = [
     labels.roll,
     labels.id,

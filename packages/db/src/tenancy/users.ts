@@ -4,10 +4,16 @@ import type { TenantTx } from './context.js';
  * Get the id of the person with this phone (E.164), creating them if new. Must run inside a
  * tenant context (`withContext` / `withTenant`). Returns only the id: a person who already
  * exists in another tenant becomes visible here only once they get a membership in this tenant.
+ * `nameBn` is stored only for a new person; an existing person's names are never changed.
  */
-export async function findOrCreateUser(tx: TenantTx, phone: string, name: string): Promise<string> {
+export async function findOrCreateUser(
+  tx: TenantTx,
+  phone: string,
+  name: string,
+  nameBn: string | null = null,
+): Promise<string> {
   const [row] = await tx.$queryRaw<{ id: string }[]>`
-    SELECT app_find_or_create_user(${phone}, ${name})::text AS id`;
+    SELECT app_find_or_create_user(${phone}, ${name}, ${nameBn}::text)::text AS id`;
   if (!row) throw new Error('app_find_or_create_user returned no id');
   return row.id;
 }

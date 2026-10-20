@@ -12,19 +12,22 @@ import {
 import {
   EllipsisVerticalIcon,
   EyeIcon,
+  FileSpreadsheetIcon,
   PhoneIcon,
   SearchIcon,
   SearchXIcon,
+  UserPlusIcon,
   UsersIcon,
   XIcon,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { useId, useState } from 'react';
 import { PageGate } from '@/components/page-gate';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { Button, ButtonLink, buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,7 +46,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { useDebounced, useErrorMessage, useLabel } from '@/lib/hooks';
+import { useDebounced, useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { classLevelName, displayName } from '@/lib/names';
 import { cn } from '@/lib/utils';
 
@@ -66,6 +69,8 @@ function Students() {
   const { client, session } = useAuth();
   const tenantId = session?.tenant?.id;
   const searchId = useId();
+  const { data: context } = useMeContext();
+  const isAdmin = context?.roles.some((r) => r === 'OWNER' || r === 'ADMIN') ?? false;
 
   const [search, setSearch] = useState('');
   const [classLevelId, setClassLevelId] = useState<string>(ALL);
@@ -132,6 +137,18 @@ function Students() {
 
   return (
     <>
+      {isAdmin && (
+        <div className="flex flex-wrap gap-2" data-testid="students-actions">
+          <ButtonLink href="/students/new" data-testid="admit-student">
+            <UserPlusIcon aria-hidden />
+            {t('admit', { student: studentLabel })}
+          </ButtonLink>
+          <ButtonLink href="/students/import" variant="outline" data-testid="import-students">
+            <FileSpreadsheetIcon aria-hidden />
+            {t('import')}
+          </ButtonLink>
+        </div>
+      )}
       <div
         className="bg-card flex flex-col gap-3 rounded-xl border p-3 shadow-xs sm:p-4 md:flex-row md:items-center"
         role="search"
@@ -315,7 +332,6 @@ function Phone({ phone }: { phone: string }) {
 
 function RowActions({ student, locale }: { student: StudentListItem; locale: Locale }) {
   const t = useTranslations('students');
-  const tCommon = useTranslations('common');
   const name = displayName(student.nameBn, student.nameEn, locale);
   const g = student.primaryGuardian;
   return (
@@ -328,10 +344,9 @@ function RowActions({ student, locale }: { student: StudentListItem; locale: Loc
         }
       />
       <DropdownMenuContent align="end" className="w-60">
-        <DropdownMenuItem disabled>
+        <DropdownMenuItem render={<Link href={`/students/${student.id}`} />} nativeButton={false}>
           <EyeIcon aria-hidden />
-          <span className="flex-1">{t('view')}</span>
-          <Badge variant="secondary">{tCommon('comingSoon')}</Badge>
+          {t('view')}
         </DropdownMenuItem>
         {g && (
           <DropdownMenuItem render={<a href={`tel:${g.phone}`} />} nativeButton={false}>
@@ -386,9 +401,12 @@ function StudentTable({
                   <span className="flex items-center gap-3">
                     <PersonAvatar name={name} photoUrl={s.photoUrl} />
                     <span className="flex min-w-0 flex-col">
-                      <span className="text-foreground truncate text-[0.95rem] font-medium">
+                      <Link
+                        href={`/students/${s.id}`}
+                        className="text-foreground truncate text-[0.95rem] font-medium underline-offset-2 hover:underline"
+                      >
                         {name}
-                      </span>
+                      </Link>
                       <span className="text-muted-foreground text-xs tabular-nums" dir="ltr">
                         {formatIdentifier(s.studentCode)}
                       </span>
@@ -462,7 +480,12 @@ function StudentCards({
               <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                 <div className="flex items-start justify-between gap-2">
                   <span className="flex min-w-0 flex-col">
-                    <span className="truncate text-base font-semibold">{name}</span>
+                    <Link
+                      href={`/students/${s.id}`}
+                      className="truncate text-base font-semibold underline-offset-2 hover:underline"
+                    >
+                      {name}
+                    </Link>
                     <span className="text-muted-foreground text-xs tabular-nums" dir="ltr">
                       {formatIdentifier(s.studentCode)}
                     </span>

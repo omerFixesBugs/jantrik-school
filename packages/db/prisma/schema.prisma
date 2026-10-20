@@ -68,6 +68,10 @@ enum Role {
 enum MembershipStatus {
   ACTIVE
   DISABLED
+  /// Added by staff; no access until the person accepts (expires after 14 days).
+  INVITED
+  /// The person declined the invitation.
+  DECLINED
 
   @@map("membership_status")
 }
@@ -371,6 +375,8 @@ model User {
   attendanceSessionsTaken   AttendanceSession[] @relation("AttendanceTakenBy")
   attendanceSessionsUpdated AttendanceSession[] @relation("AttendanceUpdatedBy")
   holidaysCreated           Holiday[]
+  studentImports            StudentImport[]
+  staffProfiles             StaffProfile[]
 
   @@map("users")
 }
@@ -409,12 +415,16 @@ model Tenant {
   auditLogs        AuditLog[]
   sessions         Session[]
 
-  attendanceSettings AttendanceSettings?
-  holidays           Holiday[]
-  sectionTeachers    SectionTeacher[]
-  attendanceSessions AttendanceSession[]
-  attendanceRecords  AttendanceRecord[]
-  smsLogs            SmsLog[]
+  attendanceSettings  AttendanceSettings?
+  holidays            Holiday[]
+  studentSettings     StudentSettings?
+  studentCodeCounters StudentCodeCounter[]
+  sectionTeachers     SectionTeacher[]
+  attendanceSessions  AttendanceSession[]
+  attendanceRecords   AttendanceRecord[]
+  smsLogs             SmsLog[]
+  studentImports      StudentImport[]
+  staffProfiles       StaffProfile[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -500,6 +510,8 @@ model Shift {
   startTime DateTime @map("start_time") @db.Time(0)
   endTime   DateTime @map("end_time") @db.Time(0)
   sortOrder Int      @default(0) @map("sort_order")
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -566,6 +578,8 @@ model ClassLevel {
   /// Overrides the tenant's default grading scheme for this class level.
   gradingSchemeId  String?  @map("grading_scheme_id") @db.Uuid
   sourceTemplateId String?  @map("source_template_id") @db.Uuid
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -589,6 +603,8 @@ model StudyGroup {
   nameEn           String   @map("name_en")
   sortOrder        Int      @default(0) @map("sort_order")
   sourceTemplateId String?  @map("source_template_id") @db.Uuid
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -613,6 +629,8 @@ model Subject {
   isOptional       Boolean  @default(false) @map("is_optional")
   sortOrder        Int      @default(0) @map("sort_order")
   sourceTemplateId String?  @map("source_template_id") @db.Uuid
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -639,6 +657,8 @@ model Section {
   name           String
   capacity       Int?
   sortOrder      Int      @default(0) @map("sort_order")
+  /// Deactivated instead of deleted once in use; hidden from pickers for new records.
+  isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -666,6 +686,8 @@ model Membership {
   userId    String           @map("user_id") @db.Uuid
   role      Role
   status    MembershipStatus @default(ACTIVE)
+  /// When the (latest) invitation was sent; INVITED rows older than 14 days have expired.
+  invitedAt DateTime?        @map("invited_at") @db.Timestamptz(3)
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -794,6 +816,105 @@ model Enrolment {
   @@index([tenantId, academicYearId, classLevelId, sectionId])
   @@index([tenantId, studentId])
   @@map("enrolments")
+}
+
+/// One row per tenant once an admin saves it; defaults live in code until then (no backfill).
+model StudentSettings {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  tenantId    String   @unique @map("tenant_id") @db.Uuid
+  /// 1–10 uppercase letters/digits, used by {PREFIX}.
+  codePrefix  String   @map("code_prefix")
+  /// Tokens: {PREFIX}, {YEAR}, {YY}, and one {N…} run (zero-padded sequence).
+  codePattern String   @default("{PREFIX}-{YEAR}-{NNNN}") @map("code_pattern")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("student_settings")
+}
+
+/// Next student_code sequence number per tenant and year (atomic upsert ... RETURNING).
+model StudentCodeCounter {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  year      Int
+  nextValue Int      @map("next_value")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, year])
+  @@map("student_code_counters")
+}
+
+enum StudentImportStatus {
+  UPLOADED
+  VALIDATED
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+
+  @@map("student_import_status")
+}
+
+/// One Excel/CSV student import. The raw rows (phones, birth registration numbers) are cleared
+/// when it finishes or after 7 days unfinished; results keep row numbers, statuses and messages.
+/// History: never deleted by the app.
+model StudentImport {
+  id                 String              @id @default(uuid(7)) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  /// Plain FK: users are global. The service checks the uploader is OWNER/ADMIN here.
+  createdById        String              @map("created_by_id") @db.Uuid
+  status             StudentImportStatus @default(UPLOADED)
+  fileName           String              @map("file_name")
+  headers            Json                @db.JsonB
+  /// string[][] data rows; NULL once cleared.
+  rows               Json?               @db.JsonB
+  mapping            Json?               @db.JsonB
+  /// ImportRowResult[] (preview, then the outcome; kept as history, incl. who a possible duplicate looked like).
+  results            Json?               @db.JsonB
+  /// Rows flagged "possible duplicate" that the admin chose to import anyway (decision #22).
+  duplicateOverrides Int[]               @default([]) @map("duplicate_overrides")
+  rowCount           Int                 @map("row_count")
+  processed          Int                 @default(0)
+  failure            String?
+  finishedAt         DateTime?           @map("finished_at") @db.Timestamptz(3)
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("student_imports")
+}
+
+/// How this institute knows a staff member: the name and phone its admin typed. Shown instead
+/// of the person's global name (which another institute, or the person, may have set).
+model StaffProfile {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  /// Plain FK: users are global. The service only creates profiles with a staff membership.
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  nameBn    String?  @map("name_bn")
+  /// E.164, as typed (the person's own row is invisible to the institute while invited).
+  phone     String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, userId])
+  @@map("staff_profiles")
 }
 
 // ───────────────────────────── Audit ─────────────────────────────

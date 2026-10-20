@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { API_URL, DEMO, otpLoginWithBanglaDigits, passwordLogin } from './helpers';
+import { API_URL, DEMO, otpLoginWithBanglaDigits, otpPhoneInput, passwordLogin } from './helpers';
 import { findLayoutProblems } from './layout-check';
 
 // Long Bangla strings must wrap or truncate with "…", never clip or overlap: checked on a small
@@ -27,7 +27,7 @@ test('login: both tabs and the code step, bn and en', async ({ page }) => {
     r.fulfill({ status: 202, contentType: 'application/json', body: '{"expiresIn":300}' }),
   );
   await page.getByRole('tab', { name: 'ওটিপি কোড' }).tap();
-  await page.getByLabel('মোবাইল নম্বর').fill('01711000001');
+  await otpPhoneInput(page).fill('01711000001');
   await page.getByRole('button', { name: 'কোড পাঠান' }).tap();
   await expect(page.getByTestId('resend-countdown')).toBeVisible();
   await expectClean(page, 'login code step bn');
@@ -130,7 +130,7 @@ test('register: draft, submitted, more-than-half dialog, conflict dialog', async
 });
 
 test('guardian dashboard', async ({ page }) => {
-  await otpLoginWithBanglaDigits(page, DEMO.shaplaGuardian);
+  await otpLoginWithBanglaDigits(page, DEMO.shaplaGuardian2);
   await expect(page.getByTestId('children')).toBeVisible();
   await expectClean(page, 'guardian dashboard');
 });

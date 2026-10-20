@@ -17,7 +17,17 @@ describe('schema safety net', () => {
   it('finds all Phase 1 tenant tables', async () => {
     const tables = await tenantTableNames(app);
     expect(tables).toEqual(
-      expect.arrayContaining(['tenants', 'students', 'shifts', 'enrolments', 'audit_logs']),
+      expect.arrayContaining([
+        'tenants',
+        'students',
+        'shifts',
+        'enrolments',
+        'audit_logs',
+        'student_settings',
+        'student_code_counters',
+        'student_imports',
+        'staff_profiles',
+      ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
   });

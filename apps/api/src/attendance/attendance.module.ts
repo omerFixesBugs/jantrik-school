@@ -45,6 +45,7 @@ import { AttendanceAdminService } from './attendance-admin.service.js';
 import { AttendanceReportsService } from './attendance-reports.service.js';
 import { AttendanceSettingsService } from './attendance-settings.service.js';
 import { AttendanceService } from './attendance.service.js';
+import { StudentsModule } from '../students/students.module.js';
 
 export class SubmitAttendanceDto extends zodDto(submitAttendanceSchema) {}
 export class AttendanceSheetQueryDto extends zodDto(attendanceSheetQuerySchema) {}
@@ -221,6 +222,8 @@ export class ChildAttendanceController {
 }
 
 @Module({
+  // StudentAccess: who may see guardian phones of absent students.
+  imports: [StudentsModule],
   controllers: [AttendanceController, AttendanceAdminController, ChildAttendanceController],
   providers: [
     AttendanceService,

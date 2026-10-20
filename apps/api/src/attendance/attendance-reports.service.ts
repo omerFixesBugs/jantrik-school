@@ -20,6 +20,8 @@ import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import { TenantSmsService } from '../sms/tenant-sms.service.js';
+import { StudentAccess } from '../students/student-access.service.js';
+import { staffNames, staffRef } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
 import { AttendanceSettingsService } from './attendance-settings.service.js';
 import { AttendanceService } from './attendance.service.js';
@@ -77,6 +79,7 @@ export class AttendanceReportsService {
     private readonly attendance: AttendanceService,
     private readonly audit: AuditService,
     private readonly sms: TenantSmsService,
+    private readonly studentAccess: StudentAccess,
   ) {}
 
   // ─────────────────────────── Today ───────────────────────────
@@ -85,6 +88,7 @@ export class AttendanceReportsService {
     const tenant = await this.settings.load();
     const mine = await this.attendance.mySections();
     const year = await this.currentYearId();
+    const scope = await this.studentAccess.scope();
     const sessions = await this.db.tx.attendanceSession.findMany({
       where: { date: dateToDb(tenant.today), sectionId: { in: mine.sections.map((s) => s.id) } },
       orderBy: { periodNo: 'asc' },
@@ -92,12 +96,15 @@ export class AttendanceReportsService {
         sectionId: true,
         periodNo: true,
         submittedAt: true,
-        updatedBy: { select: { id: true, name: true, nameBn: true } },
+        updatedById: true,
         records: { select: { studentId: true, status: true } },
       },
     });
     const first = new Map<string, (typeof sessions)[number]>();
     for (const s of sessions) if (!first.has(s.sectionId)) first.set(s.sectionId, s);
+    const updatedNames = await staffNames(this.db.tx, [
+      ...new Set([...first.values()].map((s) => s.updatedById)),
+    ]);
 
     const totals = emptyCounts();
     const sections: AttendanceTodayReport['sections'] = [];
@@ -113,17 +120,24 @@ export class AttendanceReportsService {
       const absentIds = new Set(
         s.records.filter((r) => r.status === 'ABSENT').map((r) => r.studentId),
       );
-      const absent =
+      const absentRoster =
         absentIds.size === 0
           ? []
           : (await this.attendance.roster(section.id, year)).filter((st) => absentIds.has(st.id));
+      const phones = StudentAccess.sees(scope, section.id)
+        ? await this.primaryPhones(absentRoster.map((st) => st.id))
+        : new Map<string, string>();
+      const absent = absentRoster.map((st) => ({
+        ...st,
+        guardianPhone: phones.get(st.id) ?? null,
+      }));
       sections.push({
         section: ref,
         studentCount: section.studentCount,
         register: {
           periodNo: s.periodNo,
           submittedAt: s.submittedAt.toISOString(),
-          updatedBy: s.updatedBy,
+          updatedBy: staffRef(updatedNames, s.updatedById),
           counts,
           percent: attendancePercent(counts, tenant.settings.leaveCountsAsAbsent),
           absent,
@@ -143,6 +157,16 @@ export class AttendanceReportsService {
         percent: attendancePercent(totals, tenant.settings.leaveCountsAsAbsent),
       },
     };
+  }
+
+  /** Primary guardian phone per student. */
+  private async primaryPhones(studentIds: string[]): Promise<Map<string, string>> {
+    if (studentIds.length === 0) return new Map();
+    const rows = await this.db.tx.studentGuardian.findMany({
+      where: { studentId: { in: studentIds }, isPrimary: true },
+      select: { studentId: true, guardian: { select: { phone: true } } },
+    });
+    return new Map(rows.map((r) => [r.studentId, r.guardian.phone]));
   }
 
   // ─────────────────────────── Monthly register ───────────────────────────
@@ -320,14 +344,16 @@ export class AttendanceReportsService {
   async staff(): Promise<AttendanceStaffMember[]> {
     const rows = await this.db.tx.membership.findMany({
       where: { status: 'ACTIVE', role: { in: ['OWNER', 'ADMIN', 'TEACHER'] } },
-      select: { role: true, user: { select: { id: true, name: true, nameBn: true } } },
+      select: { role: true, userId: true },
     });
     const rank = { OWNER: 0, ADMIN: 1, TEACHER: 2 } as const;
+    const names = await staffNames(this.db.tx, [...new Set(rows.map((r) => r.userId))]);
     const byUser = new Map<string, AttendanceStaffMember>();
     for (const r of rows) {
       const role = r.role as AttendanceStaffMember['role'];
-      const seen = byUser.get(r.user.id);
-      if (!seen || rank[role] < rank[seen.role]) byUser.set(r.user.id, { ...r.user, role });
+      const seen = byUser.get(r.userId);
+      if (!seen || rank[role] < rank[seen.role])
+        byUser.set(r.userId, { ...staffRef(names, r.userId), role });
     }
     return [...byUser.values()].sort(
       (a, b) => rank[a.role] - rank[b.role] || a.name.localeCompare(b.name),

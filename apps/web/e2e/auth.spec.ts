@@ -39,7 +39,7 @@ test('OTP login with a Bangla keyboard; a coaching centre sees "Batch" labels', 
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByTestId('institute-name')).toHaveText(DEMO.aloName);
   const nav = page.getByRole('navigation', { name: 'নেভিগেশন' });
-  await expect(nav.getByRole('link', { name: 'কোর্স ও ব্যাচ' })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'প্রতিষ্ঠান সেটআপ' })).toBeVisible();
   await expect(page.getByTestId('academic-year')).toContainText('সেশন');
 
   await nav.getByRole('link', { name: 'শিক্ষার্থী তালিকা' }).click();
