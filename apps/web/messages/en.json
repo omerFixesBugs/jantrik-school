@@ -922,7 +922,10 @@
     "action_INVOICE_ISSUE": "Invoice issued",
     "action_INVOICES_GENERATE": "Invoices issued for a month",
     "action_PAYMENT_RECORD": "Payment recorded",
-    "action_INVOICE_VOID": "Invoice voided"
+    "action_INVOICE_VOID": "Invoice voided",
+    "navUsage": "Usage",
+    "navSettings": "Settings",
+    "action_SETTINGS_SMS_COST": "SMS rate changed"
   },
   "platformInstitutes": {
     "title": "Institutes",
@@ -1091,7 +1094,8 @@
     "activateHint": "The trial ends and the institute becomes active. If it has a plan, invoices start with next month (you can change that in the plan).",
     "trialHint": "In trial: no invoices. Activate it when the trial ends; suspending stops everyone at once.",
     "overdueOnly": "Overdue only",
-    "overdueBadge": "Overdue {amount}"
+    "overdueBadge": "Overdue {amount}",
+    "segmentsCost": "{count} segments; sent so far: {cost}"
   },
   "platformBilling": {
     "title": "Billing",
@@ -1172,6 +1176,45 @@
     "skipped_tooLarge": "Amount too large (check the prices): {count}",
     "openLabel": "Open the invoice of {name}, {period}",
     "lineDetailFlat": "{unit} × {months, plural, one {# month} other {# months}}",
-    "errorMonth": "At most next month can be invoiced."
+    "errorMonth": "At most next month can be invoiced.",
+    "errorRate": "The rate must be from ৳0 to ৳100."
+  },
+  "platformUsage": {
+    "title": "Usage and cost",
+    "hint": "What the platform cost in a month: SMS sent by institutes and as login codes, each at the rate it was sent at. Counts only.",
+    "month": "Month",
+    "totalCost": "SMS cost in all",
+    "rateNow": "Rate now: {rate} per segment",
+    "institutesSms": "Institutes’ SMS",
+    "loginSms": "Login codes",
+    "smsLine": "{count} SMS · {segments} segments",
+    "activeStudents": "Active students now",
+    "institutesLine": "{total} institutes now: {active} active, {trial} in trial, {suspended} suspended",
+    "rateNote": "A sent SMS keeps the rate it was sent at; a new rate applies to SMS sent after it.",
+    "changeRate": "Change the rate",
+    "perInstitute": "Per institute",
+    "institute": "Institute",
+    "status": "Status",
+    "students": "Students now",
+    "smsSent": "SMS sent",
+    "segments": "Segments",
+    "cost": "Cost",
+    "imports": "Imports",
+    "lastActivity": "Last activity",
+    "count": "{n, plural, one {{count} institute} other {{count} institutes}}",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "platformSettings": {
+    "title": "Settings",
+    "hint": "Platform-wide settings. Every change is in the activity log.",
+    "smsCostTitle": "SMS cost",
+    "smsCostHint": "What one SMS segment costs Jantrik. New SMS use it; sent ones keep their cost.",
+    "smsCost": "Cost per SMS segment",
+    "save": "Save",
+    "saved": "Saved. New SMS use this rate.",
+    "updatedBy": "Last changed by {name}, {date}",
+    "updatedDefault": "The starting rate; not changed yet.",
+    "errorCost": "An amount in taka from ৳0 to ৳100, e.g. 0.30"
   }
 }

@@ -282,11 +282,14 @@ export class TenantSmsService implements OnModuleInit {
     return { phone: log.phone, body: log.body };
   }
 
+  /** Sent: the cost is segments × the platform's rate now (later rate changes keep it). */
   async markSent(smsLogId: string): Promise<void> {
-    await this.db.tx.smsLog.updateMany({
-      where: { id: smsLogId, status: 'QUEUED' },
-      data: { status: 'SENT', sentAt: new Date() },
-    });
+    await this.db.tx.$executeRaw`
+      UPDATE sms_logs
+      SET status = 'SENT', sent_at = now(), updated_at = now(),
+          -- platform_settings has exactly one row (the app may read only the rate column).
+          cost_paisa = segments * (SELECT sms_cost_per_segment_paisa FROM platform_settings)
+      WHERE id = ${smsLogId}::uuid AND status = 'QUEUED'`;
   }
 
   async markFailed(smsLogId: string, error: string): Promise<void> {

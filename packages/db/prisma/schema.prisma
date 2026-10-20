@@ -1091,6 +1091,8 @@ model SmsLog {
   relatedId         String?    @map("related_id") @db.Uuid
   sendAfter         DateTime?  @map("send_after") @db.Timestamptz(3)
   sentAt            DateTime?  @map("sent_at") @db.Timestamptz(3)
+  /// Set when sent: segments × the platform's rate then (a later rate change keeps past costs).
+  costPaisa         Int?       @map("cost_paisa")
   providerMessageId String?    @map("provider_message_id")
   error             String?
   createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -1102,6 +1104,8 @@ model SmsLog {
   @@unique([tenantId, dedupeKey], map: "sms_logs_dedupe", where: raw("dedupe_key IS NOT NULL"))
   @@index([tenantId, localDate])
   @@index([tenantId, createdAt(sort: Desc)])
+  /// Platform usage: a month's sent SMS across institutes.
+  @@index([localDate], map: "sms_logs_sent_local_date", where: raw("status = 'SENT'"))
   @@map("sms_logs")
 }
 
@@ -1113,6 +1117,8 @@ model PlatformSmsLog {
   purpose           PlatformSmsPurpose
   status            PlatformSmsStatus
   segments          Int                @db.SmallInt
+  /// SENT rows: segments × the platform's rate when sent.
+  costPaisa         Int?               @map("cost_paisa")
   providerMessageId String?            @map("provider_message_id")
   error             String?
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -1209,10 +1215,11 @@ model PlatformAdmin {
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  backupCodes PlatformAdminBackupCode[]
-  sessions    PlatformSession[]
-  auditLogs   PlatformAuditLog[]
-  payments    PlatformPayment[]
+  backupCodes   PlatformAdminBackupCode[]
+  sessions      PlatformSession[]
+  auditLogs     PlatformAuditLog[]
+  payments      PlatformPayment[]
+  settingsEdits PlatformSettings[]
 
   @@map("platform_admins")
 }
@@ -1422,4 +1429,19 @@ model PlatformPayment {
 
   @@index([tenantId, invoiceId])
   @@map("platform_payments")
+}
+
+/// Platform-wide settings: one row (id 1). Global on purpose (Jantrik's own costs, not an
+/// institute's): no tenant_id, no RLS. The app reads only the SMS rate; only the platform
+/// functions change it (audited).
+model PlatformSettings {
+  id                     Int      @id @default(1) @db.SmallInt
+  /// What one SMS segment costs Jantrik, copied onto every SMS when it is sent.
+  smsCostPerSegmentPaisa Int      @default(30) @map("sms_cost_per_segment_paisa")
+  updatedAt              DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedById            String?  @map("updated_by_id") @db.Uuid
+
+  updatedBy PlatformAdmin? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("platform_settings")
 }

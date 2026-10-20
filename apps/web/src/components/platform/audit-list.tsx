@@ -1,6 +1,12 @@
 'use client';
 
-import { formatBdPhone, formatDate, formatTime, type PlatformAuditEntry } from '@jantrik/shared';
+import {
+  formatBdPhone,
+  formatDate,
+  formatTaka,
+  formatTime,
+  type PlatformAuditEntry,
+} from '@jantrik/shared';
 import { TerminalIcon, UserRoundIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +36,7 @@ const KNOWN_ACTIONS = new Set([
   'INVOICES_GENERATE',
   'PAYMENT_RECORD',
   'INVOICE_VOID',
+  'SETTINGS_SMS_COST',
 ]);
 const MODULES = new Set(['ATTENDANCE', 'FEES', 'EXAMS']);
 
@@ -48,6 +55,10 @@ export function AuditList({ entries }: { entries: PlatformAuditEntry[] }) {
       return KNOWN_REASONS.has(reason) ? t(`reason_${reason}`) : t('auditReason', { reason }); // free text, e.g. from the CLI
     }
     if (typeof d['method'] === 'string') return t(`method_${d['method']}`);
+    if (e.action === 'SETTINGS_SMS_COST' && typeof d['to'] === 'number') {
+      const from = typeof d['from'] === 'number' ? formatTaka(d['from'], locale) : '—';
+      return `${from} → ${formatTaka(d['to'], locale)}`;
+    }
     if (typeof d['module'] === 'string' && MODULES.has(d['module'])) return tModules(d['module']);
     if (typeof d['phone'] === 'string') return formatBdPhone(d['phone']);
     return null;

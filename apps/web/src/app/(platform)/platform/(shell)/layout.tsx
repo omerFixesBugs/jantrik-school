@@ -2,11 +2,13 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  BarChart3Icon,
   Building2Icon,
   HistoryIcon,
   LayoutDashboardIcon,
   LogOutIcon,
   ReceiptTextIcon,
+  SettingsIcon,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
@@ -25,7 +27,9 @@ const NAV = [
   { href: '/platform', key: 'navOverview', icon: LayoutDashboardIcon },
   { href: '/platform/institutes', key: 'navInstitutes', icon: Building2Icon },
   { href: '/platform/billing', key: 'navBilling', icon: ReceiptTextIcon },
+  { href: '/platform/usage', key: 'navUsage', icon: BarChart3Icon },
   { href: '/platform/audit', key: 'navAudit', icon: HistoryIcon },
+  { href: '/platform/settings', key: 'navSettings', icon: SettingsIcon },
 ] as const;
 
 /** Platform area shell: its own header and nav, never the institute app shell. */

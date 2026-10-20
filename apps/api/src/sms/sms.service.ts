@@ -107,8 +107,9 @@ export class SmsProcessor extends WorkerHost {
   }
 
   /**
-   * One row per send attempt outcome, for cost tracking. The body is never stored (OTP).
-   * createMany = plain INSERT: the app role may insert into platform_sms_logs but not read it.
+   * One row per send attempt outcome, for cost tracking (a SENT row carries segments × the
+   * platform's rate now). The body is never stored (OTP). createMany = plain INSERT: the app role
+   * may insert into platform_sms_logs but not read it; it may read only the rate.
    */
   private async logPlatform(
     phone: string,
@@ -116,9 +117,30 @@ export class SmsProcessor extends WorkerHost {
     segments: number,
     error: string | null,
   ): Promise<void> {
+    let costPaisa: number | null = null;
+    if (status === 'SENT') {
+      try {
+        // platform_settings has exactly one row (the app may read only the rate column).
+        const [rate] = await this.prisma.client.$queryRaw<{ paisa: number }[]>`
+          SELECT sms_cost_per_segment_paisa AS paisa FROM platform_settings`;
+        costPaisa = rate ? segments * rate.paisa : null;
+      } catch (e) {
+        // Without the rate the row is still logged (no cost) rather than lost.
+        this.logger.error(`SMS rate read failed: ${(e as Error).message}`);
+      }
+    }
     try {
       await this.prisma.client.platformSmsLog.createMany({
-        data: [{ phone, purpose: 'OTP', status, segments, error: error?.slice(0, 500) ?? null }],
+        data: [
+          {
+            phone,
+            purpose: 'OTP',
+            status,
+            segments,
+            costPaisa,
+            error: error?.slice(0, 500) ?? null,
+          },
+        ],
       });
     } catch (e) {
       // A logging failure must not turn a delivered OTP into a retry (a second SMS).

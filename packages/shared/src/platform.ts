@@ -3,6 +3,11 @@ import { isoDateSchema, type IsoDate } from './dates.js';
 import { bdPhoneSchema } from './phone.js';
 import { monthSchema } from './reports.js';
 
+/** A month (YYYY-MM) the platform deals with: 2020 to 2100 (a year 0000 is not a date). */
+const platformMonthSchema = monthSchema.refine((m) => m >= '2020-01' && m <= '2100-12', {
+  message: 'Out of range',
+});
+
 // Platform area (/platform): Jantrik's own staff. Separate login (password + TOTP), separate
 // session (an httpOnly cookie), never an institute user. See docs/platform.md.
 
@@ -281,6 +286,8 @@ export interface PlatformInstituteDetail {
     activeStaff: number;
     smsThisMonth: number;
     smsSegmentsThisMonth: number;
+    /** SMS sent this month × the rate when each was sent (part 4). */
+    smsCostThisMonth: number;
     importsThisMonth: number;
     importsTotal: number;
     lastActivityAt: string | null;
@@ -306,7 +313,7 @@ export type PaymentMethod = (typeof PAYMENT_METHOD_VALUES)[number];
 
 /** POST /platform/invoices/generate: one month's invoices (idempotent). */
 export const platformGenerateInvoicesSchema = z.object({
-  month: monthSchema,
+  month: platformMonthSchema,
   /** The issue date; today when omitted. Never in the future. */
   issuedOn: isoDateSchema.nullable().default(null),
 });
@@ -327,7 +334,7 @@ export const platformInvoiceListQuerySchema = z.object({
   tenantId: z.uuid().optional(),
   status: z.enum(INVOICE_STATUS_VALUES).optional(),
   overdue: z.stringbool().optional(),
-  month: monthSchema.optional(),
+  month: platformMonthSchema.optional(),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -403,4 +410,65 @@ export interface PlatformInvoiceDetail extends PlatformInvoiceListItem {
 /** GET /me/billing-notice (OWNER): Jantrik's invoices past their due date, if any. */
 export interface BillingNotice {
   overdue: { count: number; duePaisa: number; oldestDueOn: IsoDate } | null;
+}
+
+// ─────────────────────────── Usage and cost (part 4) ───────────────────────────
+
+/** PUT /platform/settings: what one SMS segment costs Jantrik from now on (paisa, at most ৳100). */
+export const platformSettingsSchema = z.object({
+  smsCostPerSegmentPaisa: z.number().int().min(0).max(10_000),
+});
+export type PlatformSettingsInput = z.input<typeof platformSettingsSchema>;
+
+export interface PlatformSettings {
+  smsCostPerSegmentPaisa: number;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+/** GET /platform/usage. */
+export const platformUsageQuerySchema = z.object({
+  month: platformMonthSchema.optional(),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+});
+export type PlatformUsageQuery = z.input<typeof platformUsageQuerySchema>;
+
+export interface PlatformSmsTotals {
+  count: number;
+  segments: number;
+  /** Segments × the rate when each SMS was sent. */
+  costPaisa: number;
+}
+
+export interface PlatformUsageInstitute {
+  id: string;
+  name: string;
+  slug: string;
+  status: InstituteStatus;
+  activeStudents: number;
+  smsSent: number;
+  smsSegments: number;
+  smsCostPaisa: number;
+  importsThisMonth: number;
+  lastActivityAt: string | null;
+}
+
+export interface PlatformUsage {
+  /** YYYY-MM */
+  month: string;
+  institutes: { total: number; active: number; trial: number; suspended: number };
+  activeStudents: number;
+  /** SMS institutes sent (absence alerts and the like). */
+  institutesSms: PlatformSmsTotals;
+  /** Login codes (OTP), paid by Jantrik. */
+  loginSms: PlatformSmsTotals;
+  totalCostPaisa: number;
+  /** The rate now (past SMS keep the rate they were sent at). */
+  smsCostPerSegmentPaisa: number;
+  /** Per institute, the most expensive first. */
+  items: PlatformUsageInstitute[];
+  total: number;
+  page: number;
+  pageSize: number;
 }

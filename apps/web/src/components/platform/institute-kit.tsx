@@ -73,6 +73,7 @@ export function usePlatformError() {
         INVOICE_CLOSED: tBilling('errorClosed'),
         HAS_PAYMENTS: tBilling('errorHasPayments'),
         BAD_MONTH: tBilling('errorMonth'),
+        BAD_RATE: tBilling('errorRate'),
       };
       if (e.code && known[e.code]) return known[e.code]!;
       if (e.status === 400) return t('errorCheckForm');

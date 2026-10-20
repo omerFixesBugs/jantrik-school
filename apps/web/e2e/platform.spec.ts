@@ -223,12 +223,30 @@ test.describe.serial('platform sign-in', () => {
     await expect(notice).toContainText('৩০০');
     await expectClean(ownerPage, 'owner billing notice 360');
 
+    // Part 4 at 1440 px: the SMS rate (৳0.25 from now on), then the month's usage.
+    await page.getByRole('link', { name: 'Settings', exact: true }).click();
+    await expect(page).toHaveURL(/\/platform\/settings$/);
+    await page.getByTestId('sms-cost').fill('0.25');
+    await page.getByTestId('save-sms-cost').click();
+    await expect(page.getByTestId('settings-updated')).toContainText('Last changed by');
+    await expectClean(page, 'settings 1440');
+    await page.getByRole('link', { name: 'Usage', exact: true }).click();
+    await expect(page.getByTestId('usage-total')).toContainText('৳0.25');
+    await expect(page.getByTestId('usage-table')).toContainText(NEW_INSTITUTE);
+    await expectClean(page, 'usage 1440');
+
     // The billing page at 360 px in Bangla (same admin session).
     await page.setViewportSize({ width: 360, height: 780 });
     await context.addCookies([{ name: 'NEXT_LOCALE', value: 'bn', url: baseURL! }]);
-    await page.reload();
+    await page.goto('/platform/billing');
     await expect(page.getByTestId('invoice-cards')).toContainText(NEW_INSTITUTE);
     await expectClean(page, 'billing 360 bn');
+    await page.goto('/platform/usage');
+    await expect(page.getByTestId('usage-cards')).toContainText(NEW_INSTITUTE);
+    await expectClean(page, 'usage 360 bn');
+    await page.goto('/platform/settings');
+    await expect(page.getByTestId('sms-cost')).toHaveValue('0.25');
+    await expectClean(page, 'settings 360 bn');
     await ownerContext.close();
     await context.close();
   });

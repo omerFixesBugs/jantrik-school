@@ -922,7 +922,10 @@
     "action_INVOICE_ISSUE": "ইনভয়েস দেওয়া হয়েছে",
     "action_INVOICES_GENERATE": "মাসের ইনভয়েস দেওয়া হয়েছে",
     "action_PAYMENT_RECORD": "পরিশোধ লেখা হয়েছে",
-    "action_INVOICE_VOID": "ইনভয়েস বাতিল"
+    "action_INVOICE_VOID": "ইনভয়েস বাতিল",
+    "navUsage": "ব্যবহার",
+    "navSettings": "সেটিংস",
+    "action_SETTINGS_SMS_COST": "SMS রেট বদলেছে"
   },
   "platformInstitutes": {
     "title": "প্রতিষ্ঠানসমূহ",
@@ -1091,7 +1094,8 @@
     "activateHint": "ট্রায়াল শেষ হবে, প্রতিষ্ঠানটি চালু হবে। প্ল্যান থাকলে পরের মাস থেকে ইনভয়েস হবে (প্ল্যানে তা বদলাতে পারবেন)।",
     "trialHint": "ট্রায়ালে: কোনো ইনভয়েস নেই। ট্রায়াল শেষ হলে চালু করুন; স্থগিত করলে সবাই সঙ্গে সঙ্গে বন্ধ হয়ে যাবেন।",
     "overdueOnly": "শুধু মেয়াদ পেরোনো বিল",
-    "overdueBadge": "বকেয়া {amount}"
+    "overdueBadge": "বকেয়া {amount}",
+    "segmentsCost": "{count}টি অংশ; পাঠানোগুলোর খরচ: {cost}"
   },
   "platformBilling": {
     "title": "বিল",
@@ -1172,6 +1176,45 @@
     "skipped_tooLarge": "অঙ্ক খুব বড় (দাম দেখুন): {count}টি",
     "openLabel": "{name}-এর ইনভয়েস খুলুন, {period}",
     "lineDetailFlat": "{unit} × {months} মাস",
-    "errorMonth": "সর্বোচ্চ পরের মাসের ইনভয়েস দেওয়া যায়।"
+    "errorMonth": "সর্বোচ্চ পরের মাসের ইনভয়েস দেওয়া যায়।",
+    "errorRate": "রেট ৳০ থেকে ৳১০০-এর মধ্যে হতে হবে।"
+  },
+  "platformUsage": {
+    "title": "ব্যবহার ও খরচ",
+    "hint": "এক মাসে প্ল্যাটফর্মের খরচ: প্রতিষ্ঠানগুলোর পাঠানো SMS ও লগইন কোড, প্রতিটি পাঠানোর সময়ের রেটে। শুধু সংখ্যা।",
+    "month": "মাস",
+    "totalCost": "মোট SMS খরচ",
+    "rateNow": "এখনকার রেট: প্রতি অংশ {rate}",
+    "institutesSms": "প্রতিষ্ঠানের SMS",
+    "loginSms": "লগইন কোড",
+    "smsLine": "{count}টি SMS · {segments}টি অংশ",
+    "activeStudents": "এখনকার সক্রিয় শিক্ষার্থী",
+    "institutesLine": "এখন {total}টি প্রতিষ্ঠান: {active}টি চালু, {trial}টি ট্রায়ালে, {suspended}টি স্থগিত",
+    "rateNote": "পাঠানো SMS পাঠানোর সময়ের রেটেই থাকে; নতুন রেট এরপর পাঠানো SMS-এ খাটে।",
+    "changeRate": "রেট বদলান",
+    "perInstitute": "প্রতিষ্ঠান অনুযায়ী",
+    "institute": "প্রতিষ্ঠান",
+    "status": "অবস্থা",
+    "students": "এখনকার শিক্ষার্থী",
+    "smsSent": "পাঠানো SMS",
+    "segments": "অংশ",
+    "cost": "খরচ",
+    "imports": "ইমপোর্ট",
+    "lastActivity": "শেষ কাজ",
+    "count": "{count}টি প্রতিষ্ঠান",
+    "previous": "আগের",
+    "next": "পরের"
+  },
+  "platformSettings": {
+    "title": "সেটিংস",
+    "hint": "পুরো প্ল্যাটফর্মের সেটিংস। প্রতিটি বদল কার্যক্রমের তালিকায় থাকে।",
+    "smsCostTitle": "SMS খরচ",
+    "smsCostHint": "জান্ত্রিকের প্রতি SMS অংশের খরচ। নতুন SMS-এ এটি খাটে; পাঠানো SMS-এর খরচ বদলায় না।",
+    "smsCost": "প্রতি SMS অংশের খরচ",
+    "save": "সংরক্ষণ করুন",
+    "saved": "সংরক্ষিত হয়েছে। নতুন SMS এই রেটে হবে।",
+    "updatedBy": "শেষ বদলেছেন {name}, {date}",
+    "updatedDefault": "শুরুর রেট; এখনো বদলানো হয়নি।",
+    "errorCost": "৳০ থেকে ৳১০০-এর মধ্যে টাকার পরিমাণ, যেমন 0.30"
   }
 }

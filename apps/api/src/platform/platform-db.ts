@@ -25,6 +25,12 @@ const KNOWN: Record<string, [status: number, code: string, message: string, fiel
   PLATFORM_BAD_AMOUNT: [422, 'BAD_AMOUNT', 'More than is left to pay', 'amountPaisa'],
   PLATFORM_BAD_DATE: [422, 'BAD_DATE', 'The date is in the future or too far back'],
   PLATFORM_BAD_MONTH: [422, 'BAD_MONTH', 'At most next month can be invoiced'],
+  PLATFORM_BAD_RATE: [
+    422,
+    'BAD_RATE',
+    'The rate must be from ৳0 to ৳100',
+    'smsCostPerSegmentPaisa',
+  ],
   PLATFORM_INVOICE_CLOSED: [409, 'INVOICE_CLOSED', 'The invoice is already paid or void'],
   PLATFORM_INVOICE_HAS_PAYMENTS: [409, 'HAS_PAYMENTS', 'An invoice with payments cannot be voided'],
   PLATFORM_AMOUNT_TOO_LARGE: [422, 'AMOUNT_TOO_LARGE', 'The invoice amount is too large'],

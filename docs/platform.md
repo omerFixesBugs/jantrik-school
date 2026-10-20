@@ -118,14 +118,17 @@ API returns nothing about an institute's students, guardians or attendance beyon
   - Owner names and phones: `staff_profiles (name, name_bn, phone)` and
     `memberships (role, status, invited_at, ...)`.
   - For counts only: `students (status, deleted_at)`, `sms_logs (status, segments, local_date,
+created_at, cost_paisa)`, `platform_sms_logs (purpose, status, segments, cost_paisa,
 created_at)`, `student_imports (status, created_at)`, `attendance_sessions (updated_at)`,
     `audit_logs (created_at)`.
+  - Its own: `platform_settings`, the billing tables (`platform_invoices`, `_lines`,
+    `_payments`).
   - **Never** a student's or guardian's name, phone or address, an SMS text, import rows or
     attendance records: there is no grant on those columns or tables (`platform-institutes.test.ts`
     checks it).
 - **What it may write:** `tenants (status, suspended_from, suspended_at, updated_at)`,
-  `tenant_modules`,
-  `tenant_subscriptions`, and audit entries (`platform_audit_logs`; `audit_logs` without an
+  `tenant_modules`, `tenant_subscriptions`, `platform_settings`, the billing tables (an invoice's
+  status, paid amount and void only), and audit entries (`platform_audit_logs`; `audit_logs` without an
   actor).
 - **`schema-safety.test.ts`:**
   - It checks that every `platform_*` function is owned by `jantrik_platform`, and that all but
@@ -213,6 +216,22 @@ created_at)`, `student_imports (status, created_at)`, `attendance_sessions (upda
   until it is paid.
 - **Tables** (tenant tables; the institute may read its own; only the platform functions write;
   no DELETE): `platform_invoices`, `platform_invoice_lines`, `platform_payments`.
+
+## Usage and cost (part 4)
+
+- **The SMS rate** is one platform setting (`platform_settings`, a single global row): what one SMS
+  segment costs Jantrik, ৳0.30 to start, changed on `/platform/settings` (`PUT /platform/settings`,
+  ৳0 to ৳100, audited as `SETTINGS_SMS_COST`). The API may read only the rate.
+- **Costs are stored when an SMS is sent:** `sms_logs.cost_paisa` (an institute's SMS, set when it
+  is marked SENT) and `platform_sms_logs.cost_paisa` (login codes, SENT rows) = segments × the rate
+  then. Changing the rate never changes past costs. Held, cancelled and failed SMS cost nothing.
+  SMS sent before part 4 have no cost (nothing to backfill: no real institute has sent any yet).
+- **`/platform/usage`** (`GET /platform/usage?month=YYYY-MM`): for a month, institutes' SMS and
+  login codes (count, segments, cost), the total, and every institute by cost (SMS sent, segments,
+  cost, imports that month). Institute and student counts, and last activity, are as of now (the
+  page says so). Months are the institute's local date for its SMS and Dhaka time for login codes.
+- **The institute page** shows the month's SMS cost next to the SMS count.
+- `jantrik_platform` reads `cost_paisa`, never a phone number or an SMS text (column grants).
 
 ## What remains trusted
 

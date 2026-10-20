@@ -277,3 +277,8 @@ There is no UPDATE or DELETE path on the audit log.
 - **Payments** may not exceed what is left; a partial payment is fine.
 - **Void** only an invoice nobody has paid on; that month can then be invoiced again.
 - **A total of 0** (free plan) issues no invoice.
+
+## Part 4 notes
+
+- The rate is stored in paisa (৳0.30 = 30). An SMS gets its cost when it is sent (tenant SMS: when marked SENT; login codes: the SENT log row), so held, cancelled and failed SMS cost nothing and a rate change keeps past costs.
+- Usage counts only SENT SMS (the institute list's "SMS this month" still counts queued ones too, as before).

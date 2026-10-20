@@ -20,6 +20,7 @@ import { PlatformBillingController, PlatformBillingService } from './platform-bi
 import { PlatformDb } from './platform-db.js';
 import { PlatformInstitutesController, PlatformInstitutesService } from './platform-institutes.js';
 import { PlatformPrismaService } from './platform-prisma.service.js';
+import { PlatformUsageController, PlatformUsageService } from './platform-usage.js';
 import { PLATFORM_COOKIE, PLATFORM_COOKIE_PATH, PLATFORM_MAX_SEC } from './platform.constants.js';
 
 class PlatformLoginDto extends zodDto(platformLoginSchema) {}
@@ -105,13 +106,19 @@ export class PlatformController {
 
 @Module({
   imports: [AuthModule],
-  controllers: [PlatformController, PlatformInstitutesController, PlatformBillingController],
+  controllers: [
+    PlatformController,
+    PlatformInstitutesController,
+    PlatformBillingController,
+    PlatformUsageController,
+  ],
   providers: [
     PlatformAuthService,
     PlatformDb,
     PlatformPrismaService,
     PlatformInstitutesService,
     PlatformBillingService,
+    PlatformUsageService,
   ],
   // The global PlatformAuthGuard and PlatformContextInterceptor (registered in AppModule) need it.
   exports: [PlatformDb, PlatformPrismaService],

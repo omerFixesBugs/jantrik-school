@@ -95,6 +95,10 @@ transaction sets `app.platform_session` (the session token's hash);
   `jantrik_platform` inserts, and updates invoices only (status, paid amount, void). No DELETE for
   anyone: billing is history. One live invoice per institute and period is a partial unique index
   (`WHERE status <> 'VOID'`), so a voided month can be invoiced again.
+- **`platform_settings`** (part 4): one global row (`CHECK (id = 1)`), Jantrik's SMS rate.
+  `jantrik_app` may SELECT only `sms_cost_per_segment_paisa` (it copies the rate onto each SMS when
+  sent: `sms_logs.cost_paisa`, `platform_sms_logs.cost_paisa`); only `platform_set_sms_cost`
+  changes it. Read it without a `WHERE id = 1`: the app has no right to the `id` column.
 - **`jantrik_platform` reads institute tables by column** (counts, owner names and phones), never
   a student's, guardian's or SMS's content; see [platform.md](platform.md).
 - Tests that suspend an institute or switch a module go through the platform API

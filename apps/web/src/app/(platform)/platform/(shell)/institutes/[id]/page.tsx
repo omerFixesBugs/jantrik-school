@@ -192,7 +192,10 @@ function Usage({ d, locale }: { d: PlatformInstituteDetail; locale: Locale }) {
       icon: MessageSquareTextIcon,
       label: t('smsThisMonth'),
       value: formatCount(c.smsThisMonth, locale),
-      note: t('segments', { count: formatCount(c.smsSegmentsThisMonth, locale) }),
+      note: t('segmentsCost', {
+        count: formatCount(c.smsSegmentsThisMonth, locale),
+        cost: formatTaka(c.smsCostThisMonth, locale),
+      }),
     },
     {
       icon: UploadIcon,
