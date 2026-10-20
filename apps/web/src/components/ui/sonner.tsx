@@ -1,6 +1,5 @@
 'use client';
 
-import { useTheme } from 'next-themes';
 import { Toaster as Sonner, type ToasterProps } from 'sonner';
 import {
   CircleCheckIcon,
@@ -11,11 +10,10 @@ import {
 } from 'lucide-react';
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = 'system' } = useTheme();
-
   return (
     <Sonner
-      theme={theme as ToasterProps['theme']}
+      // Light only (v2 has no dark theme): never follow the OS into a dark toast on a light app.
+      theme="light"
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,
@@ -35,6 +33,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
       toastOptions={{
         classNames: {
           toast: 'cn-toast',
+          // Status colours from the tokens (always with the icon), not Sonner's own palette.
+          success: '[&_[data-icon]]:text-success',
+          error: '[&_[data-icon]]:text-destructive',
+          warning: '[&_[data-icon]]:text-warning',
+          info: '[&_[data-icon]]:text-info',
         },
       }}
       {...props}

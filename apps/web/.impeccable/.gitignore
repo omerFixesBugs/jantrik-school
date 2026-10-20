@@ -1,0 +1,6 @@
+# Impeccable local state (never committed): decision sketches, captures, caches, live sessions.
+mocks/
+review/
+live/
+hook.cache.json
+config.local.json

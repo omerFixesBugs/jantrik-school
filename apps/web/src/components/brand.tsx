@@ -1,14 +1,14 @@
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 
-/** The mark: a blackboard-green tile with য and a turmeric spark (docs/design.md → Brand). */
+/** The mark: a blackboard tile with a chalk য and a chalk-yellow spark (docs/design.md → Brand). */
 export function LogoMark({ className, inverted }: { className?: string; inverted?: boolean }) {
   return (
     <span
       aria-hidden
       className={cn(
         'font-heading relative inline-flex size-9 shrink-0 items-center justify-center rounded-[11px] text-xl leading-none font-semibold',
-        inverted ? 'bg-white text-[#0e5e50]' : 'bg-primary text-primary-foreground',
+        inverted ? 'bg-white text-board' : 'bg-board text-board-foreground ring-1 ring-board-line',
         className,
       )}
     >
@@ -18,23 +18,29 @@ export function LogoMark({ className, inverted }: { className?: string; inverted
   );
 }
 
-/** Mark + wordmark. `compact` hides the wordmark (collapsed sidebar). */
+/**
+ * Mark + wordmark. `compact` hides the wordmark (collapsed sidebar); `onBoard` sets it in chalk on
+ * the blackboard (the sidebar), with the white tile.
+ */
 export function Logo({
   compact,
   inverted,
+  onBoard,
   className,
 }: {
   compact?: boolean;
   inverted?: boolean;
+  onBoard?: boolean;
   className?: string;
 }) {
   const t = useTranslations('app');
   return (
     <span className={cn('inline-flex items-center gap-2.5', className)}>
-      <LogoMark inverted={inverted} />
+      <LogoMark inverted={inverted || onBoard} className={onBoard ? 'size-8 text-lg' : undefined} />
       <span
         className={cn(
           'font-heading text-lg leading-none font-semibold whitespace-nowrap',
+          onBoard && 'text-white',
           compact && 'sr-only',
         )}
       >

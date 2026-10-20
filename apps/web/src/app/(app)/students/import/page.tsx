@@ -240,7 +240,7 @@ function UploadCard({ onUploaded }: { onUploaded: (s: StudentImportSummary) => v
       <label
         className={cn(
           'bg-canvas hover:border-primary/50 flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-4 text-center',
-          'has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-3',
+          'has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-3',
         )}
       >
         <UploadIcon aria-hidden className="text-muted-foreground size-6" />

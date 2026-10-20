@@ -41,7 +41,7 @@ import { cn } from '@/lib/utils';
 const STATUS_VARIANT = { ISSUED: 'soft', PAID: 'success', VOID: 'secondary' } as const;
 
 const textareaClass =
-  'min-h-20 w-full min-w-0 rounded-lg border border-input bg-card px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive dark:bg-input/30';
+  'min-h-20 w-full min-w-0 rounded-lg border border-input bg-card px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive dark:bg-input/30';
 
 /** Unpaid / paid / void, plus "overdue" when an unpaid invoice is past its due date. */
 export function InvoiceStatusBadge({

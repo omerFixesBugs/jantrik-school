@@ -72,7 +72,7 @@ export function SetupTabs({ active }: { active: SetupTab }) {
               aria-current={tab.key === active ? 'page' : undefined}
               className={cn(
                 'inline-flex min-h-10 max-w-full items-center rounded-lg border px-3.5 text-sm font-medium transition-colors',
-                'focus-visible:ring-ring/40 outline-none focus-visible:ring-3',
+                'focus-visible:ring-ring focus-visible:ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
                 tab.key === active
                   ? 'bg-primary text-primary-foreground border-primary'
                   : 'bg-card hover:border-primary/40',

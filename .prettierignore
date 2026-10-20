@@ -11,3 +11,6 @@ next-env.d.ts
 CLAUDE.md
 apps/web/playwright-report
 apps/web/test-results
+
+# Impeccable design tooling (its own files, written by the tool)
+apps/web/.impeccable/

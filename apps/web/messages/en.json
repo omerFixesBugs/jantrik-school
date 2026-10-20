@@ -10,7 +10,8 @@
     "switchToEnglish": "English",
     "switchToBangla": "বাংলা",
     "comingSoon": "Coming soon",
-    "apply": "Show"
+    "apply": "Show",
+    "close": "Close"
   },
   "errors": {
     "invalidCredentials": "The phone number, code or password is not correct.",
@@ -71,7 +72,12 @@
     "expand": "Expand sidebar",
     "breadcrumb": "Breadcrumb",
     "institute": "Institute",
-    "account": "Your account"
+    "account": "Your account",
+    "soon": "Soon",
+    "density": "Layout",
+    "densityCompact": "Compact (desktop)",
+    "densityComfortable": "Comfortable (larger)",
+    "skipToContent": "Skip to content"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -927,7 +933,8 @@
     "action_INVOICE_VOID": "Invoice voided",
     "navUsage": "Usage",
     "navSettings": "Settings",
-    "action_SETTINGS_SMS_COST": "SMS rate changed"
+    "action_SETTINGS_SMS_COST": "SMS rate changed",
+    "skipToContent": "Skip to content"
   },
   "platformInstitutes": {
     "title": "Institutes",

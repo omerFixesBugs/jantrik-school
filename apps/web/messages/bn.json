@@ -10,7 +10,8 @@
     "switchToEnglish": "English",
     "switchToBangla": "বাংলা",
     "comingSoon": "শীঘ্রই আসছে",
-    "apply": "দেখুন"
+    "apply": "দেখুন",
+    "close": "বন্ধ করুন"
   },
   "errors": {
     "invalidCredentials": "ফোন নম্বর, কোড বা পাসওয়ার্ড সঠিক নয়।",
@@ -71,7 +72,12 @@
     "expand": "সাইডবার বড় করুন",
     "breadcrumb": "আপনি এখানে",
     "institute": "প্রতিষ্ঠান",
-    "account": "আপনার অ্যাকাউন্ট"
+    "account": "আপনার অ্যাকাউন্ট",
+    "soon": "শীঘ্রই",
+    "density": "বিন্যাস",
+    "densityCompact": "ঘন (ডেস্কটপ)",
+    "densityComfortable": "আরামদায়ক (বড় করে)",
+    "skipToContent": "মূল অংশে যান"
   },
   "nav": {
     "dashboard": "ড্যাশবোর্ড",
@@ -927,7 +933,8 @@
     "action_INVOICE_VOID": "ইনভয়েস বাতিল",
     "navUsage": "ব্যবহার",
     "navSettings": "সেটিংস",
-    "action_SETTINGS_SMS_COST": "SMS রেট বদলেছে"
+    "action_SETTINGS_SMS_COST": "SMS রেট বদলেছে",
+    "skipToContent": "মূল অংশে যান"
   },
   "platformInstitutes": {
     "title": "প্রতিষ্ঠানসমূহ",

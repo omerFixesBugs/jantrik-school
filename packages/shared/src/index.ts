@@ -18,3 +18,4 @@ export * from './students.js';
 export * from './csv.js';
 export * from './import.js';
 export * from './onboarding.js';
+export * from './density.js';

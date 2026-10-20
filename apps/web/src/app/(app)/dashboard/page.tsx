@@ -342,7 +342,7 @@ function StatCard({
           href={href}
           className={cn(
             className,
-            'hover:border-primary/40 focus-visible:ring-ring/40 transition-colors outline-none focus-visible:ring-3',
+            'hover:border-primary/40 focus-visible:ring-ring transition-colors outline-none focus-visible:ring-3',
           )}
         >
           {body}
@@ -418,7 +418,7 @@ function QuickActions({ context, wide }: { context: MeContext; wide?: boolean })
                   data-testid={`quick-${a.key}`}
                   className={cn(
                     base,
-                    'hover:border-primary/40 hover:bg-primary-soft/40 focus-visible:ring-ring/40 shadow-xs transition-colors outline-none focus-visible:ring-3',
+                    'hover:border-primary/40 hover:bg-primary-soft/40 focus-visible:ring-ring shadow-xs transition-colors outline-none focus-visible:ring-3',
                   )}
                 >
                   {inner}

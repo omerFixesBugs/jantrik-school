@@ -26,12 +26,13 @@ export function initials(name: string): string {
   return (graphemes(first)[0]! + (last ? graphemes(last)[0]! : '')).toUpperCase();
 }
 
+/** Soft chalk colours (mint, yellow, sky, pink, orange), each with a dark ink at ≥ 7:1. */
 const TONES = [
-  'bg-[#dcefe8] text-[#0b4a3f] dark:bg-[#173a33] dark:text-[#bfe9de]',
-  'bg-[#fbeccb] text-[#6b4a07] dark:bg-[#3a2f15] dark:text-[#f5d58e]',
-  'bg-[#dcebf5] text-[#1d4d6b] dark:bg-[#16303f] dark:text-[#a9d3ea]',
-  'bg-[#f6e1e8] text-[#7a2846] dark:bg-[#3b1d27] dark:text-[#f0b5c8]',
-  'bg-[#e9e3f5] text-[#4a3577] dark:bg-[#2a2240] dark:text-[#cdbdf0]',
+  'bg-[#dcefe4] text-[#173f35]',
+  'bg-[#fbf1cf] text-[#5c4706]',
+  'bg-[#ddeef7] text-[#1d4d6b]',
+  'bg-[#f9e2ea] text-[#7a2846]',
+  'bg-[#fbe8d6] text-[#6e3a0c]',
 ];
 
 /** Same name → same soft colour, so people learn to recognise each other at a glance. */

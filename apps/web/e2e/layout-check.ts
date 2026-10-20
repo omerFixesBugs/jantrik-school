@@ -6,7 +6,9 @@ import type { Page } from '@playwright/test';
  *
  * Works on text nodes (glyph boxes via Range#getClientRects), not element boxes, so a padded
  * button next to a label is fine but two strings painted over each other are not. Text hidden
- * under an overlay (a dialog, the sticky bar) is skipped: elementFromPoint must hit it.
+ * under an overlay (a dialog, the sticky bar) is skipped: elementFromPoint must hit it, and text in
+ * a sticky or fixed layer is only compared with text in the same layer (scrolled content passing
+ * under the top bar is covered by it, not drawn over it).
  */
 export interface LayoutProblem {
   kind: 'overflow' | 'clipped' | 'offscreen' | 'overlap';
@@ -37,7 +39,20 @@ export function layoutProblemsInPage(): LayoutProblem[] {
     node: Text;
     el: Element;
     rects: DOMRect[];
+    /** The sticky/fixed box the text rides in (the top bar, a sticky footer), or null. */
+    layer: Element | null;
   }
+  // A sticky or fixed layer covering scrolled content is occlusion by design, not overlap. Sticky
+  // table parts (a register's name column, a table header) are not layers: their text is still
+  // compared with its neighbours.
+  const layerOf = (el: Element): Element | null => {
+    for (let e: Element | null = el; e && e !== document.body; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      if ((cs.position === 'sticky' || cs.position === 'fixed') && !cs.display.startsWith('table'))
+        return e;
+    }
+    return null;
+  };
   const items: Item[] = [];
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -58,7 +73,7 @@ export function layoutProblemsInPage(): LayoutProblem[] {
       Math.min(Math.max(top.top + top.height / 2, 0), window.innerHeight - 1),
     );
     const onTop = !!hit && (hit === el || el.contains(hit) || hit.contains(el));
-    items.push({ node, el, rects: onTop ? rects : [] });
+    items.push({ node, el, rects: onTop ? rects : [], layer: layerOf(el) });
   }
 
   // 1. Overflow / clipping, per element (once).
@@ -135,6 +150,7 @@ export function layoutProblemsInPage(): LayoutProblem[] {
     for (let b = a + 1; b < visible.length; b++) {
       const A = visible[a]!;
       const B = visible[b]!;
+      if (A.layer !== B.layer) continue;
       for (const ra of A.rects) {
         const hit = B.rects.find((rb) => {
           const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
@@ -156,6 +172,8 @@ export function layoutProblemsInPage(): LayoutProblem[] {
   return problems;
 }
 
-export function findLayoutProblems(page: Page): Promise<LayoutProblem[]> {
+export async function findLayoutProblems(page: Page): Promise<LayoutProblem[]> {
+  // Measure the real faces, not the fallback shown while they load (font-display: swap).
+  await page.evaluate(() => document.fonts.ready);
   return page.evaluate(layoutProblemsInPage);
 }

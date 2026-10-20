@@ -372,7 +372,7 @@ function StudentTable({
 }) {
   const t = useTranslations('students');
   const th =
-    'bg-card text-muted-foreground sticky top-16 z-10 h-11 border-b px-4 text-left text-sm font-medium whitespace-nowrap first:pl-5';
+    'bg-card text-muted-foreground sticky top-(--topbar-h) z-10 h-11 border-b px-4 text-left text-sm font-medium whitespace-nowrap first:pl-5';
   return (
     // overflow-clip (not hidden/auto) keeps the rounded corners without breaking sticky headers.
     <div className="bg-card hidden overflow-clip rounded-xl border shadow-xs md:block">

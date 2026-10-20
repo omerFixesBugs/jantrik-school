@@ -63,7 +63,7 @@ export function RoleChoices({
             key={r}
             className={cn(
               'flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm font-medium',
-              'has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-3',
+              'has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-3',
               value.includes(r)
                 ? 'border-primary bg-primary-soft text-accent-foreground'
                 : 'bg-card',

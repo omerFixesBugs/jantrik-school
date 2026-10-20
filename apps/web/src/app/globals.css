@@ -2,13 +2,23 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
+/* No dark theme in v2 (docs/design.md → Colour). Keeping the class variant (instead of
+   Tailwind's media one) stops shadcn's leftover `dark:` classes from switching on with the OS. */
 @custom-variant dark (&:is(.dark *));
 
-/* Numbers (counts, steps, codes): body face, tabular figures. See docs/design.md → Typography. */
+/* Numbers (counts, money, steps, codes): body face with tabular figures. Noto Sans Bengali's
+   digits are all one width, so columns of numbers line up. See docs/design.md → Typography. */
 @utility font-numeric {
   font-family: var(--app-font-stack);
   font-variation-settings: normal;
   font-variant-numeric: tabular-nums;
+}
+
+/* A number in a table or a KPI: tabular and right-aligned. */
+@utility num {
+  font-family: var(--app-font-stack);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
 }
 
 @theme inline {
@@ -17,6 +27,7 @@
   --font-sans: var(--app-font-stack);
   --font-heading: var(--app-display-stack);
   --color-primary-soft: var(--primary-soft);
+  --color-primary-hover: var(--primary-hover);
   --color-accent-warm: var(--accent-warm);
   --color-accent-warm-soft: var(--accent-warm-soft);
   --color-success: var(--success);
@@ -24,9 +35,36 @@
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
   --color-destructive-soft: var(--destructive-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-link: var(--link);
   --color-canvas: var(--canvas);
   --color-brand: var(--brand);
-  /* Type scale: switches between Latin and Bangla sizes on :lang(bn) (see docs/design.md). */
+  /* The blackboard: the shell, the section board, primary buttons. */
+  --color-board: var(--board);
+  --color-board-raised: var(--board-raised);
+  --color-board-deep: var(--board-deep);
+  --color-board-line: var(--board-line);
+  --color-board-foreground: var(--board-foreground);
+  --color-board-muted: var(--board-muted);
+  /* Coloured chalk: the only data colours. `-ink` variants are for lines and text on white. */
+  --color-chalk-yellow: var(--chalk-yellow);
+  --color-chalk-pink: var(--chalk-pink);
+  --color-chalk-sky: var(--chalk-sky);
+  --color-chalk-mint: var(--chalk-mint);
+  --color-chalk-orange: var(--chalk-orange);
+  --color-chalk-yellow-ink: var(--chalk-yellow-ink);
+  --color-chalk-pink-ink: var(--chalk-pink-ink);
+  --color-chalk-sky-ink: var(--chalk-sky-ink);
+  --color-chalk-mint-ink: var(--chalk-mint-ink);
+  --color-chalk-orange-ink: var(--chalk-orange-ink);
+  /* One ramp for every percentage (the board, the register, reports). */
+  --color-ramp-1: var(--ramp-1);
+  --color-ramp-2: var(--ramp-2);
+  --color-ramp-3: var(--ramp-3);
+  --color-ramp-4: var(--ramp-4);
+  --color-ramp-5: var(--ramp-5);
+  /* Type scale: switches on density and on :lang(bn) (see docs/design.md → Density). */
   --text-xs: var(--fs-xs);
   --text-xs--line-height: var(--lh-xs);
   --text-sm: var(--fs-sm);
@@ -43,10 +81,11 @@
   --text-3xl--line-height: var(--lh-3xl);
   --text-4xl: var(--fs-4xl);
   --text-4xl--line-height: var(--lh-4xl);
-  --shadow-xs: 0 1px 2px rgb(15 45 38 / 0.05);
-  --shadow-sm: 0 1px 2px rgb(15 45 38 / 0.05), 0 1px 1px rgb(15 45 38 / 0.03);
-  --shadow-md: 0 4px 16px -4px rgb(15 45 38 / 0.1), 0 1px 3px rgb(15 45 38 / 0.06);
-  --shadow-lg: 0 16px 40px -12px rgb(15 45 38 / 0.18);
+  /* Flat world: surfaces separate by ground and hairline. Only overlays lift. */
+  --shadow-xs: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+  --shadow-md: 0 6px 20px -6px rgb(20 35 30 / 0.16), 0 1px 3px rgb(20 35 30 / 0.08);
+  --shadow-lg: 0 18px 44px -14px rgb(20 35 30 / 0.24);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -76,30 +115,107 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
-  --radius-2xl: 20px;
-  --radius-3xl: 24px;
-  --radius-4xl: 28px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-2xl: 14px;
+  --radius-3xl: 18px;
+  --radius-4xl: 22px;
 }
 
-/* Body: Hind Siliguri (Bangla + Latin). Display: Anek Bangla (Bangla + Latin, designed
-   together). See docs/design.md → Typography. */
+/* Body: Noto Sans Bengali (Bangla + Latin; correct, tabular digits). Display: Anek Bangla, only
+   for the wordmark, page titles and the section board's letters. See docs/design.md. */
 :root {
   --app-font-stack: var(--font-body), ui-sans-serif, system-ui, sans-serif;
   --app-display-stack: var(--font-display), var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
 
-  /* Latin sizes */
-  --fs-xs: 0.78125rem;
-  --lh-xs: 1.5;
-  --fs-sm: 0.875rem;
+/* ───────────────────────── Density × language ─────────────────────────
+   COMPACT (desktop staff) and COMFORTABLE (phones, teachers). `data-density` on <html> is set
+   before first paint (density-script.ts). Bangla never gets smaller than v1: the density comes
+   from line-height, spacing and row heights, not from shrinking Bangla. */
+
+/* Compact, English (the base). */
+:root {
+  --fs-xs: 0.75rem;
+  --lh-xs: 1.4;
+  --fs-sm: 0.84375rem;
+  --lh-sm: 1.45;
+  --fs-base: 0.90625rem;
+  --lh-base: 1.5;
+  --fs-lg: 1rem;
+  --lh-lg: 1.4;
+  --fs-xl: 1.125rem;
+  --lh-xl: 1.35;
+  --fs-2xl: 1.375rem;
+  --lh-2xl: 1.3;
+  --fs-3xl: 1.75rem;
+  --lh-3xl: 1.2;
+  --fs-4xl: 2.125rem;
+  --lh-4xl: 1.15;
+
+  --ctl: 32px;
+  --ctl-sm: 28px;
+  --ctl-xs: 24px;
+  --ctl-lg: 40px;
+  --row: 36px;
+  --cell-px: 12px;
+  --cell-py: 6px;
+  --panel-p: 16px;
+  --section-gap: 16px;
+  --topbar-h: 52px;
+  --input-fs-density: var(--fs-sm);
+
+  /* Touch screens keep 44 px targets and 16 px inputs (no iOS zoom) in either density. */
+  --touch-min: 0px;
+  --touch-input-fs: 0px;
+  --control-h: max(var(--ctl), var(--touch-min));
+  --control-h-sm: max(var(--ctl-sm), var(--touch-min));
+  --control-h-xs: max(var(--ctl-xs), var(--touch-min));
+  --control-h-lg: max(var(--ctl-lg), var(--touch-min));
+  --input-fs: max(var(--input-fs-density), var(--touch-input-fs));
+  --row-h: var(--row);
+}
+
+/* Compact, Bangla: v1's sizes, tighter line-height (Noto's Bangla sits in a shorter line box). */
+:root:lang(bn) {
+  --fs-xs: 0.84375rem;
+  --lh-xs: 1.45;
+  --fs-sm: 0.9375rem;
+  --lh-sm: 1.5;
+  --fs-base: 1.03125rem;
+  --lh-base: 1.55;
+  --fs-lg: 1.15625rem;
+  --lh-lg: 1.45;
+  --fs-xl: 1.3125rem;
+  --lh-xl: 1.4;
+  --fs-2xl: 1.5625rem;
+  --lh-2xl: 1.35;
+  --fs-3xl: 1.9375rem;
+  --lh-3xl: 1.25;
+  --fs-4xl: 2.3125rem;
+  --lh-4xl: 1.2;
+
+  --ctl: 36px;
+  --ctl-sm: 32px;
+  --ctl-xs: 28px;
+  --ctl-lg: 44px;
+  --row: 40px;
+  /* Breadcrumb + title in Bangla need a little more than English. */
+  --topbar-h: 56px;
+}
+
+/* Comfortable, English. */
+:root[data-density='comfortable'] {
+  --fs-xs: 0.8125rem;
+  --lh-xs: 1.45;
+  --fs-sm: 0.90625rem;
   --lh-sm: 1.5;
   --fs-base: 1rem;
-  --lh-base: 1.6;
+  --lh-base: 1.55;
   --fs-lg: 1.125rem;
-  --lh-lg: 1.5;
+  --lh-lg: 1.45;
   --fs-xl: 1.25rem;
   --lh-xl: 1.4;
   --fs-2xl: 1.5rem;
@@ -108,139 +224,186 @@
   --lh-3xl: 1.2;
   --fs-4xl: 2.25rem;
   --lh-4xl: 1.15;
-}
-/* Bangla needs larger small sizes and more line-height to stay readable. */
-:root:lang(bn) {
-  --fs-xs: 0.84375rem;
-  --lh-xs: 1.6;
-  --fs-sm: 0.9375rem;
-  --lh-sm: 1.65;
-  --fs-base: 1.03125rem;
-  --lh-base: 1.7;
-  --fs-lg: 1.15625rem;
-  --lh-lg: 1.6;
-  --fs-xl: 1.3125rem;
-  --lh-xl: 1.5;
-  --fs-2xl: 1.5625rem;
-  --lh-2xl: 1.4;
-  --fs-3xl: 1.9375rem;
-  --lh-3xl: 1.35;
-  --fs-4xl: 2.3125rem;
-  --lh-4xl: 1.3;
+
+  --ctl: 44px;
+  --ctl-sm: 40px;
+  --ctl-xs: 32px;
+  --ctl-lg: 48px;
+  --row: 52px;
+  --cell-px: 16px;
+  --cell-py: 10px;
+  --panel-p: 20px;
+  --section-gap: 24px;
+  --topbar-h: 60px;
+  --input-fs-density: var(--fs-base);
 }
 
-/* Colour tokens (docs/design.md → Colour). */
+/* Comfortable, Bangla: a step bigger than v1 (phones, outdoors, teachers). */
+:root[data-density='comfortable']:lang(bn) {
+  --fs-xs: 0.90625rem;
+  --lh-xs: 1.5;
+  --fs-sm: 1rem;
+  --lh-sm: 1.55;
+  --fs-base: 1.09375rem;
+  --lh-base: 1.6;
+  --fs-lg: 1.21875rem;
+  --lh-lg: 1.5;
+  --fs-xl: 1.375rem;
+  --lh-xl: 1.45;
+  --fs-2xl: 1.625rem;
+  --lh-2xl: 1.4;
+  --fs-3xl: 2rem;
+  --lh-3xl: 1.3;
+  --fs-4xl: 2.375rem;
+  --lh-4xl: 1.25;
+
+  --ctl: 44px;
+  --ctl-sm: 40px;
+  --ctl-xs: 32px;
+  --ctl-lg: 52px;
+  --row: 56px;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --touch-min: 44px;
+    --touch-input-fs: 16px;
+  }
+}
+
+/* ───────────────────────── Colour: blackboard and coloured chalk ─────────────────────────
+   docs/design.md → Colour. Light only. Every text pair is at least 4.5:1 (measured). */
 :root {
-  /* Brand panel green: the same in both themes. */
-  --brand: #0e5e50;
-  --canvas: #f4f7f6;
-  --background: #f4f7f6;
-  --foreground: #15231f;
+  color-scheme: light;
+
+  --board: #173f35;
+  --board-raised: #21503f;
+  --board-deep: #133429;
+  --board-line: #2a5547;
+  --board-foreground: #e6eee9;
+  --board-muted: #a9c2b8;
+
+  --brand: var(--board);
+  --canvas: #f4f6f2;
+  --background: #f4f6f2;
+  --foreground: #14231e;
   --card: #ffffff;
-  --card-foreground: #15231f;
+  --card-foreground: #14231e;
   --popover: #ffffff;
-  --popover-foreground: #15231f;
-  --primary: #0e5e50;
+  --popover-foreground: #14231e;
+  --primary: #173f35;
   --primary-foreground: #ffffff;
-  --primary-soft: #e2f0ec;
-  --secondary: #eaf0ee;
-  --secondary-foreground: #15231f;
-  --muted: #edf2f0;
-  --muted-foreground: #5a6b66;
-  --accent: #e2f0ec;
-  --accent-foreground: #0b4a3f;
-  --accent-warm: #e7a019;
-  --accent-warm-soft: #fbf0d6;
-  --success: #1e7f45;
+  /* Primary buttons are board green everywhere, the platform's slate shell included. */
+  --primary-hover: #21503f;
+  --primary-soft: #e5efe9;
+  --secondary: #eaf0ec;
+  --secondary-foreground: #14231e;
+  --muted: #eef2ef;
+  --muted-foreground: #56665f;
+  --accent: #e5efe9;
+  --accent-foreground: #173f35;
+  --link: #1e6b55;
+  /* Chalk yellow: the brand spark and "today"; never a status colour. Ink text on it. */
+  --accent-warm: #f2c641;
+  --accent-warm-soft: #fbf1cf;
+  --success: #1a7340;
   --success-soft: #e3f4e9;
-  --warning: #b45309;
+  --warning: #a14a06;
   --warning-soft: #fdf0e1;
   --destructive: #b42318;
   --destructive-soft: #fdecea;
-  --border: #dce5e2;
-  --input: #cfdad6;
-  --ring: #0e5e50;
-  --chart-1: #0e5e50;
-  --chart-2: #e7a019;
-  --chart-3: #3b82a0;
-  --chart-4: #8b6bb8;
-  --chart-5: #c2577a;
-  --radius: 10px;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #15231f;
-  --sidebar-primary: #0e5e50;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e2f0ec;
-  --sidebar-accent-foreground: #0b4a3f;
-  --sidebar-border: #dce5e2;
-  --sidebar-ring: #0e5e50;
+  --info: #2f6f94;
+  --info-soft: #e4f0f7;
+  --border: #dce3df;
+  /* Input outlines: 3.3:1 on white (WCAG 1.4.11). */
+  --input: #7f918a;
+  --ring: #173f35;
+
+  --chalk-yellow: #f2c641;
+  --chalk-pink: #e8739a;
+  --chalk-sky: #5ab0d8;
+  --chalk-mint: #6cc6a0;
+  --chalk-orange: #ee8f3a;
+  --chalk-yellow-ink: #8a6d0c;
+  --chalk-pink-ink: #c24e76;
+  --chalk-sky-ink: #2a77a3;
+  --chalk-mint-ink: #2b8460;
+  --chalk-orange-ink: #b05e15;
+  /* Series order validated for colour-blind separation (mint, orange, sky, yellow, pink). */
+  --chart-1: var(--chalk-mint-ink);
+  --chart-2: var(--chalk-orange-ink);
+  --chart-3: var(--chalk-sky-ink);
+  --chart-4: var(--chalk-yellow-ink);
+  --chart-5: var(--chalk-pink-ink);
+
+  /* Present %: ≤87, 88–90, 91–93, 94–96, 97–100. Text: white on 1–2, ink on 3–5. */
+  --ramp-1: #2b5a4e;
+  --ramp-2: #3e7a63;
+  --ramp-3: #57a07f;
+  --ramp-4: #7cc4a0;
+  --ramp-5: #a8e2c4;
+
+  --radius: 8px;
+  --sidebar: var(--board);
+  --sidebar-foreground: var(--board-foreground);
+  --sidebar-primary: var(--accent-warm);
+  --sidebar-primary-foreground: var(--foreground);
+  --sidebar-accent: var(--board-raised);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: var(--board-line);
+  --sidebar-ring: var(--accent-warm);
 }
 
-.dark {
-  --brand: #0b4a3f;
-  --canvas: #0d1614;
-  --background: #0d1614;
-  --foreground: #e4edea;
-  --card: #14201d;
-  --card-foreground: #e4edea;
-  --popover: #172420;
-  --popover-foreground: #e4edea;
-  --primary: #4dbfa4;
-  --primary-foreground: #05261f;
-  --primary-soft: #173a33;
-  --secondary: #1c2a26;
-  --secondary-foreground: #e4edea;
-  --muted: #1a2724;
-  --muted-foreground: #97a9a3;
-  --accent: #173a33;
-  --accent-foreground: #bfe9de;
-  --accent-warm: #f0b840;
-  --accent-warm-soft: #3a2f15;
-  --success: #5cc98a;
-  --success-soft: #16301f;
-  --warning: #f59e5b;
-  --warning-soft: #3a2614;
-  --destructive: #f97066;
-  --destructive-soft: #3b1a17;
-  --border: #26352f;
-  --input: #2f403a;
-  --ring: #4dbfa4;
-  --chart-1: #4dbfa4;
-  --chart-2: #f0b840;
-  --chart-3: #6cb4d4;
-  --chart-4: #b49ae0;
-  --chart-5: #e88aa8;
-  --sidebar: #101b18;
-  --sidebar-foreground: #e4edea;
-  --sidebar-primary: #4dbfa4;
-  --sidebar-primary-foreground: #05261f;
-  --sidebar-accent: #173a33;
-  --sidebar-accent-foreground: #bfe9de;
-  --sidebar-border: #26352f;
-  --sidebar-ring: #4dbfa4;
+/* The platform panel (Jantrik staff): the same world on black slate, so nobody mistakes it for an
+   institute. Set on the platform shell's root. */
+[data-board='slate'] {
+  --board: #1f2724;
+  --board-raised: #2c3632;
+  --board-deep: #181e1c;
+  --board-line: #343f3a;
+  --board-foreground: #e6eae8;
+  --board-muted: #a7b3ae;
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
   html {
     @apply font-sans;
+    -webkit-text-size-adjust: 100%;
   }
   body {
     @apply bg-background text-foreground text-base;
+    caret-color: var(--primary);
   }
-  /* Headings: Anek, slightly wide. Never letter-space Bangla. */
+  ::selection {
+    background: var(--accent-warm-soft);
+    color: var(--foreground);
+  }
+  /* Display face only where it is the brand's voice; every other heading is the body face
+     (one family carries the hierarchy). Never letter-space Bangla. */
   h1,
-  h2,
-  h3,
   .font-heading {
     font-family: var(--app-display-stack);
-    font-variation-settings: 'wdth' 108;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  h2,
+  h3,
+  h4 {
     letter-spacing: 0;
   }
   svg.lucide {
     stroke-width: 1.75;
+  }
+  /* Quiet, themed scrollbars (the browser's own belong to no design). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
+  }
+  :focus-visible {
+    outline-offset: 2px;
   }
   @media (prefers-reduced-motion: reduce) {
     *,
@@ -255,7 +418,8 @@
 /*
  * Printing the month register: only `.print-area` is printed (the app shell is hidden), on
  * landscape A4, in black on white. Colour fills are kept (print-color-adjust) so the cells read
- * like the screen; off days get a light hatch so they show even without colour.
+ * like the screen; off days get a light hatch so they show even without colour. A scroll area
+ * that bounds the register on screen must not cut it off on paper.
  */
 @media print {
   @page {
@@ -274,6 +438,10 @@
     inset: 0 0 auto 0;
     color: #000;
     background: #fff;
+  }
+  .print-area .print-unbound {
+    max-height: none !important;
+    overflow: visible !important;
   }
   .register-table {
     width: 100%;

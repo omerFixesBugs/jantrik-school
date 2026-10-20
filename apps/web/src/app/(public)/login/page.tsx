@@ -112,8 +112,8 @@ function BrandPanel() {
   return (
     <aside className="bg-brand relative hidden flex-col overflow-hidden p-12 text-white lg:flex xl:p-16">
       <Logo inverted />
-      <div className="relative z-10 mt-16 flex max-w-lg flex-col gap-5">
-        <h2 className="text-4xl leading-tight font-semibold">{t('brandHeadline')}</h2>
+      <div className="relative z-10 mt-12 flex max-w-lg flex-col gap-5 xl:mt-16">
+        <h2 className="font-heading text-4xl leading-tight">{t('brandHeadline')}</h2>
         <p className="text-lg text-white/80">{t('brandText')}</p>
         <ul className="mt-2 flex flex-col gap-3">
           {points.map(({ icon: Icon, text }) => (
@@ -126,7 +126,8 @@ function BrandPanel() {
           ))}
         </ul>
       </div>
-      <AlphabetChart className="pointer-events-none absolute -right-8 -bottom-10 w-[34rem]" />
+      {/* In the flow under the text (never over it): on a short screen the panel clips the chart. */}
+      <AlphabetChart className="pointer-events-none -me-8 -mb-24 mt-auto w-[34rem] shrink-0 self-end pt-8" />
     </aside>
   );
 }

@@ -43,8 +43,8 @@ export default function PlatformLoginPage() {
   };
 
   return (
-    <main className="bg-canvas flex min-h-svh flex-col">
-      <header className="bg-brand flex items-center justify-between gap-3 px-4 py-3 text-white sm:px-6">
+    <main className="bg-canvas flex min-h-svh flex-col" data-board="slate">
+      <header className="bg-board flex items-center justify-between gap-3 px-4 py-3 text-white sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <Logo inverted />
           <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-sm font-medium">

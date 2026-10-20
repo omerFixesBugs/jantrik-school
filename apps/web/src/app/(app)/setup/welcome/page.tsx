@@ -265,7 +265,7 @@ function StepList({
                 aria-label={`${titles[s]}${state ? ` (${state === 'done' ? t('stateDone') : t('stateSkipped')})` : ''}`}
                 className={cn(
                   'flex items-center gap-3 rounded-lg text-start transition-colors outline-none',
-                  'focus-visible:ring-ring/40 focus-visible:ring-3',
+                  'focus-visible:ring-ring focus-visible:ring-3',
                   'lg:hover:bg-muted lg:w-full lg:px-2 lg:py-2',
                   active && 'lg:bg-primary-soft/60',
                 )}
