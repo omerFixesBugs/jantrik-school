@@ -46,7 +46,10 @@ export class InstituteProvisioning {
     private readonly access: TenantAccessService,
   ) {}
 
-  /** A new TRIAL institute with an OWNER invitation (14 days). 409 SLUG_TAKEN on a clash. */
+  /**
+   * A new TRIAL institute with an OWNER invitation (14 days) and its setup wizard (part 5).
+   * 409 SLUG_TAKEN on a clash.
+   */
   async create(input: NewInstitute, platformAdminId: string): Promise<{ tenantId: string }> {
     try {
       const tenant = await provisionTenant(
@@ -65,6 +68,7 @@ export class InstituteProvisioning {
         },
         async (tx, { id: tenantId }) => {
           await this.inviteOwnerTx(tx, tenantId, input.owner);
+          await tx.onboardingProgress.create({ data: { tenantId }, select: { id: true } });
           await tx.auditLog.create({
             data: {
               tenantId,

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { addMonths, todayIn, toBanglaDigits } from '@jantrik/shared';
 import { DEMO, otpLoginWithBanglaDigits, totpNow } from './helpers';
 import { findLayoutProblems } from './layout-check';
@@ -17,9 +17,11 @@ async function expectClean(page: Page, where: string) {
 // (set up with a QR code on the first sign-in), 10 backup codes shown once, its own shell.
 test.describe.serial('platform sign-in', () => {
   // Sign-in plus the institute flows (and an owner's OTP sign-in): longer than one screen.
-  test.describe.configure({ timeout: 120_000 });
+  test.describe.configure({ timeout: 150_000 });
   let secret = '';
   let institutePath = '';
+  /** The new owner's signed-in browser state, for the rest of the setup wizard (part 5). */
+  let ownerState: Awaited<ReturnType<BrowserContext['storageState']>> | undefined;
 
   const contextOptions = (baseURL: string | undefined) => ({
     baseURL,
@@ -134,7 +136,7 @@ test.describe.serial('platform sign-in', () => {
     await expect(page.getByTestId('owner-row')).toContainText('Nasima Akter');
     await expectClean(page, 'institute detail 1440');
 
-    // The owner signs in with an OTP (360 px, Bangla), accepts and is in.
+    // The owner signs in with an OTP (360 px, Bangla), accepts and lands in the setup wizard.
     const ownerContext = await browser.newContext({
       ...contextOptions(baseURL),
       viewport: { width: 360, height: 780 },
@@ -149,8 +151,38 @@ test.describe.serial('platform sign-in', () => {
       `${NEW_INSTITUTE} আপনাকে প্রতিষ্ঠান প্রধান হিসেবে যুক্ত করেছে।`,
     );
     await invitation.getByTestId('invitation-accept').tap();
-    await expect(ownerPage).toHaveURL(/\/dashboard$/);
+    await expect(ownerPage).toHaveURL(/\/setup\/welcome$/);
     await expect(ownerPage.getByTestId('institute-name')).toHaveText(NEW_INSTITUTE);
+
+    // Part 5: step 1, the academic year made from the platform's dates: right, next.
+    await expect(ownerPage.getByTestId('setup-wizard')).toContainText(
+      `${NEW_INSTITUTE} সাজিয়ে নিন`,
+    );
+    await expect(ownerPage.getByTestId('wizard-step-year')).toContainText('ধাপ ১ / ৬');
+    await expect(ownerPage.getByTestId('wizard-year-name')).toBeVisible();
+    await expectClean(ownerPage, 'wizard year 360');
+    await ownerPage.getByTestId('wizard-done').tap();
+    // Step 2: the template's classes; a section for the first one, then next.
+    await expect(ownerPage).toHaveURL(/\/setup\/welcome\?step=classes$/);
+    const firstClass = ownerPage.getByTestId('wizard-class').first();
+    await expect(firstClass).toContainText('কোনো শাখা নেই');
+    await expectClean(ownerPage, 'wizard classes 360');
+    await firstClass.getByRole('button').tap();
+    const sectionDialog = ownerPage.getByTestId('section-dialog');
+    await sectionDialog.locator('#section-name').fill('ক');
+    await expectClean(ownerPage, 'wizard section dialog 360');
+    await sectionDialog.getByRole('button', { name: 'সংরক্ষণ করুন' }).tap();
+    await expect(sectionDialog).toHaveCount(0);
+    await expect(firstClass).not.toContainText('কোনো শাখা নেই');
+    await expect(firstClass.getByText('ক', { exact: true })).toBeVisible();
+    await ownerPage.getByTestId('wizard-done').tap();
+    await expect(ownerPage.getByTestId('wizard-step-shifts')).toBeVisible();
+    await expect(ownerPage.getByTestId('wizard-nav-classes')).toHaveAccessibleName(/হয়েছে/);
+    // Later: the dashboard offers to continue where it stopped.
+    await ownerPage.getByTestId('wizard-later').tap();
+    await expect(ownerPage).toHaveURL(/\/dashboard$/);
+    await expect(ownerPage.getByTestId('continue-setup')).toHaveText(/সেটআপ চালিয়ে যান/);
+    await expectClean(ownerPage, 'dashboard continue setup 360');
     await page.reload();
     await expect(page.getByTestId('owner-row').getByTestId('owner-status')).toHaveText('Owner');
 
@@ -247,7 +279,89 @@ test.describe.serial('platform sign-in', () => {
     await page.goto('/platform/settings');
     await expect(page.getByTestId('sms-cost')).toHaveValue('0.25');
     await expectClean(page, 'settings 360 bn');
+    ownerState = await ownerContext.storageState();
     await ownerContext.close();
+    await context.close();
+  });
+
+  test('the new owner finishes the setup wizard at 1440 px (English)', async ({
+    browser,
+    baseURL,
+  }) => {
+    const context = await browser.newContext({
+      ...contextOptions(baseURL),
+      viewport: { width: 1440, height: 900 },
+      storageState: ownerState,
+    });
+    await context.addCookies([{ name: 'NEXT_LOCALE', value: 'en', url: baseURL! }]);
+    const page = await context.newPage();
+    await page.goto('/dashboard');
+    await expect(page.getByTestId('institute-name')).toHaveText(NEW_INSTITUTE);
+    await expectClean(page, 'dashboard continue setup 1440');
+    await page.getByTestId('continue-setup').click();
+    // Back at the first open step; the steps so far are marked.
+    await expect(page).toHaveURL(/\/setup\/welcome\?step=shifts$/);
+    await expect(page.getByTestId('wizard-nav-year')).toHaveAccessibleName(/\(done\)/);
+    await expect(page.getByTestId('wizard-step-shifts')).toContainText('Step 3 of 6');
+    await expectClean(page, 'wizard shifts 1440');
+
+    // Step 3: a morning shift.
+    await page.getByTestId('wizard-add-shift').click();
+    const shiftDialog = page.getByTestId('shift-dialog');
+    await shiftDialog.locator('#shift-bn').fill('প্রভাতি');
+    await shiftDialog.locator('#shift-en').fill('Morning');
+    await shiftDialog.locator('#shift-start').fill('07:00');
+    await shiftDialog.locator('#shift-end').fill('12:00');
+    await shiftDialog.getByRole('button', { name: 'Save' }).click();
+    await expect(shiftDialog).toHaveCount(0);
+    await expect(page.getByTestId('wizard-shifts')).toContainText('Morning');
+    await page.getByTestId('wizard-done').click();
+
+    // Step 4: a teacher, invited by phone.
+    await expect(page.getByTestId('wizard-step-teachers')).toBeVisible();
+    await page.getByTestId('wizard-add-staff').click();
+    const staffDialog = page.getByTestId('add-staff-dialog');
+    await staffDialog.locator('#staff-phone').fill('01711000778');
+    await staffDialog.locator('#staff-name').fill('Rafiq Hasan');
+    await staffDialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(staffDialog).toHaveCount(0);
+    const staff = page.getByTestId('wizard-staff');
+    await expect(staff).toContainText('Rafiq Hasan');
+    await expect(staff).toContainText('Invited, waiting for an answer');
+    await expectClean(page, 'wizard teachers 1440');
+    await page.getByTestId('wizard-done').click();
+
+    // Step 5: the import page keeps a way back to the wizard; this step is skipped.
+    await expect(page.getByTestId('wizard-step-students')).toContainText('Added so far: 0');
+    await page.getByTestId('wizard-import').click();
+    await expect(page).toHaveURL(/\/students\/import\?from=setup$/);
+    await expect(page.getByTestId('import-page')).toBeVisible();
+    await page.getByTestId('back-to-setup').click();
+    await expect(page).toHaveURL(/\/setup\/welcome\?step=students$/);
+    await page.getByTestId('wizard-skip').click();
+
+    // Step 6: attendance every period, absent SMS on; finishing saves both.
+    await expect(page.getByTestId('wizard-step-attendance')).toBeVisible();
+    await page.getByRole('radio', { name: 'Every period or class' }).check();
+    await page
+      .getByRole('switch', { name: 'Send guardians an SMS when a student is absent' })
+      .check();
+    await expectClean(page, 'wizard attendance 1440');
+    await page.getByTestId('wizard-done').click();
+    await expect(page.getByTestId('wizard-finished')).toContainText('All set');
+    await expectClean(page, 'wizard finished 1440');
+    await page.getByRole('link', { name: 'Go to the dashboard' }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await expect(page.getByTestId('billing-notice')).toBeVisible();
+    await expect(page.getByTestId('continue-setup')).toHaveCount(0);
+    // Finished: the wizard's page goes to the dashboard; the settings were saved.
+    await page.goto('/setup/welcome');
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await page.goto('/attendance/settings');
+    await expect(page.getByRole('radio', { name: 'Every period or class' })).toBeChecked();
+    await expect(
+      page.getByRole('switch', { name: 'Send guardians an SMS when a student is absent' }),
+    ).toBeChecked();
     await context.close();
   });
 });

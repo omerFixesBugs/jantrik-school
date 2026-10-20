@@ -31,6 +31,7 @@ describe('schema safety net', () => {
         'platform_invoices',
         'platform_invoice_lines',
         'platform_payments',
+        'onboarding_progress',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

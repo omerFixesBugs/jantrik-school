@@ -282,3 +282,10 @@ There is no UPDATE or DELETE path on the audit log.
 
 - The rate is stored in paisa (৳0.30 = 30). An SMS gets its cost when it is sent (tenant SMS: when marked SENT; login codes: the SENT log row), so held, cancelled and failed SMS cost nothing and a rate change keeps past costs.
 - Usage counts only SENT SMS (the institute list's "SMS this month" still counts queued ones too, as before).
+
+## Part 5 notes
+
+- The owner lands in the wizard after accepting the OWNER invitation in the institute picker. Accepting from the dashboard's invitation banner (someone already signed in elsewhere) does not switch institutes; that owner finds "Continue setup" on the new institute's dashboard.
+- OWNER and ADMIN may both use the wizard (the API and the dashboard card); the landing after accepting is the owner's.
+- Finishing marks the steps not answered as skipped. A finished wizard cannot be reopened; every step's work stays available in Institute setup, Staff, Import and Attendance settings.
+- Step 1 confirms or edits the year the platform created; step 2 lists the template's active classes with a per-class "add section"; step 5 links to the import (no single-student form inside the wizard).

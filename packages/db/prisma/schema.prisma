@@ -429,6 +429,7 @@ model Tenant {
   studentImports      StudentImport[]
   staffProfiles       StaffProfile[]
   subscription        TenantSubscription?
+  onboarding          OnboardingProgress?
   invoices            PlatformInvoice[]
   invoiceLines        PlatformInvoiceLine[]
   payments            PlatformPayment[]
@@ -1331,6 +1332,25 @@ model TenantSubscription {
 
   @@unique([tenantId, id])
   @@map("tenant_subscriptions")
+}
+
+/// The new owner's setup wizard (step 8, part 5): one row per institute the platform creates.
+/// Institutes without one (made before the wizard, the demo ones) never see the wizard.
+model OnboardingProgress {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  tenantId    String    @unique @map("tenant_id") @db.Uuid
+  /// Step key (year, classes, shifts, teachers, students, attendance) to 'done' or 'skipped'.
+  /// A missing key: not answered yet.
+  steps       Json      @default("{}") @db.JsonB
+  /// Set when the wizard is finished; the dashboard then stops offering it.
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("onboarding_progress")
 }
 
 enum InvoiceStatus {

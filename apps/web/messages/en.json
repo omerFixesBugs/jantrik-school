@@ -149,7 +149,8 @@
     "inviteAccepted": "Accepted. Switch institute to go there.",
     "billingNoticeOne": "Jantrik’s invoice of {amount} was due on {date}.",
     "billingNoticeMany": "{count} Jantrik invoices ({amount} in all) are overdue, the first since {date}.",
-    "billingNoticeText": "Please contact Jantrik to pay. If you have already paid, ignore this; it updates when the payment is recorded."
+    "billingNoticeText": "Please contact Jantrik to pay. If you have already paid, ignore this; it updates when the payment is recorded.",
+    "continueSetup": "Continue setup"
   },
   "students": {
     "title": "{student} list",
@@ -837,7 +838,8 @@
     "importAnyway": "Import anyway",
     "importAnywayHint": "Turn on if this is a different student; otherwise the row is skipped.",
     "runBodyDuplicates": "{count} possible duplicate rows are skipped too.",
-    "errorNotImportable": "This row can't be added (for example, its section is full); it stays skipped."
+    "errorNotImportable": "This row can't be added (for example, its section is full); it stays skipped.",
+    "backToSetup": "Back to setup"
   },
   "platform": {
     "badge": "Platform",
@@ -1216,5 +1218,48 @@
     "updatedBy": "Last changed by {name}, {date}",
     "updatedDefault": "The starting rate; not changed yet.",
     "errorCost": "An amount in taka from ৳0 to ৳100, e.g. 0.30"
+  },
+  "onboarding": {
+    "title": "Set up {institute}",
+    "subtitle": "A few steps to get started. Skip any of them; you can come back from the dashboard.",
+    "later": "Continue later",
+    "stepsLabel": "Setup steps",
+    "progress": "{done} of {total} steps answered",
+    "stepOf": "Step {n} of {total}",
+    "stateDone": "done",
+    "stateSkipped": "skipped",
+    "skip": "Skip this step",
+    "next": "Done, next step",
+    "finish": "Finish setup",
+    "errorFinished": "Setup is already finished.",
+    "yearTitle": "Check the {year}",
+    "yearText": "It was made from the dates Jantrik was given. Change the name or the dates if they are not right.",
+    "yearRange": "{start} to {end}",
+    "yearEdit": "Change",
+    "yearNone": "There is no {year} yet.",
+    "yearAdd": "Add the {year}",
+    "classesTitle": "{classLevel} and {section} lists",
+    "classesText": "The {classLevel} list comes from your institute type. Add the {section} each one has (for example A and B).",
+    "noSections": "No {section} yet",
+    "addSection": "Add {section}",
+    "shiftsTitle": "{shift} (if you have more than one)",
+    "shiftsText": "If you run, say, a morning and a day {shift}, add them here. With just one, skip this step.",
+    "noShifts": "No {shift} added.",
+    "addShift": "Add a {shift}",
+    "teachersTitle": "Invite teachers",
+    "teachersText": "Add teachers by mobile number. No SMS is sent: they see the invitation when they log in with OTP on that number.",
+    "noTeachers": "Nobody else has been added yet.",
+    "addTeacher": "Add a teacher",
+    "studentsTitle": "Bring in the {student} list",
+    "studentsText": "Upload an Excel or CSV file. Every row is checked before anything is saved. You can also add a {student} at a time later.",
+    "studentsCount": "Added so far: {count}",
+    "importButton": "Import from a file",
+    "attendanceTitle": "Attendance",
+    "attendanceText": "How often do teachers take attendance, and should guardians get an SMS when a {student} is absent?",
+    "attendanceMore": "Off days, holidays and the SMS text are in the attendance settings.",
+    "doneTitle": "All set",
+    "doneText": "You can change any of this later in Institute setup, Staff and the attendance settings.",
+    "toDashboard": "Go to the dashboard",
+    "skipAndFinish": "Skip and finish"
   }
 }

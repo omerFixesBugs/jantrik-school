@@ -99,6 +99,11 @@ transaction sets `app.platform_session` (the session token's hash);
   `jantrik_app` may SELECT only `sms_cost_per_segment_paisa` (it copies the rate onto each SMS when
   sent: `sms_logs.cost_paisa`, `platform_sms_logs.cost_paisa`); only `platform_set_sms_cost`
   changes it. Read it without a `WHERE id = 1`: the app has no right to the `id` column.
+- **`onboarding_progress`** (part 5, tenant table, at most one row per institute): the new
+  owner's setup wizard. Provisioning writes it for institutes the platform creates; `jantrik_app`
+  may SELECT, INSERT and UPDATE its own row (no DELETE). `steps` is a jsonb object whose keys are
+  the six step names and whose values are `'done'` or `'skipped'` (CHECK
+  `onboarding_progress_steps`).
 - **`jantrik_platform` reads institute tables by column** (counts, owner names and phones), never
   a student's, guardian's or SMS's content; see [platform.md](platform.md).
 - Tests that suspend an institute or switch a module go through the platform API
@@ -287,6 +292,11 @@ Without either helper, queries run with no tenant and return nothing. That is in
   Create per-tenant rows in `provisionTenant()`, and give existing tenants defaults in code
   (e.g. `AttendanceSettingsService.load()` falls back to the institute type's defaults until
   an admin saves the settings).
+- **A new CHECK on an existing tenant table is checked against every row** (RLS does not apply
+  to that scan), so it fails on rows that break it. When it failed here (part 5, on the test
+  database), the statements before the error had stayed applied: the old constraint was dropped
+  and the new one missing. Use `DROP CONSTRAINT IF EXISTS` when replacing a constraint, and fix the
+  rows before marking the migration rolled back (`prisma migrate resolve --rolled-back`).
 - **Attendance dates** are `date` columns holding the calendar day in the tenant's timezone
   (`tenants.timezone`). "Today" is always computed on the server (`todayIn(timezone)` in
   `@jantrik/shared`, also in `GET /me/context`), never taken from the device.

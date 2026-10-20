@@ -117,9 +117,10 @@ API returns nothing about an institute's students, guardians or attendance beyon
   - Institute metadata: `tenants`, `institute_types`, `tenant_modules`, `tenant_subscriptions`.
   - Owner names and phones: `staff_profiles (name, name_bn, phone)` and
     `memberships (role, status, invited_at, ...)`.
-  - For counts only: `students (status, deleted_at)`, `sms_logs (status, segments, local_date,
-created_at, cost_paisa)`, `platform_sms_logs (purpose, status, segments, cost_paisa,
-created_at)`, `student_imports (status, created_at)`, `attendance_sessions (updated_at)`,
+  - For counts only: `students (status, deleted_at)`,
+    `sms_logs (status, segments, local_date, created_at, cost_paisa)`,
+    `platform_sms_logs (purpose, status, segments, cost_paisa, created_at)`,
+    `student_imports (status, created_at)`, `attendance_sessions (updated_at)`,
     `audit_logs (created_at)`.
   - Its own: `platform_settings`, the billing tables (`platform_invoices`, `_lines`,
     `_payments`).
@@ -232,6 +233,43 @@ created_at)`, `student_imports (status, created_at)`, `attendance_sessions (upda
   page says so). Months are the institute's local date for its SMS and Dhaka time for login codes.
 - **The institute page** shows the month's SMS cost next to the SMS count.
 - `jantrik_platform` reads `cost_paisa`, never a phone number or an SMS text (column grants).
+
+## New owner onboarding (part 5)
+
+- **Which institutes:** only those the platform creates (decision 8). `InstituteProvisioning.create`
+  writes the institute's `onboarding_progress` row in the same transaction as the institute and
+  the owner invitation. Demo institutes and those made before part 5 have none, so they never see
+  the wizard and their "Getting started" card has no "Continue setup".
+  (The card itself now also hides once every step is done when the institute has no attendance
+  module; before, it never did.)
+- **The table** (tenant table: RLS, `jantrik_app` may SELECT, INSERT and UPDATE its own row, no
+  DELETE): `steps` maps `year`, `classes`, `shifts`, `teachers`, `students`, `attendance` to
+  `done` or `skipped` (a CHECK allows nothing else), and `completed_at`.
+- **API** (OWNER and ADMIN, CORE module):
+  - `GET /onboarding`: `wizard: false` without a row; otherwise the steps that apply (attendance
+    only with that module on), their answers, the next open step and `completedAt`.
+  - `PUT /onboarding/steps/:step {state}`: done or skipped; the latest answer wins. One SQL
+    statement merges it, so two tabs saving different steps both keep their answer. 422
+    `ONBOARDING_STEP_UNAVAILABLE` for attendance without that module, 409 `ONBOARDING_FINISHED`
+    once finished, 404 without a wizard.
+  - In the web, answering the last open step (done or skipped) finishes the wizard; its buttons say
+    "Finish setup" and "Skip and finish". Any other answer moves on to the next open step.
+  - `POST /onboarding/finish`: the steps not answered become skipped; audited
+    (`onboarding_progress`, UPDATE); finishing twice changes nothing.
+- **What a step creates** (the year's dates, sections, shifts, invitations, attendance settings)
+  goes through the existing endpoints, with their own checks and audit entries. The wizard only
+  records the answers.
+- **Web:** `/setup/welcome?step=…`.
+  - The owner lands there after accepting an OWNER invitation in the institute picker. Without an
+    open wizard the page goes on to the dashboard.
+  - The steps reuse the setup dialogs (`components/setup/year-dialog.tsx`, `section-dialog.tsx`,
+    `shift-dialog.tsx`) and the add-staff dialog (`components/staff/staff-kit.tsx`).
+  - Step 5 opens the import page with `?from=setup`, which keeps a "Back to setup" link through
+    the import's own steps. Step 6 saves the attendance mode and the absent SMS switch when they
+    changed (the other settings as they are).
+  - "Continue later" goes to the dashboard. Its "Getting started" card (`useSetupChecklist` in
+    `lib/setup-checklist.ts`) shows "Continue setup", which opens the next open step, until the
+    wizard is finished.
 
 ## What remains trusted
 
