@@ -132,9 +132,10 @@ test('every text style has one width per digit, and ১ is drawn whole', async (
 
   for (const [style, ws] of Object.entries(report.widths)) {
     const spread = Math.max(...ws) - Math.min(...ws);
-    // At 100 px: Noto's digits are all 59.2 px; Hind Siliguri's ranged from 48.7 to 68.7.
+    // At 100 px: Noto's digits are all 59.2 px (Linux rounds boxes to whole pixels: 59 or 60);
+    // Hind Siliguri's ranged from 48.7 to 68.7.
     expect(spread, `${style}: digit widths ${ws.map((w) => w.toFixed(1)).join(', ')}`).toBeLessThan(
-      1,
+      2,
     );
   }
   for (const [weight, s] of Object.entries(report.shapes)) {
