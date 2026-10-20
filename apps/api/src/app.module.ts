@@ -26,6 +26,9 @@ import { SetupModule } from './setup/setup.module.js';
 import { StaffModule } from './staff/staff.module.js';
 import { StudentsModule } from './students/students.module.js';
 import { TenancyModule } from './tenancy/tenancy.module.js';
+import { PlatformAuthGuard } from './platform/platform-auth.guard.js';
+import { PlatformContextInterceptor } from './platform/platform-context.interceptor.js';
+import { PlatformModule } from './platform/platform.module.js';
 import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.js';
 
 @Module({
@@ -58,17 +61,21 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     StaffModule,
     ImportsModule,
     AttendanceModule,
+    PlatformModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },
     // Order matters: authenticate, check the page's tenant, rate-limit (per user if known),
     // then roles, then module.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // /platform/* (Jantrik's own admins): their own session cookie, never institute tokens.
+    { provide: APP_GUARD, useClass: PlatformAuthGuard },
     { provide: APP_GUARD, useClass: TenantHeaderGuard },
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: ModuleGuard },
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: PlatformContextInterceptor },
     { provide: APP_FILTER, useClass: PrismaErrorFilter },
   ],
 })

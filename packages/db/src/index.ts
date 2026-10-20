@@ -3,6 +3,9 @@ import { PrismaClient } from './generated/prisma/client.js';
 
 export { PrismaClient };
 export * from './generated/prisma/client.js';
+export * from './platform/context.js';
+export * from './platform/secrets.js';
+export * from './platform/totp.js';
 export * from './tenancy/context.js';
 export * from './tenancy/provision.js';
 export * from './tenancy/search.js';

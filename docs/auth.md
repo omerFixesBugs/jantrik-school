@@ -279,6 +279,17 @@ Demo staff accounts from `pnpm db:seed` use the password `Jantrik@2026` (develop
 seed refuses to run when `NODE_ENV=production`, and no API endpoint sets passwords). Demo
 guardians log in with OTP, e.g. `01811000101`.
 
+## Platform admins (Jantrik staff)
+
+The `/platform` area has its own login: a password, then an authenticator app (TOTP, with
+one-time backup codes), never SMS. Its own session is an httpOnly cookie `jantrik_ps` on
+`/platform`: 30 minutes idle, 8 hours at most. It has its own guard and audit log.
+
+- Institute tokens never work there, and the platform cookie never works on institute routes.
+- Platform admins are not `users`.
+
+See [platform.md](platform.md).
+
 ## Not built yet
 
 - Password set/reset endpoints

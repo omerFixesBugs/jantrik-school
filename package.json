@@ -20,6 +20,7 @@
     "db:studio": "pnpm --filter @jantrik/db db:studio",
     "db:seed": "pnpm --filter @jantrik/db db:seed",
     "db:reset": "pnpm --filter @jantrik/db db:reset",
+    "platform:admin": "pnpm --filter @jantrik/db platform:admin",
     "e2e": "pnpm --filter @jantrik/web e2e"
   },
   "devDependencies": {

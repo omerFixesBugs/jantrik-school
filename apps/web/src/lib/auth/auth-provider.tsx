@@ -35,8 +35,17 @@ const RETRY_DELAYS = [2_000, 4_000, 8_000, 15_000, 30_000];
 
 const AuthContext = createContext<AuthState | null>(null);
 
-/** One AuthClient per tab. Exposes the session and handles cross-tab events. */
-export function AuthProvider({ children }: { children: ReactNode }) {
+/**
+ * One AuthClient per tab. Exposes the session and handles cross-tab events. `inactive` (the
+ * /platform area, which has its own login): no institute session is restored there.
+ */
+export function AuthProvider({
+  children,
+  inactive = false,
+}: {
+  children: ReactNode;
+  inactive?: boolean;
+}) {
   const queryClient = useQueryClient();
   // Browser only. During server rendering no effect or event handler runs, so the client is
   // never used there.
@@ -45,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const [status, setStatus] = useState<Status>(() =>
-    client?.getSession() ? 'signed-in' : 'loading',
+    client?.getSession() ? 'signed-in' : inactive ? 'signed-out' : 'loading',
   );
   const [session, setSession] = useState<Session | null>(() => client?.getSession() ?? null);
   const [changedTo, setChangedTo] = useState<AuthTenant | null | undefined>(undefined);
@@ -74,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [attempt, setAttempt] = useState(0);
   const pending = status === 'loading' || status === 'unreachable';
   useEffect(() => {
-    if (!pending) return;
+    if (!pending || inactive) return;
     let cancelled = false;
     client
       .bootstrap()
@@ -90,7 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
     // `attempt` re-runs the restore; `pending` stops it once it succeeded.
-  }, [client, attempt, pending]);
+  }, [client, attempt, pending, inactive]);
 
   useEffect(() => {
     if (status !== 'unreachable') return;

@@ -3,6 +3,7 @@ import { envSchema } from './env.js';
 
 const base = {
   DATABASE_URL: 'postgresql://x@localhost/jantrik',
+  DATABASE_PLATFORM_URL: 'postgresql://p@localhost/jantrik',
   JWT_ACCESS_SECRET: 'x'.repeat(40),
   OTP_PEPPER: 'y'.repeat(40),
 };
@@ -20,10 +21,20 @@ describe('env: loosened settings never leave development', () => {
   });
 
   it('COOKIE_SECURE=false is refused in production', () => {
-    const result = envSchema.safeParse({ ...base, NODE_ENV: 'production', COOKIE_SECURE: 'false' });
+    const prod = { ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'k'.repeat(32) };
+    const result = envSchema.safeParse({ ...prod, COOKIE_SECURE: 'false' });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error)).toContain('COOKIE_SECURE');
-    expect(envSchema.safeParse({ ...base, NODE_ENV: 'production' }).success).toBe(true);
+    expect(envSchema.safeParse(prod).success).toBe(true);
+  });
+
+  it('PLATFORM_TOTP_KEY is required in production only', () => {
+    const result = envSchema.safeParse({ ...base, NODE_ENV: 'production' });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error)).toContain('PLATFORM_TOTP_KEY');
+    expect(envSchema.safeParse({ ...base, NODE_ENV: 'development' }).success).toBe(true);
+    const short = envSchema.safeParse({ ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'x' });
+    expect(short.success).toBe(false);
   });
 
   it('DEV_LAN is off by default', () => {

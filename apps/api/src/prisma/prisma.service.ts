@@ -3,7 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { createPrismaClient, type PrismaClient } from '@jantrik/db';
 import type { Env } from '../config/env.js';
 
-/** Owns the single Prisma client for the API process. */
+/**
+ * Owns the API's Prisma client (DATABASE_URL, role jantrik_app). The platform module has its own
+ * login: PlatformPrismaService (src/platform).
+ */
 @Injectable()
 export class PrismaService implements OnModuleDestroy {
   readonly client: PrismaClient;

@@ -1162,3 +1162,106 @@ model RefreshToken {
   @@index([userId])
   @@map("refresh_tokens")
 }
+
+// ─────────────────────────── Platform (Jantrik's own staff) ───────────────────────────
+// Global tables, not tenant data. jantrik_app has no grants on them: the API reaches them only
+// through SECURITY DEFINER functions owned by jantrik_platform (see docs/platform.md).
+
+enum PlatformSessionRevokeReason {
+  LOGOUT
+  DISABLED
+  RESET_2FA
+
+  @@map("platform_session_revoke_reason")
+}
+
+enum PlatformActor {
+  ADMIN
+  CLI
+
+  @@map("platform_actor")
+}
+
+/// A Jantrik staff member who runs the platform. Never a `users` row.
+model PlatformAdmin {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  name          String
+  /// E.164 (+8801…).
+  phone         String    @unique
+  email         String?   @unique
+  passwordHash  String    @map("password_hash")
+  /// TOTP secret, AES-256-GCM encrypted with PLATFORM_TOTP_KEY; NULL until enrolled.
+  totpSecret    String?   @map("totp_secret")
+  totpEnabledAt DateTime? @map("totp_enabled_at") @db.Timestamptz(3)
+  /// Until when the authenticator may be set up (first login, or after reset-2fa); NULL: closed.
+  totpEnrolBy   DateTime? @map("totp_enrol_by") @db.Timestamptz(3)
+  /// Last accepted 30 s time step (a code is never accepted twice).
+  totpLastStep  BigInt?   @map("totp_last_step")
+  isActive      Boolean   @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  backupCodes PlatformAdminBackupCode[]
+  sessions    PlatformSession[]
+  auditLogs   PlatformAuditLog[]
+
+  @@map("platform_admins")
+}
+
+/// One-time 2FA backup codes (HMAC hashes, never the codes).
+model PlatformAdminBackupCode {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  adminId   String    @map("admin_id") @db.Uuid
+  codeHash  String    @map("code_hash") @db.Char(64)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@unique([adminId, codeHash])
+  @@map("platform_admin_backup_codes")
+}
+
+/// A signed-in platform admin: an opaque cookie token (only its hash here). Short: idle and
+/// absolute expiry, checked on every request.
+model PlatformSession {
+  id            String                       @id @default(uuid(7)) @db.Uuid
+  adminId       String                       @map("admin_id") @db.Uuid
+  tokenHash     String                       @unique @map("token_hash") @db.Char(64)
+  ip            String?
+  userAgent     String?                      @map("user_agent")
+  lastUsedAt    DateTime                     @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  idleExpiresAt DateTime                     @map("idle_expires_at") @db.Timestamptz(3)
+  expiresAt     DateTime                     @map("expires_at") @db.Timestamptz(3)
+  revokedAt     DateTime?                    @map("revoked_at") @db.Timestamptz(3)
+  revokeReason  PlatformSessionRevokeReason? @map("revoke_reason")
+  createdAt     DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@map("platform_sessions")
+}
+
+/// Everything platform admins (and the CLI) do. Append-only.
+model PlatformAuditLog {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  /// NULL for CLI actions.
+  adminId        String?       @map("admin_id") @db.Uuid
+  actor          PlatformActor
+  action         String
+  /// The institute acted on, if any (not `tenant_id`: this is not a tenant table).
+  targetTenantId String?       @map("target_tenant_id") @db.Uuid
+  entity         String?
+  entityId       String?       @map("entity_id")
+  details        Json?         @db.JsonB
+  ip             String?
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  admin PlatformAdmin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([targetTenantId, createdAt(sort: Desc)])
+  @@map("platform_audit_logs")
+}

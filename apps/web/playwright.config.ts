@@ -14,6 +14,18 @@ const required = (name: string): string => {
 
 export const E2E_REDIS_URL = process.env['REDIS_URL_E2E'] ?? 'redis://localhost:6379/2';
 
+/**
+ * The platform login (user and password of DATABASE_PLATFORM_URL) on the e2e database: server,
+ * port and database always come from DATABASE_URL_E2E.
+ */
+const platformUrl = (): string => {
+  const url = new URL(required('DATABASE_URL_E2E'));
+  const login = new URL(required('DATABASE_PLATFORM_URL'));
+  url.username = login.username;
+  url.password = login.password;
+  return url.toString();
+};
+
 export default defineConfig({
   testDir: './e2e',
   globalSetup: './e2e/global-setup.ts',
@@ -44,6 +56,7 @@ export default defineConfig({
         NODE_ENV: 'test',
         API_PORT: '4000',
         DATABASE_URL: required('DATABASE_URL_E2E'),
+        DATABASE_PLATFORM_URL: platformUrl(),
         REDIS_URL: E2E_REDIS_URL,
         QUEUE_PREFIX: 'jantrik-e2e',
         SMS_PROVIDER: 'outbox',

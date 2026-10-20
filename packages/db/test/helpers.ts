@@ -8,7 +8,7 @@ import {
   type ProvisionTenantInput,
   type Tenant,
 } from '../src/index.js';
-import { APP_URL, OWNER_URL } from './env.js';
+import { APP_URL, OWNER_URL, PLATFORM_URL } from './env.js';
 
 export const appClient = (): PrismaClient => createPrismaClient(APP_URL);
 
@@ -16,6 +16,8 @@ export const appClient = (): PrismaClient => createPrismaClient(APP_URL);
 export const randomPhone = (): string =>
   `+88017${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
 export const ownerClient = (): PrismaClient => createPrismaClient(OWNER_URL);
+/** The API platform module's role: the only one that may run the platform_* functions. */
+export const platformClient = (): PrismaClient => createPrismaClient(PLATFORM_URL);
 
 /** App-role client with a single pooled connection, to test connection reuse. */
 export const singleConnectionAppClient = (): PrismaClient =>

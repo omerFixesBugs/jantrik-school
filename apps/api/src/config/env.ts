@@ -20,6 +20,11 @@ export const envSchema = z
     /** Express "trust proxy": false, true, a hop count, or a list of subnets. */
     TRUST_PROXY: z.string().default('false'),
     DATABASE_URL: z.string().min(1),
+    /**
+     * The platform module's own login (role jantrik_platform_app): the only role that may run the
+     * platform_* functions. Same database as DATABASE_URL.
+     */
+    DATABASE_PLATFORM_URL: z.string().min(1),
     REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
     /** BullMQ key prefix, so several environments can share one Redis. */
     QUEUE_PREFIX: z.string().min(1).default('jantrik'),
@@ -27,6 +32,15 @@ export const envSchema = z
     JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),
     /** HMAC key for OTP codes stored in Redis. */
     OTP_PEPPER: z.string().min(32, 'OTP_PEPPER must be at least 32 characters'),
+    /**
+     * Encrypts platform admins' TOTP secrets and keys their backup-code hashes. Required in
+     * production; elsewhere one is derived from OTP_PEPPER when unset. Changing it invalidates
+     * every enrolment (re-enrol through `pnpm platform:admin reset-2fa`).
+     */
+    PLATFORM_TOTP_KEY: z
+      .string()
+      .min(32, 'PLATFORM_TOTP_KEY must be at least 32 characters')
+      .optional(),
     /** Set the refresh cookie's Secure flag. Browsers accept Secure cookies on http://localhost. */
     COOKIE_SECURE: z.stringbool().default(true),
     /**
@@ -61,6 +75,13 @@ export const envSchema = z
         code: 'custom',
         path: ['DEV_LAN'],
         message: 'DEV_LAN is for NODE_ENV=development only',
+      });
+    }
+    if (!env.PLATFORM_TOTP_KEY && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PLATFORM_TOTP_KEY'],
+        message: 'PLATFORM_TOTP_KEY is required in production',
       });
     }
     if (!env.COOKIE_SECURE && env.NODE_ENV === 'production') {

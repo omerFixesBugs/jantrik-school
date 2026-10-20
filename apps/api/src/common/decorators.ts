@@ -28,6 +28,14 @@ export const CurrentUser = createParamDecorator(
 
 export const USER_SCOPED = 'jantrik:userScoped';
 
+export const PLATFORM = 'jantrik:platform';
+
+/**
+ * A platform route (Jantrik's own admins, /platform/*): the institute token guards skip it and
+ * PlatformAuthGuard takes over. `login`: no session needed yet (the two login steps).
+ */
+export const PlatformRoute = (mode: 'session' | 'login' = 'session') => SetMetadata(PLATFORM, mode);
+
 /**
  * Run the request transaction with the user context only, ignoring the token's tenant.
  * For account-level routes (/auth/*) that must keep working even if the tenant is suspended.

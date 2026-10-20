@@ -18,11 +18,18 @@ import type { Env } from '../config/env.js';
 import { RateLimiter } from '../redis/rate-limiter.service.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
-import { IS_PUBLIC, NO_RATE_LIMIT, REQUIRED_MODULE, ROLES, USER_SCOPED } from './decorators.js';
-import { RequestContext, type Principal } from './request-context.js';
+import {
+  IS_PUBLIC,
+  NO_RATE_LIMIT,
+  PLATFORM,
+  REQUIRED_MODULE,
+  ROLES,
+  USER_SCOPED,
+} from './decorators.js';
+import { RequestContext, type PlatformPrincipal, type Principal } from './request-context.js';
 import { revokedSessionKey } from './revocation.js';
 
-type AuthedRequest = Request & { principal?: Principal };
+type AuthedRequest = Request & { principal?: Principal; platform?: PlatformPrincipal };
 
 /** Verifies the access token (unless @Public) and rejects revoked sessions. */
 @Injectable()
@@ -35,9 +42,10 @@ export class JwtAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
-    if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [ctx.getHandler(), ctx.getClass()])) {
-      return true;
-    }
+    const targets = [ctx.getHandler(), ctx.getClass()];
+    // Platform routes have their own guard (PlatformAuthGuard); institute tokens never count.
+    if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, targets)) return true;
+    if (this.reflector.getAllAndOverride<string>(PLATFORM, targets)) return true;
     const req = ctx.switchToHttp().getRequest<AuthedRequest>();
     const header = req.headers.authorization;
     const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
@@ -72,6 +80,7 @@ export class TenantHeaderGuard implements CanActivate {
     const targets = [ctx.getHandler(), ctx.getClass()];
     if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, targets)) return true;
     if (this.reflector.getAllAndOverride<boolean>(USER_SCOPED, targets)) return true;
+    if (this.reflector.getAllAndOverride<string>(PLATFORM, targets)) return true;
     const req = ctx.switchToHttp().getRequest<AuthedRequest>();
     const expected = req.get(TENANT_HEADER);
     if (expected === undefined) return true;
@@ -102,6 +111,14 @@ export class RateLimitGuard implements CanActivate {
       return true;
     }
     const req = ctx.switchToHttp().getRequest<AuthedRequest>();
+    if (req.platform) {
+      await this.limiter.consume({
+        key: `req-platform:${req.platform.adminId}`,
+        limit: this.config.get('RATE_LIMIT_USER_PER_MIN', { infer: true }),
+        windowSec: 60,
+      });
+      return true;
+    }
     await this.limiter.consume(
       req.principal
         ? {

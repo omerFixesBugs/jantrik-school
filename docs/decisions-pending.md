@@ -57,3 +57,32 @@ first review) or _Changed_ (done differently, as described).
 22. **Possible duplicates in an import.** _Changed after review:_ rows with a student ID or birth registration number that is already here are still skipped as "already exists". Other rows are flagged **possible duplicate** when the name (Bangla or English; case, spaces and dots ignored), the class and a guardian phone match an active student of this year, or an earlier row of the same file. They are skipped by default; per row the admin can choose **Import anyway** (`PUT /student-imports/:id/rows/:row/duplicate`, audited, kept in `student_imports.duplicate_overrides`; a new column mapping clears the choices). The preview, the counts, a "Possible duplicates" filter and the report show who the row looks like (the matched student's ID and name stay in the import's results as history). Only rows without errors count as earlier rows; an imported-anyway duplicate takes a seat in its section like any other row.
 23. **Import data retention.** _Changed after review:_ raw rows (phones, birth registration numbers) are cleared when an import finishes or fails, after 7 days unfinished, or after a day stuck in a run, by a daily BullMQ job (`expire-imports`, 00:20 Asia/Dhaka, so at most a day after those limits) as well as lazily on upload and listing. Like the held-SMS job it never queries across institutes: uploads record the institute in a Redis sorted set (`imports:raw-tenants`; before the rows are stored, so a Redis outage fails the upload rather than leaving rows unswept, and again after commit), and the job visits only those, one institute per RLS transaction (`TenantJobRunner`), forgetting an institute once none of its imports hold raw rows (and only if it did not upload again meanwhile). The per-row results (row number, status, name, the offending value) are kept as history.
     - To change: also drop names and values from results after N days.
+
+## Deployment requirements (step 11)
+
+Recorded during step 8; to be done when the production setup is built.
+
+1. **Platform UI on its own subdomain** (e.g. `platform.<domain>`), separate from the institute app.
+   - Why: today `/platform` shares an origin, and the CORS allowlist, with the institute app. The
+     platform session cookie is httpOnly, so an XSS bug in the institute app could not steal it,
+     but it could still use it from the victim's browser. A separate origin, plus an `Origin`
+     allowlist check in `PlatformAuthGuard`, removes that path.
+   - Also: the platform cookie keeps `Path=/platform`, `SameSite=Strict`, `Secure`.
+2. **Redis: `maxmemory-policy noeviction` and persistence (AOF, `appendfsync everysec` or
+   stricter).**
+   - Why: Redis holds state that must not silently disappear. The roles-cache versions (an evicted
+     or lost version could re-serve stale roles), revoked sessions, rate-limit counters, OTP
+     codes, platform login challenges, the held-SMS and raw-import sets, and the BullMQ queues.
+     Eviction or a restart without persistence weakens these.
+   - Local `docker-compose.yml` already runs Redis with `--appendonly yes` and the default
+     `noeviction`.
+3. **Database roles:** create `jantrik_auth`, `jantrik_search`, `jantrik_platform` and
+   `jantrik_platform_app` as in `docker/postgres/init/01-roles.sh`, with strong passwords, and set
+   `DATABASE_PLATFORM_URL` and `PLATFORM_TOTP_KEY` for the API.
+   - The roles must exist **before** the first `prisma migrate deploy`: migrations grant to them,
+     and migration `20261021020000` fails without `jantrik_platform_app`.
+   - Optional hardening: `REVOKE TEMPORARY ON DATABASE <db> FROM PUBLIC`. The definer functions
+     already ignore temporary tables (`pg_temp` last), but the app's own raw SQL (e.g. the
+     per-request tenant check) does not name its schema; a temporary table created through an SQL
+     injection would live on that pooled connection. Not done locally: the DB tests create
+     temporary tables on purpose.

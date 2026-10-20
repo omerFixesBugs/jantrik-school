@@ -17,3 +17,16 @@ function testUrl(name: 'DATABASE_URL_TEST' | 'DATABASE_MIGRATION_URL_TEST'): str
 export const APP_URL = testUrl('DATABASE_URL_TEST');
 /** Schema owner (migrations, templates). */
 export const OWNER_URL = testUrl('DATABASE_MIGRATION_URL_TEST');
+
+/**
+ * The API platform module's login (jantrik_platform_app: user and password of
+ * DATABASE_PLATFORM_URL) on the test database; server, port and database come from APP_URL.
+ */
+export const PLATFORM_URL = (() => {
+  const login = process.env['DATABASE_PLATFORM_URL'];
+  if (!login) throw new Error('DATABASE_PLATFORM_URL is not set (see .env.example)');
+  const url = new URL(APP_URL);
+  url.username = new URL(login).username;
+  url.password = new URL(login).password;
+  return url.toString();
+})();

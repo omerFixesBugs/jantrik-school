@@ -2,6 +2,8 @@ import path from 'node:path';
 import { config } from 'dotenv';
 import { createPrismaClient } from '../index.js';
 import { seedDemo } from './demo.js';
+import { seedPlatformAdmin } from './platform.js';
+import { maySeedPlatformAdmin } from './reset-guard.js';
 import { seedTemplates } from '../reference-data/templates.js';
 
 // Seeds global templates (as the owner role) and demo tenants (as the RLS-restricted app role).
@@ -29,6 +31,15 @@ try {
   await seedTemplates(owner);
   console.log('Seeding demo tenants...');
   await seedDemo(app);
+  if (maySeedPlatformAdmin(process.env)) {
+    console.log('Seeding the development platform admin...');
+    await seedPlatformAdmin(owner);
+  } else {
+    console.log(
+      'Skipping the development platform admin: not the local dev or e2e database. ' +
+        'Create platform admins with `pnpm platform:admin create` (docs/platform.md).',
+    );
+  }
   console.log('Done.');
 } finally {
   await Promise.all([owner.$disconnect(), app.$disconnect()]);

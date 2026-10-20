@@ -30,6 +30,28 @@ function parse(name: string, url: string | undefined): ResetTarget {
   };
 }
 
+/** Databases the seed may give the development platform admin (known password). */
+export const PLATFORM_ADMIN_SEED_DATABASES = [DEV_DATABASE, 'jantrik_e2e'] as const;
+
+/**
+ * The seed's development platform admin has a published password and an open enrolment window:
+ * whoever signs in first sets up the authenticator. So only on this machine's dev or e2e database
+ * (never a staging or demo server, even when NODE_ENV is not production).
+ */
+export function maySeedPlatformAdmin(env: Record<string, string | undefined>): boolean {
+  if (env['NODE_ENV'] === 'production') return false;
+  let target: ResetTarget;
+  try {
+    target = parse('DATABASE_MIGRATION_URL', env['DATABASE_MIGRATION_URL']);
+  } catch {
+    return false;
+  }
+  return (
+    LOCAL_HOSTS.has(target.host) &&
+    (PLATFORM_ADMIN_SEED_DATABASES as readonly string[]).includes(target.database)
+  );
+}
+
 /**
  * Throws unless every condition holds: not production, both connection URLs point at the same
  * database, the host is this machine, and the database is the dev database.
