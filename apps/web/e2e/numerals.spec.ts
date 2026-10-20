@@ -100,9 +100,12 @@ test('every text style has one width per digit, and ১ is drawn whole', async (
     }
     // Ink height of ১ against ৬ in the body face, at each weight the UI uses.
     const family = getComputedStyle(document.body).fontFamily;
+    // Load the real face only: next/font's "… Fallback" face is local("Arial"), which a Linux
+    // runner doesn't have, and a failed face makes fonts.load() reject.
+    const face = family.split(',')[0]!.trim();
     const shapes: Record<number, { one: number; six: number; same: boolean }> = {};
     for (const weight of [400, 500, 600]) {
-      await document.fonts.load(`${weight} 100px ${family}`, '১৬');
+      await document.fonts.load(`${weight} 100px ${face}`, '১৬');
       const ctx = document.createElement('canvas').getContext('2d')!;
       ctx.font = `${weight} 100px ${family}`;
       const ink = (s: string) => {
