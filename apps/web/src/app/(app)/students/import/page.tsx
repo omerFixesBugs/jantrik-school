@@ -14,6 +14,7 @@ import {
   type StudentImportSummary,
 } from '@jantrik/shared';
 import {
+  ArrowLeftIcon,
   CheckCircle2Icon,
   CircleAlertIcon,
   CopyIcon,
@@ -31,7 +32,7 @@ import { PageGate } from '@/components/page-gate';
 import { ConfirmDialog } from '@/components/setup/setup-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { ApiError } from '@/lib/api/errors';
@@ -98,10 +99,27 @@ function useImportError() {
   };
 }
 
+/** Links within the import page; opened from the setup wizard, they keep the way back. */
+function useImportHref() {
+  const params = useSearchParams();
+  const fromSetup = params.get('from') === 'setup';
+  return {
+    fromSetup,
+    href: (id?: string) => {
+      const q = new URLSearchParams();
+      if (id) q.set('id', id);
+      if (fromSetup) q.set('from', 'setup');
+      const query = q.toString();
+      return query ? `/students/import?${query}` : '/students/import';
+    },
+  };
+}
+
 function Importer() {
   const t = useTranslations('import');
   const params = useSearchParams();
   const router = useRouter();
+  const { fromSetup, href } = useImportHref();
   const { data: context } = useMeContext();
   const isAdmin = context?.roles.some((r) => r === 'OWNER' || r === 'ADMIN') ?? false;
   const id = params.get('id');
@@ -114,14 +132,26 @@ function Importer() {
   }
   return (
     <div className="flex flex-col gap-5" data-testid="import-page">
+      {fromSetup && (
+        <ButtonLink
+          variant="outline"
+          size="sm"
+          href="/setup/welcome?step=students"
+          className="self-start"
+          data-testid="back-to-setup"
+        >
+          <ArrowLeftIcon aria-hidden />
+          {t('backToSetup')}
+        </ButtonLink>
+      )}
       <h2 className="text-xl font-semibold sm:text-2xl">{t('title')}</h2>
       {id ? (
-        <ImportView key={id} id={id} onRestart={() => router.push('/students/import')} />
+        <ImportView key={id} id={id} onRestart={() => router.push(href())} />
       ) : (
         <>
           <Steps current={1} />
           <TemplateCard />
-          <UploadCard onUploaded={(s) => router.push(`/students/import?id=${s.id}`)} />
+          <UploadCard onUploaded={(s) => router.push(href(s.id))} />
           <RecentImports />
         </>
       )}
@@ -247,6 +277,7 @@ function RecentImports() {
   const t = useTranslations('import');
   const locale = useLocale() as Locale;
   const router = useRouter();
+  const { href } = useImportHref();
   const { client, session } = useAuth();
   const list = useQuery({
     queryKey: ['student-imports', session?.tenant?.id],
@@ -266,11 +297,7 @@ function RecentImports() {
                   ` · ${t('importedCount', { count: formatCount(i.counts.imported, locale) })}`}
               </span>
             </span>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => router.push(`/students/import?id=${i.id}`)}
-            >
+            <Button size="sm" variant="outline" onClick={() => router.push(href(i.id))}>
               {t('open')}
             </Button>
           </li>

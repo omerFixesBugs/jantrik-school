@@ -69,9 +69,15 @@ export default function SelectInstitutePage() {
         method: 'POST',
         json: accept ? { roles } : undefined,
       });
-      // Accepted: straight into the institute (access starts now).
-      if (accept) await switchAndReload(client, tenantId);
-      else {
+      // Accepted: straight into the institute (access starts now). A new owner starts with the
+      // setup wizard; where there is none (or it is finished) that page goes to the dashboard.
+      if (accept) {
+        await switchAndReload(
+          client,
+          tenantId,
+          roles.includes('OWNER') ? '/setup/welcome' : '/dashboard',
+        );
+      } else {
         await memberships.refetch();
         setSwitching(null);
       }
@@ -182,11 +188,14 @@ export default function SelectInstitutePage() {
   );
 }
 
-async function switchAndReload(client: AuthClient, tenantId: string): Promise<void> {
+async function switchAndReload(
+  client: AuthClient,
+  tenantId: string,
+  to: '/dashboard' | '/setup/welcome' = '/dashboard',
+): Promise<void> {
   await client.switchTenant(tenantId);
   // Full reload on purpose: no state from the previous institute may survive.
-  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-  window.location.assign('/dashboard');
+  window.location.assign(to);
 }
 
 /** "<institute> added you as <role>: accept / decline". Access starts only on accept. */

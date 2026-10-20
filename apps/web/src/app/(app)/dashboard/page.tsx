@@ -8,13 +8,11 @@ import {
   formatCount,
   formatDate,
   formatIdentifier,
-  type AttendanceSettings,
   type AttendanceTodaySummary,
   type SendHeldSmsResult,
   type SmsDailyStatus,
   type GuardianChild,
   type MeContext,
-  type StudentFilters,
   type StudentsPage,
 } from '@jantrik/shared';
 import {
@@ -37,6 +35,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
+import { BillingNoticeBanner } from '@/components/billing-notice';
 import { InvitationsBanner } from '@/components/invitations-banner';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -57,6 +56,7 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { classLevelName, displayName, displayUserName } from '@/lib/names';
 import { canSee, isStaff, navItem } from '@/lib/navigation';
+import { useSetupChecklist, wizardHref } from '@/lib/setup-checklist';
 import { cn } from '@/lib/utils';
 
 export default function DashboardPage() {
@@ -65,6 +65,7 @@ export default function DashboardPage() {
   return (
     <>
       <InvitationsBanner />
+      {context.roles.includes('OWNER') && <BillingNoticeBanner />}
       {isStaff(context.roles) ? (
         <StaffDashboard context={context} />
       ) : context.roles.includes('GUARDIAN') ? (
@@ -141,11 +142,6 @@ function StaffDashboard({ context }: { context: MeContext }) {
     queryFn: () => client.api<StudentsPage>('/students?limit=1'),
     enabled: canSeeStudents,
   });
-  const filters = useQuery({
-    queryKey: ['student-filters', tenantId],
-    queryFn: () => client.api<StudentFilters>('/students/filters'),
-    enabled: canSeeStudents && isAdmin,
-  });
 
   const canSeeAttendance = canSee(navItem('attendance'), context);
   const summary = useQuery({
@@ -154,11 +150,6 @@ function StaffDashboard({ context }: { context: MeContext }) {
     enabled: canSeeAttendance,
   });
   const attendanceAdmin = canSeeAttendance && isAdmin;
-  const attendanceSettings = useQuery({
-    queryKey: ['attendance-settings', tenantId],
-    queryFn: () => client.api<AttendanceSettings>('/attendance/settings'),
-    enabled: attendanceAdmin,
-  });
   // Attendance kept on this phone that the server doesn't have yet.
   const [unsent] = useState(() =>
     session?.tenant ? listDrafts(session.user.id, session.tenant.id).length : 0,
@@ -270,16 +261,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
           isAdmin && 'lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]',
         )}
       >
-        {isAdmin && (
-          <GettingStarted
-            context={context}
-            hasSections={Boolean(filters.data?.classLevels.some((c) => c.sections.length > 0))}
-            hasStudents={(total ?? 0) > 0}
-            hasAttendance={summary.data?.everTaken ?? false}
-            hasAbsentSms={attendanceSettings.data?.absentSmsEnabled ?? false}
-            loading={students.isPending || filters.isPending || attendanceSettings.isPending}
-          />
-        )}
+        {isAdmin && <GettingStarted context={context} />}
         <QuickActions context={context} wide={!isAdmin} />
       </div>
     </>
@@ -455,72 +437,11 @@ function QuickActions({ context, wide }: { context: MeContext; wide?: boolean })
 }
 
 /** The real setup sequence for a new institute, ticked from data the institute already has. */
-function GettingStarted({
-  context,
-  hasSections,
-  hasStudents,
-  hasAttendance,
-  hasAbsentSms,
-  loading,
-}: {
-  context: MeContext;
-  hasSections: boolean;
-  hasStudents: boolean;
-  hasAttendance: boolean;
-  hasAbsentSms: boolean;
-  loading: boolean;
-}) {
+function GettingStarted({ context }: { context: MeContext }) {
   const t = useTranslations('dashboard');
   const locale = useLocale() as Locale;
-  const label = useLabel();
-  const student = label('student', 'Student', { inText: true });
-  const classLevel = label('class_level', 'Class', { inText: true });
-  const section = label('section', 'Section', { inText: true });
-
-  const steps = [
-    { key: 'institute', done: true, title: t('stepInstitute'), text: t('stepInstituteText') },
-    {
-      key: 'year',
-      done: Boolean(context.academicYear),
-      title: t('stepYear', { label: label('academic_year', 'Academic Year', { inText: true }) }),
-      text: t('stepYearText'),
-      href: '/setup',
-    },
-    {
-      key: 'sections',
-      done: hasSections,
-      title: t('stepSections', { classLevel, section }),
-      text: t('stepSectionsText', { classLevel, section }),
-      href: '/setup/classes',
-    },
-    {
-      key: 'students',
-      done: hasStudents,
-      title: t('stepStudents', { student }),
-      text: t('stepStudentsText'),
-      href: '/students',
-    },
-    ...(context.modules.includes('ATTENDANCE')
-      ? [
-          {
-            key: 'attendance',
-            done: hasAttendance,
-            title: t('stepAttendance'),
-            text: t('stepAttendanceText'),
-            href: '/attendance',
-          },
-          {
-            key: 'sms',
-            done: hasAbsentSms,
-            title: t('stepSms'),
-            text: t('stepSmsText'),
-            href: '/attendance/settings#settings-sms',
-          },
-        ]
-      : []),
-  ];
-  const done = steps.filter((s) => s.done).length;
-  if (!loading && done === steps.length) return null;
+  const { steps, done, wizard, loading } = useSetupChecklist(context);
+  if (!loading && done === steps.length && !wizard) return null;
   const nextKey = steps.find((s) => !s.done)?.key;
 
   return (
@@ -543,6 +464,16 @@ function GettingStarted({
           <span id="getting-started">{t('checklistTitle')}</span>
         </SectionTitle>
         <p className="text-muted-foreground text-sm">{t('checklistText')}</p>
+        {wizard && (
+          <ButtonLink
+            href={wizardHref(wizard)}
+            className="mt-2 self-start"
+            data-testid="continue-setup"
+          >
+            {t('continueSetup')}
+            <ChevronRightIcon aria-hidden />
+          </ButtonLink>
+        )}
         <div
           className="bg-muted mt-2 h-2 overflow-hidden rounded-full"
           role="progressbar"
@@ -626,6 +557,14 @@ function HeldSmsBanner() {
         cancelled: formatCount(r.cancelled, locale),
       };
       toast.success(r.cancelled > 0 ? t('heldDoneCancelled', n) : t('heldDone', n));
+      if (r.stillHeld > 0 && r.platformLimit !== null) {
+        toast.warning(
+          t('heldPlatformLimit', {
+            held: formatCount(r.stillHeld, locale),
+            limit: formatCount(r.platformLimit, locale),
+          }),
+        );
+      }
       void queryClient.invalidateQueries({ queryKey: key });
     },
     onError: (e) => toast.error(`${t('heldFailed')} ${describe(e)}`),

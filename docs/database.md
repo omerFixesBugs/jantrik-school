@@ -24,13 +24,15 @@ the template.
 
 ## Database roles
 
-| Role             | Used by                                                    | Notes                                                                                                                                                                                                                                                                              |
-| ---------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `postgres`       | Docker admin only                                          | Superuser. Only the init script uses it.                                                                                                                                                                                                                                           |
-| `jantrik_owner`  | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`) | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                |
-| `jantrik_app`    | API runtime, demo seed (`DATABASE_URL`)                    | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                               |
-| `jantrik_auth`   | Owner of the auth `SECURITY DEFINER` functions             | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything). |
-| `jantrik_search` | Owner of `search_student_ids()`                            | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                 |
+| Role                   | Used by                                                    | Notes                                                                                                                                                                                                                                                                              |
+| ---------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres`             | Docker admin only                                          | Superuser. Only the init script uses it.                                                                                                                                                                                                                                           |
+| `jantrik_owner`        | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`) | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                |
+| `jantrik_app`          | API runtime, demo seed (`DATABASE_URL`)                    | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                               |
+| `jantrik_auth`         | Owner of the auth `SECURITY DEFINER` functions             | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything). |
+| `jantrik_search`       | Owner of `search_student_ids()`                            | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                 |
+| `jantrik_platform`     | Owner of the `platform_*` functions (Jantrik's own admins) | Same rules as `jantrik_auth`. Grants on the platform tables and explicit `TO jantrik_platform` policies for institute metadata only, never student/guardian/attendance rows. See [platform.md](platform.md).                                                                       |
+| `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)        | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                               |
 
 The roles and databases (`jantrik`, `jantrik_test`) are created by
 [`docker/postgres/init/01-roles.sh`](../docker/postgres/init/01-roles.sh). That script only runs
@@ -46,12 +48,66 @@ docker compose exec postgres psql -U postgres \
   -c "GRANT jantrik_auth TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
   -c "CREATE ROLE jantrik_search NOLOGIN NOSUPERUSER NOBYPASSRLS" \
   -c "GRANT jantrik_search TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
+  -c "CREATE ROLE jantrik_platform NOLOGIN NOSUPERUSER NOBYPASSRLS" \
+  -c "GRANT jantrik_platform TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
+  -c "CREATE ROLE jantrik_platform_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'platform_dev_password'" \
   -c "CREATE DATABASE jantrik_e2e OWNER jantrik_owner"
+# A volume that already granted jantrik_app to jantrik_platform_app (early step 8): take it back.
+docker compose exec postgres psql -U postgres -c "REVOKE jantrik_app FROM jantrik_platform_app"
 docker compose exec postgres psql -U postgres -d jantrik_e2e \
   -c "ALTER SCHEMA public OWNER TO jantrik_owner" \
   -c "REVOKE ALL ON SCHEMA public FROM PUBLIC" \
   -c "GRANT USAGE ON SCHEMA public TO jantrik_app"
+# Then apply the migrations (they grant the new roles what they need, e.g. schema USAGE):
+pnpm db:deploy
 ```
+
+## Global tables of the platform
+
+`platform_admins`, `platform_admin_backup_codes`, `platform_sessions` and `platform_audit_logs`
+are global (no `tenant_id`, no RLS) and protected by grants:
+
+- `jantrik_app` has none;
+- `jantrik_platform` has what its functions need (the audit log is append-only);
+- the owner role (migrations, the `pnpm platform:admin` CLI) owns them.
+
+The API uses them only through the `platform_*` definer functions. A platform request's
+transaction sets `app.platform_session` (the session token's hash);
+`app_current_platform_admin_id()` turns it into the admin or raises. See
+[platform.md](platform.md).
+
+### What the platform may change in an institute (step 8, part 2)
+
+- **`tenant_subscriptions`** (tenant table, at most one row per institute): Jantrik's plan
+  (pricing in paisa, cycle, yearly discount, days to pay, trial end) and limits (student limit,
+  SMS ceiling). `jantrik_app` may only SELECT its own row (admissions and the SMS cap read it);
+  only the platform functions write it. Institutes created before part 2 have none: no plan, no
+  limits.
+- **`tenants` and `tenant_modules`:** `jantrik_app` has no UPDATE or DELETE (provisioning still
+  INSERTs), so an institute cannot un-suspend itself or switch a module on. Provisioning writes a
+  `tenant_modules` row for every module, and the restrictive policy `provisioning_only` lets
+  `jantrik_app` insert module rows only while its institute has none, so no module can be added
+  later either. `jantrik_platform`
+  may UPDATE only `tenants (status, suspended_from, suspended_at, updated_at)`.
+  `tenants.suspended_from` keeps the status a suspension returns to.
+- **Billing** (part 3): `platform_invoices`, `platform_invoice_lines` and `platform_payments`
+  are tenant tables. `jantrik_app` may only SELECT its own rows (the owner's overdue notice);
+  `jantrik_platform` inserts, and updates invoices only (status, paid amount, void). No DELETE for
+  anyone: billing is history. One live invoice per institute and period is a partial unique index
+  (`WHERE status <> 'VOID'`), so a voided month can be invoiced again.
+- **`platform_settings`** (part 4): one global row (`CHECK (id = 1)`), Jantrik's SMS rate.
+  `jantrik_app` may SELECT only `sms_cost_per_segment_paisa` (it copies the rate onto each SMS when
+  sent: `sms_logs.cost_paisa`, `platform_sms_logs.cost_paisa`); only `platform_set_sms_cost`
+  changes it. Read it without a `WHERE id = 1`: the app has no right to the `id` column.
+- **`onboarding_progress`** (part 5, tenant table, at most one row per institute): the new
+  owner's setup wizard. Provisioning writes it for institutes the platform creates; `jantrik_app`
+  may SELECT, INSERT and UPDATE its own row (no DELETE). `steps` is a jsonb object whose keys are
+  the six step names and whose values are `'done'` or `'skipped'` (CHECK
+  `onboarding_progress_steps`).
+- **`jantrik_platform` reads institute tables by column** (counts, owner names and phones), never
+  a student's, guardian's or SMS's content; see [platform.md](platform.md).
+- Tests that suspend an institute or switch a module go through the platform API
+  (`platformAdminCookie` in `apps/api/test/support/platform.ts`).
 
 ## Row-Level Security
 
@@ -94,7 +150,9 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
 - **`sessions`, `refresh_tokens`:** visible to their own user only.
 - **Lookups that must happen before any context exists** go through narrow `SECURITY DEFINER`
   functions:
-  - Each is owned by `jantrik_auth`, pins `search_path`, and is executable only by `jantrik_app`.
+  - Each is owned by `jantrik_auth`, pins `search_path = pg_catalog, public, pg_temp` (`pg_temp`
+    last, so a temporary table cannot stand in for a real one), and is executable only by
+    `jantrik_app`.
   - `auth_find_user_for_login(phone, email)`
   - `auth_list_my_memberships()`: uses `app.user_id`, with no user parameter. It also returns
     `invited_at`, so the login flow can show pending invitations.
@@ -104,8 +162,15 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
 - **Don't add more casually.** Each one is a deliberate hole in RLS.
 - **Never accept a tenant (or user) id as a parameter.** Scope only by `app_current_tenant_id()`
   / `app_current_user_id()`, so a missing context returns nothing. The only exceptions are the
-  three pre-context login lookups. `test/schema-safety.test.ts` fails on any definer function that
-  takes a tenant/uuid argument or isn't scoped by context.
+  three pre-context login lookups and the `platform_*` functions (`docs/platform.md`): those
+  belong to `jantrik_platform`, need a live platform session instead, and may take an institute
+  id. `test/schema-safety.test.ts` fails on any other definer function that takes a tenant/uuid
+  argument or isn't scoped by context.
+- **Every definer function** pins exactly `search_path = pg_catalog, public, pg_temp`, and PUBLIC
+  may not run it (`schema-safety.test.ts` checks every one).
+- **Platform functions** (owned by `jantrik_platform`): EXECUTE for `jantrik_platform_app` only,
+  never `jantrik_app`. Don't copy the `GRANT … TO jantrik_app` of an auth function;
+  `schema-safety.test.ts` checks this by owner, so a new function is covered too.
 - **Privileges on a definer function:** REVOKE/GRANT _before_ `ALTER FUNCTION … OWNER TO`, or
   `SET ROLE <owner>` first. Only a function's owner can change its privileges. A REVOKE run by
   anyone else is a silent no-op, which left PUBLIC with EXECUTE until migration
@@ -227,6 +292,11 @@ Without either helper, queries run with no tenant and return nothing. That is in
   Create per-tenant rows in `provisionTenant()`, and give existing tenants defaults in code
   (e.g. `AttendanceSettingsService.load()` falls back to the institute type's defaults until
   an admin saves the settings).
+- **A new CHECK on an existing tenant table is checked against every row** (RLS does not apply
+  to that scan), so it fails on rows that break it. When it failed here (part 5, on the test
+  database), the statements before the error had stayed applied: the old constraint was dropped
+  and the new one missing. Use `DROP CONSTRAINT IF EXISTS` when replacing a constraint, and fix the
+  rows before marking the migration rolled back (`prisma migrate resolve --rolled-back`).
 - **Attendance dates** are `date` columns holding the calendar day in the tenant's timezone
   (`tenants.timezone`). "Today" is always computed on the server (`todayIn(timezone)` in
   `@jantrik/shared`, also in `GET /me/context`), never taken from the device.

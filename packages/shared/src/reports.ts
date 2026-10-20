@@ -125,4 +125,11 @@ export interface SendHeldSmsResult {
   queued: number;
   /** Not sent: the student is no longer absent today. */
   cancelled: number;
+  /**
+   * Still held: Jantrik's daily ceiling for the institute (the plan) is reached. The institute's
+   * own cap can be passed by sending held SMS; the platform's cannot.
+   */
+  stillHeld: number;
+  /** That ceiling, when there is one. */
+  platformLimit: number | null;
 }

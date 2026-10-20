@@ -1,6 +1,7 @@
 'use client';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Toaster } from '@/components/ui/sonner';
 import { ApiError } from '@/lib/api/errors';
@@ -14,6 +15,8 @@ declare global {
 }
 
 export function Providers({ children }: { children: ReactNode }) {
+  // The platform area (Jantrik's own admins) has its own login; no institute session there.
+  const platform = usePathname()?.startsWith('/platform') ?? false;
   // The page is alive: tell the boot watchdog, and take down its banner if a slow start showed it.
   useEffect(() => {
     window.__jantrikHydrated = true;
@@ -36,7 +39,7 @@ export function Providers({ children }: { children: ReactNode }) {
   );
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>{children}</AuthProvider>
+      <AuthProvider inactive={platform}>{children}</AuthProvider>
       <Toaster richColors position="top-center" />
     </QueryClientProvider>
   );

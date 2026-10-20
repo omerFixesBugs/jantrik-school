@@ -118,7 +118,10 @@ Phone + OTP and password login, rotating refresh sessions, tenant switching and 
 RLS transaction are described in [docs/auth.md](docs/auth.md). After `pnpm db:seed`, log in as
 demo staff with phone `01711000001` and password `Jantrik@2026` (development only), or as a
 guardian with OTP to `01811000101` (the code is printed in the API log). `01911000999` (same
-password) teaches at both demo institutes and gets the institute picker.
+password) teaches at both demo institutes and gets the institute picker. All demo accounts,
+including the platform admin (`/platform`, password + authenticator app), are listed in
+[docs/demo-accounts.md](docs/demo-accounts.md); platform admins for real servers are created with
+`pnpm platform:admin` ([docs/platform.md](docs/platform.md)).
 
 ## Database
 

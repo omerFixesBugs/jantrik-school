@@ -11,6 +11,18 @@ const required = (name: string): string => {
   return value;
 };
 
+/**
+ * The platform login (user and password of DATABASE_PLATFORM_URL) on the test database: server,
+ * port and database always come from DATABASE_URL_TEST, so the tests never reach another one.
+ */
+const platformUrl = (): string => {
+  const url = new URL(required('DATABASE_URL_TEST'));
+  const login = new URL(required('DATABASE_PLATFORM_URL'));
+  url.username = login.username;
+  url.password = login.password;
+  return url.toString();
+};
+
 export default defineConfig({
   test: {
     globals: true,
@@ -24,6 +36,7 @@ export default defineConfig({
     env: {
       NODE_ENV: 'test',
       DATABASE_URL: required('DATABASE_URL_TEST'),
+      DATABASE_PLATFORM_URL: platformUrl(),
       DATABASE_MIGRATION_URL_TEST: required('DATABASE_MIGRATION_URL_TEST'),
       REDIS_URL: process.env['REDIS_URL_TEST'] ?? 'redis://localhost:6379/1',
       QUEUE_PREFIX: 'jantrik-test',

@@ -27,6 +27,11 @@ describe('schema safety net', () => {
         'student_code_counters',
         'student_imports',
         'staff_profiles',
+        'tenant_subscriptions',
+        'platform_invoices',
+        'platform_invoice_lines',
+        'platform_payments',
+        'onboarding_progress',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
@@ -93,11 +98,36 @@ describe('schema safety net', () => {
     'auth_find_refresh_token',
   ];
 
+  // A SECURITY DEFINER function runs with its owner's rights. Without an explicit search_path, or
+  // with pg_temp not last, a caller's temporary table (or function) named like a real one would be
+  // found first and could feed it fake rows (e.g. a fake session). Every one must pin exactly this.
+  it('every SECURITY DEFINER function pins search_path with pg_temp last, and PUBLIC cannot run it', async () => {
+    const rows = await app.$queryRaw<
+      { fn: string; config: string[] | null; public_exec: boolean }[]
+    >`
+      SELECT p.oid::regprocedure::text AS fn, p.proconfig AS config,
+             has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec
+      FROM pg_proc p
+      WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef`;
+    expect(rows.length).toBeGreaterThanOrEqual(15);
+    const unsafe = rows.filter(
+      (r) => !(r.config ?? []).includes('search_path=pg_catalog, public, pg_temp'),
+    );
+    expect(unsafe.map((r) => r.fn)).toEqual([]);
+    expect(rows.filter((r) => r.public_exec).map((r) => r.fn)).toEqual([]);
+  });
+
+  // Platform functions (Jantrik's own admins) are checked separately below: they may take an
+  // institute id, because they only ever run for a live platform session.
+  const isPlatform = (fn: string) =>
+    fn.startsWith('platform_') || fn === 'app_current_platform_admin_id';
+
   it('no SECURITY DEFINER function takes a tenant id parameter', async () => {
-    const rows = await app.$queryRaw<{ fn: string; args: string }[]>`
+    const all = await app.$queryRaw<{ fn: string; args: string }[]>`
       SELECT p.proname AS fn, pg_get_function_arguments(p.oid) AS args
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef`;
+    const rows = all.filter((r) => !isPlatform(r.fn));
     expect(rows.length).toBeGreaterThan(0);
     const offenders = rows.filter((r) => /tenant/i.test(r.args) || /\buuid\b/i.test(r.args));
     expect(offenders).toEqual([]);
@@ -110,11 +140,60 @@ describe('schema safety net', () => {
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
         AND p.proname <> ALL(${PRE_CONTEXT_AUTH_LOOKUPS})`;
-    expect(rows.map((r) => r.fn).sort()).toEqual([
+    const scoped = rows.filter((r) => !isPlatform(r.fn));
+    expect(scoped.map((r) => r.fn).sort()).toEqual([
       'app_find_or_create_user',
       'auth_list_my_memberships',
       'search_student_ids',
     ]);
-    expect(rows.filter((r) => !r.scoped)).toEqual([]);
+    expect(scoped.filter((r) => !r.scoped)).toEqual([]);
+  });
+
+  // The login steps run before a platform session exists (the API has checked the password and
+  // the second factor). Everything else needs a live session of an active admin.
+  const PRE_SESSION_PLATFORM = [
+    'platform_find_admin_for_login',
+    'platform_complete_login',
+    'platform_audit_login_failure',
+    'platform_session_admin',
+  ];
+
+  it('every platform function is owned by jantrik_platform and (after login) needs a session', async () => {
+    const rows = await app.$queryRaw<
+      { fn: string; owner: string; scoped: boolean; temp_last: boolean }[]
+    >`
+      SELECT p.proname AS fn, r.rolname AS owner,
+             p.prosrc LIKE '%app_current_platform_admin_id()%' AS scoped,
+             -- pg_temp searched last: a temp table cannot shadow a platform table.
+             'search_path=pg_catalog, public, pg_temp' = ANY(p.proconfig) AS temp_last
+      FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
+      WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
+        AND (p.proname LIKE 'platform\_%' OR p.proname = 'app_current_platform_admin_id')`;
+    expect(rows.length).toBeGreaterThanOrEqual(9);
+    expect(rows.filter((r) => r.owner !== 'jantrik_platform')).toEqual([]);
+    expect(rows.filter((r) => !r.temp_last)).toEqual([]);
+    const needSession = rows.filter(
+      (r) => r.fn !== 'app_current_platform_admin_id' && !PRE_SESSION_PLATFORM.includes(r.fn),
+    );
+    expect(needSession.filter((r) => !r.scoped)).toEqual([]);
+  });
+
+  // By owner, not by name: a new platform function whose migration copies an old
+  // `GRANT EXECUTE … TO jantrik_app` fails here.
+  it('only jantrik_platform_app may run functions owned by jantrik_platform', async () => {
+    const rows = await app.$queryRaw<
+      { fn: string; app_exec: boolean; platform_exec: boolean; public_exec: boolean }[]
+    >`
+      SELECT p.oid::regprocedure::text AS fn,
+             has_function_privilege('jantrik_app', p.oid, 'EXECUTE') AS app_exec,
+             has_function_privilege('jantrik_platform_app', p.oid, 'EXECUTE') AS platform_exec,
+             COALESCE(EXISTS (SELECT 1 FROM aclexplode(p.proacl) a
+                              WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'), true)
+               AS public_exec
+      FROM pg_proc p
+      WHERE p.pronamespace = 'public'::regnamespace
+        AND p.proowner = 'jantrik_platform'::regrole`;
+    expect(rows.length).toBeGreaterThanOrEqual(9);
+    expect(rows.filter((r) => r.app_exec || r.public_exec || !r.platform_exec)).toEqual([]);
   });
 });

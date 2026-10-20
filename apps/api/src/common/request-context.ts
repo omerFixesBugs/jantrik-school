@@ -10,8 +10,18 @@ export interface Principal {
   tenantId?: string;
 }
 
+/** A signed-in platform admin, from the session cookie (never an institute user). */
+export interface PlatformPrincipal {
+  adminId: string;
+  sessionId: string;
+  /** SHA-256 of the session token: the platform functions' context. */
+  tokenHash: string;
+  name: string;
+}
+
 export interface JantrikClsStore extends ClsStore {
   principal?: Principal;
+  platform?: PlatformPrincipal;
   /** The request's RLS-scoped transaction (set by TenantContextInterceptor). */
   tx?: TenantTx;
   /** Side effects to run once the request transaction has committed. */
@@ -34,6 +44,20 @@ export class RequestContext {
 
   setPrincipal(principal: Principal): void {
     this.cls.set('principal', principal);
+  }
+
+  get platform(): PlatformPrincipal | undefined {
+    return this.cls.isActive() ? this.cls.get('platform') : undefined;
+  }
+
+  setPlatform(platform: PlatformPrincipal): void {
+    this.cls.set('platform', platform);
+  }
+
+  requirePlatform(): PlatformPrincipal {
+    const platform = this.platform;
+    if (!platform) throw new InternalServerErrorException('No platform session');
+    return platform;
   }
 
   requirePrincipal(): Principal {

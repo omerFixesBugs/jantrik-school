@@ -129,7 +129,12 @@ function Admission() {
     onError: (e) => {
       // Someone may have added a guardian on the same phone meanwhile: show the choices again.
       void queryClient.invalidateQueries({ queryKey: ['guardian-matches'] });
-      if (!(e instanceof ApiError) || (e.status !== 400 && e.status !== 409 && e.status !== 422)) {
+      if (e instanceof ApiError && (e.body as { code?: string } | null)?.code === 'STUDENT_LIMIT') {
+        toast.error(t('errorStudentLimit'));
+      } else if (
+        !(e instanceof ApiError) ||
+        (e.status !== 400 && e.status !== 409 && e.status !== 422)
+      ) {
         toast.error(describe(e));
       } else toast.error(t('errorCheckForm'));
     },

@@ -128,26 +128,46 @@ export class TenantSmsService implements OnModuleInit {
   }
 
   /**
-   * An admin sends today's held SMS anyway (over the cap). Each one is re-checked first: when
-   * the reason went away (the student is no longer absent) it is CANCELLED instead. Call inside
-   * a request transaction; the jobs are queued after commit.
+   * An admin sends today's held SMS anyway (over the institute's own cap). Each one is re-checked
+   * first: when the reason went away (the student is no longer absent) it is CANCELLED instead.
+   * `ceiling` is Jantrik's limit for the day (the plan): never passed, so only what still fits
+   * under it is released, oldest first; the rest stay held. Call inside a request transaction;
+   * the jobs are queued after commit.
    */
-  async releaseHeld(localDate: IsoDate): Promise<{ queued: string[]; cancelled: string[] }> {
+  async releaseHeld(
+    localDate: IsoDate,
+    ceiling: number | null = null,
+  ): Promise<{ queued: string[]; cancelled: string[]; stillHeld: number }> {
     const tx = this.db.tx;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('sms:' || app_current_tenant_id()::text, 0))`;
+    const day = dateToDb(localDate);
     const held = await tx.smsLog.findMany({
-      where: { localDate: dateToDb(localDate), status: 'HELD_OVER_LIMIT' },
+      where: { localDate: day, status: 'HELD_OVER_LIMIT' },
       orderBy: { createdAt: 'asc' },
       select: { id: true, purpose: true, relatedEntity: true, relatedId: true },
     });
+    // Counted under the same lock as queue(): nothing can slip in between.
+    const room =
+      ceiling === null
+        ? Number.POSITIVE_INFINITY
+        : Math.max(
+            0,
+            ceiling -
+              (await tx.smsLog.count({ where: { localDate: day, status: { in: COUNTED } } })),
+          );
     const tenantId = this.context.requirePrincipal().tenantId!;
     const queued: string[] = [];
     const cancelled: string[] = [];
+    let stillHeld = 0;
     for (const log of held) {
       const check = this.relevance.get(log.purpose);
       const wanted =
         !check ||
         (await check({ relatedEntity: log.relatedEntity, relatedId: log.relatedId, localDate }));
+      if (wanted && queued.length >= room) {
+        stillHeld++;
+        continue;
+      }
       await tx.smsLog.update({
         where: { id: log.id },
         data: wanted
@@ -161,7 +181,7 @@ export class TenantSmsService implements OnModuleInit {
         cancelled.push(log.id);
       }
     }
-    return { queued, cancelled };
+    return { queued, cancelled, stillHeld };
   }
 
   /** Held SMS of the days before `today` were never released: mark them EXPIRED. */
@@ -262,11 +282,14 @@ export class TenantSmsService implements OnModuleInit {
     return { phone: log.phone, body: log.body };
   }
 
+  /** Sent: the cost is segments × the platform's rate now (later rate changes keep it). */
   async markSent(smsLogId: string): Promise<void> {
-    await this.db.tx.smsLog.updateMany({
-      where: { id: smsLogId, status: 'QUEUED' },
-      data: { status: 'SENT', sentAt: new Date() },
-    });
+    await this.db.tx.$executeRaw`
+      UPDATE sms_logs
+      SET status = 'SENT', sent_at = now(), updated_at = now(),
+          -- platform_settings has exactly one row (the app may read only the rate column).
+          cost_paisa = segments * (SELECT sms_cost_per_segment_paisa FROM platform_settings)
+      WHERE id = ${smsLogId}::uuid AND status = 'QUEUED'`;
   }
 
   async markFailed(smsLogId: string, error: string): Promise<void> {

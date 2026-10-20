@@ -1,11 +1,9 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
-  STAFF_ROLE_VALUES,
   formatBdPhone,
   formatDate,
-  normalizeBdPhone,
   type SetupClassLevel,
   type SetupSection,
   type StaffMember,
@@ -14,7 +12,6 @@ import {
 import {
   BookOpenIcon,
   EllipsisVerticalIcon,
-  InfoIcon,
   PhoneIcon,
   PlusIcon,
   PowerIcon,
@@ -25,11 +22,11 @@ import {
 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
-import { toast } from 'sonner';
-import { Field, SectionCard, TextField } from '@/components/form-kit';
+import { Field, SectionCard } from '@/components/form-kit';
 import { PageGate } from '@/components/page-gate';
 import { PersonAvatar } from '@/components/person-avatar';
 import { ConfirmDialog, FormDialog } from '@/components/setup/setup-kit';
+import { AddStaffDialog, RoleChoices, useStaffMutation } from '@/components/staff/staff-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,7 +38,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
-import { ApiError } from '@/lib/api/errors';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { displayName, displayUserName } from '@/lib/names';
@@ -56,28 +52,6 @@ type Dialog =
   | { kind: 'status'; member: StaffMember }
   | { kind: 'cancel'; member: StaffMember }
   | null;
-
-function useStaffError() {
-  const t = useTranslations('staff');
-  const describe = useErrorMessage();
-  return (e: unknown) => {
-    if (e instanceof ApiError) {
-      const known: Record<string, string> = {
-        ALREADY_STAFF: t('errorAlreadyStaff'),
-        LAST_OWNER: t('errorLastOwner'),
-        SELF_CHANGE: t('errorSelf'),
-        NOT_TEACHING: t('errorNotTeaching'),
-        INVALID_SECTIONS: t('errorSections'),
-        NO_CURRENT_YEAR: t('errorNoYear'),
-      };
-      if (e.status === 429) return t('errorRateLimit');
-      if (e.code && known[e.code]) return known[e.code]!;
-      if (e.status === 403) return t('errorOwnerOnly');
-      if (e.status === 400) return t('errorCheckForm');
-    }
-    return describe(e);
-  };
-}
 
 /** Staff: who works here, with which roles; add by phone, change roles, deactivate. */
 export default function StaffPage() {
@@ -272,156 +246,6 @@ function StaffCard({
         )}
       </div>
     </li>
-  );
-}
-
-/** Roles a caller may hand out: OWNER only by an owner. */
-const assignable = (callerIsOwner: boolean) =>
-  STAFF_ROLE_VALUES.filter((r) => r !== 'OWNER' || callerIsOwner);
-
-function RoleChoices({
-  value,
-  onChange,
-  callerIsOwner,
-}: {
-  value: StaffRole[];
-  onChange: (roles: StaffRole[]) => void;
-  callerIsOwner: boolean;
-}) {
-  const t = useTranslations('staff');
-  const tRoles = useTranslations('roles');
-  return (
-    <fieldset className="flex flex-col gap-2">
-      <legend className="mb-1 text-sm font-medium">{t('roles')}</legend>
-      <div className="flex flex-wrap gap-2">
-        {assignable(callerIsOwner).map((r) => (
-          <label
-            key={r}
-            className={cn(
-              'flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm font-medium',
-              'has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-3',
-              value.includes(r)
-                ? 'border-primary bg-primary-soft text-accent-foreground'
-                : 'bg-card',
-            )}
-          >
-            <input
-              type="checkbox"
-              className="accent-primary size-4"
-              checked={value.includes(r)}
-              onChange={(e) =>
-                onChange(e.target.checked ? [...value, r] : value.filter((x) => x !== r))
-              }
-            />
-            {tRoles(r)}
-          </label>
-        ))}
-      </div>
-      <p className="text-muted-foreground text-sm">{t('rolesHint')}</p>
-    </fieldset>
-  );
-}
-
-function useStaffMutation<I>(
-  fn: (input: I) => Promise<unknown>,
-  done: () => void,
-  success: string,
-) {
-  const { session } = useAuth();
-  const queryClient = useQueryClient();
-  const message = useStaffError();
-  return useMutation({
-    mutationFn: fn,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['staff', session?.tenant?.id] });
-      void queryClient.invalidateQueries({ queryKey: ['attendance-staff'] });
-      void queryClient.invalidateQueries({ queryKey: ['section-teachers'] });
-      toast.success(success);
-      done();
-    },
-    onError: (e) => toast.error(message(e)),
-  });
-}
-
-function AddStaffDialog({
-  callerIsOwner,
-  onClose,
-}: {
-  callerIsOwner: boolean;
-  onClose: () => void;
-}) {
-  const t = useTranslations('staff');
-  const { client } = useAuth();
-  const [phone, setPhone] = useState('');
-  const [name, setName] = useState('');
-  const [nameBn, setNameBn] = useState('');
-  const [roles, setRoles] = useState<StaffRole[]>(['TEACHER']);
-  const [touched, setTouched] = useState(false);
-  const phoneOk = normalizeBdPhone(phone) !== null;
-  const save = useStaffMutation(
-    () =>
-      client.api('/staff', {
-        method: 'POST',
-        json: { phone, name, nameBn: nameBn || null, roles },
-      }),
-    onClose,
-    t('added'),
-  );
-  return (
-    <FormDialog
-      open
-      onOpenChange={(o) => !o && onClose()}
-      title={t('add')}
-      submitLabel={t('addSubmit')}
-      pending={save.isPending}
-      onSubmit={() => {
-        setTouched(true);
-        if (phoneOk && roles.length > 0) save.mutate(undefined);
-      }}
-      testId="add-staff-dialog"
-    >
-      <TextField
-        id="staff-phone"
-        label={t('phone')}
-        value={phone}
-        onChange={setPhone}
-        required
-        inputMode="tel"
-        autoComplete="off"
-        placeholder="01XXXXXXXXX"
-        dir="ltr"
-        hint={t('phoneHint')}
-        error={touched && !phoneOk ? t('errorPhone') : null}
-      />
-      <TextField
-        id="staff-name"
-        label={t('nameEn')}
-        value={name}
-        onChange={setName}
-        required
-        maxLength={100}
-        lang="en"
-      />
-      <TextField
-        id="staff-name-bn"
-        label={t('nameBn')}
-        value={nameBn}
-        onChange={setNameBn}
-        maxLength={100}
-        lang="bn"
-        hint={t('nameBnHint')}
-      />
-      <RoleChoices value={roles} onChange={setRoles} callerIsOwner={callerIsOwner} />
-      {touched && roles.length === 0 && (
-        <p className="text-destructive text-sm" role="alert">
-          {t('errorNoRole')}
-        </p>
-      )}
-      <Alert>
-        <InfoIcon aria-hidden />
-        <AlertDescription data-testid="otp-note">{t('otpNote')}</AlertDescription>
-      </Alert>
-    </FormDialog>
   );
 }
 

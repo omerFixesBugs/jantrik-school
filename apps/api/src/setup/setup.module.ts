@@ -38,6 +38,7 @@ import {
 } from '@jantrik/shared';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
+import { OnboardingController, OnboardingService } from './onboarding.js';
 import { SetupService } from './setup.service.js';
 
 class CreateAcademicYearDto extends zodDto(createAcademicYearSchema) {}
@@ -215,5 +216,9 @@ export class SetupController {
   }
 }
 
-@Module({ controllers: [SetupController], providers: [SetupService], exports: [SetupService] })
+@Module({
+  controllers: [SetupController, OnboardingController],
+  providers: [SetupService, OnboardingService],
+  exports: [SetupService],
+})
 export class SetupModule {}

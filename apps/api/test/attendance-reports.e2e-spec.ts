@@ -24,6 +24,7 @@ import {
   otpLogin,
   type Harness,
 } from './support/harness.js';
+import { platform, platformAdminCookie } from './support/platform.js';
 import { school, type School } from './support/school.js';
 
 const TODAY = () => todayIn('Asia/Dhaka');
@@ -251,7 +252,7 @@ describe('attendance reports', () => {
       await http(h).post('/attendance/sms/held/send').set(bearer(t.teacher)).expect(403);
       const res = (await http(h).post('/attendance/sms/held/send').set(bearer(t.admin)).expect(200))
         .body as SendHeldSmsResult;
-      expect(res).toEqual({ queued: 1, cancelled: 1 });
+      expect(res).toEqual({ queued: 1, cancelled: 1, stillHeld: 0, platformLimit: null });
 
       await vi.waitFor(
         async () => {
@@ -272,7 +273,25 @@ describe('attendance reports', () => {
       // Nothing left to send.
       expect(
         (await http(h).post('/attendance/sms/held/send').set(bearer(t.admin)).expect(200)).body,
-      ).toEqual({ queued: 0, cancelled: 0 });
+      ).toEqual({ queued: 0, cancelled: 0, stillHeld: 0, platformLimit: null });
+    });
+
+    it("sending held SMS never passes Jantrik's ceiling for the day", async () => {
+      const t = await school(h, { settings: { dailySmsCap: 1 } });
+      await platform(h, await platformAdminCookie(h))
+        .put(`/platform/institutes/${t.tenantId}/limits`)
+        .send({ studentLimit: null, smsDailyCap: 2 })
+        .expect(200);
+      await submit(t.teacher, t.sectionA, t.a, ['ABSENT', 'ABSENT', 'ABSENT']).expect(200);
+      expect(
+        (await smsLogs(t.tenantId)).filter((l) => l.status === 'HELD_OVER_LIMIT'),
+      ).toHaveLength(2);
+      const res = (await http(h).post('/attendance/sms/held/send').set(bearer(t.admin)).expect(200))
+        .body as SendHeldSmsResult;
+      expect(res).toEqual({ queued: 1, cancelled: 0, stillHeld: 1, platformLimit: 2 });
+      const logs = await smsLogs(t.tenantId);
+      expect(logs.filter((l) => l.status === 'HELD_OVER_LIMIT')).toHaveLength(1);
+      expect(logs.filter((l) => l.status !== 'HELD_OVER_LIMIT')).toHaveLength(2);
     });
 
     it('held SMS of an earlier day expire (daily job) and are never sent', async () => {
@@ -293,7 +312,7 @@ describe('attendance reports', () => {
       // Not today's: the admin's "send held" does not touch it.
       expect(
         (await http(h).post('/attendance/sms/held/send').set(bearer(t.admin)).expect(200)).body,
-      ).toEqual({ queued: 0, cancelled: 0 });
+      ).toEqual({ queued: 0, cancelled: 0, stillHeld: 0, platformLimit: null });
       expect(h.sms.sentTo(log!.phone)).toEqual([]);
     });
 

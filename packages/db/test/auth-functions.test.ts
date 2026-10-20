@@ -99,7 +99,7 @@ describe('auth SECURITY DEFINER functions', () => {
         app_exec: true,
         owner_exec: false,
       });
-      expect(r.config).toContain('search_path=pg_catalog, public');
+      expect(r.config).toContain('search_path=pg_catalog, public, pg_temp');
     }
   });
 

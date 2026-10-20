@@ -19,8 +19,11 @@ env:
   # CI-only throwaway credentials for the service container (not secrets).
   DB_OWNER_PASSWORD: owner_ci_password
   DB_APP_PASSWORD: app_ci_password
+  DB_PLATFORM_PASSWORD: platform_ci_password
   # Same roles as local dev; tests run against jantrik_test.
   DATABASE_URL: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_test
+  # The API platform module's own role (tests point it at their database themselves).
+  DATABASE_PLATFORM_URL: postgresql://jantrik_platform_app:platform_ci_password@localhost:5432/jantrik_test
   DATABASE_MIGRATION_URL: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
   DATABASE_URL_TEST: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_test
   DATABASE_MIGRATION_URL_TEST: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
@@ -85,8 +88,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Same script Docker runs locally on first start: creates jantrik_owner, jantrik_app,
-      # and the jantrik, jantrik_test and jantrik_e2e databases.
+      # Same script Docker runs locally on first start: creates the roles (jantrik_owner,
+      # jantrik_app, jantrik_platform_app and the function owners) and the jantrik, jantrik_test
+      # and jantrik_e2e databases.
       - name: Create database roles and databases
         run: sh docker/postgres/init/01-roles.sh
         env:
@@ -164,8 +168,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Same script Docker runs locally on first start: creates jantrik_owner, jantrik_app,
-      # and the jantrik, jantrik_test and jantrik_e2e databases.
+      # Same script Docker runs locally on first start: creates the roles (jantrik_owner,
+      # jantrik_app, jantrik_platform_app and the function owners) and the jantrik, jantrik_test
+      # and jantrik_e2e databases.
       - name: Create database roles and databases
         run: sh docker/postgres/init/01-roles.sh
         env:

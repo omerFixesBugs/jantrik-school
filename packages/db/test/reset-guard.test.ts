@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertLocalDevDatabase } from '../src/seed/reset-guard.js';
+import { assertLocalDevDatabase, maySeedPlatformAdmin } from '../src/seed/reset-guard.js';
 
 const url = (user: string, host: string, db: string, port = 5432) =>
   `postgresql://${user}:secret@${host}:${port}/${db}`;
@@ -74,5 +74,28 @@ describe('db:reset guard', () => {
     expect(() => assertLocalDevDatabase(env({ DATABASE_URL: 'not a url' }))).toThrow(
       /DATABASE_URL is not a valid/,
     );
+  });
+});
+
+describe('seed: development platform admin', () => {
+  const owner = (host: string, db: string) => ({ DATABASE_MIGRATION_URL: url('o', host, db) });
+
+  it('only on the local dev or e2e database', () => {
+    expect(maySeedPlatformAdmin(owner('localhost', 'jantrik'))).toBe(true);
+    expect(maySeedPlatformAdmin(owner('127.0.0.1', 'jantrik_e2e'))).toBe(true);
+    for (const db of ['jantrik_test', 'jantrik_staging', 'postgres']) {
+      expect(maySeedPlatformAdmin(owner('localhost', db))).toBe(false);
+    }
+    for (const host of ['db.example.com', '10.0.0.5', 'staging.internal']) {
+      expect(maySeedPlatformAdmin(owner(host, 'jantrik'))).toBe(false);
+    }
+  });
+
+  it('never in production, never without a URL', () => {
+    expect(maySeedPlatformAdmin({ ...owner('localhost', 'jantrik'), NODE_ENV: 'production' })).toBe(
+      false,
+    );
+    expect(maySeedPlatformAdmin({})).toBe(false);
+    expect(maySeedPlatformAdmin({ DATABASE_MIGRATION_URL: 'not a url' })).toBe(false);
   });
 });

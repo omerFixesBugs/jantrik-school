@@ -43,7 +43,14 @@ describe('provisionTenant copies the institute type template', () => {
     expect(scheme.bands).toHaveLength(7);
 
     const modules = await db.tenantModule.findMany();
-    expect(modules.map((m) => m.moduleKey).sort()).toEqual(['CORE', 'EXAMS']);
+    // Every module has a row (so none can be inserted later); only the chosen ones are on.
+    expect(modules.map((m) => m.moduleKey).sort()).toEqual(['ATTENDANCE', 'CORE', 'EXAMS', 'FEES']);
+    expect(
+      modules
+        .filter((m) => m.enabled)
+        .map((m) => m.moduleKey)
+        .sort(),
+    ).toEqual(['CORE', 'EXAMS']);
     expect(await db.branch.count({ where: { isMain: true } })).toBe(1);
     expect(await db.academicYear.count({ where: { isCurrent: true } })).toBe(1);
 

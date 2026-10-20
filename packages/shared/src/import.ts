@@ -336,6 +336,8 @@ export type ImportErrorCode =
   | 'RELIGION_UNKNOWN'
   | 'BLOOD_GROUP_UNKNOWN'
   | 'SECTION_FULL'
+  /** The institute has reached the student limit of its plan (set by Jantrik). */
+  | 'STUDENT_LIMIT'
   | 'ROW_REJECTED'
   | 'GUARDIAN_PHONE_TWICE'
   /** No guardian name, and several guardians here have the phone: we cannot tell which one. */

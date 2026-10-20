@@ -814,6 +814,7 @@ function rowErrorFrom(error: unknown): ImportRowError {
     const map: Record<string, ImportRowError> = {
       ROLL_TAKEN: { code: 'ROLL_TAKEN', field: 'roll' },
       SECTION_FULL: { code: 'SECTION_FULL', field: 'section' },
+      STUDENT_LIMIT: { code: 'STUDENT_LIMIT', field: 'nameBn' },
       GUARDIAN_NAME_REQUIRED: { code: 'GUARDIAN_NAME_MISSING', field: 'guardianNameBn' },
       GUARDIAN_CHOICE_REQUIRED: { code: 'GUARDIAN_NAME_NEEDED', field: 'guardianNameBn' },
       INACTIVE: { code: 'CLASS_UNKNOWN', field: 'classLevel' },
@@ -886,6 +887,10 @@ const ERROR_TEXT: Record<ImportRowError['code'], { bn: string; en: string }> = {
   RELIGION_UNKNOWN: { bn: 'অজানা ধর্ম', en: 'Unknown religion' },
   BLOOD_GROUP_UNKNOWN: { bn: 'অজানা রক্তের গ্রুপ', en: 'Unknown blood group' },
   SECTION_FULL: { bn: 'শাখায় আসন নেই', en: 'Section is full' },
+  STUDENT_LIMIT: {
+    bn: 'প্রতিষ্ঠানের ছাত্র-ছাত্রীর সীমা পূর্ণ; জান্ত্রিকের সাথে যোগাযোগ করুন',
+    en: 'The institute has reached its student limit; contact Jantrik',
+  },
   ROW_REJECTED: {
     bn: 'এই সারি যোগ করা যায়নি; তথ্য দেখে আবার চেষ্টা করুন',
     en: 'This row could not be added; check it and try again',

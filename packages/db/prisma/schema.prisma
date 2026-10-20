@@ -385,15 +385,18 @@ model User {
 
 /// An institute. RLS: a tenant can only see its own row (policy on `id`).
 model Tenant {
-  id              String       @id @default(uuid(7)) @db.Uuid
-  slug            String       @unique
+  id              String        @id @default(uuid(7)) @db.Uuid
+  slug            String        @unique
   name            String
-  instituteTypeId String       @map("institute_type_id") @db.Uuid
-  status          TenantStatus @default(TRIAL)
-  timezone        String       @default("Asia/Dhaka")
-  defaultLocale   Locale       @default(bn) @map("default_locale")
-  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  instituteTypeId String        @map("institute_type_id") @db.Uuid
+  status          TenantStatus  @default(TRIAL)
+  timezone        String        @default("Asia/Dhaka")
+  defaultLocale   Locale        @default(bn) @map("default_locale")
+  /// While SUSPENDED: the status to return to on reactivation (TRIAL or ACTIVE). Platform only.
+  suspendedFrom   TenantStatus? @map("suspended_from")
+  suspendedAt     DateTime?     @map("suspended_at") @db.Timestamptz(3)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   instituteType    InstituteType     @relation(fields: [instituteTypeId], references: [id], onDelete: Restrict)
   modules          TenantModule[]
@@ -425,6 +428,11 @@ model Tenant {
   smsLogs             SmsLog[]
   studentImports      StudentImport[]
   staffProfiles       StaffProfile[]
+  subscription        TenantSubscription?
+  onboarding          OnboardingProgress?
+  invoices            PlatformInvoice[]
+  invoiceLines        PlatformInvoiceLine[]
+  payments            PlatformPayment[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -1084,6 +1092,8 @@ model SmsLog {
   relatedId         String?    @map("related_id") @db.Uuid
   sendAfter         DateTime?  @map("send_after") @db.Timestamptz(3)
   sentAt            DateTime?  @map("sent_at") @db.Timestamptz(3)
+  /// Set when sent: segments × the platform's rate then (a later rate change keeps past costs).
+  costPaisa         Int?       @map("cost_paisa")
   providerMessageId String?    @map("provider_message_id")
   error             String?
   createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -1095,6 +1105,8 @@ model SmsLog {
   @@unique([tenantId, dedupeKey], map: "sms_logs_dedupe", where: raw("dedupe_key IS NOT NULL"))
   @@index([tenantId, localDate])
   @@index([tenantId, createdAt(sort: Desc)])
+  /// Platform usage: a month's sent SMS across institutes.
+  @@index([localDate], map: "sms_logs_sent_local_date", where: raw("status = 'SENT'"))
   @@map("sms_logs")
 }
 
@@ -1106,6 +1118,8 @@ model PlatformSmsLog {
   purpose           PlatformSmsPurpose
   status            PlatformSmsStatus
   segments          Int                @db.SmallInt
+  /// SENT rows: segments × the platform's rate when sent.
+  costPaisa         Int?               @map("cost_paisa")
   providerMessageId String?            @map("provider_message_id")
   error             String?
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -1161,4 +1175,293 @@ model RefreshToken {
   @@index([sessionId])
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+// ─────────────────────────── Platform (Jantrik's own staff) ───────────────────────────
+// Global tables, not tenant data. jantrik_app has no grants on them: the API reaches them only
+// through SECURITY DEFINER functions owned by jantrik_platform (see docs/platform.md).
+
+enum PlatformSessionRevokeReason {
+  LOGOUT
+  DISABLED
+  RESET_2FA
+
+  @@map("platform_session_revoke_reason")
+}
+
+enum PlatformActor {
+  ADMIN
+  CLI
+
+  @@map("platform_actor")
+}
+
+/// A Jantrik staff member who runs the platform. Never a `users` row.
+model PlatformAdmin {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  name          String
+  /// E.164 (+8801…).
+  phone         String    @unique
+  email         String?   @unique
+  passwordHash  String    @map("password_hash")
+  /// TOTP secret, AES-256-GCM encrypted with PLATFORM_TOTP_KEY; NULL until enrolled.
+  totpSecret    String?   @map("totp_secret")
+  totpEnabledAt DateTime? @map("totp_enabled_at") @db.Timestamptz(3)
+  /// Until when the authenticator may be set up (first login, or after reset-2fa); NULL: closed.
+  totpEnrolBy   DateTime? @map("totp_enrol_by") @db.Timestamptz(3)
+  /// Last accepted 30 s time step (a code is never accepted twice).
+  totpLastStep  BigInt?   @map("totp_last_step")
+  isActive      Boolean   @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  backupCodes   PlatformAdminBackupCode[]
+  sessions      PlatformSession[]
+  auditLogs     PlatformAuditLog[]
+  payments      PlatformPayment[]
+  settingsEdits PlatformSettings[]
+
+  @@map("platform_admins")
+}
+
+/// One-time 2FA backup codes (HMAC hashes, never the codes).
+model PlatformAdminBackupCode {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  adminId   String    @map("admin_id") @db.Uuid
+  codeHash  String    @map("code_hash") @db.Char(64)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@unique([adminId, codeHash])
+  @@map("platform_admin_backup_codes")
+}
+
+/// A signed-in platform admin: an opaque cookie token (only its hash here). Short: idle and
+/// absolute expiry, checked on every request.
+model PlatformSession {
+  id            String                       @id @default(uuid(7)) @db.Uuid
+  adminId       String                       @map("admin_id") @db.Uuid
+  tokenHash     String                       @unique @map("token_hash") @db.Char(64)
+  ip            String?
+  userAgent     String?                      @map("user_agent")
+  lastUsedAt    DateTime                     @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  idleExpiresAt DateTime                     @map("idle_expires_at") @db.Timestamptz(3)
+  expiresAt     DateTime                     @map("expires_at") @db.Timestamptz(3)
+  revokedAt     DateTime?                    @map("revoked_at") @db.Timestamptz(3)
+  revokeReason  PlatformSessionRevokeReason? @map("revoke_reason")
+  createdAt     DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@map("platform_sessions")
+}
+
+/// Everything platform admins (and the CLI) do. Append-only.
+model PlatformAuditLog {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  /// NULL for CLI actions.
+  adminId        String?       @map("admin_id") @db.Uuid
+  actor          PlatformActor
+  action         String
+  /// The institute acted on, if any (not `tenant_id`: this is not a tenant table).
+  targetTenantId String?       @map("target_tenant_id") @db.Uuid
+  entity         String?
+  entityId       String?       @map("entity_id")
+  details        Json?         @db.JsonB
+  ip             String?
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  admin PlatformAdmin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([targetTenantId, createdAt(sort: Desc)])
+  @@map("platform_audit_logs")
+}
+
+/// How a plan charges: per active student per month for each enabled module, or a flat price.
+enum PlanPricing {
+  PER_STUDENT
+  FLAT
+
+  @@map("plan_pricing")
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+
+  @@map("billing_cycle")
+}
+
+/// Jantrik's plan and limits for one institute. The institute may read its own row (the limits are
+/// enforced in its requests); only the platform functions (jantrik_platform) write it. Institutes
+/// created before step 8 have none: no plan, no limits. Amounts in paisa.
+model TenantSubscription {
+  id                    String       @id @default(uuid(7)) @db.Uuid
+  tenantId              String       @unique @map("tenant_id") @db.Uuid
+  /// NULL: no plan yet (nothing is invoiced).
+  planName              String?      @map("plan_name")
+  pricing               PlanPricing  @default(PER_STUDENT)
+  /// PER_STUDENT: paisa per active student per month, per enabled module (CORE is always on).
+  corePaisa             Int          @default(0) @map("core_paisa")
+  attendancePaisa       Int          @default(0) @map("attendance_paisa")
+  feesPaisa             Int          @default(0) @map("fees_paisa")
+  examsPaisa            Int          @default(0) @map("exams_paisa")
+  /// FLAT: paisa per month.
+  flatPaisa             Int          @default(0) @map("flat_paisa")
+  cycle                 BillingCycle @default(MONTHLY)
+  /// YEARLY: 12 × monthly minus this percentage.
+  yearlyDiscountPercent Int          @default(0) @map("yearly_discount_percent") @db.SmallInt
+  /// Invoices are due this many days after they are issued.
+  dueDays               Int          @default(10) @map("due_days") @db.SmallInt
+  trialEndsOn           DateTime?    @map("trial_ends_on") @db.Date
+  /// Admissions and imports stop once active students reach it. NULL: no limit.
+  studentLimit          Int?         @map("student_limit")
+  /// A ceiling on the institute's daily SMS cap (the lower of the two applies). NULL: none.
+  smsDailyCap           Int?         @map("sms_daily_cap")
+  /// The first month invoiced (its first day). Set on activation (the next month); NULL: not yet.
+  billingStartsOn       DateTime?    @map("billing_starts_on") @db.Date
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("tenant_subscriptions")
+}
+
+/// The new owner's setup wizard (step 8, part 5): one row per institute the platform creates.
+/// Institutes without one (made before the wizard, the demo ones) never see the wizard.
+model OnboardingProgress {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  tenantId    String    @unique @map("tenant_id") @db.Uuid
+  /// Step key (year, classes, shifts, teachers, students, attendance) to 'done' or 'skipped'.
+  /// A missing key: not answered yet.
+  steps       Json      @default("{}") @db.JsonB
+  /// Set when the wizard is finished; the dashboard then stops offering it.
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("onboarding_progress")
+}
+
+enum InvoiceStatus {
+  ISSUED
+  PAID
+  VOID
+
+  @@map("invoice_status")
+}
+
+/// A line of a platform invoice: a module (per active student), the flat price, or the yearly
+/// discount (a negative amount).
+enum InvoiceLineKind {
+  CORE
+  ATTENDANCE
+  FEES
+  EXAMS
+  FLAT
+  DISCOUNT
+
+  @@map("invoice_line_kind")
+}
+
+enum PaymentMethod {
+  CASH
+  BKASH
+  BANK
+
+  @@map("payment_method")
+}
+
+/// Jantrik's invoice to an institute for one period (a month, or 12 months on a yearly plan).
+/// The institute may read its own; only the platform functions write. Overdue = ISSUED and past
+/// due_on (computed, not stored). History: no DELETE for anyone.
+model PlatformInvoice {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  tenantId    String        @map("tenant_id") @db.Uuid
+  periodStart DateTime      @map("period_start") @db.Date
+  periodEnd   DateTime      @map("period_end") @db.Date
+  cycle       BillingCycle
+  issuedOn    DateTime      @map("issued_on") @db.Date
+  dueOn       DateTime      @map("due_on") @db.Date
+  status      InvoiceStatus @default(ISSUED)
+  totalPaisa  Int           @map("total_paisa")
+  paidPaisa   Int           @default(0) @map("paid_paisa")
+  voidReason  String?       @map("void_reason")
+  voidedAt    DateTime?     @map("voided_at") @db.Timestamptz(3)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  lines    PlatformInvoiceLine[]
+  payments PlatformPayment[]
+
+  @@unique([tenantId, id])
+  /// One live invoice per institute and period (a voided one can be issued again).
+  @@unique([tenantId, periodStart], map: "platform_invoices_tenant_period", where: raw("status <> 'VOID'"))
+  @@index([tenantId, dueOn])
+  @@map("platform_invoices")
+}
+
+model PlatformInvoiceLine {
+  id             String          @id @default(uuid(7)) @db.Uuid
+  tenantId       String          @map("tenant_id") @db.Uuid
+  invoiceId      String          @map("invoice_id") @db.Uuid
+  kind           InvoiceLineKind
+  /// Per-student lines: the active students counted when the invoice was made.
+  activeStudents Int?            @map("active_students")
+  unitPaisa      Int             @map("unit_paisa")
+  months         Int             @db.SmallInt
+  amountPaisa    Int             @map("amount_paisa")
+  sortOrder      Int             @default(0) @map("sort_order") @db.SmallInt
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice PlatformInvoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+
+  @@index([tenantId, invoiceId])
+  @@map("platform_invoice_lines")
+}
+
+/// A payment recorded by a platform admin (cash, bKash or bank). Append-only.
+model PlatformPayment {
+  id           String        @id @default(uuid(7)) @db.Uuid
+  tenantId     String        @map("tenant_id") @db.Uuid
+  invoiceId    String        @map("invoice_id") @db.Uuid
+  amountPaisa  Int           @map("amount_paisa")
+  method       PaymentMethod
+  reference    String?
+  paidOn       DateTime      @map("paid_on") @db.Date
+  recordedById String        @map("recorded_by_id") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice    PlatformInvoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+  recordedBy PlatformAdmin   @relation(fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, invoiceId])
+  @@map("platform_payments")
+}
+
+/// Platform-wide settings: one row (id 1). Global on purpose (Jantrik's own costs, not an
+/// institute's): no tenant_id, no RLS. The app reads only the SMS rate; only the platform
+/// functions change it (audited).
+model PlatformSettings {
+  id                     Int      @id @default(1) @db.SmallInt
+  /// What one SMS segment costs Jantrik, copied onto every SMS when it is sent.
+  smsCostPerSegmentPaisa Int      @default(30) @map("sms_cost_per_segment_paisa")
+  updatedAt              DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedById            String?  @map("updated_by_id") @db.Uuid
+
+  updatedBy PlatformAdmin? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("platform_settings")
 }

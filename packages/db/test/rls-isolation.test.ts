@@ -69,9 +69,10 @@ describe('RLS: tenant A cannot touch tenant B', () => {
 
     const { count } = await db.enrolment.deleteMany({ where: { studentId: studentB } });
     expect(count).toBe(0);
-    await expect(db.tenant.delete({ where: { id: tenantB } })).rejects.toMatchObject({
-      code: 'P2025',
-    });
+    // No institute may delete a tenant at all (not even its own): no DELETE grant.
+    await expect(db.tenant.delete({ where: { id: tenantB } })).rejects.toThrow(
+      /permission denied/i,
+    );
 
     expect(await tenantClient(app, tenantB).enrolment.count()).toBe(1);
   });

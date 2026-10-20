@@ -9,6 +9,7 @@ import {
   randomPhone,
   type Harness,
 } from './support/harness.js';
+import { platform, platformAdminCookie } from './support/platform.js';
 
 describe('guards and request side effects', () => {
   let h: Harness;
@@ -76,10 +77,17 @@ describe('guards and request side effects', () => {
     const login = await otpLogin(h, (await addMember(h, t.id)).phone);
     await http(h).get('/test/attendance').set(bearer(login.accessToken)).expect(403); // now cached
 
-    await h.access.setModuleEnabled(t.id, 'ATTENDANCE', true);
+    // Only the platform switches modules (the institute's own role cannot).
+    const cookie = await platformAdminCookie(h);
+    const setAttendance = (enabled: boolean) =>
+      platform(h, cookie)
+        .put(`/platform/institutes/${t.id}/modules/ATTENDANCE`)
+        .send({ enabled })
+        .expect(200);
+    await setAttendance(true);
     await http(h).get('/test/attendance').set(bearer(login.accessToken)).expect(200);
 
-    await h.access.setModuleEnabled(t.id, 'ATTENDANCE', false);
+    await setAttendance(false);
     await http(h).get('/test/attendance').set(bearer(login.accessToken)).expect(403);
   });
 

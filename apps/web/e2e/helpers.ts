@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { normalizeBdPhone, toAsciiDigits, toBanglaDigits } from '@jantrik/shared';
 import { Redis } from 'ioredis';
@@ -16,7 +17,31 @@ export const DEMO = {
   shaplaGuardian: '01811000101',
   // Tasnim's mother (OTP only): a second guardian, so specs don't share one OTP cooldown.
   shaplaGuardian2: '01811000102',
+  // Platform admin (Jantrik staff, /platform): password + authenticator app; enrols on first login.
+  platformAdmin: '01700000001',
 };
+
+/** RFC 6238 TOTP code (SHA-1, 6 digits, 30 s) for a base32 secret, `offset` steps from now. */
+export function totpNow(secret: string, offset = 0): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  const bytes: number[] = [];
+  for (const ch of secret.replace(/\s/g, '').toUpperCase()) {
+    value = (value << 5) | alphabet.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000) + offset));
+  const mac = createHmac('sha1', Buffer.from(bytes)).update(counter).digest();
+  const o = mac[mac.length - 1]! & 15;
+  const n = ((mac[o]! & 127) << 24) | (mac[o + 1]! << 16) | (mac[o + 2]! << 8) | mac[o + 3]!;
+  return String(n % 1_000_000).padStart(6, '0');
+}
 
 export const API_URL = process.env['E2E_API_URL'] ?? 'http://localhost:4000';
 

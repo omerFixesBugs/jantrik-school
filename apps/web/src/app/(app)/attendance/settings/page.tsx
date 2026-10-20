@@ -24,6 +24,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { AttendanceTabs, isAdminRole } from '@/components/attendance/attendance-tabs';
+import { ChoiceChip } from '@/components/form-kit';
 import { PageGate } from '@/components/page-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -158,7 +159,7 @@ function SettingsForm({
     dailySmsCap: initial.dailySmsCap,
   }));
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
-  const autoCap = initial.dailySmsCap === null ? initial.effectiveDailySmsCap : null;
+  const autoCap = initial.automaticSmsCap;
 
   const save = useMutation({
     mutationFn: () =>
@@ -296,7 +297,7 @@ function SettingsForm({
                 checked={form.dailySmsCap === null}
                 onChange={() => set('dailySmsCap', null)}
               >
-                {t('capAuto', { n: formatCount(autoCap ?? initial.effectiveDailySmsCap, locale) })}
+                {t('capAuto', { n: formatCount(autoCap, locale) })}
               </ChoiceChip>
               <ChoiceChip
                 type="radio"
@@ -321,6 +322,11 @@ function SettingsForm({
               )}
             </div>
             <p className="text-muted-foreground text-sm">{t('capHint')}</p>
+            {initial.platformSmsCap !== null && (
+              <p className="text-warning text-sm">
+                {t('capPlatform', { n: formatCount(initial.platformSmsCap, locale) })}
+              </p>
+            )}
           </fieldset>
         </fieldset>
       </Card>
@@ -341,42 +347,6 @@ function SettingsForm({
 
 const clampInt = (raw: string, min: number, max: number) =>
   Math.min(max, Math.max(min, Math.trunc(Number(raw) || 0)));
-
-/** A pill-shaped radio or checkbox (big tap target). */
-function ChoiceChip({
-  type,
-  name,
-  checked,
-  onChange,
-  children,
-}: {
-  type: 'radio' | 'checkbox';
-  name: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  children: ReactNode;
-}) {
-  return (
-    <label
-      className={cn(
-        'flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors',
-        'has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-3',
-        checked
-          ? 'border-primary bg-primary-soft text-accent-foreground'
-          : 'bg-card hover:border-primary/40',
-      )}
-    >
-      <input
-        type={type}
-        name={name}
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="accent-primary size-4"
-      />
-      {children}
-    </label>
-  );
-}
 
 function Toggle({
   id,

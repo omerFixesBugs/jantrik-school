@@ -1,4 +1,3 @@
-import { withTenant } from '@jantrik/db';
 import type { AuthResponse, MembershipSummary } from '@jantrik/shared';
 import {
   addMember,
@@ -11,6 +10,7 @@ import {
   randomPhone,
   type Harness,
 } from './support/harness.js';
+import { platform, platformAdminCookie } from './support/platform.js';
 
 describe('tenant selection and per-request tenant context', () => {
   let h: Harness;
@@ -94,9 +94,11 @@ describe('tenant selection and per-request tenant context', () => {
     const login = await otpLogin(h, phone);
     await http(h).get('/test/students').set(bearer(login.accessToken)).expect(200);
 
-    await withTenant(h.prisma, t.id, (tx) =>
-      tx.tenant.update({ where: { id: t.id }, data: { status: 'SUSPENDED' } }),
-    );
+    // Only the platform suspends (the institute's own role cannot change its status).
+    await platform(h, await platformAdminCookie(h))
+      .post(`/platform/institutes/${t.id}/suspend`)
+      .send({ reason: 'test suspension' })
+      .expect(200);
 
     await http(h).get('/test/students').set(bearer(login.accessToken)).expect(403);
     await http(h).get('/auth/me').set(bearer(login.accessToken)).expect(200);
