@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState, type ReactNode } from 'react';
+import { AppCommands, PaletteButton } from '@/components/app-commands';
 import { Logo } from '@/components/brand';
 import { LanguageToggle } from '@/components/language-toggle';
 import { PersonAvatar } from '@/components/person-avatar';
@@ -36,37 +37,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { DensityProvider, useDensity } from '@/lib/density';
+import { clearRecents } from '@/lib/recents';
 import { useLabel } from '@/lib/hooks';
 import { displayUserName } from '@/lib/names';
-import {
-  canSee,
-  NAV_GROUPS,
-  NAV_ITEMS,
-  navItemForPath,
-  primaryRole,
-  type NavKey,
-} from '@/lib/navigation';
+import { useNavLabel } from '@/lib/nav-label';
+import { canSee, NAV_GROUPS, NAV_ITEMS, navItemForPath, primaryRole } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 
 const COLLAPSED_KEY = 'jantrik.sidebar.collapsed';
-
-/** Nav item text. Uses tenant labels, so a coaching centre reads "Course & Batch". */
-export function useNavLabel() {
-  const t = useTranslations();
-  const label = useLabel();
-  return (key: NavKey): string => {
-    switch (key) {
-      case 'students':
-        return t('students.title', { student: label('student', 'Student') });
-      case 'setup':
-        return t('nav.setup');
-      case 'staff':
-        return t('nav.staff');
-      default:
-        return t(`nav.${key}`);
-    }
-  };
-}
 
 /** "শিক্ষাবর্ষ ২০২৬" / "Session 2026" — year names are dates, so Bangla digits in Bangla. */
 function useYearText(context: MeContext): string | null {
@@ -255,7 +233,7 @@ function UserMenu({ context }: { context: MeContext }) {
         render={
           <Button
             variant="ghost"
-            className="gap-2 rounded-full ps-1 pe-1 sm:pe-2.5"
+            className="min-w-(--control-h) gap-2 rounded-full ps-1 pe-1 sm:pe-2.5"
             aria-label={t('userMenu')}
             data-testid="user-menu"
           >
@@ -298,7 +276,11 @@ function UserMenu({ context }: { context: MeContext }) {
         </DropdownMenuItem>
         <DropdownMenuItem
           variant="destructive"
-          onClick={() => void client.logout()}
+          onClick={() => {
+            // Office computers are shared: the palette's recent records go with the person.
+            clearRecents();
+            void client.logout();
+          }}
           data-testid="logout"
         >
           <LogOutIcon aria-hidden />
@@ -339,6 +321,7 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
   const navLabel = useNavLabel();
   const yearText = useYearText(context);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   // AppShell only renders in the browser (it needs the session), so reading storage here is safe.
   const [collapsed, setCollapsed] = useState(readCollapsed);
 
@@ -470,6 +453,7 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
             )}
           </div>
 
+          <PaletteButton onClick={() => setPaletteOpen(true)} />
           {yearText && (
             // A fact, not a control: plain text, so it never looks clickable.
             <span
@@ -491,6 +475,7 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
           {children}
         </main>
       </div>
+      <AppCommands context={context} open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
   );
 }

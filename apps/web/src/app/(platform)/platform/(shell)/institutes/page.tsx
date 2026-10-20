@@ -140,7 +140,7 @@ export default function PlatformInstitutesPage() {
           options={(options.data?.plans ?? []).map((p) => ({ value: p, label: p }))}
         />
         <div className="flex flex-col gap-1 lg:gap-0">
-          <label className="flex min-h-10 items-center gap-2 text-sm font-medium">
+          <label className="flex min-h-(--control-h) items-center gap-2 text-sm font-medium">
             <input
               type="checkbox"
               className="accent-primary size-5"
@@ -150,7 +150,7 @@ export default function PlatformInstitutesPage() {
             />
             {t('trialEndedOnly')}
           </label>
-          <label className="flex min-h-10 items-center gap-2 text-sm font-medium">
+          <label className="flex min-h-(--control-h) items-center gap-2 text-sm font-medium">
             <input
               type="checkbox"
               className="accent-primary size-5"

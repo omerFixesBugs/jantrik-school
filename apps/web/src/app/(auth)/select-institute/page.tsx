@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/lib/auth/auth-provider';
 import type { Locale } from '@/i18n/config';
 import { useErrorMessage } from '@/lib/hooks';
+import { clearRecents } from '@/lib/recents';
 
 export default function SelectInstitutePage() {
   const t = useTranslations('selectInstitute');
@@ -179,7 +180,14 @@ export default function SelectInstitutePage() {
             )}
           </>
         )}
-        <Button variant="ghost" className="self-start" onClick={() => void client.logout()}>
+        <Button
+          variant="ghost"
+          className="self-start"
+          onClick={() => {
+            clearRecents();
+            void client.logout();
+          }}
+        >
           <LogOutIcon aria-hidden />
           {tShell('logout')}
         </Button>

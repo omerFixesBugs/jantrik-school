@@ -19,8 +19,8 @@ import { InvoiceDialog, InvoiceList } from '@/components/platform/billing-kit';
 import { usePlatformError } from '@/components/platform/institute-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
 import { platformApi } from '@/lib/platform/platform-api';
 
@@ -94,12 +94,11 @@ function Generate() {
             options={months.map((m) => ({ value: m, label: formatMonth(m, locale) }))}
           />
           <Field id="generate-issued" label={t('issuedOn')} hint={t('issuedOnHint')}>
-            <Input
+            <DateInput
               id="generate-issued"
-              type="date"
               value={issuedOn}
               max={todayIn('Asia/Dhaka')}
-              onChange={(e) => setIssuedOn(e.target.value)}
+              onValueChange={setIssuedOn}
             />
           </Field>
         </div>

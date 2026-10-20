@@ -1268,5 +1268,73 @@
     "doneText": "এগুলো পরে যেকোনো সময় বদলানো যাবে: প্রতিষ্ঠান সেটআপ, কর্মী ও শিক্ষক আর হাজিরার সেটিংস থেকে।",
     "toDashboard": "ড্যাশবোর্ডে যান",
     "skipAndFinish": "বাদ দিয়ে শেষ করুন"
+  },
+  "charts": {
+    "showTable": "টেবিলে দেখুন",
+    "showChart": "চার্টে দেখুন",
+    "day": "দিন",
+    "value": "মান",
+    "lowest": "সবচেয়ে কম {value}"
+  },
+  "board": {
+    "label": "আজকের হাজিরা, {section} অনুযায়ী",
+    "lowest": "সবচেয়ে কম",
+    "notTaken": "নেওয়া হয়নি",
+    "legend": "উপস্থিতি %"
+  },
+  "palette": {
+    "title": "খুঁজুন বা কাজ বেছে নিন",
+    "button": "খুঁজুন: নাম, পাতা, কাজ",
+    "placeholder": "নাম, আইডি, ফোন নম্বর বা পাতার নাম",
+    "searching": "খোঁজা হচ্ছে…",
+    "empty": "কিছু পাওয়া যায়নি",
+    "move": "বাছাই",
+    "open": "খুলুন",
+    "close": "বন্ধ",
+    "recent": "সম্প্রতি খোলা",
+    "students": "শিক্ষার্থী",
+    "pages": "পাতা",
+    "actions": "কাজ",
+    "pageToday": "আজকের হাজিরার হিসাব",
+    "pageRegister": "মাসিক হাজিরা রেজিস্টার",
+    "takeAttendance": "হাজিরা নিন",
+    "admit": "নতুন {student} ভর্তি",
+    "import": "এক্সেল থেকে {student} আনুন",
+    "shortcuts": "কিবোর্ড শর্টকাট",
+    "keyPalette": "খোঁজা ও কাজের তালিকা",
+    "keySearch": "পাতার খোঁজার ঘরে যান",
+    "keyNew": "পাতার নতুন যোগ করার বোতাম",
+    "keyDashboard": "ড্যাশবোর্ডে যান",
+    "keyStudents": "{student} তালিকায় যান",
+    "keyAttendance": "হাজিরা নিতে যান",
+    "keyToday": "আজকের হিসাবে যান",
+    "keyRegister": "মাসিক রেজিস্টারে যান",
+    "keyHelp": "এই তালিকা",
+    "language": "ভাষা: {language}",
+    "languageKeywords": "ভাষা language English বাংলা",
+    "densityKeywords": "বিন্যাস ঘন আরামদায়ক density compact comfortable",
+    "results": "{count, plural, other {#টি ফল}}"
+  },
+  "dateInput": {
+    "placeholder": "দিন/মাস/বছর",
+    "calendar": "ক্যালেন্ডার খুলুন",
+    "required": "তারিখ দিন",
+    "invalid": "তারিখ দিন/মাস/বছর আকারে লিখুন, যেমন ২১/১০/২০২৬",
+    "tooEarly": "তারিখ {date}-এর আগে হতে পারে না",
+    "tooLate": "তারিখ {date}-এর পরে হতে পারে না"
+  },
+  "table": {
+    "actions": "কাজ",
+    "columns": "কলাম",
+    "showColumns": "কোন কলাম দেখাবে",
+    "views": "সংরক্ষিত দৃশ্য",
+    "allView": "সব",
+    "removeView": "{name} মুছুন",
+    "viewName": "দৃশ্যের নাম",
+    "saveView": "রাখুন",
+    "cancel": "বাতিল",
+    "keepView": "এই ছাঁকনি রাখুন",
+    "openPage": "পুরো পাতা",
+    "closePeek": "পাশের প্যানেল বন্ধ করুন"
   }
 }

@@ -139,7 +139,7 @@ function Students() {
     <>
       {isAdmin && (
         <div className="flex flex-wrap gap-2" data-testid="students-actions">
-          <ButtonLink href="/students/new" data-testid="admit-student">
+          <ButtonLink href="/students/new" data-testid="admit-student" data-page-new>
             <UserPlusIcon aria-hidden />
             {t('admit', { student: studentLabel })}
           </ButtonLink>
@@ -163,6 +163,7 @@ function Students() {
             className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4.5 -translate-y-1/2"
           />
           <Input
+            data-page-search
             id={searchId}
             type="search"
             placeholder={t('search')}
@@ -480,9 +481,10 @@ function StudentCards({
               <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                 <div className="flex items-start justify-between gap-2">
                   <span className="flex min-w-0 flex-col">
+                    {/* The card's way into the record: a full 44 px target on a phone. */}
                     <Link
                       href={`/students/${s.id}`}
-                      className="truncate text-base font-semibold underline-offset-2 hover:underline"
+                      className="block max-w-full truncate py-2 text-base font-semibold underline-offset-2 hover:underline"
                     >
                       {name}
                     </Link>

@@ -58,8 +58,8 @@ import {
 import { FormDialog } from '@/components/setup/setup-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, ButtonLink } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
 import { platformApi } from '@/lib/platform/platform-api';
 
@@ -668,12 +668,7 @@ function PlanDialog({ d, onClose }: { d: PlatformInstituteDetail; onClose: () =>
       <PlanFields form={plan} onChange={setPlan} err={err} />
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id="plan-trial-ends" label={t('trialEndsOn')}>
-          <Input
-            id="plan-trial-ends"
-            type="date"
-            value={trialEndsOn}
-            onChange={(e) => setTrialEndsOn(e.target.value)}
-          />
+          <DateInput id="plan-trial-ends" value={trialEndsOn} onValueChange={setTrialEndsOn} />
         </Field>
         <SelectField
           id="plan-billing-start"

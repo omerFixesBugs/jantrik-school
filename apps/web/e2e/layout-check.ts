@@ -172,8 +172,83 @@ export function layoutProblemsInPage(): LayoutProblem[] {
   return problems;
 }
 
+/**
+ * Layout problems on the whole page, not just the first screen: checks, scrolls one screen
+ * down, checks again, to the end, then puts the scroll back where it was (so a test can go on).
+ */
 export async function findLayoutProblems(page: Page): Promise<LayoutProblem[]> {
   // Measure the real faces, not the fallback shown while they load (font-display: swap).
   await page.evaluate(() => document.fonts.ready);
-  return page.evaluate(layoutProblemsInPage);
+  const start = await page.evaluate(() => window.scrollY);
+  const found = new Map<string, LayoutProblem>();
+  for (let step = 0; step < 30; step++) {
+    for (const p of await page.evaluate(layoutProblemsInPage)) found.set(`${p.kind}|${p.text}`, p);
+    const moved = await page.evaluate(() => {
+      const before = window.scrollY;
+      window.scrollBy(0, Math.max(200, window.innerHeight * 0.8));
+      return window.scrollY !== before;
+    });
+    if (!moved) break;
+    await page.waitForTimeout(50);
+  }
+  await page.evaluate((y) => window.scrollTo(0, y), start);
+  return [...found.values()];
+}
+
+export interface SmallTarget {
+  text: string;
+  size: string;
+}
+
+/** Runs in the page: interactive elements smaller than 44 × 44 px (the phone rule). */
+export function smallTargetsInPage(): SmallTarget[] {
+  const out: SmallTarget[] = [];
+  const sel =
+    'a[href], button, input:not([type=hidden]), select, textarea, summary, [role=button], [role=tab], [role=checkbox], [role=switch], [role=radio], [role=menuitem], [role=option]';
+  for (const el of document.querySelectorAll<HTMLElement>(sel)) {
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+    if (el.closest('[aria-hidden="true"], [inert]')) continue;
+    let r = el.getBoundingClientRect();
+    if (r.width <= 1 || r.height <= 1) continue; // sr-only (a skip link until focused), collapsed
+    // Text links inside a sentence are exempt (WCAG 2.5.8), not links standing on their own.
+    if (el.tagName === 'A' && cs.display === 'inline') {
+      const around = el.parentElement?.textContent?.trim().length ?? 0;
+      if (around > (el.textContent?.trim().length ?? 0)) continue;
+    }
+    // A checkbox or radio takes its label (only a real label) as part of its target.
+    if (el instanceof HTMLInputElement && ['checkbox', 'radio'].includes(el.type)) {
+      const label =
+        el.closest('label') ?? (el.id ? document.querySelector(`label[for="${el.id}"]`) : null);
+      if (label) {
+        const l = label.getBoundingClientRect();
+        r = new DOMRect(
+          Math.min(r.left, l.left),
+          Math.min(r.top, l.top),
+          Math.max(r.right, l.right) - Math.min(r.left, l.left),
+          Math.max(r.bottom, l.bottom) - Math.min(r.top, l.top),
+        );
+      }
+    }
+    if (r.width + 0.5 < 44 || r.height + 0.5 < 44) {
+      const text = (
+        el.getAttribute('aria-label') ??
+        el.textContent ??
+        el.getAttribute('name') ??
+        el.tagName
+      )
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 50);
+      out.push({
+        text: text || el.tagName.toLowerCase(),
+        size: `${Math.round(r.width)}×${Math.round(r.height)}`,
+      });
+    }
+  }
+  return out;
+}
+
+export function findSmallTargets(page: Page): Promise<SmallTarget[]> {
+  return page.evaluate(smallTargetsInPage);
 }

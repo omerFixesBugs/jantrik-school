@@ -125,7 +125,7 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
           {showBack ? (
             <Link
               href="/attendance"
-              className="text-muted-foreground hover:text-foreground flex w-fit min-h-8 items-center gap-1"
+              className="text-muted-foreground hover:text-foreground flex w-fit min-h-(--control-h) items-center gap-1"
             >
               <ChevronLeftIcon aria-hidden className="size-4" />
               {t('back', { section: label('section', 'Section', { inText: true }) })}
@@ -135,7 +135,7 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
           )}
           <Link
             href={`/attendance/register?section=${sectionId}`}
-            className="text-primary flex min-h-8 items-center gap-1 font-medium hover:underline"
+            className="text-primary flex min-h-(--control-h) items-center gap-1 font-medium hover:underline"
             data-testid="open-month-register"
           >
             <TableIcon aria-hidden className="size-4" />

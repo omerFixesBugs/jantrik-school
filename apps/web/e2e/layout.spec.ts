@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { API_URL, DEMO, otpLoginWithBanglaDigits, otpPhoneInput, passwordLogin } from './helpers';
-import { findLayoutProblems } from './layout-check';
+import { findLayoutProblems, findSmallTargets } from './layout-check';
 
 // Long Bangla strings must wrap or truncate with "…", never clip or overlap: checked on a small
 // Android phone (360 px), and the busiest screens again at 320 px (a phone with larger text).
@@ -10,6 +10,9 @@ async function expectClean(page: Page, where: string) {
   await page.waitForLoadState('networkidle');
   const problems = await findLayoutProblems(page);
   expect(problems, `${where}: ${JSON.stringify(problems, null, 1)}`).toEqual([]);
+  // A phone (touch): every control at least 44 × 44 px (docs/design.md → Density).
+  const small = await findSmallTargets(page);
+  expect(small, `${where}: targets under 44 px: ${JSON.stringify(small, null, 1)}`).toEqual([]);
 }
 
 async function english(page: Page) {

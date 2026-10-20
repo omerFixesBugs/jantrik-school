@@ -32,8 +32,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
 import { platformApi } from '@/lib/platform/platform-api';
 import { cn } from '@/lib/utils';
@@ -463,12 +463,11 @@ function PaymentForm({
           maxLength={100}
         />
         <Field id="payment-date" label={t('paidOn')}>
-          <Input
+          <DateInput
             id="payment-date"
-            type="date"
             value={paidOn}
             max={todayIn('Asia/Dhaka')}
-            onChange={(e) => setPaidOn(e.target.value)}
+            onValueChange={setPaidOn}
           />
         </Field>
       </div>

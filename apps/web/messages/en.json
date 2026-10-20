@@ -1268,5 +1268,73 @@
     "doneText": "You can change any of this later in Institute setup, Staff and the attendance settings.",
     "toDashboard": "Go to the dashboard",
     "skipAndFinish": "Skip and finish"
+  },
+  "charts": {
+    "showTable": "Show as table",
+    "showChart": "Show as chart",
+    "day": "Day",
+    "value": "Value",
+    "lowest": "Lowest {value}"
+  },
+  "board": {
+    "label": "Today by {section}",
+    "lowest": "Lowest",
+    "notTaken": "Not taken",
+    "legend": "Present %"
+  },
+  "palette": {
+    "title": "Search or run a command",
+    "button": "Search names, pages, actions",
+    "placeholder": "A name, ID, phone number or page",
+    "searching": "Searching…",
+    "empty": "Nothing found",
+    "move": "move",
+    "open": "open",
+    "close": "close",
+    "recent": "Recent",
+    "students": "Students",
+    "pages": "Pages",
+    "actions": "Actions",
+    "pageToday": "Today’s attendance",
+    "pageRegister": "Monthly attendance register",
+    "takeAttendance": "Take attendance",
+    "admit": "Admit a {student}",
+    "import": "Import {student} records from Excel",
+    "shortcuts": "Keyboard shortcuts",
+    "keyPalette": "Search and commands",
+    "keySearch": "Go to the page’s search",
+    "keyNew": "The page’s add button",
+    "keyDashboard": "Go to the dashboard",
+    "keyStudents": "Go to the {student} list",
+    "keyAttendance": "Go to taking attendance",
+    "keyToday": "Go to today’s attendance",
+    "keyRegister": "Go to the monthly register",
+    "keyHelp": "This list",
+    "language": "Language: {language}",
+    "languageKeywords": "language ভাষা English বাংলা",
+    "densityKeywords": "density layout compact comfortable বিন্যাস",
+    "results": "{count, plural, one {# result} other {# results}}"
+  },
+  "dateInput": {
+    "placeholder": "DD/MM/YYYY",
+    "calendar": "Open the calendar",
+    "required": "Enter a date",
+    "invalid": "Write the date as DD/MM/YYYY, for example 21/10/2026",
+    "tooEarly": "The date can’t be before {date}",
+    "tooLate": "The date can’t be after {date}"
+  },
+  "table": {
+    "actions": "Actions",
+    "columns": "Columns",
+    "showColumns": "Columns to show",
+    "views": "Saved views",
+    "allView": "All",
+    "removeView": "Remove {name}",
+    "viewName": "View name",
+    "saveView": "Save",
+    "cancel": "Cancel",
+    "keepView": "Keep this filter",
+    "openPage": "Full page",
+    "closePeek": "Close the side panel"
   }
 }

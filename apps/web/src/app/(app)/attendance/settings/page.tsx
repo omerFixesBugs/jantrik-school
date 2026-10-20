@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
 import { ApiError } from '@/lib/api/errors';
 import { useAuth } from '@/lib/auth/auth-provider';
@@ -372,7 +373,10 @@ function Toggle({
         className="accent-primary mt-0.5 size-5 shrink-0"
       />
       <div className="flex min-w-0 flex-col gap-1">
-        <label htmlFor={id} className="leading-snug font-medium">
+        <label
+          htmlFor={id}
+          className="flex min-h-(--control-h-xs) items-center leading-snug font-medium"
+        >
           {label}
         </label>
         {hint && <p className="text-muted-foreground text-sm">{hint}</p>}
@@ -643,24 +647,22 @@ function HolidayForm({
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="holiday-start">{t('start')}</Label>
-          <Input
+          <DateInput
             id="holiday-start"
-            type="date"
             required
             min={`${year}-01-01`}
             max={`${year + 1}-12-31`}
             value={start}
-            onChange={(e) => setStart(e.target.value)}
+            onValueChange={setStart}
           />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="holiday-end">{t('end')}</Label>
-          <Input
+          <DateInput
             id="holiday-end"
-            type="date"
             min={start || `${year}-01-01`}
             value={end}
-            onChange={(e) => setEnd(e.target.value)}
+            onValueChange={setEnd}
           />
         </div>
       </div>

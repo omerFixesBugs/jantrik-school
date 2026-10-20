@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DateInput } from '@/components/date-input';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 
@@ -85,6 +86,21 @@ export function Field({
   );
 }
 
+/** An input's props as the date field takes them (min/max as ISO strings, no `type`). */
+function dateProps({
+  type: _type,
+  min,
+  max,
+  defaultValue: _defaultValue,
+  ...rest
+}: Omit<React.ComponentProps<typeof Input>, 'value' | 'onChange' | 'id'>) {
+  return {
+    ...rest,
+    min: typeof min === 'string' ? min : undefined,
+    max: typeof max === 'string' ? max : undefined,
+  };
+}
+
 /** A text input inside a Field. */
 export function TextField({
   id,
@@ -115,15 +131,28 @@ export function TextField({
       required={required}
       className={className}
     >
-      <Input
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        required={required}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
-        {...props}
-      />
+      {props.type === 'date' ? (
+        // Day-first, Bangla-digit date field instead of the browser's (date-input.tsx).
+        <DateInput
+          {...dateProps(props)}
+          id={id}
+          value={value}
+          onValueChange={onChange}
+          required={required}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
+        />
+      ) : (
+        <Input
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
+          {...props}
+        />
+      )}
     </Field>
   );
 }
@@ -213,7 +242,10 @@ export function ToggleField({
         className="accent-primary mt-0.5 size-5 shrink-0"
       />
       <div className="flex min-w-0 flex-col gap-1">
-        <label htmlFor={id} className="leading-snug font-medium">
+        <label
+          htmlFor={id}
+          className="flex min-h-(--control-h-xs) items-center leading-snug font-medium"
+        >
           {label}
         </label>
         {hint && <p className="text-muted-foreground text-sm">{hint}</p>}
