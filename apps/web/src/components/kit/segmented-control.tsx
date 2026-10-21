@@ -4,7 +4,7 @@ import { useRef, type KeyboardEvent } from 'react';
 import { cn } from '@/lib/utils';
 
 /**
- * A pill segmented control (আজ | সপ্তাহ | মাস): one choice of a few, always visible. A radio group
+ * A pill segmented control (আজ | ৭ দিন | ৩০ দিন): one choice of a few, always visible. A radio group
  * (docs/design.md → Components): one tab stop, the arrow keys move the choice, Home and End jump
  * to the ends.
  */

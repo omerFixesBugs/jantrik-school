@@ -22,7 +22,7 @@ export interface ColumnItem {
 }
 
 /**
- * Columns over a few periods (this week's school days): history hatched in a mid-tone (3:1 on the
+ * Columns over a few periods (the last 7 days' school days): history hatched in a mid-tone (3:1 on the
  * card), the one that matters (today) solid in the accent, with its value above it unless the
  * chart is `decorative` (a KPI tile's mini chart, whose text already says the numbers). A
  * missing day (holiday, not taken) is a short dashed stub.
@@ -31,6 +31,7 @@ export function HatchedColumns({
   items,
   highlight,
   max = 100,
+  min = 0,
   height = 64,
   title,
   showLabels = false,
@@ -40,6 +41,8 @@ export function HatchedColumns({
   items: readonly ColumnItem[];
   highlight?: string | null;
   max?: number;
+  /** Where the scale starts (for a present %, under the lowest day, so the days are told apart). */
+  min?: number;
   height?: number;
   title: string;
   showLabels?: boolean;
@@ -54,7 +57,10 @@ export function HatchedColumns({
     >
       {items.map((item) => {
         const on = item.key === highlight;
-        const share = item.value === null || max <= 0 ? 0 : Math.min(1, item.value / max);
+        const share =
+          item.value === null || max <= min
+            ? 0
+            : Math.min(1, Math.max(0, (item.value - min) / (max - min)));
         return (
           <li
             key={item.key}

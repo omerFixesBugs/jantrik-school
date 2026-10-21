@@ -120,6 +120,8 @@ export function useSetupChecklist(context: MeContext, enabled = true) {
     done: steps.filter((s) => s.done).length,
     /** The unfinished setup wizard, if this institute has one. */
     wizard,
+    /** Absent SMS on or off; undefined until the setting has loaded (or if it failed). */
+    absentSms: attendance ? settings.data?.absentSmsEnabled : undefined,
     loading:
       students.isPending ||
       filters.isPending ||

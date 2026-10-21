@@ -545,9 +545,11 @@ function Students() {
             rowLabel={(s) => displayName(s.nameBn, s.nameEn, locale)}
             // Status says something only where a row is not "active": a column of "active" is
             // dropped (shown again with any other status, or a status filter).
-            hidden={
-              status || items.some((s) => s.status !== 'ACTIVE') ? hidden : [...hidden, 'status']
-            }
+            hidden={[
+              ...hidden,
+              ...(status || items.some((s) => s.status !== 'ACTIVE') ? [] : ['status']),
+              ...(peek && wide ? ['guardian'] : []),
+            ]}
             sort={{ key: sort, dir }}
             onSortChange={onSort}
             // Beside a side peek the table may no longer fit: it scrolls instead of clipping.
@@ -905,22 +907,23 @@ function StudentCards({
               className="focus-visible:ring-ring absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset"
             />
             <PersonAvatar name={name} photoUrl={s.photoUrl} />
-            <div className="flex min-w-0 flex-1 flex-col leading-5">
+            {/* Names, class text and the guardian's name give way first; the ID and the phone
+                never truncate, and Bangla gets room for its marks above and below the line. */}
+            <div className="flex min-w-0 flex-1 flex-col">
               <span className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 truncate font-semibold">{name}</span>
+                <span className="min-w-0 truncate py-0.5 leading-normal font-semibold">{name}</span>
                 {s.status !== 'ACTIVE' && <StatusMark status={s.status} />}
               </span>
-              <span className="text-muted-foreground truncate text-sm">
+              <span className="text-muted-foreground truncate py-0.5 text-sm leading-normal">
                 {place}
-                {' · '}
-                <span className="tabular-nums" dir="ltr">
-                  {formatIdentifier(s.studentCode)}
-                </span>
+              </span>
+              <span className="text-muted-foreground text-sm leading-normal whitespace-nowrap tabular-nums">
+                <span dir="ltr">{formatIdentifier(s.studentCode)}</span>
               </span>
               {g && (
-                <span className="text-muted-foreground truncate text-sm">
-                  {guardianName}{' '}
-                  <span className="tabular-nums" dir="ltr">
+                <span className="text-muted-foreground flex min-w-0 gap-1.5 text-sm leading-normal">
+                  <span className="min-w-0 truncate py-0.5">{guardianName}</span>
+                  <span className="shrink-0 py-0.5 whitespace-nowrap tabular-nums" dir="ltr">
                     {formatBdPhone(g.phone)}
                   </span>
                 </span>

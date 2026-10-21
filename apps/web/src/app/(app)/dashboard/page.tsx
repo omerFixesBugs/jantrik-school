@@ -190,7 +190,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
     queryFn: () => client.api<AttendanceTodayReport>('/attendance/reports/today'),
     enabled: overview,
   });
-  // This week and last, all sections together: the hero's and the KPIs' comparisons.
+  // The last 14 days, all sections together: the hero's and the KPIs' comparisons.
   const recent = useQuery({
     queryKey: ['attendance-trend', tenantId, 14],
     queryFn: () => client.api<AttendanceTrendReport>('/attendance/reports/trend?days=14'),
@@ -241,9 +241,10 @@ function StaffDashboard({ context }: { context: MeContext }) {
     ? day.counts.present + day.counts.absent + day.counts.late + day.counts.leave
     : 0;
   const present = day ? day.counts.present + day.counts.late : 0;
-  const longAbsent = (report.data?.sections ?? [])
-    .flatMap((s) => s.register?.absent ?? [])
-    .filter((st) => st.streak >= LONG_ABSENCE_DAYS).length;
+  const longAway = (report.data?.sections ?? []).flatMap((s) =>
+    (s.register?.absent ?? []).filter((st) => st.streak >= LONG_ABSENCE_DAYS),
+  );
+  const longAbsent = longAway.length;
   const dayFailed = overview
     ? report.isError && !report.data
     : todaySummary.isError && !todaySummary.data;
@@ -325,7 +326,8 @@ function StaffDashboard({ context }: { context: MeContext }) {
     );
   }
 
-  // This week against last (the hero), and today against last week's average (the KPIs).
+  // The last 7 days against the 7 before (the hero), and today against the last 7 days' average
+  // (the KPIs).
   const r = recent.data;
   const leave = r?.leaveCountsAsAbsent ?? false;
   const weeks = r ? splitPeriods(r.days, r.today, 7) : null;
@@ -340,6 +342,10 @@ function StaffDashboard({ context }: { context: MeContext }) {
   const todayChange =
     day?.percent !== null && day?.percent !== undefined ? pointChange(day.percent, lastWeek) : null;
   const schoolDays = (weeks?.current ?? []).filter((d) => !d.nonWorkingDay);
+  // The hatched week's scale starts under its lowest day (at 80 at most), so a 93 % day and a
+  // 97 % day look different and no day looks like none.
+  const lowestDay = Math.min(100, ...schoolDays.map((d) => d.percent ?? 100));
+  const weekFloor = Math.max(0, Math.min(80, Math.floor(lowestDay / 10) * 10 - 10));
 
   const offDay = report.data?.nonWorkingDay ?? null;
   const facts = report.data
@@ -369,6 +375,11 @@ function StaffDashboard({ context }: { context: MeContext }) {
     ]),
   );
   const nextStep = checklist.loading ? undefined : checklist.steps.find((s) => !s.done);
+  // Off only once the setting has loaded as off (not while it is on its way, nor if it failed).
+  const smsOff = checklist.absentSms === false;
+  // "Call their guardian": one student opens their record (the guardian, a call button and the
+  // number to dial from a desk phone); more go to today's absentees.
+  const callHref = longAway.length === 1 ? `/students/${longAway[0]!.id}` : '/attendance/today';
   const h = history.data;
   const attention = report.data
     ? attentionItems({
@@ -419,7 +430,11 @@ function StaffDashboard({ context }: { context: MeContext }) {
         greeting={t(GREETING[dayPeriod(dhakaHour(now))], {
           name: displayUserName(session?.user, locale),
         })}
-        insight={facts ? insightText(facts) : t('subtitle', { institute: context.tenant.name })}
+        insight={
+          facts
+            ? insightText(facts, { callHref })
+            : t('subtitle', { institute: context.tenant.name })
+        }
         week={{
           percent: weekNow,
           change: pointChange(weekNow, weekBefore),
@@ -459,12 +474,13 @@ function StaffDashboard({ context }: { context: MeContext }) {
             )
           }
           compare={todayChange !== null ? t('vsLastWeekAverage') : undefined}
-          // This week's school days hatched, today solid: a row of its own under the figure.
-          meter={
+          // The last 7 days' school days hatched, today solid, beside the figure.
+          aside={
             schoolDays.length > 1 && (
               <HatchedColumns
                 decorative
-                height={36}
+                min={weekFloor}
+                height={40}
                 title={t('presentToday')}
                 highlight={r?.today}
                 items={schoolDays.map((d) => ({
@@ -473,7 +489,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
                   value: d.percent,
                   display: d.percent === null ? '' : pct(d.percent),
                 }))}
-                className="h-9 w-full"
+                className="w-24"
               />
             )
           }
@@ -555,10 +571,12 @@ function StaffDashboard({ context }: { context: MeContext }) {
           href="/attendance/settings#settings-sms"
           loading={sms.isPending}
           failed={sms.isError && !sms.data}
-          count={sms.data ? { to: sms.data.used, format: f } : null}
-          suffix={sms.data ? `/ ${f(sms.data.cap)}` : undefined}
+          value={smsOff ? t('smsOffValue') : undefined}
+          count={sms.data && !smsOff ? { to: sms.data.used, format: f } : null}
+          suffix={sms.data && !smsOff ? `/ ${f(sms.data.cap)}` : undefined}
           aside={
             sms.data &&
+            !smsOff &&
             sms.data.cap > 0 && (
               <HalfGauge
                 size={72}
@@ -572,7 +590,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
           }
           hint={
             sms.data &&
-            (checklist.steps.find((s) => s.key === 'sms')?.done === false
+            (smsOff
               ? t('smsOff')
               : sms.data.held > 0
                 ? t('smsHeld', { count: f(sms.data.held) })

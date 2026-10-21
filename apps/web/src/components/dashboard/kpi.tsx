@@ -45,7 +45,6 @@ export function KpiTile({
   compare,
   hint,
   chart,
-  meter,
   aside,
   href,
   loading,
@@ -63,13 +62,11 @@ export function KpiTile({
   suffix?: ReactNode;
   /** How it moved: a DeltaPill. */
   delta?: ReactNode;
-  /** What the delta is against ("গত সপ্তাহের তুলনায়"). */
+  /** What the delta is against ("আগের ৭ দিনের গড়ের তুলনায়"). */
   compare?: string;
   hint?: ReactNode;
   /** A mini chart beside the label. */
   chart?: ReactNode;
-  /** A meter under the figure. */
-  meter?: ReactNode;
   /** Beside the figure, at its baseline (a half gauge). */
   aside?: ReactNode;
   href?: string;
@@ -96,7 +93,9 @@ export function KpiTile({
           <span className="flex min-w-0 flex-1 justify-end pt-0.5">{chart}</span>
         )}
       </span>
-      <span className="flex items-end justify-between gap-3">
+      {/* A wide figure takes the line, and the gauge or chart goes under it (never out of the
+          tile). */}
+      <span className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
         {loading ? (
           <Skeleton className="h-10 w-28" />
         ) : (
@@ -130,7 +129,6 @@ export function KpiTile({
           {compare && <span className="text-muted-foreground text-xs">{compare}</span>}
         </span>
       )}
-      {meter}
       {(failed || hint) && (
         <span className="text-muted-foreground text-sm leading-snug">
           {failed ? t('loadFailed') : hint}

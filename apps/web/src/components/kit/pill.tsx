@@ -43,8 +43,8 @@ export function Pill({
 /**
  * A change against the comparison period: ↗ or ↘ and the size of it. The colour follows the
  * meaning, not the direction (more absences is red although the number went up): `better` says
- * which way is good. `label` is the whole sentence for screen readers ("২.৪% বেশি, গত সপ্তাহের
- * চেয়ে"); the arrow and number are what the eye reads.
+ * which way is good. `label` is the whole sentence for screen readers ("২.৪ পয়েন্ট বেশি, আগের ৭
+ * দিনের গড়ের তুলনায়"); the arrow and number are what the eye reads.
  */
 export function DeltaPill({
   change,

@@ -126,16 +126,17 @@ export function useInsightText() {
         return t('insightSetup', { classLevel, section });
     }
   };
-  const href = (fact: InsightFact): string | null =>
-    fact.kind === 'coverage' || fact.kind === 'call'
-      ? '/attendance/today'
-      : fact.kind === 'setup'
-        ? '/setup/classes'
-        : null;
-  return (facts: InsightFact[]): ReactNode =>
+  return (facts: InsightFact[], links: { callHref?: string } = {}): ReactNode =>
     facts.map((fact, i) => {
       const words = text(fact);
-      const to = href(fact);
+      const to =
+        fact.kind === 'call'
+          ? (links.callHref ?? '/attendance/today')
+          : fact.kind === 'coverage'
+            ? '/attendance/today'
+            : fact.kind === 'setup'
+              ? '/setup/classes'
+              : null;
       return (
         // Fragments: each link sits inside the sentence (an inline link, not a lone target).
         <Fragment key={fact.kind}>

@@ -46,15 +46,15 @@ test('the day in one line, what needs the principal first, and where the year st
 
   // The board's week: each section's present % over the last 7 days.
   const board = page.getByTestId('today-board');
-  await board.getByTestId('board-period').getByRole('radio', { name: 'সপ্তাহ' }).click();
-  await expect(board.getByRole('heading')).toHaveText('এই সপ্তাহ, শাখা অনুযায়ী');
+  await board.getByTestId('board-period').getByRole('radio', { name: '৭ দিন' }).click();
+  await expect(board.getByRole('heading')).toHaveText('গত ৭ দিন, শাখা অনুযায়ী');
   await expect(board.getByTestId('board-section').first()).toContainText('%');
 
   // The trend against the period before and the target; the week view too.
   const trend = page.getByTestId('attendance-trend');
   await trend.scrollIntoViewIfNeeded();
   await expect(trend).toContainText('লক্ষ্য ৯০%');
-  await trend.getByTestId('trend-period').getByRole('radio', { name: 'সপ্তাহ' }).click();
+  await trend.getByTestId('trend-period').getByRole('radio', { name: '৭ দিন' }).click();
   await expect(trend.getByRole('heading')).toHaveText('উপস্থিতি, গত ৭ দিন');
   await expect(trend).toContainText('তার আগের ৭ দিন');
 
