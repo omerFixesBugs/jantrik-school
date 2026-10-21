@@ -100,7 +100,7 @@ export function layoutProblemsInPage(): LayoutProblem[] {
 
   // 1. Overflow / clipping, per element (once).
   const seen = new Set<Element>();
-  for (const { el, node, rects } of items) {
+  for (const { el, node, rects, shown } of items) {
     if (rects.length === 0) continue;
     // Inside a horizontal scroller (the month register) text may run past the screen edge.
     let scrolls = false;
@@ -108,7 +108,8 @@ export function layoutProblemsInPage(): LayoutProblem[] {
       const ox = getComputedStyle(e).overflowX;
       if (ox === 'auto' || ox === 'scroll') scrolls = true;
     }
-    for (const r of scrolls ? [] : rects) {
+    // Only the painted part: glyphs past a clipping box (an ellipsis) are not on the screen at all.
+    for (const r of scrolls ? [] : shown) {
       if (r.right > vw + 1 || r.left < -1) {
         problems.push({
           kind: 'offscreen',

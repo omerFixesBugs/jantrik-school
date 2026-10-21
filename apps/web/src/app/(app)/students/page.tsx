@@ -4,15 +4,20 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   formatBdPhone,
   formatCount,
+  formatDate,
   formatIdentifier,
+  LONG_ABSENCE_DAYS,
   STUDENT_SORTS,
   STUDENT_STATUSES,
   STUDENTS_PAGE_SIZE,
   type StudentFilters,
   type StudentListItem,
   type StudentSort,
+  type StudentAttendanceReport,
+  type StudentProfile,
   type StudentStatus,
   type StudentsPage,
+  type StudentsSummary,
 } from '@jantrik/shared';
 import {
   ArrowRightLeftIcon,
@@ -36,6 +41,7 @@ import { useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { Suspense, useEffect, useId, useRef, useState } from 'react';
 import { ColumnChooser, DataTable, type DataColumn, type SortState } from '@/components/data-table';
+import { Pill, type PillTone } from '@/components/kit/pill';
 import { PageGate } from '@/components/page-gate';
 import { PersonAvatar } from '@/components/person-avatar';
 import { SavedViews } from '@/components/saved-views';
@@ -96,6 +102,12 @@ function Students() {
   const { data: context } = useMeContext();
   const isAdmin = context?.roles.some((r) => r === 'OWNER' || r === 'ADMIN') ?? false;
   const wide = useMediaQuery('(min-width: 1280px)');
+  const summary = useQuery({
+    queryKey: ['students-summary', tenantId],
+    queryFn: () => client.api<StudentsSummary>('/students/summary'),
+    enabled: isAdmin,
+  });
+  const perClass = new Map(summary.data?.byClass.map((c) => [c.classLevel.id, c.count]) ?? []);
 
   // ── The view, from the URL (Back returns to it; a link shares it).
   const { params, set, replace } = useUrlParams();
@@ -206,10 +218,15 @@ function Students() {
       value: ALL,
       label: t('allClassLevels', { classLevel: label('class_level', 'Class', { inText: true }) }),
     },
-    ...(filters.data?.classLevels.map((c) => ({
-      value: c.id,
-      label: displayName(c.nameBn, c.nameEn, locale),
-    })) ?? []),
+    // With how many active students each has (owners and admins), so a filter says what it finds.
+    ...(filters.data?.classLevels.map((c) => {
+      const name = displayName(c.nameBn, c.nameEn, locale);
+      const count = perClass.get(c.id);
+      return {
+        value: c.id,
+        label: count === undefined ? name : `${name} (${formatCount(count, locale)})`,
+      };
+    }) ?? []),
   ];
   const sectionItems = [
     {
@@ -308,7 +325,7 @@ function Students() {
       id: 'status',
       header: t('status'),
       hideable: true,
-      cell: (s) => <StatusMark status={s.status} />,
+      cell: (s) => (s.status === 'ACTIVE' ? null : <StatusMark status={s.status} />),
     },
   ];
 
@@ -327,10 +344,11 @@ function Students() {
     <div
       className={cn(
         'flex flex-col gap-(--section-gap) transition-[padding]',
-        peek && wide && 'pe-[min(26rem,40vw)]',
+        peek && wide && 'pe-[calc(min(26rem,40vw)+0.75rem)]',
       )}
       onClickCapture={flushSearch}
     >
+      {summary.data && <SummaryChips summary={summary.data} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SavedViews
           views={views.views}
@@ -382,7 +400,7 @@ function Students() {
             id={searchId}
             type="search"
             placeholder={t('search')}
-            className="ps-9"
+            className="rounded-full ps-9"
             value={search}
             onChange={(e) => onSearch(e.target.value)}
             onBlur={flushSearch}
@@ -397,7 +415,7 @@ function Students() {
             }
           >
             <SelectTrigger
-              className="w-full md:w-44"
+              className="w-full rounded-full md:w-48"
               aria-label={classLabel}
               data-testid="class-filter"
             >
@@ -418,7 +436,7 @@ function Students() {
             disabled={!classLevelId}
           >
             <SelectTrigger
-              className="w-full md:w-40"
+              className="w-full rounded-full md:w-40"
               aria-label={sectionLabel}
               data-testid="section-filter"
             >
@@ -438,7 +456,7 @@ function Students() {
             onValueChange={(v) => change({ status: v && v !== ALL ? v : null, page: null })}
           >
             <SelectTrigger
-              className="col-span-2 w-full md:w-40"
+              className="col-span-2 w-full rounded-full md:w-40"
               aria-label={t('status')}
               data-testid="status-filter"
             >
@@ -478,7 +496,7 @@ function Students() {
         </Alert>
       ) : items.length === 0 ? (
         <div
-          className="bg-card flex flex-col items-center gap-3 rounded-lg border px-6 py-14 text-center"
+          className="bg-card rounded-card shadow-card flex flex-col items-center gap-3 border px-6 py-14 text-center"
           data-testid="students-empty"
         >
           <span className="bg-primary-soft text-primary-ink flex size-14 items-center justify-center rounded-lg">
@@ -525,7 +543,11 @@ function Students() {
             rows={items}
             rowKey={(s) => s.id}
             rowLabel={(s) => displayName(s.nameBn, s.nameEn, locale)}
-            hidden={hidden}
+            // Status says something only where a row is not "active": a column of "active" is
+            // dropped (shown again with any other status, or a status filter).
+            hidden={
+              status || items.some((s) => s.status !== 'ACTIVE') ? hidden : [...hidden, 'status']
+            }
             sort={{ key: sort, dir }}
             onSortChange={onSort}
             // Beside a side peek the table may no longer fit: it scrolls instead of clipping.
@@ -641,15 +663,53 @@ const STATUS_MARK: Record<
   DROPPED_OUT: { icon: CircleXIcon, className: 'text-destructive' },
 };
 
+const STATUS_TONE: Record<Exclude<StudentStatus, 'ACTIVE'>, PillTone> = {
+  INACTIVE: 'neutral',
+  GRADUATED: 'info',
+  TRANSFERRED: 'neutral',
+  DROPPED_OUT: 'destructive',
+};
+
+/** A student's status as a soft pill with its icon (never colour alone). */
 function StatusMark({ status }: { status: StudentStatus }) {
   const t = useTranslations('studentStatus');
-  if (status === 'ACTIVE') return <span className="text-muted-foreground">{t(status)}</span>;
-  const { icon: Icon, className } = STATUS_MARK[status];
+  if (status === 'ACTIVE') return <Pill tone="success">{t(status)}</Pill>;
+  const { icon: Icon } = STATUS_MARK[status];
   return (
-    <span className={cn('inline-flex items-center gap-1 font-medium', className)}>
+    <Pill tone={STATUS_TONE[status]}>
       <Icon aria-hidden className="size-3.5 shrink-0" />
       {t(status)}
-    </span>
+    </Pill>
+  );
+}
+
+/** Over the list (owners and admins): how many, how many active, how many added this month. */
+function SummaryChips({ summary }: { summary: StudentsSummary }) {
+  const t = useTranslations('students');
+  const locale = useLocale() as Locale;
+  const f = (n: number) => formatCount(n, locale);
+  const all = Object.values(summary.byStatus).reduce((a, n) => a + n, 0);
+  const added = summary.addedByMonth.at(-1)?.count ?? 0;
+  return (
+    <ul className="flex flex-wrap gap-2" aria-label={t('summary')} data-testid="students-summary">
+      <li>
+        <Pill tone="neutral" className="text-sm">
+          {t('summaryAll', { count: f(all) })}
+        </Pill>
+      </li>
+      <li>
+        <Pill tone="success" className="text-sm">
+          {t('summaryActive', { count: f(summary.byStatus.ACTIVE ?? 0) })}
+        </Pill>
+      </li>
+      {added > 0 && (
+        <li>
+          <Pill tone="accent" className="text-sm">
+            {t('summaryAdded', { count: f(added) })}
+          </Pill>
+        </li>
+      )}
+    </ul>
   );
 }
 
@@ -665,9 +725,38 @@ function StudentPeek({
   const t = useTranslations('students');
   const locale = useLocale() as Locale;
   const label = useLabel();
+  const tEnum = useTranslations('enums');
+  const { client, session } = useAuth();
+  const { data: context } = useMeContext();
   const name = displayName(s.nameBn, s.nameEn, locale);
-  const g = s.primaryGuardian;
-  const guardianName = g ? displayName(g.nameBn, g.nameEn, locale) : '';
+  const f = (n: number) => formatCount(n, locale);
+  const profile = useQuery({
+    queryKey: ['student', session?.tenant?.id, s.id],
+    queryFn: () => client.api<StudentProfile>(`/students/${s.id}`),
+  });
+  const today = context?.today;
+  const attendance = useQuery({
+    queryKey: ['student-attendance-month', session?.tenant?.id, s.id, today],
+    queryFn: () =>
+      client.api<StudentAttendanceReport>(
+        `/attendance/reports/students/${s.id}?from=${today!.slice(0, 8)}01&to=${today}`,
+      ),
+    enabled: showAttendance && Boolean(today),
+  });
+  // School days absent in a row, up to the latest register (days come newest first).
+  const streak = (() => {
+    let n = 0;
+    for (const d of attendance.data?.days ?? []) {
+      if (d.status !== 'ABSENT') break;
+      n++;
+    }
+    return n;
+  })();
+  const guardians =
+    profile.data?.guardians ??
+    (s.primaryGuardian
+      ? [{ ...s.primaryGuardian, linkId: 'primary', relation: null, isPrimary: true }]
+      : []);
   const facts: { term: string; value: string; id?: boolean }[] = [
     { term: t('code'), value: formatIdentifier(s.studentCode), id: true },
     {
@@ -704,23 +793,70 @@ function StudentPeek({
             </div>
           ))}
         </dl>
-        {g && (
-          <div className="flex items-center gap-3 rounded-lg border p-3">
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-muted-foreground text-xs">{t('guardian')}</span>
-              <span className="truncate font-medium">{guardianName}</span>
-              <span className="text-sm tabular-nums" dir="ltr">
-                {formatBdPhone(g.phone)}
+        {/* A teacher may see students outside their sections without their reports (403):
+            then nothing, rather than a wrong "no register". */}
+        {showAttendance && !attendance.isError && (
+          <div
+            className="bg-muted/60 flex flex-col gap-1 rounded-xl p-3"
+            data-testid="peek-attendance"
+          >
+            <span className="text-muted-foreground text-xs">{t('peekThisMonth')}</span>
+            {attendance.isPending ? (
+              <Skeleton className="h-7 w-32" />
+            ) : attendance.data?.percent == null ? (
+              <span className="text-muted-foreground text-sm">{t('peekNoRegister')}</span>
+            ) : (
+              <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="font-numeric text-2xl leading-none font-light">
+                  {f(Math.round(attendance.data.percent))}%
+                </span>
+                <span className="text-muted-foreground text-sm">
+                  {t('peekAbsentDays', {
+                    count: f(attendance.data.counts.absent),
+                    n: attendance.data.counts.absent,
+                  })}
+                </span>
+                {streak >= 2 && (
+                  <Pill tone={streak >= LONG_ABSENCE_DAYS ? 'destructive' : 'warning'}>
+                    {t('peekStreak', { count: f(streak), n: streak })}
+                  </Pill>
+                )}
               </span>
-            </span>
-            <a
-              href={`tel:${g.phone}`}
-              className={buttonVariants({ variant: 'outline', size: 'icon' })}
-              aria-label={t('call', { name: guardianName })}
-            >
-              <PhoneIcon aria-hidden />
-            </a>
+            )}
           </div>
+        )}
+        {guardians.length > 0 && (
+          <ul className="flex flex-col gap-2" aria-label={t('guardian')}>
+            {guardians.map((g) => {
+              const guardianName = displayName(g.nameBn, g.nameEn, locale);
+              return (
+                <li key={g.linkId} className="flex items-center gap-3 rounded-xl border p-3">
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="text-muted-foreground text-xs">
+                      {g.relation ? tEnum(`relation_${g.relation}`) : t('guardian')}
+                      {g.isPrimary && guardians.length > 1 && ` · ${t('primaryGuardian')}`}
+                    </span>
+                    <span className="truncate font-medium">{guardianName}</span>
+                    <span className="text-sm tabular-nums" dir="ltr">
+                      {formatBdPhone(g.phone)}
+                    </span>
+                  </span>
+                  <a
+                    href={`tel:${g.phone}`}
+                    className={buttonVariants({ variant: 'outline', size: 'icon' })}
+                    aria-label={t('call', { name: guardianName })}
+                  >
+                    <PhoneIcon aria-hidden />
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {profile.data && (
+          <p className="text-muted-foreground text-sm">
+            {t('peekAdded', { date: formatDate(profile.data.createdAt, locale, 'long') })}
+          </p>
         )}
         {showAttendance && (
           <ButtonLink

@@ -2,12 +2,20 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  addDays,
+  ATTENDANCE_TARGET,
+  attentionItems,
+  dashboardInsight,
   dayPeriod,
   dhakaHour,
   formatBanglaCalendarDate,
   formatCount,
   formatDate,
   formatIdentifier,
+  LONG_ABSENCE_DAYS,
+  periodPercent,
+  pointChange,
+  splitPeriods,
   type AttendanceTodayReport,
   type AttendanceTodaySummary,
   type AttendanceTrendReport,
@@ -23,26 +31,41 @@ import {
   CalendarDaysIcon,
   CheckIcon,
   ChevronRightIcon,
+  ClipboardCheckIcon,
   ClockIcon,
   CloudOffIcon,
   HeartHandshakeIcon,
+  MessageSquareTextIcon,
   MessageSquareWarningIcon,
+  UserCheckIcon,
   UserPlusIcon,
+  UsersIcon,
+  UserXIcon,
   WalletIcon,
 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
-import { useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
 import { BillingNoticeBanner } from '@/components/billing-notice';
-import { Meter, Sparkline } from '@/components/charts';
+import { Sparkline } from '@/components/charts';
 import {
   AttendanceTrend,
-  LONG_ABSENCE,
   TodayAbsentees,
   TodayBoard,
+  type BoardPeriod,
 } from '@/components/dashboard/attendance-overview';
 import { KpiPlaceholder, KpiTile } from '@/components/dashboard/kpi';
+import {
+  AttentionCard,
+  DashboardHero,
+  Deferred,
+  StudentsByClass,
+  TermTimeline,
+  useInsightText,
+} from '@/components/dashboard/principal';
+import { DeltaPill, Pill } from '@/components/kit/pill';
+import { HalfGauge, HatchedColumns } from '@/components/story-charts';
 import { InvitationsBanner } from '@/components/invitations-banner';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -146,6 +169,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
   // Owners and admins get the whole picture; everyone else their figures (teachers: part 5).
   const overview = isAdmin && canSeeAttendance;
   const f = (n: number) => formatCount(n, locale);
+  const pct = (n: number) => `${f(Math.round(n))}%`;
 
   const summary = useQuery({
     queryKey: ['students-summary', tenantId],
@@ -167,18 +191,33 @@ function StaffDashboard({ context }: { context: MeContext }) {
     queryFn: () => client.api<AttendanceTodayReport>('/attendance/reports/today'),
     enabled: overview,
   });
-  const trend = useQuery({
-    queryKey: ['attendance-trend', tenantId, 30],
-    queryFn: () =>
-      client.api<AttendanceTrendReport>('/attendance/reports/trend?days=30&bySection=1'),
+  // This week and last, all sections together: the hero's and the KPIs' comparisons.
+  const recent = useQuery({
+    queryKey: ['attendance-trend', tenantId, 14],
+    queryFn: () => client.api<AttendanceTrendReport>('/attendance/reports/trend?days=14'),
     enabled: overview,
+  });
+  // 60 days by section (the board's week and month, the trend against the period before):
+  // loaded once those come near the screen, or a period is chosen.
+  const [wantHistory, setWantHistory] = useState(false);
+  const loadHistory = useCallback(() => setWantHistory(true), []);
+  const history = useQuery({
+    queryKey: ['attendance-trend', tenantId, 60, 'bySection'],
+    queryFn: () =>
+      client.api<AttendanceTrendReport>('/attendance/reports/trend?days=60&bySection=1'),
+    enabled: overview && wantHistory,
   });
   const sms = useQuery({
     queryKey: ['sms-today', tenantId],
     queryFn: () => client.api<SmsDailyStatus>('/attendance/sms/today'),
     enabled: overview,
   });
+  // The next setup step (the attention list): owners' and admins' overview only.
+  const checklist = useSetupChecklist(context, overview);
+  const insightText = useInsightText();
   const [classId, setClassId] = useState<string | null>(null);
+  const [boardPeriod, setBoardPeriod] = useState<BoardPeriod>('today');
+  const [trendPeriod, setTrendPeriod] = useState<'week' | 'month'>('month');
   // Attendance kept on this phone that the server doesn't have yet.
   const [unsent] = useState(() =>
     session?.tenant ? listDrafts(session.user.id, session.tenant.id).length : 0,
@@ -204,10 +243,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
   const present = day ? day.counts.present + day.counts.late : 0;
   const longAbsent = (report.data?.sections ?? [])
     .flatMap((s) => s.register?.absent ?? [])
-    .filter((st) => st.streak >= LONG_ABSENCE).length;
-
-  // The KPI's comparison (docs/design.md → Principles 9): the school day before today.
-  const before = trend.data?.days.slice(0, -1).findLast((d) => d.percent !== null) ?? null;
+    .filter((st) => st.streak >= LONG_ABSENCE_DAYS).length;
   const dayFailed = overview
     ? report.isError && !report.data
     : todaySummary.isError && !todaySummary.data;
@@ -217,268 +253,473 @@ function StaffDashboard({ context }: { context: MeContext }) {
     : students.data?.total;
   const addedNow = summary.data?.addedByMonth.at(-1)?.count ?? 0;
 
-  return (
-    <>
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-        <Greeting subtitle={t('subtitle', { institute: context.tenant.name })} />
-        <QuickActions context={context} />
-      </div>
-
-      {unsent > 0 && (
-        <div
-          className="border-warning/40 bg-warning-soft flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"
-          data-testid="unsent-banner"
-        >
-          <span className="flex items-center gap-2 font-medium">
-            <CloudOffIcon aria-hidden className="text-warning size-5" />
-            {t('unsentBanner', { count: f(unsent) })}
-          </span>
-          <ButtonLink size="sm" variant="outline" href="/attendance">
-            {t('unsentOpen')}
-          </ButtonLink>
-        </div>
-      )}
-
-      {overview && <HeldSmsBanner />}
-
-      <ul
-        className={cn(
-          'grid grid-cols-2 gap-(--gap)',
-          overview ? 'md:grid-cols-3 xl:grid-cols-5' : 'md:grid-cols-3',
-        )}
-        aria-label={t('figures')}
-      >
-        {canSeeStudents && (
-          <KpiTile
-            label={t('totalStudents', { student: studentLabel })}
-            value={total === undefined ? null : f(total)}
-            loading={isAdmin ? summary.isPending : students.isPending}
-            failed={isAdmin ? summary.isError && !summary.data : students.isError && !students.data}
-            href="/students"
-            chart={
-              summary.data && (
-                <Sparkline
-                  values={summary.data.addedByMonth.map((m) => m.count)}
-                  tone="sky"
-                  className="h-6 w-full max-w-24"
-                />
-              )
-            }
-            hint={
-              <>
-                {t('totalStudentsHint', { classLevel: classLabel })}
-                {summary.data && addedNow > 0 && (
-                  <span className="block">{t('addedThisMonth', { count: f(addedNow) })}</span>
-                )}
-              </>
-            }
+  const studentsTile = canSeeStudents && (
+    <KpiTile
+      label={t('totalStudents', { student: studentLabel })}
+      icon={UsersIcon}
+      count={total === undefined ? null : { to: total, format: f }}
+      loading={isAdmin ? summary.isPending : students.isPending}
+      failed={isAdmin ? summary.isError && !summary.data : students.isError && !students.data}
+      href="/students"
+      delta={
+        addedNow > 0 && (
+          <DeltaPill
+            change={addedNow}
+            display={f(addedNow)}
+            better="up"
+            label={t('addedChangeLabel', { count: f(addedNow) })}
           />
-        )}
-        {canSeeAttendance && (
-          <KpiTile
-            testId="module-card-attendance"
-            label={t('presentToday')}
-            href="/attendance/today"
-            loading={dayLoading}
-            failed={dayFailed}
-            value={
-              day && counted > 0 ? (
-                <>
-                  {f(present)}
-                  <span className="text-muted-foreground text-xl font-medium">
-                    {' / '}
-                    {f(counted)}
-                  </span>
-                </>
-              ) : null
-            }
-            chart={
-              trend.data && (
-                <Sparkline
-                  values={trend.data.days.map((d) => d.percent)}
-                  className="h-6 w-full max-w-24"
-                />
-              )
-            }
-            hint={
-              !day ? (
-                t('presentTodayHint')
-              ) : counted === 0 ? (
-                t('presentTodayNone')
-              ) : (
-                <>
-                  {day.percent !== null && (
-                    <span className="text-foreground block font-medium">
-                      {t('presentTodayPercent', { percent: f(Math.round(day.percent)) })}
-                    </span>
-                  )}
-                  {before && (
-                    <span className="block">
-                      {t('prevDay', { percent: f(Math.round(before.percent!)) })}
-                    </span>
-                  )}
-                  {!overview &&
-                    t('presentTodaySectionsOf', {
+        )
+      }
+      compare={addedNow > 0 ? t('thisMonth') : undefined}
+      chart={
+        summary.data && (
+          <Sparkline
+            values={summary.data.addedByMonth.map((m) => m.count)}
+            className="h-6 w-full max-w-24"
+          />
+        )
+      }
+      hint={t('totalStudentsHint', { classLevel: classLabel })}
+    />
+  );
+
+  if (!overview) {
+    return (
+      <>
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+          <Greeting subtitle={t('subtitle', { institute: context.tenant.name })} />
+          <QuickActions context={context} />
+        </div>
+        <UnsentBanner count={unsent} />
+        <ul className="grid grid-cols-2 gap-(--gap) md:grid-cols-3" aria-label={t('figures')}>
+          {studentsTile}
+          {canSeeAttendance && (
+            <KpiTile
+              testId="module-card-attendance"
+              label={t('presentToday')}
+              icon={UserCheckIcon}
+              href="/attendance/today"
+              loading={dayLoading}
+              failed={dayFailed}
+              count={day && counted > 0 ? { to: present, format: f } : null}
+              suffix={day && counted > 0 ? `/ ${f(counted)}` : undefined}
+              hint={
+                !day ? (
+                  t('presentTodayHint')
+                ) : counted === 0 ? (
+                  t('presentTodayNone')
+                ) : (
+                  <>
+                    {day.percent !== null && (
+                      <span className="text-foreground block font-medium">
+                        {t('presentTodayPercent', { percent: f(Math.round(day.percent)) })}
+                      </span>
+                    )}
+                    {t('presentTodaySectionsOf', {
                       taken: f(day.sectionsTaken),
                       total: f(day.sectionsTotal),
                       section: sectionLabel,
                     })}
-                </>
-              )
-            }
-          />
-        )}
-        {overview && (
-          <KpiTile
-            testId="kpi-absent"
-            label={t('absentToday')}
-            href="/attendance/today"
-            loading={dayLoading}
-            failed={dayFailed}
-            value={day && counted > 0 ? f(day.counts.absent) : null}
-            hint={
-              day && counted > 0
-                ? longAbsent > 0
-                  ? t('absentRun', { count: f(longAbsent), days: f(LONG_ABSENCE) })
-                  : t('absentRunNone', { days: f(LONG_ABSENCE) })
-                : t('presentTodayHint')
-            }
-          />
-        )}
-        {overview && (
-          <KpiTile
-            testId="kpi-registers"
-            label={t('registersTaken')}
-            href="/attendance/today"
-            loading={dayLoading}
-            failed={dayFailed}
-            value={
-              day && day.sectionsTotal > 0 ? (
-                <>
-                  {f(day.sectionsTaken)}
-                  <span className="text-muted-foreground text-xl font-medium">
-                    {' / '}
-                    {f(day.sectionsTotal)}
-                  </span>
-                </>
-              ) : null
-            }
-            meter={
-              day &&
-              day.sectionsTotal > 0 && (
-                <Meter
-                  value={day.sectionsTaken}
-                  max={day.sectionsTotal}
-                  label={t('registersMeter', {
-                    taken: f(day.sectionsTaken),
-                    total: f(day.sectionsTotal),
-                    section: sectionLabel,
-                  })}
-                />
-              )
-            }
-            hint={
-              day && day.sectionsTotal > 0
-                ? day.sectionsTaken < day.sectionsTotal
-                  ? t('registersLeft', {
-                      count: f(day.sectionsTotal - day.sectionsTaken),
-                      n: day.sectionsTotal - day.sectionsTaken,
-                      section: sectionLabel,
-                    })
-                  : t('registersDone', { section: sectionLabel })
-                : t('boardEmpty', { section: sectionLabel })
-            }
-          />
-        )}
-        {overview && (
-          <KpiTile
-            testId="kpi-sms"
-            // The fifth tile: the whole row on a phone (two columns there).
-            className="col-span-2 md:col-span-1"
-            label={t('smsToday')}
-            href="/attendance/settings#settings-sms"
-            loading={sms.isPending}
-            failed={sms.isError && !sms.data}
-            value={
-              sms.data ? (
-                <>
-                  {f(sms.data.used)}
-                  <span className="text-muted-foreground text-xl font-medium">
-                    {' / '}
-                    {f(sms.data.cap)}
-                  </span>
-                </>
-              ) : null
-            }
-            meter={
-              sms.data && (
-                <Meter
-                  value={sms.data.used}
-                  max={sms.data.cap}
-                  tone={sms.data.held > 0 || sms.data.used >= sms.data.cap ? 'warning' : 'board'}
-                  label={t('smsMeter', { used: f(sms.data.used), cap: f(sms.data.cap) })}
-                />
-              )
-            }
-            hint={
-              sms.data &&
-              (sms.data.held > 0
-                ? t('smsHeld', { count: f(sms.data.held) })
-                : t('smsLeft', { count: f(Math.max(0, sms.data.cap - sms.data.used)) }))
-            }
-          />
-        )}
-      </ul>
-
-      {overview && (
-        <div className="grid items-start gap-(--gap) xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <div className="flex min-w-0 flex-col gap-(--gap)">
-            {report.isError && !report.data ? (
-              <LoadError error={report.error} onRetry={() => void report.refetch()} />
-            ) : report.data ? (
-              <TodayBoard report={report.data} classId={classId} onClassChange={setClassId} />
-            ) : (
-              <Skeleton className="h-64 rounded-lg" />
-            )}
-            <GettingStarted context={context} />
-          </div>
-          <div className="flex min-w-0 flex-col gap-(--gap)">
-            {report.isError && !report.data ? null : report.data ? (
-              <TodayAbsentees report={report.data} classId={classId} />
-            ) : (
-              <Skeleton className="h-48 rounded-lg" />
-            )}
-            {trend.isError && !trend.data ? (
-              <LoadError error={trend.error} onRetry={() => void trend.refetch()} />
-            ) : trend.data ? (
-              <AttendanceTrend report={trend.data} classId={classId} />
-            ) : (
-              <Skeleton className="h-56 rounded-lg" />
-            )}
-          </div>
-        </div>
-      )}
-      {!overview && isAdmin && <GettingStarted context={context} />}
-
-      {(canSee(navItem('fees'), context) || canSee(navItem('exams'), context)) && (
-        <ul className="grid gap-(--gap) sm:grid-cols-2" aria-label={t('modulesSoon')}>
-          {canSee(navItem('fees'), context) && (
-            <KpiPlaceholder
-              testId="module-card-fees"
-              label={t('feesThisMonth')}
-              hint={t('feesThisMonthHint')}
-            />
-          )}
-          {canSee(navItem('exams'), context) && (
-            <KpiPlaceholder
-              testId="module-card-exams"
-              label={t('upcomingExam')}
-              hint={t('upcomingExamHint')}
+                  </>
+                )
+              }
             />
           )}
         </ul>
-      )}
+        {isAdmin && <GettingStarted context={context} />}
+        <ModulesSoon context={context} />
+      </>
+    );
+  }
+
+  // This week against last (the hero), and today against last week's average (the KPIs).
+  const r = recent.data;
+  const leave = r?.leaveCountsAsAbsent ?? false;
+  const weeks = r ? splitPeriods(r.days, r.today, 7) : null;
+  const weekNow = weeks ? periodPercent(weeks.current, leave) : null;
+  const weekBefore = weeks ? periodPercent(weeks.previous, leave) : null;
+  const lastWeek = r
+    ? periodPercent(
+        r.days.filter((d) => d.date < r.today && d.date >= addDays(r.today, -7)),
+        leave,
+      )
+    : null;
+  const todayChange =
+    day?.percent !== null && day?.percent !== undefined ? pointChange(day.percent, lastWeek) : null;
+  const schoolDays = (weeks?.current ?? []).filter((d) => !d.nonWorkingDay);
+
+  const offDay = report.data?.nonWorkingDay ?? null;
+  const facts = report.data
+    ? dashboardInsight({
+        sectionsTotal: report.data.totals.sectionsTotal,
+        sectionsTaken: report.data.totals.sectionsTaken,
+        counts: report.data.totals.counts,
+        longAbsent,
+        week: { now: weekNow, before: weekBefore },
+        dayOff: offDay
+          ? {
+              name:
+                offDay.reason === 'HOLIDAY'
+                  ? locale === 'bn'
+                    ? offDay.nameBn
+                    : offDay.nameEn
+                  : null,
+            }
+          : null,
+      })
+    : null;
+
+  const sectionNames = new Map(
+    (report.data?.sections ?? []).map((s) => [
+      s.section.id,
+      `${displayName(s.section.classLevel.nameBn, s.section.classLevel.nameEn, locale)} ${s.section.name}`,
+    ]),
+  );
+  const nextStep = checklist.loading ? undefined : checklist.steps.find((s) => !s.done);
+  const h = history.data;
+  const attention = report.data
+    ? attentionItems({
+        absent: report.data.sections.flatMap((s) =>
+          (s.register?.absent ?? []).map((st) => ({
+            id: st.id,
+            sectionId: s.section.id,
+            streak: st.streak,
+          })),
+        ),
+        notTaken: offDay
+          ? []
+          : report.data.sections.filter((s) => !s.register).map((s) => s.section.id),
+        heldSms: sms.data?.held ?? 0,
+        week: h
+          ? h.sections.map((l) => ({
+              sectionId: l.section.id,
+              percent: periodPercent(
+                splitPeriods(l.days, h.today, 7).current,
+                h.leaveCountsAsAbsent,
+              ),
+            }))
+          : [],
+        nextSetupStep: nextStep?.key ?? null,
+      })
+    : [];
+
+  const now = new Date();
+  return (
+    <>
+      <DashboardHero
+        date={
+          <>
+            <span className="flex items-center gap-1.5">
+              <CalendarDaysIcon aria-hidden className="size-4" />
+              {formatDate(now, locale, 'full')}
+            </span>
+            <span
+              className="border-hero-foreground/30 inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium"
+              title={t('banglaDate')}
+            >
+              {formatBanglaCalendarDate(now, locale)}
+              <span className="sr-only"> ({t('banglaDate')})</span>
+            </span>
+          </>
+        }
+        greeting={t(GREETING[dayPeriod(dhakaHour(now))], {
+          name: displayUserName(session?.user, locale),
+        })}
+        insight={facts ? insightText(facts) : t('subtitle', { institute: context.tenant.name })}
+        week={{
+          percent: weekNow,
+          change: pointChange(weekNow, weekBefore),
+          loading: recent.isPending,
+        }}
+        actions={<QuickActions context={context} onHero />}
+      />
+
+      <UnsentBanner count={unsent} />
+      <HeldSmsBanner />
+
+      <ul
+        className="grid grid-cols-2 gap-(--gap) md:grid-cols-3 xl:grid-cols-5"
+        aria-label={t('figures')}
+      >
+        {studentsTile}
+        <KpiTile
+          testId="module-card-attendance"
+          label={t('presentToday')}
+          icon={UserCheckIcon}
+          href="/attendance/today"
+          loading={dayLoading}
+          failed={dayFailed}
+          count={day && counted > 0 ? { to: present, format: f } : null}
+          suffix={day && counted > 0 ? `/ ${f(counted)}` : undefined}
+          delta={
+            todayChange !== null && (
+              <DeltaPill
+                change={todayChange}
+                display={`${formatCount(Math.abs(todayChange), locale)}%`}
+                better="up"
+                label={t('todayChangeLabel', {
+                  change: formatCount(Math.abs(todayChange), locale),
+                  more: todayChange > 0 ? 'true' : 'false',
+                })}
+              />
+            )
+          }
+          compare={todayChange !== null ? t('vsLastWeekAverage') : undefined}
+          chart={
+            schoolDays.length > 1 && (
+              <HatchedColumns
+                decorative
+                height={28}
+                title={t('presentToday')}
+                highlight={r?.today}
+                items={schoolDays.map((d) => ({
+                  key: d.date,
+                  label: d.date,
+                  value: d.percent,
+                  display: d.percent === null ? '' : pct(d.percent),
+                }))}
+                className="w-full max-w-28"
+              />
+            )
+          }
+          hint={
+            !day
+              ? t('presentTodayHint')
+              : counted === 0
+                ? t('presentTodayNone')
+                : day.percent !== null &&
+                  t('presentTodayPercent', { percent: f(Math.round(day.percent)) })
+          }
+        />
+        <KpiTile
+          testId="kpi-absent"
+          label={t('absentToday')}
+          icon={UserXIcon}
+          href="/attendance/today"
+          loading={dayLoading}
+          failed={dayFailed}
+          count={day && counted > 0 ? { to: day.counts.absent, format: f } : null}
+          delta={
+            todayChange !== null && (
+              <DeltaPill
+                change={-todayChange}
+                display={`${formatCount(Math.abs(todayChange), locale)}%`}
+                better="down"
+                label={t('absentChangeLabel', {
+                  change: formatCount(Math.abs(todayChange), locale),
+                  more: todayChange < 0 ? 'true' : 'false',
+                })}
+              />
+            )
+          }
+          compare={todayChange !== null ? t('vsLastWeekAverage') : undefined}
+          hint={
+            day && counted > 0 ? (
+              longAbsent > 0 ? (
+                <Pill tone="destructive">
+                  {t('absentRun', { count: f(longAbsent), days: f(LONG_ABSENCE_DAYS) })}
+                </Pill>
+              ) : (
+                t('absentRunNone', { days: f(LONG_ABSENCE_DAYS) })
+              )
+            ) : (
+              t('presentTodayHint')
+            )
+          }
+        />
+        <KpiTile
+          testId="kpi-registers"
+          label={t('registersTaken')}
+          icon={ClipboardCheckIcon}
+          href="/attendance/today"
+          loading={dayLoading}
+          failed={dayFailed}
+          count={day && day.sectionsTotal > 0 ? { to: day.sectionsTaken, format: f } : null}
+          suffix={day && day.sectionsTotal > 0 ? `/ ${f(day.sectionsTotal)}` : undefined}
+          aside={
+            day &&
+            day.sectionsTotal > 0 && (
+              <HalfGauge
+                size={72}
+                value={day.sectionsTaken}
+                max={day.sectionsTotal}
+                display={pct((day.sectionsTaken / day.sectionsTotal) * 100)}
+                label={t('registersMeter', {
+                  taken: f(day.sectionsTaken),
+                  total: f(day.sectionsTotal),
+                  section: sectionLabel,
+                })}
+              />
+            )
+          }
+          hint={
+            day && day.sectionsTotal > 0
+              ? day.sectionsTaken < day.sectionsTotal
+                ? t('registersLeft', {
+                    count: f(day.sectionsTotal - day.sectionsTaken),
+                    n: day.sectionsTotal - day.sectionsTaken,
+                    section: sectionLabel,
+                  })
+                : t('registersDone', { section: sectionLabel })
+              : t('boardEmpty', { section: sectionLabel })
+          }
+        />
+        <KpiTile
+          testId="kpi-sms"
+          // The fifth tile: the whole row on a phone (two columns there).
+          className="col-span-2 md:col-span-1"
+          label={t('smsToday')}
+          icon={MessageSquareTextIcon}
+          href="/attendance/settings#settings-sms"
+          loading={sms.isPending}
+          failed={sms.isError && !sms.data}
+          count={sms.data ? { to: sms.data.used, format: f } : null}
+          suffix={sms.data ? `/ ${f(sms.data.cap)}` : undefined}
+          aside={
+            sms.data &&
+            sms.data.cap > 0 && (
+              <HalfGauge
+                size={72}
+                value={sms.data.used}
+                max={sms.data.cap}
+                tone={sms.data.held > 0 || sms.data.used >= sms.data.cap ? 'warning' : 'accent'}
+                display={pct((sms.data.used / sms.data.cap) * 100)}
+                label={t('smsMeter', { used: f(sms.data.used), cap: f(sms.data.cap) })}
+              />
+            )
+          }
+          hint={
+            sms.data &&
+            (sms.data.held > 0
+              ? t('smsHeld', { count: f(sms.data.held) })
+              : t('smsLeft', { count: f(Math.max(0, sms.data.cap - sms.data.used)) }))
+          }
+        />
+      </ul>
+
+      <div className="grid items-start gap-(--gap) xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div className="flex min-w-0 flex-col gap-(--gap)">
+          {report.isError && !report.data ? (
+            <LoadError error={report.error} onRetry={() => void report.refetch()} />
+          ) : report.data ? (
+            <TodayBoard
+              report={report.data}
+              history={history.data}
+              historyFailed={history.isError && !history.data}
+              onRetryHistory={() => void history.refetch()}
+              period={boardPeriod}
+              onPeriodChange={(p) => {
+                setBoardPeriod(p);
+                if (p !== 'today') loadHistory();
+              }}
+              classId={classId}
+              onClassChange={setClassId}
+            />
+          ) : (
+            <Skeleton className="rounded-card h-64" />
+          )}
+          {report.data && (
+            <Deferred height={300} onVisible={loadHistory}>
+              {history.isError && !history.data ? (
+                <LoadError error={history.error} onRetry={() => void history.refetch()} />
+              ) : history.data ? (
+                <AttendanceTrend
+                  report={history.data}
+                  classId={classId}
+                  period={trendPeriod}
+                  onPeriodChange={setTrendPeriod}
+                />
+              ) : (
+                <Skeleton className="rounded-card h-72" />
+              )}
+            </Deferred>
+          )}
+        </div>
+        <div className="flex min-w-0 flex-col gap-(--gap)">
+          {report.data ? (
+            <AttentionCard
+              items={attention}
+              sectionName={(id) => sectionNames.get(id) ?? ''}
+              setupStep={nextStep?.href ? { title: nextStep.title, href: nextStep.href } : null}
+              target={ATTENDANCE_TARGET}
+            />
+          ) : (
+            !report.isError && <Skeleton className="rounded-card h-40" />
+          )}
+          {report.isError && !report.data ? null : report.data ? (
+            <TodayAbsentees report={report.data} classId={classId} />
+          ) : (
+            <Skeleton className="rounded-card h-48" />
+          )}
+        </div>
+      </div>
+
+      <div className="grid items-start gap-(--gap) lg:grid-cols-2">
+        {canSeeStudents && (
+          <Deferred height={220}>
+            {summary.data ? (
+              <StudentsByClass summary={summary.data} />
+            ) : (
+              <Skeleton className="rounded-card h-56" />
+            )}
+          </Deferred>
+        )}
+        <Deferred height={200}>
+          <TermTimeline context={context} />
+        </Deferred>
+      </div>
+
+      <GettingStarted context={context} />
+      <ModulesSoon context={context} />
     </>
+  );
+}
+
+/** Attendance kept on this phone that the server doesn't have yet. */
+function UnsentBanner({ count }: { count: number }) {
+  const t = useTranslations('dashboard');
+  const locale = useLocale() as Locale;
+  if (count <= 0) return null;
+  return (
+    <div
+      className="border-warning/40 bg-warning-soft rounded-card flex flex-wrap items-center justify-between gap-3 border px-4 py-3"
+      data-testid="unsent-banner"
+    >
+      <span className="flex items-center gap-2 font-medium">
+        <CloudOffIcon aria-hidden className="text-warning size-5" />
+        {t('unsentBanner', { count: formatCount(count, locale) })}
+      </span>
+      <ButtonLink size="sm" variant="outline" href="/attendance">
+        {t('unsentOpen')}
+      </ButtonLink>
+    </div>
+  );
+}
+
+/** Modules not running yet: what will appear here, never a made-up number. */
+function ModulesSoon({ context }: { context: MeContext }) {
+  const t = useTranslations('dashboard');
+  const fees = canSee(navItem('fees'), context);
+  const exams = canSee(navItem('exams'), context);
+  if (!fees && !exams) return null;
+  return (
+    <ul className="grid gap-(--gap) sm:grid-cols-2" aria-label={t('modulesSoon')}>
+      {fees && (
+        <KpiPlaceholder
+          testId="module-card-fees"
+          label={t('feesThisMonth')}
+          hint={t('feesThisMonthHint')}
+        />
+      )}
+      {exams && (
+        <KpiPlaceholder
+          testId="module-card-exams"
+          label={t('upcomingExam')}
+          hint={t('upcomingExamHint')}
+        />
+      )}
+    </ul>
   );
 }
 
@@ -498,27 +739,39 @@ function LoadError({ error, onRetry }: { error: unknown; onRetry: () => void }) 
   );
 }
 
-/** The day's main jobs, beside the greeting: taking attendance first. */
-function QuickActions({ context }: { context: MeContext }) {
+/**
+ * The day's main jobs, beside the greeting: taking attendance first. `onHero`: drawn on the
+ * hero (its text colour as the fill, outlines in it), every pair tested on both gradient stops.
+ */
+function QuickActions({ context, onHero = false }: { context: MeContext; onHero?: boolean }) {
   const t = useTranslations('dashboard');
   const label = useLabel();
   const isAdmin = context.roles.some((r) => r === 'OWNER' || r === 'ADMIN');
+  const main = onHero ? 'bg-hero-foreground text-hero-from hover:bg-hero-foreground/90' : undefined;
+  const other = onHero
+    ? 'border-hero-foreground/40 text-hero-foreground hover:bg-hero-foreground/10 hover:text-hero-foreground bg-transparent'
+    : undefined;
   return (
     <div className="flex flex-wrap gap-2" aria-label={t('quickActions')} role="group">
       {canSee(navItem('attendance'), context) && (
-        <ButtonLink href="/attendance" data-testid="quick-attendance">
+        <ButtonLink href="/attendance" data-testid="quick-attendance" className={main}>
           <CalendarCheckIcon aria-hidden />
           {t('takeAttendance')}
         </ButtonLink>
       )}
       {isAdmin && canSee(navItem('students'), context) && (
-        <ButtonLink href="/students/new" variant="outline" data-testid="quick-add-student">
+        <ButtonLink
+          href="/students/new"
+          variant="outline"
+          data-testid="quick-add-student"
+          className={other}
+        >
           <UserPlusIcon aria-hidden />
           {t('addStudent', { student: label('student', 'Student', { inText: true }) })}
         </ButtonLink>
       )}
       {canSee(navItem('fees'), context) && (
-        <ButtonLink href="/fees" variant="outline" data-testid="quick-fees">
+        <ButtonLink href="/fees" variant="outline" data-testid="quick-fees" className={other}>
           <WalletIcon aria-hidden />
           {t('collectFee')}
         </ButtonLink>
@@ -668,6 +921,7 @@ function HeldSmsBanner() {
   return (
     <div
       className="border-warning/40 bg-warning-soft flex flex-col gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+      id="held-sms"
       data-testid="held-sms"
     >
       <div className="flex min-w-0 gap-3">

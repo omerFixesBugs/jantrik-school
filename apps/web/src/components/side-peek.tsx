@@ -62,7 +62,7 @@ export function SidePeek({
       ref={panel}
       aria-label={title}
       data-testid={testId}
-      className="bg-card fixed top-(--topbar-h) end-0 bottom-0 z-20 flex w-[min(26rem,40vw)] flex-col border-s shadow-lg"
+      className="bg-card rounded-card shadow-card-hover fixed top-[calc(var(--topbar-h)+0.75rem)] end-3 bottom-3 z-20 flex w-[min(26rem,40vw)] flex-col overflow-hidden border"
     >
       <div className="flex items-center gap-2 border-b px-(--panel-p) py-2.5">
         <h2

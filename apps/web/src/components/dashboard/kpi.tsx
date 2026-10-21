@@ -46,6 +46,7 @@ export function KpiTile({
   hint,
   chart,
   meter,
+  aside,
   href,
   loading,
   failed,
@@ -67,8 +68,10 @@ export function KpiTile({
   hint?: ReactNode;
   /** A mini chart beside the label. */
   chart?: ReactNode;
-  /** A meter or gauge under the figure. */
+  /** A meter under the figure. */
   meter?: ReactNode;
+  /** Beside the figure, at its baseline (a half gauge). */
+  aside?: ReactNode;
   href?: string;
   loading?: boolean;
   /** The figure could not be loaded (says so, instead of "not started yet"). */
@@ -93,29 +96,34 @@ export function KpiTile({
           <span className="flex min-w-0 flex-1 justify-end pt-0.5">{chart}</span>
         )}
       </span>
-      {loading ? (
-        <Skeleton className="h-10 w-28" />
-      ) : (
-        // Big and light (Noto's figures are drawn for weight 300). A big school's
-        // "১,০২৩ / ১,১০০" wraps at the suffix rather than overflowing the tile.
-        <span className="font-numeric flex flex-wrap items-baseline gap-x-1.5 leading-none">
-          <span className="text-[2.25rem] font-light sm:text-[2.5rem]">
-            {empty ? (
-              <>
-                <span aria-hidden>—</span>
-                {!failed && <span className="sr-only">{t('notYet')}</span>}
-              </>
-            ) : count ? (
-              <CountUp to={count.to} format={count.format} />
-            ) : (
-              value
+      <span className="flex items-end justify-between gap-3">
+        {loading ? (
+          <Skeleton className="h-10 w-28" />
+        ) : (
+          // Big and light (Noto's figures are drawn for weight 300). A big school's
+          // "১,০২৩ / ১,১০০" wraps at the suffix rather than overflowing the tile.
+          <span className="font-numeric flex flex-wrap items-baseline gap-x-1.5 leading-none">
+            <span className="text-[2.25rem] font-light sm:text-[2.5rem]">
+              {empty ? (
+                <>
+                  <span aria-hidden>—</span>
+                  {!failed && <span className="sr-only">{t('notYet')}</span>}
+                </>
+              ) : count ? (
+                <CountUp to={count.to} format={count.format} />
+              ) : (
+                value
+              )}
+            </span>
+            {!empty && suffix && (
+              // The space reads "২৬ / ২৭" as one figure (a flex item drops it on screen).
+              <span className="text-muted-foreground text-lg font-normal"> {suffix}</span>
             )}
           </span>
-          {!empty && suffix && (
-            <span className="text-muted-foreground text-lg font-normal">{suffix}</span>
-          )}
-        </span>
-      )}
+        )}
+        {/* Narrow phones: the figure needs the room (the hint says the same). */}
+        {aside && !loading && !failed && <span className="hidden shrink-0 sm:block">{aside}</span>}
+      </span>
       {!loading && !failed && (delta || compare) && (
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {delta}

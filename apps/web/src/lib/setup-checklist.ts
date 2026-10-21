@@ -40,7 +40,7 @@ export interface ChecklistStep {
  * (an academic year, sections, students, attendance taken, absent SMS on), plus the setup wizard
  * while it is unfinished. The queries share their keys with the dashboard's cards.
  */
-export function useSetupChecklist(context: MeContext) {
+export function useSetupChecklist(context: MeContext, enabled = true) {
   const t = useTranslations('dashboard');
   const label = useLabel();
   const { client, session } = useAuth();
@@ -50,22 +50,24 @@ export function useSetupChecklist(context: MeContext) {
   const students = useQuery({
     queryKey: ['students-total', tenantId],
     queryFn: () => client.api<StudentsPage>('/students?pageSize=1'),
+    enabled,
   });
   const filters = useQuery({
     queryKey: ['student-filters', tenantId],
     queryFn: () => client.api<StudentFilters>('/students/filters'),
+    enabled,
   });
   const summary = useQuery({
     queryKey: ['attendance-summary', tenantId],
     queryFn: () => client.api<AttendanceTodaySummary>('/attendance/summary/today'),
-    enabled: attendance,
+    enabled: enabled && attendance,
   });
   const settings = useQuery({
     queryKey: ['attendance-settings', tenantId],
     queryFn: () => client.api<AttendanceSettings>('/attendance/settings'),
-    enabled: attendance,
+    enabled: enabled && attendance,
   });
-  const onboarding = useOnboarding();
+  const onboarding = useOnboarding(enabled);
 
   const student = label('student', 'Student', { inText: true });
   const classLevel = label('class_level', 'Class', { inText: true });

@@ -25,7 +25,8 @@ export function SectionCard({
 }) {
   return (
     <section
-      className="bg-card flex min-w-0 flex-col gap-4 rounded-lg border p-(--panel-p)"
+      data-slot="card"
+      className="bg-card rounded-card shadow-card flex min-w-0 flex-col gap-4 border p-(--panel-p)"
       aria-labelledby={`${id}-title`}
       data-testid={id}
     >

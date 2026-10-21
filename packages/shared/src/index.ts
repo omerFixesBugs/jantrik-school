@@ -20,6 +20,7 @@ export * from './import.js';
 export * from './onboarding.js';
 export * from './density.js';
 export * from './charts.js';
+export * from './dashboard.js';
 export * from './date-input.js';
 export * from './shortcuts.js';
 export * from './color.js';

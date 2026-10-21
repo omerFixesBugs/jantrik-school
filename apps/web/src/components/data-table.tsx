@@ -115,7 +115,7 @@ export function DataTable<T>({
     // the header does not stick (inside the scrolling box its top offset would cover the rows).
     <div
       className={cn(
-        'bg-card overflow-x-auto rounded-lg border',
+        'bg-card rounded-card shadow-card overflow-x-auto border',
         !scrollX && 'xl:overflow-x-clip',
         className,
       )}

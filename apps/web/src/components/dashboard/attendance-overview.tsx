@@ -1,12 +1,15 @@
 'use client';
 
 import {
+  ATTENDANCE_TARGET,
   attendancePercent,
   formatCount,
   formatDate,
   formatDayMonth,
   formatIdentifier,
-  percentDomain,
+  LONG_ABSENCE_DAYS,
+  periodPercent,
+  splitPeriods,
   type AttendanceCounts,
   type AttendanceTodayReport,
   type AttendanceTrendReport,
@@ -17,21 +20,27 @@ import { useLocale, useTranslations } from 'next-intl';
 import type { ReactNode } from 'react';
 import { registerHref } from '@/components/attendance/section-picker';
 import { TrendChart, type TrendPoint } from '@/components/charts';
+import { SegmentedControl } from '@/components/kit/segmented-control';
 import { SectionBoard, type BoardSection } from '@/components/section-board';
 import { buttonVariants } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useLabel } from '@/lib/hooks';
 import { displayName } from '@/lib/names';
 import { cn } from '@/lib/utils';
 
 /*
- * Today's attendance on the dashboard (docs/design.md → Dashboards): the section board, who is
- * absent and whom to call, and the last 30 days. Choosing a class on the board narrows the
- * absentees and the trend to that class (the chosen series burns brightest).
+ * Attendance on the dashboard (docs/design.md → Dashboards): the section board (today, this week
+ * or the last 30 days), who is absent and whom to call, and the trend against the period before
+ * and the target. Choosing a class on the board narrows the absentees and the trend to that class
+ * (the chosen series burns brightest).
  */
 
 /** Absent this many school days running or more: worth a call. */
-export const LONG_ABSENCE = 3;
+export const LONG_ABSENCE = LONG_ABSENCE_DAYS;
+
+export type BoardPeriod = 'today' | 'week' | 'month';
+const PERIOD_DAYS = { week: 7, month: 30 } as const;
 
 export function Panel({
   title,
@@ -80,31 +89,58 @@ function PanelLink({ href, children }: { href: string; children: ReactNode }) {
 
 export function TodayBoard({
   report,
+  history,
+  historyFailed = false,
+  onRetryHistory,
+  period = 'today',
+  onPeriodChange,
   classId,
   onClassChange,
 }: {
   report: AttendanceTodayReport;
+  /** The last 60 days by section (the week and month views); undefined while it loads. */
+  history?: AttendanceTrendReport;
+  /** The 60 days could not be loaded (the week and month views say so, with a retry). */
+  historyFailed?: boolean;
+  onRetryHistory?: () => void;
+  period?: BoardPeriod;
+  onPeriodChange?: (period: BoardPeriod) => void;
   classId: string | null;
   onClassChange: (classId: string | null) => void;
 }) {
   const t = useTranslations('dashboard');
   const tBoard = useTranslations('board');
   const tAtt = useTranslations('attendance');
+  const tCommon = useTranslations('common');
   const locale = useLocale() as Locale;
   const label = useLabel();
   const section = label('section', 'Section', { inText: true });
   const classLevel = label('class_level', 'Class', { inText: true });
   const f = (n: number) => formatCount(n, locale);
 
+  // Each section's present %: today's register, or the week's or month's days added up.
+  const lines = new Map((history?.sections ?? []).map((l) => [l.section.id, l.days]));
+  const percentOf = (id: string, today: number | null): number | null => {
+    if (period === 'today') return today;
+    const days = lines.get(id);
+    if (!days || !history) return null;
+    const { current } = splitPeriods(days, history.today, PERIOD_DAYS[period]);
+    return periodPercent(current, history.leaveCountsAsAbsent);
+  };
   const sections: BoardSection[] = report.sections.map((s) => {
-    const percent = s.register?.percent ?? null;
+    const percent = percentOf(s.section.id, s.register?.percent ?? null);
     return {
       section: s.section,
       percent,
       display: percent === null ? '' : `${f(Math.round(percent))}%`,
     };
   });
-  const period = (id: string) =>
+  const waiting = period !== 'today' && !history;
+  const title =
+    period === 'today'
+      ? tBoard('label', { section })
+      : t(period === 'week' ? 'boardTitleWeek' : 'boardTitleMonth', { section });
+  const registerPeriod = (id: string) =>
     report.sections.find((s) => s.section.id === id)?.register?.periodNo ??
     (report.mode === 'PER_SESSION' ? 1 : 0);
   const day = report.nonWorkingDay;
@@ -112,10 +148,27 @@ export function TodayBoard({
   return (
     <Panel
       testId="today-board"
-      title={tBoard('label', { section })}
-      aside={<PanelLink href="/attendance/today">{t('boardOpen')}</PanelLink>}
+      title={title}
+      aside={
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {onPeriodChange && report.sections.length > 0 && (
+            <SegmentedControl
+              value={period}
+              onChange={onPeriodChange}
+              label={`${title}: ${t('periodLabel')}`}
+              testId="board-period"
+              options={[
+                { value: 'today', label: t('periodToday') },
+                { value: 'week', label: t('periodWeek') },
+                { value: 'month', label: t('periodMonth') },
+              ]}
+            />
+          )}
+          <PanelLink href="/attendance/today">{t('boardOpen')}</PanelLink>
+        </div>
+      }
     >
-      {day && (
+      {day && period === 'today' && (
         <p className="text-muted-foreground text-sm">
           {day.reason === 'HOLIDAY'
             ? tAtt('holiday', { name: locale === 'bn' ? day.nameBn : day.nameEn })
@@ -129,10 +182,25 @@ export function TodayBoard({
             {t('stepSections', { classLevel, section })}
           </Link>
         </p>
+      ) : waiting && historyFailed ? (
+        <p className="text-muted-foreground flex flex-wrap items-center gap-3 text-sm">
+          {t('loadFailed')}
+          {onRetryHistory && (
+            <button
+              type="button"
+              onClick={onRetryHistory}
+              className="text-link focus-visible:ring-ring min-h-(--control-h-xs) rounded font-medium underline underline-offset-2 outline-none focus-visible:ring-2"
+            >
+              {tCommon('retry')}
+            </button>
+          )}
+        </p>
+      ) : waiting ? (
+        <Skeleton className="h-48 rounded-xl" />
       ) : (
         <SectionBoard
           sections={sections}
-          href={(s) => registerHref(s.section.id, period(s.section.id))}
+          href={(s) => registerHref(s.section.id, registerPeriod(s.section.id))}
           legend={[
             `< ${f(88)}`,
             `${f(88)}–${f(90)}`,
@@ -305,45 +373,94 @@ export function trendPoints(
   });
 }
 
+/**
+ * Present % over the last week or 30 days (all sections, or the chosen class), the same days of
+ * the period before as a dashed ghost, and the target line. `report` holds both periods (60
+ * days).
+ */
 export function AttendanceTrend({
   report,
   classId,
+  period = 'month',
+  onPeriodChange,
   className,
 }: {
   report: AttendanceTrendReport;
   classId: string | null;
+  period?: 'week' | 'month';
+  onPeriodChange?: (period: 'week' | 'month') => void;
   className?: string;
 }) {
   const t = useTranslations('dashboard');
   const tReports = useTranslations('reports');
   const locale = useLocale() as Locale;
   const f = (n: number) => formatCount(n, locale);
-  const points = trendPoints(report, classId, {
+  const all = trendPoints(report, classId, {
     detail: (present, total) => t('trendDetail', { present: f(present), total: f(total) }),
     offDay: tReports('offDay'),
     holiday: (h) => t('trendHoliday', { name: locale === 'bn' ? h.nameBn : h.nameEn }),
     notTaken: t('trendNotTaken'),
   });
+  const length = PERIOD_DAYS[period];
+  const { current, previous } = splitPeriods(
+    report.days.map((d, i) => ({ date: d.date, i })),
+    report.today,
+    length,
+  );
+  const points = current.map((c) => all[c.i]!);
+  // Day k of this period meets day k of the one before (aligned from the end when the year began
+  // inside the earlier period).
+  const offset = current.length - previous.length;
+  const ghost = current.map((_, k) =>
+    k - offset >= 0 ? (all[previous[k - offset]!.i]!.value ?? null) : null,
+  );
   const chosen = classId
     ? report.sections.find((s) => s.section.classLevel.id === classId)?.section.classLevel
     : null;
   const title = chosen
     ? t('trendTitleClass', {
         name: displayName(chosen.nameBn, chosen.nameEn, locale),
-        days: f(report.days.length),
+        days: f(points.length),
       })
-    : t('trendTitle', { days: f(report.days.length) });
+    : t('trendTitle', { days: f(points.length) });
   return (
-    <Panel title={title} className={className} testId="attendance-trend">
+    <Panel
+      title={title}
+      className={className}
+      testId="attendance-trend"
+      aside={
+        onPeriodChange && (
+          <SegmentedControl
+            value={period}
+            onChange={onPeriodChange}
+            label={`${title}: ${t('periodLabel')}`}
+            testId="trend-period"
+            options={[
+              { value: 'week', label: t('periodWeek') },
+              { value: 'month', label: t('periodMonth') },
+            ]}
+          />
+        )
+      }
+    >
       <TrendChart
         points={points}
         title={title}
-        height={170}
-        domain={percentDomain(points.map((p) => p.value))}
+        height={190}
         formatValue={(v) => `${f(Math.round(v))}%`}
         formatKey={(k) => formatDate(k, locale, 'full')}
         formatAxis={(k) => formatDayMonth(k, locale)}
-        tone={chosen ? 'sky' : 'mint'}
+        tone={chosen ? 'sky' : 'accent'}
+        currentLabel={t('trendCurrent', { days: f(length) })}
+        previous={
+          ghost.some((v) => v !== null)
+            ? { values: ghost, label: t('trendPrevious', { days: f(length) }) }
+            : undefined
+        }
+        target={{
+          value: ATTENDANCE_TARGET,
+          label: t('trendTarget', { target: f(ATTENDANCE_TARGET) }),
+        }}
       />
     </Panel>
   );
