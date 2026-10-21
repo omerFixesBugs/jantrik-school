@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Page, type Response } from '@playwright/test';
 import {
   accentOverrideVars,
   themeTokens,
@@ -37,9 +37,50 @@ async function expectReadable(page: Page, where: string) {
   expect.soft(layout, `${where}: ${JSON.stringify(layout, null, 1)}`).toEqual([]);
 }
 
+/** Waits as long as a 429 asks (300 requests a minute per person), as a person would. */
+async function waitOut(seconds: number) {
+  test.info().setTimeout(test.info().timeout + (seconds + 1) * 1000);
+  await new Promise((r) => setTimeout(r, (seconds + 1) * 1000));
+}
+
+/**
+ * Opens a screen (a URL, or a reload when none) and lets it settle. A sweep opens many screens
+ * quickly: if the API answered "too many requests" meanwhile, wait that out and open it again,
+ * so the checks never judge an error screen.
+ */
+async function openScreen(page: Page, url?: string) {
+  let wait = 0;
+  const on = (r: Response) => {
+    if (r.status() === 429) wait = Math.max(wait, Number(r.headers()['retry-after'] ?? 60));
+  };
+  page.on('response', on);
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      wait = 0;
+      await (url ? page.goto(url) : page.reload());
+      await page.waitForLoadState('networkidle');
+      if (!wait) return;
+      await waitOut(wait);
+    }
+  } finally {
+    page.off('response', on);
+  }
+}
+
 /** Sets the institute's preset as its owner would (PUT /settings/appearance). */
 async function setPreset(token: string, preset: ThemePreset | null, accent: string | null = null) {
-  await api(token, '/settings/appearance', { method: 'PUT', json: { preset, accent } });
+  const put = () =>
+    fetch(`${API_URL}/settings/appearance`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset, accent }),
+    });
+  let res = await put();
+  if (res.status === 429) {
+    await waitOut(Number(res.headers.get('Retry-After') ?? 60));
+    res = await put();
+  }
+  expect(res.status, `PUT /settings/appearance → ${res.status}`).toBe(200);
 }
 
 /** A person's light/dark choice through the API (PATCH /me/preferences answers 204). */
@@ -221,44 +262,43 @@ test('signing out leaves the next person the default look', async ({ page }) => 
   }
 });
 
-test('every screen holds up in dark', async ({ page }) => {
+test('every screen holds up in dark', async ({ browser }) => {
   test.setTimeout(150_000);
-  const token = await apiLogin(DEMO.shaplaOwner);
-  const student = (await api<StudentsPage>(token, '/students?pageSize=1')).items[0]!.id;
-  const screens = [
-    '/dashboard',
-    '/students',
-    `/students/${student}`,
-    '/students/new',
-    '/students/import',
-    '/attendance',
-    '/attendance/today',
-    '/attendance/register',
-    '/attendance/settings',
-    `/attendance/students/${student}`,
-    '/staff',
-    '/setup',
-    '/setup/classes',
-    '/setup/student-code',
-    '/fees',
-  ];
-  await page.emulateMedia({ colorScheme: 'dark' });
-  await page.setViewportSize({ width: 1366, height: 900 });
-  await passwordLogin(page, DEMO.shaplaOwner);
-  await expect(page).toHaveURL(/\/dashboard$/);
-  for (const preset of ['SCHOOL', 'COACHING'] as const) {
-    await setPreset(token, preset);
-    try {
-      for (const screen of screens) {
-        await page.goto(screen);
-        await expect(html(page)).toHaveAttribute('data-theme', preset.toLowerCase());
-        await expect(html(page)).toHaveAttribute('data-mode', 'dark');
-        await expect(page.getByRole('main')).toBeVisible();
-        await expectReadable(page, `${preset} dark ${screen}`);
-      }
-    } finally {
-      await setPreset(token, null);
+  // School at Shapla, Coaching at Alo (its type's default, and long batch names): one person per
+  // preset, which also keeps each inside the API's per-person request limit.
+  for (const [identifier, theme] of [
+    [DEMO.shaplaOwner, 'school'],
+    [DEMO.aloOwner, 'coaching'],
+  ] as const) {
+    const token = await apiLogin(identifier);
+    const student = (await api<StudentsPage>(token, '/students?pageSize=1')).items[0]!.id;
+    const page = await newPage(browser, 'dark');
+    await passwordLogin(page, identifier);
+    await expect(page).toHaveURL(/\/dashboard$/);
+    for (const screen of [
+      '/dashboard',
+      '/students',
+      `/students/${student}`,
+      '/students/new',
+      '/students/import',
+      '/attendance',
+      '/attendance/today',
+      '/attendance/register',
+      '/attendance/settings',
+      `/attendance/students/${student}`,
+      '/staff',
+      '/setup',
+      '/setup/classes',
+      '/setup/student-code',
+      '/fees',
+    ]) {
+      await openScreen(page, screen);
+      await expect(html(page)).toHaveAttribute('data-theme', theme);
+      await expect(html(page)).toHaveAttribute('data-mode', 'dark');
+      await expect(page.getByRole('main')).toBeVisible();
+      await expectReadable(page, `${theme} dark ${screen}`);
     }
+    await page.context().close();
   }
 });
 
@@ -277,7 +317,7 @@ test.describe('outdoors, on a phone, in light', () => {
     try {
       for (const preset of ['SCHOOL', 'MADRASA', 'COACHING', 'ENGLISH_MEDIUM'] as const) {
         await setPreset(owner, preset);
-        await page.goto('/attendance');
+        await openScreen(page, '/attendance');
         await expect(html(page)).toHaveAttribute(
           'data-theme',
           preset.toLowerCase().replace('_', '-'),
@@ -286,7 +326,7 @@ test.describe('outdoors, on a phone, in light', () => {
         await expect(page.getByTestId('register-list')).toBeVisible();
         await expectReadable(page, `${preset} light register`);
 
-        await guardian.reload();
+        await openScreen(guardian);
         await expect(guardian.getByTestId('children')).toBeVisible();
         await expect(html(guardian)).toHaveAttribute('data-mode', 'light');
         await expectReadable(guardian, `${preset} light guardian`);
