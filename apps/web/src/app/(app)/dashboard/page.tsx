@@ -489,7 +489,8 @@ function StaffDashboard({ context }: { context: MeContext }) {
                   value: d.percent,
                   display: d.percent === null ? '' : pct(d.percent),
                 }))}
-                className="w-24"
+                // 80 px fits beside a two-digit figure in a five-tile row at 1280.
+                className="w-20 2xl:w-24"
               />
             )
           }

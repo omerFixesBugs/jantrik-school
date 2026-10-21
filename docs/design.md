@@ -525,14 +525,27 @@ alone.
 
 **Target: ≤ 3 s to interactive on a 390 px phone with 4× CPU throttling and slow 4G.**
 
-Median of three cold-cache runs, signed in, with Chrome DevTools throttling (CPU 4×; 150 ms RTT,
-1.6 Mbps down); "interactive" is the main content on screen followed by 2 s without a long task.
-The checkpoint is commit `6fd66ac` (design v2 part 4a), measured the same way.
+Cold-cache runs, signed in, with Chrome DevTools throttling (CPU 4×; 150 ms RTT, 1.6 Mbps down);
+"interactive" is the main content on screen followed by 2 s without a long task. The checkpoint
+is commit `6fd66ac` (design v2 part 4a). CPU throttling is relative to the machine running the
+test, so the two builds are measured interleaved (one run of each in turn, six pairs, the same
+API and data) and only compared with each other; runs in separate sessions differed by up to
+0.8 s for the same build, and an earlier separate-session comparison (7.05 s → 5.6 s) overstated
+the gain.
 
-| Page      | Checkpoint | Now (v2.1), to interactive | Budget | Status      |
-| --------- | ---------- | -------------------------- | ------ | ----------- |
-| Dashboard | 7.05 s     | 5.6 s                      | 3 s    | over budget |
-| Students  | 7.1 s      | 4.9 s                      | 3 s    | over budget |
+Medians, with the range over the six runs:
+
+| Page      | Measure           | Checkpoint      | Now (v2.1)      | Budget | Status      |
+| --------- | ----------------- | --------------- | --------------- | ------ | ----------- |
+| Dashboard | content on screen | 5.9 s (5.7–6.0) | 5.4 s (5.2–5.5) |        |             |
+| Dashboard | to interactive    | 6.6 s (6.4–6.8) | 6.8 s (6.5–6.9) | 3 s    | over budget |
+| Students  | to interactive    | 6.5 s (6.3–6.8) | 6.2 s (6.1–6.2) | 3 s    | over budget |
+
+The dashboard shows its content sooner (the ranges do not overlap) but is interactive no sooner
+(+0.2 s is within the spread): the time from content to interactive grew from 0.8 s to 1.5 s
+(the median of the per-run gaps). The cause is not measured yet; the candidates are what starts
+right after the first screen: the sections near it, the 60-day history and the setup checklist's
+requests. The students list is faster (the ranges do not overlap).
 
 What is deferred today:
 

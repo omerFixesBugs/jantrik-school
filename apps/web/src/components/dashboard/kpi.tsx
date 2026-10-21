@@ -93,15 +93,17 @@ export function KpiTile({
           <span className="flex min-w-0 flex-1 justify-end pt-0.5">{chart}</span>
         )}
       </span>
-      {/* A wide figure takes the line, and the gauge or chart goes under it (never out of the
-          tile). */}
+      {/* A number too wide for the gauge or chart beside it takes the line, and they go under
+          it (never out of the tile). */}
       <span className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
         {loading ? (
           <Skeleton className="h-10 w-28" />
         ) : (
           // Big and light (Noto's figures are drawn for weight 300). A big school's
-          // "১,০২৩ / ১,১০০" wraps at the suffix rather than overflowing the tile.
-          <span className="font-numeric flex flex-wrap items-baseline gap-x-1.5 leading-none">
+          // "১,০২৩ / ১,১০০" wraps at the suffix rather than overflowing the tile. The row
+          // breaks for the number alone (basis 0, at least its min-content), so the suffix
+          // goes under the number before the gauge or chart goes under the figure.
+          <span className="font-numeric flex min-w-min grow basis-0 flex-wrap items-baseline gap-x-1.5 leading-none">
             <span className="text-[2.25rem] font-light sm:text-[2.5rem]">
               {empty ? (
                 <>
