@@ -1307,7 +1307,8 @@
     "showChart": "চার্টে দেখুন",
     "day": "দিন",
     "value": "মান",
-    "lowest": "সবচেয়ে কম {value}"
+    "lowest": "সবচেয়ে কম {value}",
+    "other": "অন্যান্য"
   },
   "board": {
     "label": "আজকের হাজিরা, {section} অনুযায়ী",

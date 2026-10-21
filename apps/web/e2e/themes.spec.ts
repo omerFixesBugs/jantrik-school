@@ -107,6 +107,7 @@ async function newPage(browser: Browser, colorScheme: 'light' | 'dark', mobile =
     locale: 'bn-BD',
     timezoneId: 'Asia/Dhaka',
     colorScheme,
+    reducedMotion: 'reduce',
     ...(mobile
       ? { viewport: { width: 360, height: 780 }, isMobile: true, hasTouch: true }
       : { viewport: { width: 1366, height: 900 } }),
@@ -174,6 +175,14 @@ test('the light/dark choice is kept on the account and paints first on the next 
     await page.reload();
     await expect(page.getByTestId('module-card-attendance')).toBeVisible();
     await expect(html(page)).toHaveAttribute('data-mode', 'dark');
+
+    // The top bar's one-tap toggle goes back to light (and is kept the same way).
+    const saved = page.waitForResponse(
+      (r) => r.url().endsWith('/me/preferences') && r.request().method() === 'PATCH',
+    );
+    await page.getByTestId('scheme-toggle').click();
+    await saved;
+    await expect(html(page)).toHaveAttribute('data-mode', 'light');
   } finally {
     // Through the API, so a broken page cannot leave the shared demo owner in dark.
     await setScheme(DEMO.shaplaOwner, 'SYSTEM');

@@ -158,11 +158,24 @@
   --radius-control: 12px;
 }
 
-/* Body: Noto Sans Bengali (Bangla + Latin; correct, tabular digits). Display: Anek Bangla, only
-   for the wordmark, page titles and the section board's letters. See docs/design.md. */
+/* Bangla pages: Noto Sans Bengali draws everything it can (correct, tabular digits; one face per
+   line, punctuation included). English pages: Plus Jakarta Sans first, Bangla names falling through
+   to Noto. Arabic (Noto Naskh Arabic) only where Arabic text appears. Display: Anek Bangla, only for
+   the wordmark, page titles and the section board's letters. See docs/design.md → Typography. */
 :root {
-  --app-font-stack: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --app-font-stack:
+    var(--font-body), var(--font-latin), var(--font-arabic), ui-sans-serif, system-ui, sans-serif;
   --app-display-stack: var(--font-display), var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+:root:lang(en) {
+  --app-font-stack:
+    var(--font-latin), var(--font-body), var(--font-arabic), ui-sans-serif, system-ui, sans-serif;
+  --app-display-stack: var(--font-latin), var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+/* Arabic text (mark it lang="ar"): Noto Naskh Arabic first, not the system's Arabic in the
+   fallback faces next/font puts after each family. */
+:lang(ar) {
+  font-family: var(--font-arabic), var(--app-font-stack);
 }
 
 /* ───────────────────────── Density × language ─────────────────────────
@@ -397,6 +410,85 @@
       animation-duration: 0ms !important;
     }
   }
+}
+
+/* ───────────────────────── Surfaces and motion ─────────────────────────
+   docs/design.md → Motion. One authored moment per surface: a card lifts 2 px under the pointer,
+   a KPI number counts up and a chart line draws in, once. The base layer zeroes every duration
+   under prefers-reduced-motion, so each lands on its final state. */
+@utility lift {
+  transition:
+    transform 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Pointers that hover only: a tapped card on a phone does not stay lifted. */
+  @media (hover: hover) {
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-card-hover);
+    }
+  }
+}
+
+/* A chart line drawing itself in (the path needs pathLength="1"). */
+@keyframes draw-in {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@utility draw-in {
+  stroke-dasharray: 1;
+  animation: draw-in 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Hatching: "not taken yet", and history behind the highlighted bar. A texture, so the meaning
+   never rests on colour alone; drawn behind the content (text is measured on the real fill). */
+@utility hatch {
+  position: relative;
+  isolation: isolate;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, currentColor 18%, transparent) 0 1.5px,
+      transparent 1.5px 6px
+    );
+  }
+}
+
+/* The madrasa's pattern (docs/design.md → Themes): an eight-fold star lattice, no living beings,
+   in the theme's ink at a whisper (masked, so it follows light and dark), behind the content of the
+   sidebar and the hero. Other presets draw nothing. */
+@layer components {
+  /* In a layer, so a positioning utility on the same element (sticky, absolute) still wins. */
+  :where([data-theme='madrasa']) .girih {
+    position: relative;
+    isolation: isolate;
+  }
+}
+[data-theme='madrasa'] .girih::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--primary-ink);
+  opacity: 0.07;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56' fill='none' stroke='%23000' stroke-width='1'%3E%3Cpath d='M28 8l6 14 14 6-14 6-6 14-6-14-14-6 14-6z'/%3E%3Cpath d='M14 14h28v28H14z' transform='rotate(45 28 28)'/%3E%3Cpath d='M0 28h8M48 28h8M28 0v8M28 48v8'/%3E%3C/svg%3E");
+  mask-size: 56px 56px;
+}
+
+/* Coaching in dark: the cards are glass over the purple glow (translucency, no blur filter: blur
+   costs cheap phones every scroll frame). */
+[data-theme='coaching'][data-mode='dark'] [data-slot='card'] {
+  background-color: color-mix(in oklab, var(--card) 86%, transparent);
 }
 
 /*

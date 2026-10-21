@@ -1307,7 +1307,8 @@
     "showChart": "Show as chart",
     "day": "Day",
     "value": "Value",
-    "lowest": "Lowest {value}"
+    "lowest": "Lowest {value}",
+    "other": "Other"
   },
   "board": {
     "label": "Today by {section}",

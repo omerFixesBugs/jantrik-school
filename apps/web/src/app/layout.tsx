@@ -1,5 +1,10 @@
 import type { Metadata, Viewport } from 'next';
-import { Anek_Bangla, Noto_Sans_Bengali } from 'next/font/google';
+import {
+  Anek_Bangla,
+  Noto_Naskh_Arabic,
+  Noto_Sans_Bengali,
+  Plus_Jakarta_Sans,
+} from 'next/font/google';
 import { themeCss } from '@jantrik/shared';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getTranslations } from 'next-intl/server';
@@ -27,6 +32,21 @@ const display = Anek_Bangla({
   display: 'swap',
   variable: '--font-display',
 });
+// Latin text (English UI, IDs, phone numbers, Latin digits): Plus Jakarta Sans, first in the
+// stack; Bangla falls through to Noto by unicode-range. Not preloaded: Bangla is the first paint.
+const latin = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-latin',
+});
+// Arabic (a madrasa's Arabic text): Noto Naskh Arabic, downloaded only if Arabic text appears.
+const arabic = Noto_Naskh_Arabic({
+  subsets: ['arabic'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-arabic',
+});
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('app');
@@ -45,7 +65,13 @@ export default async function RootLayout({ children }: LayoutProps<'/'>) {
     // before the first paint, so the server's <html> and the browser's differ there on purpose.
     <html
       lang={locale}
-      className={cn('h-full antialiased', body.variable, display.variable)}
+      className={cn(
+        'h-full antialiased',
+        body.variable,
+        display.variable,
+        latin.variable,
+        arabic.variable,
+      )}
       suppressHydrationWarning
     >
       <head>

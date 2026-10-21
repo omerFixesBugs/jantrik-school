@@ -48,7 +48,11 @@ export function Panel({
 }) {
   return (
     <section
-      className={cn('bg-card flex flex-col gap-3 rounded-lg border p-(--panel-p)', className)}
+      data-slot="card"
+      className={cn(
+        'bg-card rounded-card shadow-card flex flex-col gap-3 border p-(--panel-p)',
+        className,
+      )}
       data-testid={testId}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">

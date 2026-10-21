@@ -81,8 +81,15 @@ test('every text style has one width per digit, and ১ is drawn whole', async (
   await page.goto('/login');
   await page.evaluate(() => document.fonts.ready);
   const report = await page.evaluate(async (digits) => {
-    // The styles numbers appear in: body, label, emphasis, KPI value, a number in a heading.
-    const styles = ['', 'font-medium', 'font-semibold', 'text-3xl font-semibold font-numeric'];
+    // The styles numbers appear in: body, label, emphasis, a number in a heading, and the KPI
+    // figure (big and light).
+    const styles = [
+      '',
+      'font-medium',
+      'font-semibold',
+      'text-3xl font-semibold font-numeric',
+      'text-[2.5rem] font-light font-numeric',
+    ];
     const host = document.createElement('div');
     document.body.appendChild(host);
     const widths: Record<string, number[]> = {};
@@ -103,11 +110,15 @@ test('every text style has one width per digit, and ১ is drawn whole', async (
     }
     // Ink height of ১ against ৬ in the body face, at each weight the UI uses.
     const family = getComputedStyle(document.body).fontFamily;
-    // Load the real face only: next/font's "… Fallback" face is local("Arial"), which a Linux
-    // runner doesn't have, and a failed face makes fonts.load() reject.
-    const face = family.split(',')[0]!.trim();
+    // Load the real Bangla face by name (English pages put the Latin face first; next/font's
+    // "… Fallback" face is local("Arial"), which a Linux runner doesn't have, and a failed face
+    // makes fonts.load() reject).
+    const face = family
+      .split(',')
+      .map((f) => f.trim())
+      .find((f) => f.replace(/["']/g, '') === 'Noto Sans Bengali')!;
     const shapes: Record<number, { one: number; six: number; same: boolean }> = {};
-    for (const weight of [400, 500, 600]) {
+    for (const weight of [300, 400, 500, 600]) {
       await document.fonts.load(`${weight} 100px ${face}`, '১৬');
       const ctx = document.createElement('canvas').getContext('2d')!;
       ctx.font = `${weight} 100px ${family}`;

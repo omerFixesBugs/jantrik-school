@@ -9,8 +9,10 @@ import {
   HouseIcon,
   LogOutIcon,
   MenuIcon,
+  MoonIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
+  SunIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -60,7 +62,7 @@ function useYearText(context: MeContext): string | null {
   });
 }
 
-/** The sidebar's links, in chalk on the blackboard (docs/design.md → App shell). */
+/** The sidebar's links: pills, the active one in the accent (docs/design.md → App shell). */
 function NavLinks({
   context,
   collapsed,
@@ -82,8 +84,13 @@ function NavLinks({
         if (items.length === 0) return null;
         const headingId = `nav-group-${group}`;
         return (
-          <section key={group} aria-labelledby={headingId} className="flex flex-col gap-0.5">
-            <h2
+          <div
+            key={group}
+            role="group"
+            aria-labelledby={headingId}
+            className="flex flex-col gap-0.5"
+          >
+            <span
               id={headingId}
               className={cn(
                 'text-sidebar-muted px-3 pb-1 text-xs font-medium',
@@ -91,7 +98,7 @@ function NavLinks({
               )}
             >
               {t(group)}
-            </h2>
+            </span>
             <ul className="flex flex-col gap-0.5">
               {items.map((item) => {
                 const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -104,7 +111,7 @@ function NavLinks({
                       aria-current={active ? 'page' : undefined}
                       title={collapsed ? text : undefined}
                       className={cn(
-                        'flex min-h-(--control-h) items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                        'flex min-h-(--control-h) items-center gap-3 rounded-full px-3 py-1.5 text-sm font-medium transition-colors',
                         'focus-visible:ring-sidebar-ring outline-none focus-visible:ring-2',
                         collapsed && 'justify-center px-0',
                         active
@@ -135,7 +142,7 @@ function NavLinks({
                 );
               })}
             </ul>
-          </section>
+          </div>
         );
       })}
     </div>
@@ -217,6 +224,32 @@ function SidebarBody({
         <UserCard context={context} collapsed={collapsed} />
       </div>
     </>
+  );
+}
+
+/** Light or dark in one tap (System is in the user menu): phones outdoors switch to light. */
+function SchemeToggle() {
+  const t = useTranslations('shell');
+  const { mode, setScheme } = useTheme();
+  const toDark = mode === 'light';
+  const label = toDark ? t('schemeToDark') : t('schemeToLight');
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      // Phones: in the user menu (the top bar keeps room for the page title).
+      className="hidden rounded-full sm:inline-flex"
+      onClick={() => setScheme(toDark ? 'DARK' : 'LIGHT')}
+      aria-label={label}
+      title={label}
+      data-testid="scheme-toggle"
+    >
+      {toDark ? (
+        <MoonIcon aria-hidden className="size-4.5" />
+      ) : (
+        <SunIcon aria-hidden className="size-4.5" />
+      )}
+    </Button>
   );
 }
 
@@ -362,7 +395,7 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
   const title = current ? navLabel(current.key) : '';
 
   return (
-    <div className="bg-canvas flex min-h-svh w-full">
+    <div className="flex min-h-svh w-full">
       {/* Keyboard users skip the sidebar and the top bar (about a dozen stops) on every page. */}
       <a
         href="#main"
@@ -370,55 +403,57 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
       >
         {t('skipToContent')}
       </a>
-      {/* The blackboard: the sidebar on desktop (the drawer on phones, below). */}
+      {/* The sidebar on desktop, a floating card on the canvas (the drawer on phones, below). */}
       <aside
         className={cn(
-          'bg-sidebar text-sidebar-foreground sticky top-0 hidden h-svh shrink-0 flex-col transition-[width] duration-200 ease-out lg:flex',
-          collapsed ? 'w-16' : 'w-62',
+          'sticky top-0 hidden h-svh shrink-0 py-3 ps-3 transition-[width] duration-200 ease-out lg:block',
+          collapsed ? 'w-19' : 'w-65',
         )}
       >
-        <div
-          className={cn(
-            'border-sidebar-border flex h-(--topbar-h) shrink-0 items-center gap-2 border-b px-4',
-            collapsed && 'justify-center px-0',
-          )}
-        >
-          <Link
-            href="/dashboard"
-            className="focus-visible:ring-sidebar-ring rounded-md outline-none focus-visible:ring-2"
-          >
-            <Logo compact={collapsed} onBoard />
-          </Link>
-        </div>
-        <SidebarBody context={context} collapsed={collapsed} testIds />
-        <div className={cn('bg-sidebar px-2.5 pb-2.5', collapsed && 'flex justify-center')}>
-          <Button
-            variant="ghost"
-            size="sm"
+        <div className="bg-sidebar text-sidebar-foreground rounded-card shadow-card girih flex h-full flex-col overflow-hidden border">
+          <div
             className={cn(
-              // aria-expanded marks the sidebar's state, not an open menu: no ghost-button fill.
-              'text-sidebar-muted hover:bg-sidebar-accent aria-expanded:text-sidebar-muted focus-visible:ring-sidebar-ring focus-visible:ring-offset-sidebar w-full justify-start hover:text-sidebar-accent-foreground aria-expanded:bg-transparent',
-              collapsed && 'w-auto',
+              'border-sidebar-border flex h-(--topbar-h) shrink-0 items-center gap-2 border-b px-4',
+              collapsed && 'justify-center px-0',
             )}
-            onClick={toggleCollapsed}
-            aria-label={collapsed ? t('expand') : t('collapse')}
-            aria-expanded={!collapsed}
-            title={collapsed ? t('expand') : undefined}
           >
-            {collapsed ? (
-              <PanelLeftOpenIcon aria-hidden className="size-4.5" />
-            ) : (
-              <>
-                <PanelLeftCloseIcon aria-hidden className="size-4.5" />
-                {t('collapse')}
-              </>
-            )}
-          </Button>
+            <Link
+              href="/dashboard"
+              className="focus-visible:ring-sidebar-ring rounded-md outline-none focus-visible:ring-2"
+            >
+              <Logo compact={collapsed} onBoard />
+            </Link>
+          </div>
+          <SidebarBody context={context} collapsed={collapsed} testIds />
+          <div className={cn('bg-sidebar px-2.5 pb-2.5', collapsed && 'flex justify-center')}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                // aria-expanded marks the sidebar's state, not an open menu: no ghost-button fill.
+                'text-sidebar-muted hover:bg-sidebar-accent aria-expanded:text-sidebar-muted focus-visible:ring-sidebar-ring focus-visible:ring-offset-sidebar w-full justify-start hover:text-sidebar-accent-foreground aria-expanded:bg-transparent',
+                collapsed && 'w-auto',
+              )}
+              onClick={toggleCollapsed}
+              aria-label={collapsed ? t('expand') : t('collapse')}
+              aria-expanded={!collapsed}
+              title={collapsed ? t('expand') : undefined}
+            >
+              {collapsed ? (
+                <PanelLeftOpenIcon aria-hidden className="size-4.5" />
+              ) : (
+                <>
+                  <PanelLeftCloseIcon aria-hidden className="size-4.5" />
+                  {t('collapse')}
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="bg-card sticky top-0 z-20 flex h-(--topbar-h) items-center gap-2 border-b px-3 sm:px-6">
+        <header className="bg-background/90 sticky top-0 z-20 flex h-(--topbar-h) items-center gap-2 px-3 sm:px-6">
           <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
             <SheetTrigger
               render={
@@ -487,6 +522,7 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
               {yearText}
             </span>
           )}
+          <SchemeToggle />
           <LanguageToggle />
           <UserMenu context={context} />
         </header>
@@ -505,29 +541,31 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
 
 export function ShellSkeleton() {
   return (
-    <div className="bg-canvas flex min-h-svh w-full" aria-busy="true">
-      <div className="bg-sidebar hidden w-62 shrink-0 flex-col lg:flex">
-        <div className="border-sidebar-border flex h-(--topbar-h) items-center border-b px-4">
-          <Skeleton className="bg-sidebar-accent h-8 w-36" />
-        </div>
-        <div className="flex flex-col gap-2 p-3">
-          <Skeleton className="bg-sidebar-accent h-(--control-h) w-full" />
-          <Skeleton className="bg-sidebar-accent h-(--control-h) w-full" />
-          <Skeleton className="bg-sidebar-accent h-(--control-h) w-full" />
+    <div className="flex min-h-svh w-full" aria-busy="true">
+      <div className="hidden h-svh w-65 shrink-0 py-3 ps-3 lg:block">
+        <div className="bg-sidebar rounded-card shadow-card flex h-full flex-col border">
+          <div className="border-sidebar-border flex h-(--topbar-h) items-center border-b px-4">
+            <Skeleton className="bg-sidebar-accent h-8 w-36" />
+          </div>
+          <div className="flex flex-col gap-2 p-3">
+            <Skeleton className="bg-sidebar-accent h-(--control-h) w-full rounded-full" />
+            <Skeleton className="bg-sidebar-accent h-(--control-h) w-full rounded-full" />
+            <Skeleton className="bg-sidebar-accent h-(--control-h) w-full rounded-full" />
+          </div>
         </div>
       </div>
       <div className="flex flex-1 flex-col">
-        <div className="bg-card flex min-h-(--topbar-h) items-center gap-3 border-b px-4 sm:px-6">
+        <div className="flex min-h-(--topbar-h) items-center gap-3 px-4 sm:px-6">
           <Skeleton className="h-7 w-48" />
         </div>
         <div className="flex w-full max-w-[1760px] flex-col gap-(--section-gap) px-4 py-(--section-gap) sm:px-6">
           <Skeleton className="h-10 w-72" />
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            <Skeleton className="h-28" />
-            <Skeleton className="h-28" />
-            <Skeleton className="h-28" />
-            <Skeleton className="h-28" />
-            <Skeleton className="h-28" />
+            <Skeleton className="rounded-card h-32" />
+            <Skeleton className="rounded-card h-32" />
+            <Skeleton className="rounded-card h-32" />
+            <Skeleton className="rounded-card h-32" />
+            <Skeleton className="rounded-card h-32" />
           </div>
         </div>
       </div>

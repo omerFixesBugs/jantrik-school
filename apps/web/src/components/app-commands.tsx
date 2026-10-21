@@ -363,7 +363,7 @@ export function PaletteButton({ onClick }: { onClick: () => void }) {
       type="button"
       onClick={onClick}
       data-testid="palette-button"
-      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring bg-muted/60 hover:bg-muted flex h-(--control-h) min-w-(--control-h) shrink-0 items-center justify-center gap-2 rounded-md border px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-offset-2 lg:w-72 lg:justify-start"
+      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring bg-card hover:bg-muted flex h-(--control-h) min-w-(--control-h) shrink-0 items-center justify-center gap-2 rounded-full border px-3 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-offset-2 lg:w-72 lg:justify-start"
     >
       <SearchIcon aria-hidden className="size-4 shrink-0" />
       <span className="hidden min-w-0 truncate lg:block">{t('button')}</span>
