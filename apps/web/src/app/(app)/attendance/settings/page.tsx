@@ -783,7 +783,7 @@ function SectionTeacherRow({
                 key={c.user.id}
                 className={cn(
                   'inline-flex max-w-full min-w-0 items-center gap-1 rounded-lg border py-0.5 pr-0.5 pl-2.5 text-sm',
-                  c.isClassTeacher && 'border-primary bg-primary-soft',
+                  c.isClassTeacher && 'border-primary-ink bg-primary-soft',
                 )}
               >
                 <span className="min-w-0 truncate">{person}</span>

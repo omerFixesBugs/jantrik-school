@@ -26,13 +26,16 @@ export function initials(name: string): string {
   return (graphemes(first)[0]! + (last ? graphemes(last)[0]! : '')).toUpperCase();
 }
 
-/** Soft chalk colours (mint, yellow, sky, pink, orange), each with a dark ink at ≥ 7:1. */
+/**
+ * Soft tints (mint, yellow, sky, pink, orange) that tell people apart, each with an ink at ≥ 7:1;
+ * in dark mode a deep tint with a light ink, so an avatar never glares on a dark card.
+ */
 const TONES = [
-  'bg-[#dcefe4] text-[#173f35]',
-  'bg-[#fbf1cf] text-[#5c4706]',
-  'bg-[#ddeef7] text-[#1d4d6b]',
-  'bg-[#f9e2ea] text-[#7a2846]',
-  'bg-[#fbe8d6] text-[#6e3a0c]',
+  'bg-[#dcefe4] text-[#173f35] dark:bg-[#173a2b] dark:text-[#a8e0c2]',
+  'bg-[#fbf1cf] text-[#5c4706] dark:bg-[#3a3012] dark:text-[#f1d98a]',
+  'bg-[#ddeef7] text-[#1d4d6b] dark:bg-[#132f44] dark:text-[#a9d4ef]',
+  'bg-[#f9e2ea] text-[#7a2846] dark:bg-[#3d1a28] dark:text-[#f3b5ca]',
+  'bg-[#fbe8d6] text-[#6e3a0c] dark:bg-[#3d2512] dark:text-[#f6c49a]',
 ];
 
 /** Same name → same soft colour, so people learn to recognise each other at a glance. */

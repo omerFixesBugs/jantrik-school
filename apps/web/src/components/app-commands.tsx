@@ -20,8 +20,10 @@ import {
   KeyboardIcon,
   LanguagesIcon,
   LogOutIcon,
+  MoonIcon,
   Rows3Icon,
   SearchIcon,
+  SunIcon,
   UserPlusIcon,
   UserRoundIcon,
 } from 'lucide-react';
@@ -41,6 +43,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { useDensity } from '@/lib/density';
+import { useTheme } from '@/lib/theme';
 import { useSetLocale } from '@/lib/hooks';
 import { classLevelName, displayName } from '@/lib/names';
 import { useLabel } from '@/lib/hooks';
@@ -90,6 +93,7 @@ export function AppCommands({
   const navLabel = useNavLabel();
   const { client, session } = useAuth();
   const { density, toggle } = useDensity();
+  const { mode, setScheme } = useTheme();
   const setLocale = useSetLocale();
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -193,6 +197,13 @@ export function AppCommands({
         run: toggle,
       },
       {
+        id: 'act:scheme',
+        label: mode === 'dark' ? tShell('schemeToLight') : tShell('schemeToDark'),
+        keywords: t('schemeKeywords'),
+        icon: mode === 'dark' ? SunIcon : MoonIcon,
+        run: () => setScheme(mode === 'dark' ? 'LIGHT' : 'DARK'),
+      },
+      {
         id: 'act:shortcuts',
         label: t('shortcuts'),
         hint: '?',
@@ -223,6 +234,8 @@ export function AppCommands({
     student,
     locale,
     density,
+    mode,
+    setScheme,
     t,
     tShell,
     tCommon,

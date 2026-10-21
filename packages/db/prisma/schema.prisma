@@ -171,6 +171,25 @@ enum AttendanceMode {
   @@map("attendance_mode")
 }
 
+/// The institute themes (packages/shared/src/themes.ts holds their colours).
+enum ThemePreset {
+  SCHOOL
+  MADRASA
+  COACHING
+  ENGLISH_MEDIUM
+
+  @@map("theme_preset")
+}
+
+/// A person's light / dark choice; SYSTEM follows the device (the default for everyone).
+enum ColorScheme {
+  LIGHT
+  DARK
+  SYSTEM
+
+  @@map("color_scheme")
+}
+
 enum AttendanceStatus {
   PRESENT
   ABSENT
@@ -226,6 +245,8 @@ model InstituteType {
   defaultLocale                  Locale         @default(bn) @map("default_locale")
   /// Copied into attendance_settings.mode when a tenant is provisioned.
   attendanceMode                 AttendanceMode @default(DAILY) @map("attendance_mode")
+  /// The theme an institute of this type gets until its owner picks another.
+  defaultTheme                   ThemePreset    @default(SCHOOL) @map("default_theme")
   isActive                       Boolean        @default(true) @map("is_active")
   sortOrder                      Int            @default(0) @map("sort_order")
   defaultGradingSchemeTemplateId String?        @map("default_grading_scheme_template_id") @db.Uuid
@@ -353,17 +374,18 @@ model TemplateLabel {
 
 /// A person, global across tenants. Their roles per tenant are memberships.
 model User {
-  id           String   @id @default(uuid(7)) @db.Uuid
+  id           String      @id @default(uuid(7)) @db.Uuid
   /// E.164 Bangladeshi mobile, e.g. +8801712345678 (CHECK constraint in SQL).
-  phone        String   @unique
-  email        String?  @unique
+  phone        String      @unique
+  email        String?     @unique
   name         String
   /// Name in Bangla script, shown in the Bangla UI; falls back to `name`.
-  nameBn       String?  @map("name_bn")
-  passwordHash String?  @map("password_hash")
-  locale       Locale   @default(bn)
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  nameBn       String?     @map("name_bn")
+  passwordHash String?     @map("password_hash")
+  locale       Locale      @default(bn)
+  colorScheme  ColorScheme @default(SYSTEM) @map("color_scheme")
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   memberships Membership[]
   students    Student[]
@@ -421,6 +443,7 @@ model Tenant {
   attendanceSettings  AttendanceSettings?
   holidays            Holiday[]
   studentSettings     StudentSettings?
+  appearanceSettings  AppearanceSettings?
   studentCodeCounters StudentCodeCounter[]
   sectionTeachers     SectionTeacher[]
   attendanceSessions  AttendanceSession[]
@@ -824,6 +847,24 @@ model Enrolment {
   @@index([tenantId, academicYearId, classLevelId, sectionId])
   @@index([tenantId, studentId])
   @@map("enrolments")
+}
+
+/// The institute's theme, one row per tenant once the owner saves it; until then the institute
+/// type's default theme and the preset's own accent (no backfill).
+model AppearanceSettings {
+  id        String       @id @default(uuid(7)) @db.Uuid
+  tenantId  String       @unique @map("tenant_id") @db.Uuid
+  /// Null: the institute type's default (institute_types.default_theme).
+  preset    ThemePreset?
+  /// "#rrggbb" in lower case; null: the preset's own accent. The API checks its contrast.
+  accent    String?      @db.Char(7)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("appearance_settings")
 }
 
 /// One row per tenant once an admin saves it; defaults live in code until then (no backfill).

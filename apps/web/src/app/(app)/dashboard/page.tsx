@@ -757,7 +757,7 @@ function GuardianDashboard({ context }: { context: MeContext }) {
             className="bg-card flex flex-col items-center gap-3 rounded-xl border px-6 py-12 text-center"
             data-testid="children-empty"
           >
-            <span className="bg-primary-soft text-primary flex size-14 items-center justify-center rounded-2xl">
+            <span className="bg-primary-soft text-primary-ink flex size-14 items-center justify-center rounded-2xl">
               <HeartHandshakeIcon aria-hidden className="size-7" />
             </span>
             <p className="font-medium">{t('none')}</p>

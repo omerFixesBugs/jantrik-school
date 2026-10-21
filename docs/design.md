@@ -53,77 +53,110 @@ at the end.
     length and shows its recent history; a module that is not running shows "—" and says what
     will appear, never a made-up number (Stripe; PRODUCT.md principle 4).
 
-## Brand: blackboard and coloured chalk
+## Brand
 
 - **Name:** **Jantrik School** / **যন্ত্রিক স্কুল**. The wordmark is Anek Bangla 600.
-- **World:** the institute's own blackboard. A flat blackboard-green shell, chalk-white type on
-  it, and coloured chalk as the only data colours. No chalk textures, no hand-drawn fonts, no
-  ruled-paper tables: the board lends colour, type, density and one signature, never the layout or
-  the controls.
-- **Mark:** a tile with **য** and a chalk-yellow dot (the spark): the board tile on light
-  grounds, a white tile on the board itself. Component: `Logo` / `LogoMark` in
-  `src/components/brand.tsx` (`onBoard` for the sidebar).
-- **Signature: the section board.** Today's attendance as a class × section chart, like the
-  বর্ণমালা chart every child learns from, drawn on a small blackboard. Every tile shows its
-  percentage as text, not-taken tiles are dashed, the lowest is ringed in chalk pink, and a tile
-  opens that section's register. Labels come from `useLabel()` (Course/Batch at a coaching centre).
-  It lives on the dashboard, Attendance today and the take-attendance picker.
-- **The alphabet chart** (chalk letters on the board, one in chalk yellow) stays on the login
+- **World:** the institute's own theme (below). v2's flat blackboard shell is retired: the
+  shell, cards and data now take the institute's preset, light or dark. The blackboard names
+  (`board-*`, `chalk-*`) survive only as aliases of theme tokens until their last users are
+  rebuilt (design v2.1, R2–R3).
+- **Mark:** a tile with **য** in the accent fill; on the hero and the brand panels it inverts
+  (hero text colour, the gradient's first stop as its letter). Component: `Logo` / `LogoMark` in
+  `src/components/brand.tsx`.
+- **The section board:** today's attendance as a class × section chart, like the বর্ণমালা chart
+  every child learns from. Every tile shows its percentage as text in the tile's own label colour
+  (`ramp-fg-N`), not-taken tiles are dashed, the lowest is ringed, and a tile opens that section's
+  register. Labels come from `useLabel()` (Course/Batch at a coaching centre). It lives on the
+  dashboard, Attendance today and the take-attendance picker.
+- **The alphabet chart** (letters on the hero gradient, one in the hero accent) stays on the login
   brand panel only.
-- **The platform panel** (Jantrik staff) uses the same world on black slate
-  (`data-board="slate"`), so nobody mistakes it for an institute.
+- **The platform panel** (Jantrik staff) keeps its own look whatever an institute or a person
+  chose: School, light, with a black slate header (`data-board="slate"`), so nobody mistakes it
+  for an institute.
 
-## Colour
+## Themes
 
-Light only: v2 has no dark theme (the class-based `dark:` variant is kept so shadcn's leftover
-`dark:` classes never switch on with the OS). Never use raw hex values in components. Every text
-pair below was measured at 4.5:1 or more.
+Every colour comes from [`packages/shared/src/themes.ts`](../packages/shared/src/themes.ts):
+four presets, each designed in light **and** dark, as data. Never use raw hex values in
+components; use the tokens (the one exception: the avatar tones in `person-avatar.tsx`, a light and
+a dark pair per tone).
 
-| Token                                  | Value                 | Use                                                     |
-| -------------------------------------- | --------------------- | ------------------------------------------------------- |
-| `--board`                              | `#173F35`             | Sidebar, section board (slate: `#1F2724`)               |
-| `--board-raised`                       | `#21503F`             | Hover and the active item on the board                  |
-| `--board-deep`                         | `#133429`             | The board's bottom rail (institute and user)            |
-| `--board-foreground` / `--board-muted` | `#E6EEE9` / `#A9C2B8` | Text on the board (9.9:1, 6.2:1)                        |
-| `--background`                         | `#F4F6F2`             | Chalk-dust ground behind panels                         |
-| `--card`                               | `#FFFFFF`             | Panels, tables, dialogs                                 |
-| `--foreground`                         | `#14231E`             | Body text (15:1 on the ground)                          |
-| `--muted-foreground`                   | `#56665F`             | Secondary text, the lightest text allowed (5.6:1)       |
-| `--primary`                            | `#173F35`             | Primary buttons, focus ring (11.7:1 on white)           |
-| `--primary-hover`                      | `#21503F`             | Primary button hover; primary stays green on slate too  |
-| `--link`                               | `#1E6B55`             | Text links (6.4:1)                                      |
-| `--primary-soft`                       | `#E5EFE9`             | Selected rows, soft fills                               |
-| `--accent-warm` (chalk yellow)         | `#F2C641`             | The spark, "today", the active nav icon; ink text on it |
-| `--success` / `-soft`                  | `#1A7340` / `#E3F4E9` | Present, paid, active (5.2:1 on soft)                   |
-| `--warning` / `-soft`                  | `#A14A06` / `#FDF0E1` | Late, needs attention (5.4:1 on soft)                   |
-| `--destructive` / `-soft`              | `#B42318` / `#FDECEA` | Absent, overdue, errors, delete                         |
-| `--info` / `-soft`                     | `#2F6F94` / `#E4F0F7` | Leave, neutral notices                                  |
-| `--border`                             | `#DCE3DF`             | Hairlines between surfaces                              |
-| `--input`                              | `#7F918A`             | Input and select outlines (3.3:1, WCAG 1.4.11)          |
+| Preset             | Default for                       | Light                                 | Dark                       | Character                                                   |
+| ------------------ | --------------------------------- | ------------------------------------- | -------------------------- | ----------------------------------------------------------- |
+| **School**         | NCTB Bangla Version (and any new) | white cards on a cool mist, blue      | navy slate, blue           | trustworthy; blue → teal hero gradient                      |
+| **Madrasa**        | madrasa types, when added         | ivory and deep green, gold highlight  | green-black, gold          | a faint eight-fold geometric pattern; no living beings      |
+| **Coaching**       | Coaching                          | lavender white, vivid purple          | near-black, purple glow    | designed to look its best in dark, but **never forced**     |
+| **English medium** | NCTB English Version              | white and warm white, ink black, gold | warm charcoal, ink inverts | minimal and refined; a soft tinted hero instead of gradient |
 
-**Coloured chalk (data series only):** yellow `#F2C641`, pink `#E8739A`, sky `#5AB0D8`, mint
-`#6CC6A0`, orange `#EE8F3A` for fills (on the board, bars), and the `-ink` variants (yellow
-`#8A6D0C`, pink `#C24E76`, sky `#2A77A3`, mint `#2B8460`, orange `#B05E15`) for lines and text on
-white (all ≥ 4.5:1). `--chart-1…5` map to the inks in the order mint, orange, sky, yellow, pink,
-which passes the colour-blind separation checks (dataviz `validate_palette.js`): use the series
-in that order, never cycled.
+**Who chooses what:**
 
-**Percent ramp (one for every percentage):** ≤87 `#2B5A4E`, 88–90 `#3E7A63`, 91–93 `#57A07F`,
-94–96 `#7CC4A0`, 97–100 `#A8E2C4`. White text on the first two steps, ink on the rest. The same
-present % has the same colour on the board, the register and every report.
+- **The institute's preset:** its type's default (`institute_types.default_theme`), or the
+  owner's choice (`PUT /settings/appearance`, OWNER only), with an optional **accent** colour.
+  An accent goes through the same derivation and checks as the presets' own: the fill, hover,
+  soft fill, text ink, ramp and hero are derived from it, its lightness is nudged until every pair
+  passes, and a colour that still cannot pass is refused (`422 ACCENT_CONTRAST`; no `#rrggbb` in
+  the test sweep is refused today, so this is a safety net).
+- **Each person's mode:** Light, Dark or **System**: the default for everyone, coaching included.
+  Kept on their account (`users.color_scheme`), so their other devices follow; in the user menu
+  and in Ctrl+K. System follows the device live.
+- **How it reaches the page:** the root layout inlines `themeCss()` (one rule per preset and mode
+  on `[data-theme][data-mode]`, School light also on `:root`; about 22 KB). A head script
+  (`src/lib/theme-script.ts`) sets `data-theme`, `data-mode` and an owner's accent variables before
+  the first paint, from the last look this browser showed, so a reload never flashes;
+  `ThemeProvider` (`src/lib/theme.tsx`) then applies what `/me/context` and the session say.
+  `dark:` utilities follow `data-mode`, never the OS media query directly. A dark page prints in
+  its preset's light colours.
+
+**Tokens** (shadcn names plus ours, all per preset and mode):
+
+| Token                                                                             | Use                                                                  |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `background`, `card`, `muted`, `border`, `input`                                  | ground, floating cards, quiet fills, hairlines, control outlines     |
+| `foreground`, `muted-foreground`                                                  | body text, secondary text (the lightest text allowed)                |
+| `primary` / `primary-foreground` / `primary-hover`                                | the accent as a fill (buttons, the active nav pill) and its text     |
+| `primary-ink`                                                                     | the accent as text or a thin mark on a surface (links, chart lines)  |
+| `link`                                                                            | links: `primary-ink`, or the gold ink when the accent is ink black   |
+| `primary-soft`                                                                    | selected rows, soft accent fills                                     |
+| `sidebar-*`                                                                       | the shell's sidebar, its active pill (`sidebar-primary`), its hover  |
+| `hero-from` / `hero-to` / `hero-foreground` / `hero-muted` / `hero-accent`        | the hero band and brand panels: gradient stops and the text on them  |
+| `accent-warm` / `-soft` / `-ink`                                                  | the second, quieter highlight (gold in the madrasa); `-ink` for text |
+| `success`, `warning`, `destructive`, `info` (+ `-soft`), `destructive-foreground` | status, the same in every preset (one set per mode)                  |
+| `ramp-1…5` / `ramp-fg-1…5`                                                        | the percent tiers and each tier's own label colour                   |
+| `chart-1…5`                                                                       | categorical chart series, in that order                              |
+| `bloom-1/2`, `shadow-rgb`                                                         | the canvas's two soft blooms; the theme's shadow tint                |
+
+**Contrast is tested, not eyeballed.** `themes.test.ts` checks every preset × mode and a sweep of
+39 owner accents: 4.5:1 for every text pair (body and muted text on every surface, text on the
+accent fill, the accent as text, the sidebar, hero text on **both** gradient stops, status text on
+its soft fill, each ramp tier's label) and 3:1 for control outlines, the focus ring and chart
+marks. The e2e `themes.spec.ts` measures what pages actually paint: every staff screen in dark
+(School and Coaching), and the teacher's register and the guardian's screen in light in every
+preset (phones outdoors).
+
+**Data colours** (the dataviz gates, also in `themes.test.ts`):
+
+- **Percent ramp:** five ordered tiers of one hue (≤87, 88–90, 91–93, 94–96, 97–100), darker for
+  more in light mode and brighter for more in dark mode. Even the faintest tier clears 2:1 on the
+  card, so a low section never fades away; tiers are at least 0.06 apart in lightness. The same
+  present % has the same colour on the board, the register and every report.
+- **Series:** `chart-1…5` per preset and mode. Slot 1 is the theme's hue (gold, not ink black, in
+  English medium); the order clears colour-blind ΔE ≥ 8 and normal-vision ΔE ≥ 15 between
+  neighbours, stays in one lightness band and reaches 3:1 on the card. Use them in order, never
+  cycled; past five, fold into "Other". A single-series chart uses `primary-ink`, so it follows an
+  owner's accent.
 
 Rules:
 
 - **Status is never colour alone:** absent ✕, late (clock), leave, warning !, always with the word.
-  Status colours are separate from the chalk series.
-- **Chalk yellow is never a status colour**, and text on it is ink, never white.
+  Status colours are separate from the chart series.
+- **The warm highlight is never a status colour.**
 - **No faded text** (`text-muted-foreground/70` and the like): use `--muted-foreground`.
 - **The chosen series burns brightest:** choosing a class highlights its line or bar in every
   chart and dims the rest.
 - **Nothing disappears, it cancels:** voided invoices, cancelled invitations and inactive
   students stay visible, struck through and labelled.
-- **Browser surfaces are themed:** selection is chalk yellow, the caret is board green, scrollbars
-  are thin and muted, focus is a full-strength ring (below).
+- **Browser surfaces are themed:** selection is the warm soft fill, the caret is the accent ink,
+  scrollbars are thin and muted, focus is a full-strength ring (below).
 
 ## Typography
 
@@ -233,12 +266,12 @@ Desktop (≥ 1024 px)                              Phone (< 1024 px)
 └────────────┴─────────────────────────────────┘
 ```
 
-- **Sidebar:** the blackboard, 248 px wide, collapsible to a 64 px rail (labels stay the
-  accessible names). Group labels are quiet chalk-muted text. The active item is the raised board
-  colour with a chalk-yellow icon (no coloured edge bar). Modules not built yet say "শীঘ্রই". The
-  institute and the person sit on the board's bottom rail, so people always know which institute
-  they are changing.
-- **Top bar:** white, sticky, exactly `--topbar-h` tall (so sticky table headers sit right under
+- **Sidebar:** the theme's sidebar surface (`sidebar-*`), 248 px wide, collapsible to a 64 px
+  rail (labels stay the accessible names). Group labels are quiet `sidebar-muted` text. The
+  active item is the accent pill (`sidebar-primary`; no coloured edge bar). Modules not built yet
+  say "শীঘ্রই" (on the active pill, in the pill's own text colour). The institute and the person
+  sit on the sidebar's bottom rail, so people always know which institute they are changing.
+- **Top bar:** the card surface, sticky, exactly `--topbar-h` tall (so sticky table headers sit right under
   it): breadcrumb and page title on the left; the search that opens Ctrl+K (part 2), the academic
   year (plain text: a fact, not a control), the language toggle and the user menu on the right.
 - **Skip link:** the first stop on every page jumps to the content.
@@ -253,8 +286,9 @@ Desktop (≥ 1024 px)                              Phone (< 1024 px)
 ## Focus
 
 Every interactive element shows a full-strength focus indicator: buttons and links a 2 px
-`--ring` ring with a 2 px gap (11.7:1), inputs a `--ring` border plus a soft halo, items on the
-board a chalk-yellow ring. Never a faded ring alone.
+`--ring` ring (the accent ink, 4.5:1 or more on the card in every theme) with a 2 px gap, inputs
+a `--ring` border plus a soft halo, items in the sidebar a `--sidebar-ring` ring. Never a faded
+ring alone.
 
 ## Icons
 

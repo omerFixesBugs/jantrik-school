@@ -57,7 +57,7 @@ export function SavedViews({
                 key={v.id}
                 className={cn(
                   'inline-flex rounded-md border',
-                  current ? 'border-primary bg-primary-soft' : 'bg-card',
+                  current ? 'border-primary-ink bg-primary-soft' : 'bg-card',
                 )}
               >
                 <ViewTab
@@ -149,7 +149,7 @@ function ViewTab({
         'focus-visible:ring-ring inline-flex min-h-(--control-h-sm) items-center rounded-md px-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
         current ? 'text-accent-foreground' : 'text-muted-foreground hover:text-foreground',
         framed && 'border',
-        framed && (current ? 'border-primary bg-primary-soft' : 'bg-card'),
+        framed && (current ? 'border-primary-ink bg-primary-soft' : 'bg-card'),
         className,
       )}
     >

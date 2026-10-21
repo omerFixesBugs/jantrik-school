@@ -309,7 +309,7 @@ function Profile() {
                     </div>
                     <a
                       href={`tel:${g.phone}`}
-                      className="text-primary inline-flex w-fit items-center gap-1 text-sm tabular-nums"
+                      className="text-primary-ink inline-flex w-fit items-center gap-1 text-sm tabular-nums"
                       dir="ltr"
                     >
                       <PhoneIcon aria-hidden className="size-3.5" />

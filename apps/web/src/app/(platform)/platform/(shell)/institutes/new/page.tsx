@@ -221,7 +221,7 @@ export default function NewInstitutePage() {
           <fieldset className="flex flex-col gap-2">
             <legend className="mb-2 text-sm font-medium">{t('modulesTitle')}</legend>
             <div className="flex flex-wrap gap-2">
-              <span className="border-primary bg-primary-soft text-accent-foreground flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium">
+              <span className="border-primary-ink bg-primary-soft text-accent-foreground flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium">
                 <CheckIcon aria-hidden className="size-4" />
                 {tModules('CORE')}
                 <span className="sr-only">({t('alwaysOn')})</span>

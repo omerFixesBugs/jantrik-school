@@ -180,7 +180,7 @@ function StudentReport() {
             <section className="bg-card flex flex-col gap-3 rounded-xl border p-4 shadow-xs sm:p-5">
               <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
                 <p
-                  className="font-numeric text-primary text-4xl font-semibold"
+                  className="font-numeric text-primary-ink text-4xl font-semibold"
                   data-testid="student-percent"
                 >
                   {r.percent === null ? '—' : `${formatCount(Math.round(r.percent), locale)}%`}

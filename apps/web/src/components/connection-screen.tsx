@@ -36,7 +36,7 @@ export function ConnectionScreen({ onRetry }: { onRetry: () => void }) {
       data-testid="connection-screen"
       aria-live="polite"
     >
-      <div className="bg-brand flex items-center px-4 py-3 text-white sm:px-8">
+      <div className="bg-linear-to-br from-hero-from to-hero-to text-hero-foreground flex items-center px-4 py-3 sm:px-8">
         <Logo inverted />
       </div>
       <div className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-4 px-6 py-12 text-center">

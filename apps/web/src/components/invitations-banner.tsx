@@ -57,7 +57,7 @@ export function InvitationsBanner() {
           className="border-primary/40 bg-primary-soft/40 flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center"
         >
           <span className="flex min-w-0 flex-1 items-start gap-3">
-            <MailOpenIcon aria-hidden className="text-primary mt-0.5 size-5 shrink-0" />
+            <MailOpenIcon aria-hidden className="text-primary-ink mt-0.5 size-5 shrink-0" />
             <span className="font-medium break-words">
               {t('inviteBanner', {
                 institute: i.tenant.name,

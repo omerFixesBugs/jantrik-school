@@ -481,7 +481,7 @@ function Students() {
           className="bg-card flex flex-col items-center gap-3 rounded-lg border px-6 py-14 text-center"
           data-testid="students-empty"
         >
-          <span className="bg-primary-soft text-primary flex size-14 items-center justify-center rounded-lg">
+          <span className="bg-primary-soft text-primary-ink flex size-14 items-center justify-center rounded-lg">
             {filtered ? (
               <SearchXIcon aria-hidden className="size-7" />
             ) : (

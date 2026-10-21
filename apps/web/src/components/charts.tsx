@@ -393,7 +393,7 @@ export function TrendChart({
                     cx={x(lowest)}
                     cy={y(values[lowest]!)}
                     r={4}
-                    fill="var(--chalk-pink-ink)"
+                    fill="var(--destructive)"
                     stroke="var(--card)"
                     strokeWidth={2}
                   />

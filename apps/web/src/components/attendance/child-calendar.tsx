@@ -140,9 +140,11 @@ export function ChildCalendar({ studentId }: { studentId: string }) {
                       ? STATUS_TONE[d.status]
                       : off
                         ? 'bg-muted text-muted-foreground'
-                        : 'border border-dashed',
-                    future && 'opacity-50',
-                    d.date === data!.today && 'ring-primary ring-2 ring-offset-1',
+                        : // Days to come: quieter than a day with no record, still legible.
+                          future
+                          ? 'text-muted-foreground'
+                          : 'border border-dashed',
+                    d.date === data!.today && 'ring-primary-ink ring-2 ring-offset-1',
                   )}
                 >
                   <span className="font-numeric font-medium">

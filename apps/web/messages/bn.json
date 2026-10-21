@@ -77,7 +77,14 @@
     "density": "বিন্যাস",
     "densityCompact": "ঘন (ডেস্কটপ)",
     "densityComfortable": "আরামদায়ক (বড় করে)",
-    "skipToContent": "মূল অংশে যান"
+    "skipToContent": "মূল অংশে যান",
+    "colorScheme": "রং",
+    "schemeLight": "আলো",
+    "schemeDark": "অন্ধকার",
+    "schemeSystem": "ডিভাইসের মতো",
+    "schemeToLight": "আলো রঙে দেখুন",
+    "schemeSaveFailed": "রঙের পছন্দ সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।",
+    "schemeToDark": "অন্ধকার রঙে দেখুন"
   },
   "nav": {
     "dashboard": "ড্যাশবোর্ড",
@@ -1341,7 +1348,8 @@
     "language": "ভাষা: {language}",
     "languageKeywords": "ভাষা language English বাংলা",
     "densityKeywords": "বিন্যাস ঘন আরামদায়ক density compact comfortable",
-    "results": "{count, plural, other {#টি ফল}}"
+    "results": "{count, plural, other {#টি ফল}}",
+    "schemeKeywords": "রং আলো অন্ধকার ডার্ক থিম dark light theme mode"
   },
   "dateInput": {
     "placeholder": "দিন/মাস/বছর",

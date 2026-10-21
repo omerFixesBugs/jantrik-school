@@ -8,7 +8,7 @@ export function LogoMark({ className, inverted }: { className?: string; inverted
       aria-hidden
       className={cn(
         'font-heading relative inline-flex size-9 shrink-0 items-center justify-center rounded-[11px] text-xl leading-none font-semibold',
-        inverted ? 'bg-white text-board' : 'bg-board text-board-foreground ring-1 ring-board-line',
+        inverted ? 'bg-hero-foreground text-hero-from' : 'bg-primary text-primary-foreground',
         className,
       )}
     >
@@ -36,11 +36,11 @@ export function Logo({
   const t = useTranslations('app');
   return (
     <span className={cn('inline-flex items-center gap-2.5', className)}>
-      <LogoMark inverted={inverted || onBoard} className={onBoard ? 'size-8 text-lg' : undefined} />
+      <LogoMark inverted={inverted} className={onBoard ? 'size-8 text-lg' : undefined} />
       <span
         className={cn(
           'font-heading text-lg leading-none font-semibold whitespace-nowrap',
-          onBoard && 'text-white',
+          onBoard && 'text-board-foreground',
           compact && 'sr-only',
         )}
       >
@@ -63,7 +63,7 @@ export function AlphabetStrip({ className }: { className?: string }) {
       )}
     >
       {LETTERS.slice(0, 16).map((letter, i) => (
-        <span key={letter} className={i === 0 ? 'text-accent-warm' : 'text-white/20'}>
+        <span key={letter} className={i === 0 ? 'text-hero-accent' : 'text-hero-foreground/20'}>
           {letter}
         </span>
       ))}
@@ -89,7 +89,7 @@ export function AlphabetChart({ className }: { className?: string }) {
           key={letter}
           className={cn(
             'flex aspect-square items-center justify-center',
-            i === 0 ? 'text-accent-warm' : 'text-white/[0.13]',
+            i === 0 ? 'text-hero-accent' : 'text-hero-foreground/[0.13]',
           )}
         >
           {letter}

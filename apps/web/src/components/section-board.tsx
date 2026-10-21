@@ -26,11 +26,11 @@ export interface BoardSection {
 }
 
 const RAMP_TEXT: Record<1 | 2 | 3 | 4 | 5, string> = {
-  1: 'bg-ramp-1 text-white',
-  2: 'bg-ramp-2 text-white',
-  3: 'bg-ramp-3 text-foreground',
-  4: 'bg-ramp-4 text-foreground',
-  5: 'bg-ramp-5 text-foreground',
+  1: 'bg-ramp-1 text-ramp-fg-1',
+  2: 'bg-ramp-2 text-ramp-fg-2',
+  3: 'bg-ramp-3 text-ramp-fg-3',
+  4: 'bg-ramp-4 text-ramp-fg-4',
+  5: 'bg-ramp-5 text-ramp-fg-5',
 };
 
 export function SectionBoard({
@@ -93,8 +93,8 @@ export function SectionBoard({
                 onClick={() =>
                   onSelectClass(selectedClass === row.classLevel.id ? null : row.classLevel.id)
                 }
-                // Chosen: the raised board, chalk-yellow, and a tick (a shape, not colour alone).
-                className="hover:bg-board-raised focus-visible:ring-chalk-yellow aria-pressed:bg-board-raised aria-pressed:text-chalk-yellow flex min-h-(--control-h) items-center gap-1.5 rounded-md px-2 text-start text-sm font-semibold text-white outline-none focus-visible:ring-2"
+                // Chosen: the accent pill and a tick (a shape, not colour alone).
+                className="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring aria-pressed:bg-sidebar-primary aria-pressed:text-sidebar-primary-foreground flex min-h-(--control-h) items-center gap-1.5 rounded-md px-2 text-board-foreground text-start text-sm font-semibold outline-none focus-visible:ring-2"
               >
                 {selectedClass === row.classLevel.id && (
                   <CheckIcon aria-hidden className="size-4 shrink-0" />
@@ -102,7 +102,7 @@ export function SectionBoard({
                 {classLevelName(row.classLevel)}
               </button>
             ) : (
-              <span className="flex items-center text-sm font-semibold text-white">
+              <span className="text-board-foreground flex items-center text-sm font-semibold">
                 {classLevelName(row.classLevel)}
               </span>
             )}
@@ -118,11 +118,11 @@ export function SectionBoard({
                       href={href(s)}
                       data-testid="board-section"
                       className={cn(
-                        'focus-visible:ring-chalk-yellow focus-visible:ring-offset-board flex min-h-16 flex-col justify-between rounded-md px-2.5 py-2 transition-[filter] outline-none hover:brightness-110 focus-visible:ring-2 focus-visible:ring-offset-2',
+                        'focus-visible:ring-sidebar-ring focus-visible:ring-offset-board flex min-h-16 flex-col justify-between rounded-md px-2.5 py-2 transition-[filter] outline-none hover:brightness-110 focus-visible:ring-2 focus-visible:ring-offset-2',
                         step === null
                           ? 'border-board-muted/70 text-board-foreground border border-dashed'
                           : RAMP_TEXT[step],
-                        isLowest && 'ring-chalk-pink ring-offset-board ring-2 ring-offset-2',
+                        isLowest && 'ring-destructive ring-offset-board ring-2 ring-offset-2',
                       )}
                     >
                       <span className="flex items-baseline justify-between gap-2">
@@ -130,7 +130,7 @@ export function SectionBoard({
                           {s.section.name}
                         </span>
                         {isLowest && (
-                          <span className="bg-chalk-pink text-foreground rounded-full px-1.5 text-xs leading-5">
+                          <span className="bg-destructive text-destructive-foreground rounded-full px-1.5 text-xs leading-5">
                             {t('lowest')}
                           </span>
                         )}
@@ -178,7 +178,7 @@ export function SectionBoard({
             <button
               type="button"
               onClick={() => onSelectClass(null)}
-              className="focus-visible:ring-chalk-yellow min-h-(--control-h-xs) rounded px-1 font-medium text-white underline underline-offset-2 outline-none focus-visible:ring-2"
+              className="focus-visible:ring-sidebar-ring min-h-(--control-h-xs) text-board-foreground rounded px-1 font-medium underline underline-offset-2 outline-none focus-visible:ring-2"
             >
               {t('allClasses', { classLevel: classLabel })}
             </button>

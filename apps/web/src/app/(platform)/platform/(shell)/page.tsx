@@ -78,7 +78,7 @@ function Fact({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="bg-primary-soft text-primary flex size-10 shrink-0 items-center justify-center rounded-lg">
+      <span className="bg-primary-soft text-primary-ink flex size-10 shrink-0 items-center justify-center rounded-lg">
         <Icon aria-hidden className="size-5" />
       </span>
       <div className="flex min-w-0 flex-col">

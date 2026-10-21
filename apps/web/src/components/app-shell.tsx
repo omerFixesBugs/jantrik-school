@@ -1,6 +1,6 @@
 'use client';
 
-import { isDensity, toBanglaDigits, type MeContext } from '@jantrik/shared';
+import { isColorScheme, isDensity, toBanglaDigits, type MeContext } from '@jantrik/shared';
 import {
   Building2Icon,
   CalendarDaysIcon,
@@ -37,6 +37,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { DensityProvider, useDensity } from '@/lib/density';
+import { ThemeProvider, useTheme } from '@/lib/theme';
 import { clearRecents } from '@/lib/recents';
 import { useLabel } from '@/lib/hooks';
 import { displayUserName } from '@/lib/names';
@@ -85,7 +86,7 @@ function NavLinks({
             <h2
               id={headingId}
               className={cn(
-                'text-board-muted px-3 pb-1 text-xs font-medium',
+                'text-sidebar-muted px-3 pb-1 text-xs font-medium',
                 collapsed && 'sr-only',
               )}
             >
@@ -104,24 +105,25 @@ function NavLinks({
                       title={collapsed ? text : undefined}
                       className={cn(
                         'flex min-h-(--control-h) items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                        'focus-visible:ring-chalk-yellow outline-none focus-visible:ring-2',
+                        'focus-visible:ring-sidebar-ring outline-none focus-visible:ring-2',
                         collapsed && 'justify-center px-0',
                         active
-                          ? 'bg-board-raised text-white'
-                          : 'text-board-foreground hover:bg-board-raised/70 hover:text-white',
+                          ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                          : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                       )}
                     >
-                      <item.icon
-                        aria-hidden
-                        className={cn('size-4.5 shrink-0', active && 'text-chalk-yellow')}
-                      />
+                      <item.icon aria-hidden className="size-4.5 shrink-0" />
                       <span className={cn('min-w-0 flex-1 truncate', collapsed && 'sr-only')}>
                         {text}
                       </span>
                       {item.soon && (
                         <span
                           className={cn(
-                            'text-board-muted border-board-line rounded-full border px-1.5 text-xs leading-5 font-normal',
+                            'rounded-full border px-1.5 text-xs leading-5 font-normal',
+                            // On the active pill, its own text colour (the muted one fails on it).
+                            active
+                              ? 'border-sidebar-primary-foreground/40 text-sidebar-primary-foreground'
+                              : 'text-sidebar-muted border-sidebar-border',
                             collapsed && 'sr-only',
                           )}
                         >
@@ -159,18 +161,18 @@ function InstituteCard({
       className={cn('flex items-center gap-3 px-1', collapsed && 'justify-center px-0')}
       title={collapsed ? context.tenant.name : undefined}
     >
-      <span className="bg-board-raised text-chalk-yellow flex size-9 shrink-0 items-center justify-center rounded-md">
+      <span className="bg-sidebar-accent text-primary-ink flex size-9 shrink-0 items-center justify-center rounded-md">
         <Building2Icon aria-hidden className="size-4.5" />
       </span>
       <div className={cn('flex min-w-0 flex-col', collapsed && 'sr-only')}>
         <span className="sr-only">{t('institute')}: </span>
         <span
-          className="truncate text-sm leading-snug font-semibold text-white"
+          className="text-sidebar-foreground truncate text-sm leading-snug font-semibold"
           data-testid={testIds ? 'institute-name' : undefined}
         >
           {context.tenant.name}
         </span>
-        <span className="text-board-muted truncate text-xs">{type}</span>
+        <span className="text-sidebar-muted truncate text-xs">{type}</span>
       </div>
     </div>
   );
@@ -186,8 +188,8 @@ function UserCard({ context, collapsed }: { context: MeContext; collapsed?: bool
     <div className={cn('flex items-center gap-3 px-1', collapsed && 'justify-center px-0')}>
       <PersonAvatar name={name} />
       <div className={cn('flex min-w-0 flex-col leading-tight', collapsed && 'sr-only')}>
-        <span className="truncate text-sm font-medium text-white">{name}</span>
-        {role && <span className="text-board-muted truncate text-xs">{t(role)}</span>}
+        <span className="text-sidebar-foreground truncate text-sm font-medium">{name}</span>
+        {role && <span className="text-sidebar-muted truncate text-xs">{t(role)}</span>}
       </div>
     </div>
   );
@@ -210,7 +212,7 @@ function SidebarBody({
       <nav aria-label={t('navigation')} className="flex-1 overflow-y-auto px-2.5 py-3">
         <NavLinks context={context} collapsed={collapsed} onNavigate={onNavigate} />
       </nav>
-      <div className="border-board-line bg-board-deep flex flex-col gap-3 border-t p-3">
+      <div className="border-sidebar-border bg-sidebar flex flex-col gap-3 border-t p-3">
         <InstituteCard context={context} collapsed={collapsed} testIds={testIds} />
         <UserCard context={context} collapsed={collapsed} />
       </div>
@@ -225,6 +227,7 @@ function UserMenu({ context }: { context: MeContext }) {
   const { client, session } = useAuth();
   const router = useRouter();
   const { density, setDensity } = useDensity();
+  const { scheme, setScheme } = useTheme();
   const name = displayUserName(session?.user, locale);
   const role = primaryRole(context.roles);
   return (
@@ -270,6 +273,24 @@ function UserMenu({ context }: { context: MeContext }) {
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup
+          value={scheme}
+          onValueChange={(value) => {
+            if (isColorScheme(value)) setScheme(value);
+          }}
+        >
+          <DropdownMenuLabel>{t('colorScheme')}</DropdownMenuLabel>
+          <DropdownMenuRadioItem value="LIGHT" data-testid="scheme-light">
+            {t('schemeLight')}
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="DARK" data-testid="scheme-dark">
+            {t('schemeDark')}
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="SYSTEM" data-testid="scheme-system">
+            {t('schemeSystem')}
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => router.push('/select-institute')}>
           <Building2Icon aria-hidden />
           {t('switchInstitute')}
@@ -308,7 +329,9 @@ export function AppShell({ context, children }: { context: MeContext; children: 
       userId={session?.user.id ?? 'none'}
       role={primaryRole(context.roles)}
     >
-      <Shell context={context}>{children}</Shell>
+      <ThemeProvider key={session?.user.id ?? 'none'} appearance={context.appearance}>
+        <Shell context={context}>{children}</Shell>
+      </ThemeProvider>
     </DensityProvider>
   );
 }
@@ -356,25 +379,25 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
       >
         <div
           className={cn(
-            'border-board-line flex h-(--topbar-h) shrink-0 items-center gap-2 border-b px-4',
+            'border-sidebar-border flex h-(--topbar-h) shrink-0 items-center gap-2 border-b px-4',
             collapsed && 'justify-center px-0',
           )}
         >
           <Link
             href="/dashboard"
-            className="focus-visible:ring-chalk-yellow rounded-md outline-none focus-visible:ring-2"
+            className="focus-visible:ring-sidebar-ring rounded-md outline-none focus-visible:ring-2"
           >
             <Logo compact={collapsed} onBoard />
           </Link>
         </div>
         <SidebarBody context={context} collapsed={collapsed} testIds />
-        <div className={cn('bg-board-deep px-2.5 pb-2.5', collapsed && 'flex justify-center')}>
+        <div className={cn('bg-sidebar px-2.5 pb-2.5', collapsed && 'flex justify-center')}>
           <Button
             variant="ghost"
             size="sm"
             className={cn(
               // aria-expanded marks the sidebar's state, not an open menu: no ghost-button fill.
-              'text-board-muted hover:bg-board-raised aria-expanded:text-board-muted focus-visible:ring-chalk-yellow focus-visible:ring-offset-board w-full justify-start hover:text-white aria-expanded:bg-transparent',
+              'text-sidebar-muted hover:bg-sidebar-accent aria-expanded:text-sidebar-muted focus-visible:ring-sidebar-ring focus-visible:ring-offset-sidebar w-full justify-start hover:text-sidebar-accent-foreground aria-expanded:bg-transparent',
               collapsed && 'w-auto',
             )}
             onClick={toggleCollapsed}
@@ -413,7 +436,7 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
               side="left"
               className="bg-sidebar text-sidebar-foreground flex w-[84%] max-w-80 flex-col gap-0 border-0 p-0 data-[side=left]:border-r-0"
             >
-              <div className="border-board-line flex h-(--topbar-h) shrink-0 items-center border-b px-4">
+              <div className="border-sidebar-border flex h-(--topbar-h) shrink-0 items-center border-b px-4">
                 <SheetTitle render={<div />}>
                   <Logo onBoard />
                 </SheetTitle>
@@ -484,13 +507,13 @@ export function ShellSkeleton() {
   return (
     <div className="bg-canvas flex min-h-svh w-full" aria-busy="true">
       <div className="bg-sidebar hidden w-62 shrink-0 flex-col lg:flex">
-        <div className="border-board-line flex h-(--topbar-h) items-center border-b px-4">
-          <Skeleton className="bg-board-raised h-8 w-36" />
+        <div className="border-sidebar-border flex h-(--topbar-h) items-center border-b px-4">
+          <Skeleton className="bg-sidebar-accent h-8 w-36" />
         </div>
         <div className="flex flex-col gap-2 p-3">
-          <Skeleton className="bg-board-raised h-(--control-h) w-full" />
-          <Skeleton className="bg-board-raised h-(--control-h) w-full" />
-          <Skeleton className="bg-board-raised h-(--control-h) w-full" />
+          <Skeleton className="bg-sidebar-accent h-(--control-h) w-full" />
+          <Skeleton className="bg-sidebar-accent h-(--control-h) w-full" />
+          <Skeleton className="bg-sidebar-accent h-(--control-h) w-full" />
         </div>
       </div>
       <div className="flex flex-1 flex-col">

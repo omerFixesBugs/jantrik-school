@@ -21,6 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ApiError } from '@/lib/api/errors';
 import { usePlatformMe } from '@/lib/platform/hooks';
 import { DensityProvider } from '@/lib/density';
+import { usePlatformLook } from '@/lib/theme';
 import { platformApi } from '@/lib/platform/platform-api';
 import { cn } from '@/lib/utils';
 
@@ -35,6 +36,8 @@ const NAV = [
 
 /** Platform area shell: its own header and nav, never the institute app shell. */
 export default function PlatformShellLayout({ children }: { children: ReactNode }) {
+  // Its own look (School, light, the slate board) whatever an institute or a person chose.
+  usePlatformLook();
   const t = useTranslations('platform');
   const router = useRouter();
   const pathname = usePathname();

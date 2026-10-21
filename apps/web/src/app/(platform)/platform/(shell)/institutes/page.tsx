@@ -189,7 +189,7 @@ function Empty({ filtered }: { filtered: boolean }) {
       className="bg-card flex flex-col items-center gap-3 rounded-xl border px-4 py-10 text-center"
       data-testid="institutes-empty"
     >
-      <span className="bg-primary-soft text-primary flex size-12 items-center justify-center rounded-lg">
+      <span className="bg-primary-soft text-primary-ink flex size-12 items-center justify-center rounded-lg">
         <Building2Icon aria-hidden className="size-6" />
       </span>
       <p className="font-medium">{filtered ? t('emptyFiltered') : t('emptyAll')}</p>
@@ -226,7 +226,7 @@ function OwnerLine({ owner }: { owner: PlatformInstituteListItem['owner'] }) {
       {owner.phone && (
         <a
           href={`tel:${owner.phone}`}
-          className="text-primary w-fit tabular-nums underline-offset-2 hover:underline"
+          className="text-primary-ink w-fit tabular-nums underline-offset-2 hover:underline"
           dir="ltr"
         >
           {formatBdPhone(owner.phone)}

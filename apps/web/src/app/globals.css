@@ -2,9 +2,15 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
-/* No dark theme in v2 (docs/design.md → Colour). Keeping the class variant (instead of
-   Tailwind's media one) stops shadcn's leftover `dark:` classes from switching on with the OS. */
-@custom-variant dark (&:is(.dark *));
+/* Dark mode follows data-mode on <html> (the person's choice, or the device's when it is
+   SYSTEM), never the OS media query directly (docs/design.md → Themes). */
+@custom-variant dark {
+  @media not print {
+    &:where([data-mode='dark'], [data-mode='dark'] *) {
+      @slot;
+    }
+  }
+}
 
 /* Numbers (counts, money, steps, codes): body face with tabular figures. Noto Sans Bengali's
    digits are all one width, so columns of numbers line up. See docs/design.md → Typography. */
@@ -30,6 +36,19 @@
   --color-primary-hover: var(--primary-hover);
   --color-accent-warm: var(--accent-warm);
   --color-accent-warm-soft: var(--accent-warm-soft);
+  --color-accent-warm-ink: var(--accent-warm-ink);
+  /* The accent as text or a thin mark on a surface (primary is the fill). */
+  --color-primary-ink: var(--primary-ink);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  /* The hero band: a gradient in the accent (or a soft tint), and its text. */
+  --color-hero-from: var(--hero-from);
+  --color-hero-to: var(--hero-to);
+  --color-hero-foreground: var(--hero-foreground);
+  --color-hero-muted: var(--hero-muted);
+  --color-hero-accent: var(--hero-accent);
+  --color-bloom-1: var(--bloom-1);
+  --color-bloom-2: var(--bloom-2);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-warning: var(--warning);
@@ -64,6 +83,12 @@
   --color-ramp-3: var(--ramp-3);
   --color-ramp-4: var(--ramp-4);
   --color-ramp-5: var(--ramp-5);
+  /* Each ramp step's own label colour (4.5:1 on it). */
+  --color-ramp-fg-1: var(--ramp-fg-1);
+  --color-ramp-fg-2: var(--ramp-fg-2);
+  --color-ramp-fg-3: var(--ramp-fg-3);
+  --color-ramp-fg-4: var(--ramp-fg-4);
+  --color-ramp-fg-5: var(--ramp-fg-5);
   /* Type scale: switches on density and on :lang(bn) (see docs/design.md → Density). */
   --text-xs: var(--fs-xs);
   --text-xs--line-height: var(--lh-xs);
@@ -81,11 +106,17 @@
   --text-3xl--line-height: var(--lh-3xl);
   --text-4xl: var(--fs-4xl);
   --text-4xl--line-height: var(--lh-4xl);
-  /* Flat world: surfaces separate by ground and hairline. Only overlays lift. */
-  --shadow-xs: 0 0 #0000;
-  --shadow-sm: 0 0 #0000;
-  --shadow-md: 0 6px 20px -6px rgb(20 35 30 / 0.16), 0 1px 3px rgb(20 35 30 / 0.08);
-  --shadow-lg: 0 18px 44px -14px rgb(20 35 30 / 0.24);
+  /* Soft layered shadows tinted by the theme (black on dark, where the hairline does the work). */
+  --shadow-xs: 0 1px 2px rgb(var(--shadow-rgb) / 0.05);
+  --shadow-sm: 0 1px 2px rgb(var(--shadow-rgb) / 0.05), 0 2px 6px rgb(var(--shadow-rgb) / 0.05);
+  /* Floating cards: a contact shadow and a wide soft one. */
+  --shadow-card:
+    0 1px 2px rgb(var(--shadow-rgb) / 0.05), 0 12px 32px -12px rgb(var(--shadow-rgb) / 0.16);
+  --shadow-card-hover:
+    0 2px 4px rgb(var(--shadow-rgb) / 0.06), 0 18px 40px -14px rgb(var(--shadow-rgb) / 0.24);
+  --shadow-md:
+    0 6px 20px -6px rgb(var(--shadow-rgb) / 0.18), 0 1px 3px rgb(var(--shadow-rgb) / 0.08);
+  --shadow-lg: 0 18px 44px -14px rgb(var(--shadow-rgb) / 0.28);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -122,6 +153,9 @@
   --radius-2xl: 14px;
   --radius-3xl: 18px;
   --radius-4xl: 22px;
+  /* Floating cards and the hero (16 px on phones), controls and pills. */
+  --radius-card: var(--card-radius);
+  --radius-control: 12px;
 }
 
 /* Body: Noto Sans Bengali (Bangla + Latin; correct, tabular digits). Display: Anek Bangla, only
@@ -274,87 +308,21 @@
   }
 }
 
-/* ───────────────────────── Colour: blackboard and coloured chalk ─────────────────────────
-   docs/design.md → Colour. Light only. Every text pair is at least 4.5:1 (measured). */
+/* ───────────────────────── Colour: institute themes ─────────────────────────
+   docs/design.md → Themes. Every colour token comes from packages/shared/src/themes.ts: the root
+   layout inlines themeCss() (one rule per preset and mode, School light also on :root), the
+   head script sets data-theme and data-mode before the first paint, and an owner's accent is laid
+   over by its own <style id="theme-accent"> (accentCss). themes.test.ts proves every text pair at
+   4.5:1 in every theme. */
 :root {
-  color-scheme: light;
-
-  --board: #173f35;
-  --board-raised: #21503f;
-  --board-deep: #133429;
-  --board-line: #2a5547;
-  --board-foreground: #e6eee9;
-  --board-muted: #a9c2b8;
-
-  --brand: var(--board);
-  --canvas: #f4f6f2;
-  --background: #f4f6f2;
-  --foreground: #14231e;
-  --card: #ffffff;
-  --card-foreground: #14231e;
-  --popover: #ffffff;
-  --popover-foreground: #14231e;
-  --primary: #173f35;
-  --primary-foreground: #ffffff;
-  /* Primary buttons are board green everywhere, the platform's slate shell included. */
-  --primary-hover: #21503f;
-  --primary-soft: #e5efe9;
-  --secondary: #eaf0ec;
-  --secondary-foreground: #14231e;
-  --muted: #eef2ef;
-  --muted-foreground: #56665f;
-  --accent: #e5efe9;
-  --accent-foreground: #173f35;
-  --link: #1e6b55;
-  /* Chalk yellow: the brand spark and "today"; never a status colour. Ink text on it. */
-  --accent-warm: #f2c641;
-  --accent-warm-soft: #fbf1cf;
-  --success: #1a7340;
-  --success-soft: #e3f4e9;
-  --warning: #a14a06;
-  --warning-soft: #fdf0e1;
-  --destructive: #b42318;
-  --destructive-soft: #fdecea;
-  --info: #2f6f94;
-  --info-soft: #e4f0f7;
-  --border: #dce3df;
-  /* Input outlines: 3.3:1 on white (WCAG 1.4.11). */
-  --input: #7f918a;
-  --ring: #173f35;
-
-  --chalk-yellow: #f2c641;
-  --chalk-pink: #e8739a;
-  --chalk-sky: #5ab0d8;
-  --chalk-mint: #6cc6a0;
-  --chalk-orange: #ee8f3a;
-  --chalk-yellow-ink: #8a6d0c;
-  --chalk-pink-ink: #c24e76;
-  --chalk-sky-ink: #2a77a3;
-  --chalk-mint-ink: #2b8460;
-  --chalk-orange-ink: #b05e15;
-  /* Series order validated for colour-blind separation (mint, orange, sky, yellow, pink). */
-  --chart-1: var(--chalk-mint-ink);
-  --chart-2: var(--chalk-orange-ink);
-  --chart-3: var(--chalk-sky-ink);
-  --chart-4: var(--chalk-yellow-ink);
-  --chart-5: var(--chalk-pink-ink);
-
-  /* Present %: ≤87, 88–90, 91–93, 94–96, 97–100. Text: white on 1–2, ink on 3–5. */
-  --ramp-1: #2b5a4e;
-  --ramp-2: #3e7a63;
-  --ramp-3: #57a07f;
-  --ramp-4: #7cc4a0;
-  --ramp-5: #a8e2c4;
-
+  --card-radius: 20px;
+  /* shadcn's base radius (the toast reads it). */
   --radius: 8px;
-  --sidebar: var(--board);
-  --sidebar-foreground: var(--board-foreground);
-  --sidebar-primary: var(--accent-warm);
-  --sidebar-primary-foreground: var(--foreground);
-  --sidebar-accent: var(--board-raised);
-  --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: var(--board-line);
-  --sidebar-ring: var(--accent-warm);
+}
+@media (max-width: 639px) {
+  :root {
+    --card-radius: 16px;
+  }
 }
 
 /* The platform panel (Jantrik staff): the same world on black slate, so nobody mistakes it for an
@@ -378,7 +346,20 @@
   }
   body {
     @apply bg-background text-foreground text-base;
-    caret-color: var(--primary);
+    caret-color: var(--primary-ink);
+  }
+  /* The canvas: two soft blooms of the theme fixed behind the floating cards. A fixed layer (not
+     background-attachment: fixed) so phones do not repaint it on scroll; no blur filters. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(42% 38% at 12% 0%, var(--bloom-1), transparent 72%),
+      radial-gradient(36% 34% at 100% 6%, var(--bloom-2), transparent 70%);
+    opacity: 0.85;
   }
   ::selection {
     background: var(--accent-warm-soft);
@@ -428,6 +409,9 @@
   @page {
     size: A4 landscape;
     margin: 10mm;
+  }
+  body::before {
+    display: none;
   }
   body * {
     visibility: hidden;

@@ -74,7 +74,7 @@ export function SetupTabs({ active }: { active: SetupTab }) {
                 'inline-flex min-h-(--control-h) max-w-full items-center rounded-md border px-3.5 text-sm font-medium transition-colors',
                 'focus-visible:ring-ring focus-visible:ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
                 tab.key === active
-                  ? 'bg-primary text-primary-foreground border-primary'
+                  ? 'bg-primary text-primary-foreground border-primary-ink'
                   : 'bg-card hover:border-primary/40',
               )}
             >

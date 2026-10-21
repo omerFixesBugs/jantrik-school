@@ -55,7 +55,7 @@ function Login() {
     <main className="bg-canvas grid min-h-svh flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
       <BrandPanel />
       <section className="flex min-w-0 flex-col">
-        <div className="bg-brand flex items-center justify-between px-4 py-3 text-white lg:bg-transparent lg:px-8 lg:py-6 lg:text-inherit">
+        <div className="bg-linear-to-br from-hero-from to-hero-to text-hero-foreground flex items-center justify-between px-4 py-3 lg:bg-none lg:px-8 lg:py-6 lg:text-inherit">
           <Logo inverted className="lg:hidden" />
           <span className="hidden lg:block" />
           <span className="lg:hidden">
@@ -66,7 +66,7 @@ function Login() {
           </span>
         </div>
         {/* Phone: a short brand band above the form. */}
-        <div className="bg-brand flex flex-col gap-4 overflow-hidden px-4 pt-2 pb-14 text-white lg:hidden">
+        <div className="bg-linear-to-br from-hero-from to-hero-to text-hero-foreground flex flex-col gap-4 overflow-hidden px-4 pt-2 pb-14 lg:hidden">
           <p className="font-heading max-w-xs text-2xl leading-snug font-semibold">
             {t('brandHeadline')}
           </p>
@@ -110,15 +110,15 @@ function BrandPanel() {
     { icon: ShieldCheckIcon, text: t('pointPrivate') },
   ];
   return (
-    <aside className="bg-brand relative hidden flex-col overflow-hidden p-12 text-white lg:flex xl:p-16">
+    <aside className="bg-linear-to-br from-hero-from to-hero-to text-hero-foreground relative hidden flex-col overflow-hidden p-12 lg:flex xl:p-16">
       <Logo inverted />
       <div className="relative z-10 mt-12 flex max-w-lg flex-col gap-5 xl:mt-16">
         <h2 className="font-heading text-4xl leading-tight">{t('brandHeadline')}</h2>
-        <p className="text-lg text-white/80">{t('brandText')}</p>
+        <p className="text-hero-muted text-lg">{t('brandText')}</p>
         <ul className="mt-2 flex flex-col gap-3">
           {points.map(({ icon: Icon, text }) => (
-            <li key={text} className="flex items-center gap-3 text-white/90">
-              <span className="flex size-9 items-center justify-center rounded-lg bg-white/10">
+            <li key={text} className="text-hero-muted flex items-center gap-3">
+              <span className="bg-hero-foreground/10 flex size-9 items-center justify-center rounded-lg">
                 <Icon aria-hidden className="size-4.5" />
               </span>
               {text}

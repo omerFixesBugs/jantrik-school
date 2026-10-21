@@ -172,7 +172,7 @@ function Steps({ current }: { current: number }) {
           className={cn(
             'rounded-full border px-3 py-1',
             i + 1 === current
-              ? 'border-primary bg-primary-soft font-medium'
+              ? 'border-primary-ink bg-primary-soft font-medium'
               : 'text-muted-foreground',
           )}
         >

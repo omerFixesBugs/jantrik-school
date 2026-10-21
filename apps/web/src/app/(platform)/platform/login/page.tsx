@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label';
 import { ApiError } from '@/lib/api/errors';
 import { useErrorMessage } from '@/lib/hooks';
 import { platformApi } from '@/lib/platform/platform-api';
+import { usePlatformLook } from '@/lib/theme';
 
 type Step =
   | { kind: 'password' }
@@ -30,6 +31,7 @@ type Step =
 
 /** /platform/login: password, then the authenticator code (first time: set the app up). */
 export default function PlatformLoginPage() {
+  usePlatformLook();
   const t = useTranslations('platform');
   const router = useRouter();
   const queryClient = useQueryClient();

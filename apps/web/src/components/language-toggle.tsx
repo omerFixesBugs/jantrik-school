@@ -23,14 +23,15 @@ export function LanguageToggle({ onBrand }: { onBrand?: boolean }) {
       size="sm"
       className={cn(
         'rounded-full px-2.5',
-        onBrand && 'border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white',
+        onBrand &&
+          'border-hero-foreground/30 bg-hero-foreground/10 text-hero-foreground hover:bg-hero-foreground/20 hover:text-hero-foreground',
       )}
       disabled={pending}
       title={t('language')}
       data-testid="language-toggle"
       onClick={() => startTransition(() => setLocale(next))}
     >
-      <LanguagesIcon aria-hidden className={onBrand ? undefined : 'text-primary'} />
+      <LanguagesIcon aria-hidden className={onBrand ? undefined : 'text-primary-ink'} />
       <span lang={next} className="hidden sm:inline">
         {next === 'en' ? t('switchToEnglish') : t('switchToBangla')}
       </span>

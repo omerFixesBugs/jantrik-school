@@ -77,7 +77,14 @@
     "density": "Layout",
     "densityCompact": "Compact (desktop)",
     "densityComfortable": "Comfortable (larger)",
-    "skipToContent": "Skip to content"
+    "skipToContent": "Skip to content",
+    "colorScheme": "Appearance",
+    "schemeLight": "Light",
+    "schemeDark": "Dark",
+    "schemeSystem": "Same as the device",
+    "schemeToLight": "Switch to light",
+    "schemeSaveFailed": "Your light/dark choice could not be saved. Try again.",
+    "schemeToDark": "Switch to dark"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -1341,7 +1348,8 @@
     "language": "Language: {language}",
     "languageKeywords": "language ভাষা English বাংলা",
     "densityKeywords": "density layout compact comfortable বিন্যাস",
-    "results": "{count, plural, one {# result} other {# results}}"
+    "results": "{count, plural, one {# result} other {# results}}",
+    "schemeKeywords": "dark light theme mode appearance রং অন্ধকার"
   },
   "dateInput": {
     "placeholder": "DD/MM/YYYY",

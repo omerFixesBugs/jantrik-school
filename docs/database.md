@@ -206,6 +206,31 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   `staff_profiles`. `src/common/global-names.spec.ts` fails the build if other code reads them;
   `test/no-global-names.e2e-spec.ts` checks the raw responses.
 
+### Appearance: themes and light/dark
+
+How an institute looks, and each person's light/dark choice (docs/design.md → Themes):
+
+- **`institute_types.default_theme`** (`theme_preset`: `SCHOOL`, `MADRASA`, `COACHING`,
+  `ENGLISH_MEDIUM`, default `SCHOOL`): the look an institute of that type starts with. Set as data
+  in `templates.ts`, so a new type picks its own (NCTB Bangla Version → School, NCTB English
+  Version → English medium, Coaching → Coaching).
+- **`appearance_settings`** (tenant table, at most one row per tenant): the owner's choice.
+  - `preset` NULL means the type's default; `accent` (`char(7)`, `#rrggbb` lowercase by CHECK)
+    NULL means the preset's own colour.
+  - Created on the owner's first save (`PUT /settings/appearance`), like `student_settings`:
+    no row means "all defaults", so there is no backfill.
+  - Grants SELECT, INSERT, UPDATE (no DELETE: "reset" writes NULLs). Changes are audited
+    (`audit_logs`, entity `appearance_settings`), which records who made them.
+- **`users.color_scheme`** (`color_scheme`: `LIGHT`, `DARK`, `SYSTEM`, default `SYSTEM`): the
+  person's own choice, kept on the account so their other devices follow. Written by
+  `PATCH /me/preferences` (the user's own row, like `locale`); returned in the session's user.
+  Nobody is put in dark by default.
+- Migration `20261021070455_appearance_themes` is **empty** on purpose: it was created by mistake
+  and is already applied to developer databases. Keep it; deleting it makes those databases report
+  drift.
+- `test/appearance-rls.test.ts` checks tenant isolation, the missing DELETE grant, the accent
+  CHECK, the type defaults and the `SYSTEM` default.
+
 ### Student search (`search_student_ids`)
 
 **The problem.** ILIKE's operator (`texticlike`) is not LEAKPROOF. Under RLS, Postgres evaluates

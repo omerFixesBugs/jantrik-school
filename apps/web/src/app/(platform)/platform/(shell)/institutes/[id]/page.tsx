@@ -210,7 +210,7 @@ function Usage({ d, locale }: { d: PlatformInstituteDetail; locale: Locale }) {
       <dl className="grid gap-4 sm:grid-cols-2">
         {items.map((i) => (
           <div key={i.label} className="flex items-start gap-3">
-            <span className="bg-primary-soft text-primary flex size-10 shrink-0 items-center justify-center rounded-lg">
+            <span className="bg-primary-soft text-primary-ink flex size-10 shrink-0 items-center justify-center rounded-lg">
               <i.icon aria-hidden className="size-5" />
             </span>
             <div className="flex min-w-0 flex-col">
@@ -321,7 +321,7 @@ function OwnerRow({
         {o.phone && (
           <a
             href={`tel:${o.phone}`}
-            className="text-primary tabular-nums underline-offset-2 hover:underline"
+            className="text-primary-ink tabular-nums underline-offset-2 hover:underline"
             dir="ltr"
           >
             {formatBdPhone(o.phone)}

@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from 'next';
 import { Anek_Bangla, Noto_Sans_Bengali } from 'next/font/google';
+import { themeCss } from '@jantrik/shared';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { DENSITY_SCRIPT } from '@/lib/density-script';
+import { THEME_SCRIPT } from '@/lib/theme-script';
 import { cn } from '@/lib/utils';
 import { BOOT_WATCHDOG } from './boot-watchdog';
 import { Providers } from './providers';
@@ -33,17 +35,22 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export const viewport: Viewport = { width: 'device-width', initialScale: 1 };
 
+// Every theme's colours, generated from packages/shared/src/themes.ts (docs/design.md → Themes).
+const THEMES_CSS = themeCss();
+
 export default async function RootLayout({ children }: LayoutProps<'/'>) {
   const locale = await getLocale();
   return (
-    // data-density is set by DENSITY_SCRIPT before the first paint, so the server's <html> and the
-    // browser's differ by that attribute on purpose.
+    // data-density, data-theme and data-mode (and an owner's accent) are set by the head scripts
+    // before the first paint, so the server's <html> and the browser's differ there on purpose.
     <html
       lang={locale}
       className={cn('h-full antialiased', body.variable, display.variable)}
       suppressHydrationWarning
     >
       <head>
+        <style id="themes" dangerouslySetInnerHTML={{ __html: THEMES_CSS }} />
+        <script id="theme" dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         <script id="density" dangerouslySetInnerHTML={{ __html: DENSITY_SCRIPT }} />
       </head>
       <body className="bg-background text-foreground flex min-h-full flex-col font-sans">

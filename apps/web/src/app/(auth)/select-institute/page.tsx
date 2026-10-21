@@ -17,6 +17,7 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import type { Locale } from '@/i18n/config';
 import { useErrorMessage } from '@/lib/hooks';
 import { clearRecents } from '@/lib/recents';
+import { resetLook } from '@/lib/theme';
 
 export default function SelectInstitutePage() {
   const t = useTranslations('selectInstitute');
@@ -98,7 +99,7 @@ export default function SelectInstitutePage() {
 
   return (
     <main className="bg-canvas flex min-h-svh flex-1 flex-col">
-      <div className="bg-brand flex items-center justify-between px-4 py-3 text-white sm:px-8">
+      <div className="bg-linear-to-br from-hero-from to-hero-to text-hero-foreground flex items-center justify-between px-4 py-3 sm:px-8">
         <Logo inverted />
         <LanguageToggle onBrand />
       </div>
@@ -185,6 +186,7 @@ export default function SelectInstitutePage() {
           className="self-start"
           onClick={() => {
             clearRecents();
+            resetLook();
             void client.logout();
           }}
         >
@@ -226,7 +228,7 @@ function Invitation({
       data-testid="invitation"
     >
       <div className="flex items-start gap-3">
-        <span className="bg-card text-primary flex size-11 shrink-0 items-center justify-center rounded-lg">
+        <span className="bg-card text-primary-ink flex size-11 shrink-0 items-center justify-center rounded-lg">
           <MailOpenIcon aria-hidden className="size-5" />
         </span>
         <div className="flex min-w-0 flex-col gap-1">

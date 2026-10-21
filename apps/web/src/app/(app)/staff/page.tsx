@@ -348,7 +348,7 @@ function SectionsDialog({ member, onClose }: { member: StaffMember; onClose: () 
                         key={s.id}
                         className={cn(
                           'flex min-h-(--control-h) cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm font-medium',
-                          chosen.includes(s.id) ? 'border-primary bg-primary-soft' : 'bg-card',
+                          chosen.includes(s.id) ? 'border-primary-ink bg-primary-soft' : 'bg-card',
                         )}
                       >
                         <input

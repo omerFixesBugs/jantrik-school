@@ -192,7 +192,7 @@ function Wizard() {
           aria-labelledby="wizard-step-title"
           data-testid={`wizard-step-${current}`}
         >
-          <p className="text-primary text-sm font-semibold">
+          <p className="text-primary-ink text-sm font-semibold">
             {t('stepOf', {
               n: formatCount(index + 1, locale),
               total: formatCount(data.steps.length, locale),
@@ -279,7 +279,7 @@ function StepList({
                       : state === 'skipped'
                         ? 'bg-muted text-muted-foreground'
                         : 'border',
-                    active && 'ring-primary ring-offset-background ring-2 ring-offset-2',
+                    active && 'ring-primary-ink ring-offset-background ring-2 ring-offset-2',
                   )}
                 >
                   {state === 'done' ? (
@@ -651,7 +651,7 @@ function StudentsStep(actions: StepActionsProps) {
     <Step step="students" text={t('studentsText', { student })} actions={actions}>
       <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
         <span className="flex items-center gap-3">
-          <span className="bg-primary-soft text-primary flex size-10 shrink-0 items-center justify-center rounded-lg">
+          <span className="bg-primary-soft text-primary-ink flex size-10 shrink-0 items-center justify-center rounded-lg">
             <FileSpreadsheetIcon aria-hidden className="size-5" />
           </span>
           <span className="text-sm" data-testid="wizard-student-count">

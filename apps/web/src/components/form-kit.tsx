@@ -300,7 +300,7 @@ export function ChoiceChip({
         'flex min-h-(--control-h) cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors',
         'has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-3',
         checked
-          ? 'border-primary bg-primary-soft text-accent-foreground'
+          ? 'border-primary-ink bg-primary-soft text-accent-foreground'
           : 'bg-card hover:border-primary/40',
       )}
     >

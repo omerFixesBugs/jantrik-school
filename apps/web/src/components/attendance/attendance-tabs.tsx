@@ -32,7 +32,7 @@ export function AttendanceTabs({ active }: { active: AttendanceTab }) {
                 'inline-flex min-h-(--control-h) max-w-full items-center rounded-md border px-3.5 text-sm font-medium transition-colors',
                 'focus-visible:ring-ring focus-visible:ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
                 tab.key === active
-                  ? 'bg-primary text-primary-foreground border-primary'
+                  ? 'bg-primary text-primary-foreground border-primary-ink'
                   : 'bg-card hover:border-primary/40',
               )}
             >
@@ -48,7 +48,7 @@ export function AttendanceTabs({ active }: { active: AttendanceTab }) {
 /** Register cell colours (same meaning as on the take-attendance screen). */
 export const STATUS_TONE: Record<AttendanceStatus, string> = {
   PRESENT: 'bg-success-soft text-success',
-  ABSENT: 'bg-destructive text-white dark:text-[#2a0c09]',
+  ABSENT: 'bg-destructive text-destructive-foreground',
   LATE: 'bg-warning-soft text-warning',
   LEAVE: 'bg-muted text-muted-foreground',
 };

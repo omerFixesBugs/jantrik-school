@@ -53,7 +53,7 @@ const STATUS_STYLE: Record<AttendanceStatus, { icon: LucideIcon; row: string; pi
   ABSENT: {
     icon: XIcon,
     row: 'bg-destructive-soft',
-    pill: 'bg-destructive text-white dark:text-[#2a0c09]',
+    pill: 'bg-destructive text-destructive-foreground',
   },
   LATE: { icon: ClockIcon, row: 'bg-warning-soft/60', pill: 'bg-warning-soft text-warning' },
   LEAVE: { icon: CalendarOffIcon, row: 'bg-muted/60', pill: 'bg-muted text-muted-foreground' },
@@ -135,7 +135,7 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
           )}
           <Link
             href={`/attendance/register?section=${sectionId}`}
-            className="text-primary flex min-h-(--control-h) items-center gap-1 font-medium hover:underline"
+            className="text-primary-ink flex min-h-(--control-h) items-center gap-1 font-medium hover:underline"
             data-testid="open-month-register"
           >
             <TableIcon aria-hidden className="size-4" />

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Role } from './auth.js';
 import { toAsciiDigits } from './digits.js';
+import { COLOR_SCHEMES, THEME_PRESETS, type ThemePreset } from './themes.js';
 
 /** Header the web app sends with the tenant a page was loaded for. */
 export const TENANT_HEADER = 'X-Jantrik-Tenant';
@@ -25,11 +26,44 @@ export interface MeContext {
   academicYear: { id: string; name: string; startDate: string; endDate: string } | null;
   /** Today in the tenant's timezone (YYYY-MM-DD). Never use the device date. */
   today: string;
+  /** The institute's theme (docs/design.md → Themes). */
+  appearance: Appearance;
 }
 
-export const preferencesSchema = z.object({
-  locale: z.enum(['bn', 'en']),
+/** An institute's theme: the preset in force and the owner's accent, if any. */
+export interface Appearance {
+  /** The preset in force: the owner's choice, else the institute type's default. */
+  preset: ThemePreset;
+  /** The owner's accent ("#rrggbb"), null for the preset's own. */
+  accent: string | null;
+  /** What the institute type gives by default (for "reset to default"). */
+  typeDefault: ThemePreset;
+  /** True while the owner's choice (a preset or an accent) is in force; false after a reset. */
+  chosen: boolean;
+}
+
+/** PUT /settings/appearance (OWNER). Null preset: back to the type's default; null accent: the
+ * preset's own. The accent must read in both light and dark (shared fitAccent), else 422. */
+export const appearanceSchema = z.object({
+  preset: z.enum(THEME_PRESETS).nullable(),
+  accent: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^#[0-9a-f]{6}$/, 'Expected #rrggbb')
+    .nullable(),
 });
+export type AppearanceInput = z.infer<typeof appearanceSchema>;
+
+/** PATCH /me/preferences: the language, the light/dark choice, or both. */
+export const preferencesSchema = z
+  .object({
+    locale: z.enum(['bn', 'en']).optional(),
+    colorScheme: z.enum(COLOR_SCHEMES).optional(),
+  })
+  .refine((p) => p.locale !== undefined || p.colorScheme !== undefined, {
+    message: 'Nothing to change',
+  });
 
 export const STUDENT_STATUSES = [
   'ACTIVE',
