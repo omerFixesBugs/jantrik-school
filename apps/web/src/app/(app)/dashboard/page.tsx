@@ -48,7 +48,6 @@ import { useCallback, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
 import { BillingNoticeBanner } from '@/components/billing-notice';
-import { Sparkline } from '@/components/charts';
 import {
   AttendanceTrend,
   TodayAbsentees,
@@ -83,7 +82,7 @@ import type { Locale } from '@/i18n/config';
 import { listDrafts } from '@/lib/attendance/drafts';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
-import { classLevelName, displayName, displayUserName } from '@/lib/names';
+import { bnGenitive, classLevelName, displayName, displayUserName } from '@/lib/names';
 import { canSee, isStaff, navItem } from '@/lib/navigation';
 import { useSetupChecklist, wizardHref } from '@/lib/setup-checklist';
 import { cn } from '@/lib/utils';
@@ -212,8 +211,9 @@ function StaffDashboard({ context }: { context: MeContext }) {
     queryFn: () => client.api<SmsDailyStatus>('/attendance/sms/today'),
     enabled: overview,
   });
-  // The next setup step (the attention list): owners' and admins' overview only.
-  const checklist = useSetupChecklist(context, overview);
+  // The next setup step (the attention list): owners' and admins' overview only, and after the
+  // first screen's own data (five requests that would otherwise queue ahead of it on a phone).
+  const checklist = useSetupChecklist(context, overview && Boolean(report.data));
   const insightText = useInsightText();
   const [classId, setClassId] = useState<string | null>(null);
   const [boardPeriod, setBoardPeriod] = useState<BoardPeriod>('today');
@@ -272,14 +272,6 @@ function StaffDashboard({ context }: { context: MeContext }) {
         )
       }
       compare={addedNow > 0 ? t('thisMonth') : undefined}
-      chart={
-        summary.data && (
-          <Sparkline
-            values={summary.data.addedByMonth.map((m) => m.count)}
-            className="h-6 w-full max-w-24"
-          />
-        )
-      }
       hint={t('totalStudentsHint', { classLevel: classLabel })}
     />
   );
@@ -400,7 +392,8 @@ function StaffDashboard({ context }: { context: MeContext }) {
               ),
             }))
           : [],
-        nextSetupStep: nextStep?.key ?? null,
+        // "Getting started" is on this page and says it already.
+        nextSetupStep: null,
       })
     : [];
 
@@ -466,11 +459,12 @@ function StaffDashboard({ context }: { context: MeContext }) {
             )
           }
           compare={todayChange !== null ? t('vsLastWeekAverage') : undefined}
-          chart={
+          // This week's school days hatched, today solid: a row of its own under the figure.
+          meter={
             schoolDays.length > 1 && (
               <HatchedColumns
                 decorative
-                height={28}
+                height={36}
                 title={t('presentToday')}
                 highlight={r?.today}
                 items={schoolDays.map((d) => ({
@@ -479,7 +473,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
                   value: d.percent,
                   display: d.percent === null ? '' : pct(d.percent),
                 }))}
-                className="w-full max-w-28"
+                className="h-9 w-full"
               />
             )
           }
@@ -500,24 +494,10 @@ function StaffDashboard({ context }: { context: MeContext }) {
           loading={dayLoading}
           failed={dayFailed}
           count={day && counted > 0 ? { to: day.counts.absent, format: f } : null}
-          delta={
-            todayChange !== null && (
-              <DeltaPill
-                change={-todayChange}
-                display={`${formatCount(Math.abs(todayChange), locale)}%`}
-                better="down"
-                label={t('absentChangeLabel', {
-                  change: formatCount(Math.abs(todayChange), locale),
-                  more: todayChange < 0 ? 'true' : 'false',
-                })}
-              />
-            )
-          }
-          compare={todayChange !== null ? t('vsLastWeekAverage') : undefined}
           hint={
             day && counted > 0 ? (
               longAbsent > 0 ? (
-                <Pill tone="destructive">
+                <Pill tone="destructive" className="whitespace-normal">
                   {t('absentRun', { count: f(longAbsent), days: f(LONG_ABSENCE_DAYS) })}
                 </Pill>
               ) : (
@@ -549,6 +529,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
                   taken: f(day.sectionsTaken),
                   total: f(day.sectionsTotal),
                   section: sectionLabel,
+                  sectionOf: locale === 'bn' ? bnGenitive(sectionLabel) : sectionLabel,
                 })}
               />
             )
@@ -591,9 +572,11 @@ function StaffDashboard({ context }: { context: MeContext }) {
           }
           hint={
             sms.data &&
-            (sms.data.held > 0
-              ? t('smsHeld', { count: f(sms.data.held) })
-              : t('smsLeft', { count: f(Math.max(0, sms.data.cap - sms.data.used)) }))
+            (checklist.steps.find((s) => s.key === 'sms')?.done === false
+              ? t('smsOff')
+              : sms.data.held > 0
+                ? t('smsHeld', { count: f(sms.data.held) })
+                : t('smsLeft', { count: f(Math.max(0, sms.data.cap - sms.data.used)) }))
           }
         />
       </ul>
@@ -652,25 +635,24 @@ function StaffDashboard({ context }: { context: MeContext }) {
           ) : (
             <Skeleton className="rounded-card h-48" />
           )}
+          {/* Beside the trend, so the right column does not end halfway down the page. */}
+          {canSeeStudents && (
+            <Deferred height={220}>
+              {summary.data ? (
+                <StudentsByClass summary={summary.data} />
+              ) : (
+                <Skeleton className="rounded-card h-56" />
+              )}
+            </Deferred>
+          )}
         </div>
       </div>
 
-      <div className="grid items-start gap-(--gap) lg:grid-cols-2">
-        {canSeeStudents && (
-          <Deferred height={220}>
-            {summary.data ? (
-              <StudentsByClass summary={summary.data} />
-            ) : (
-              <Skeleton className="rounded-card h-56" />
-            )}
-          </Deferred>
-        )}
-        <Deferred height={200}>
-          <TermTimeline context={context} />
-        </Deferred>
-      </div>
+      <Deferred height={200}>
+        <TermTimeline context={context} />
+      </Deferred>
 
-      <GettingStarted context={context} />
+      <GettingStarted context={context} after={Boolean(report.data)} />
       <ModulesSoon context={context} />
     </>
   );
@@ -770,7 +752,7 @@ function QuickActions({ context, onHero = false }: { context: MeContext; onHero?
           {t('addStudent', { student: label('student', 'Student', { inText: true }) })}
         </ButtonLink>
       )}
-      {canSee(navItem('fees'), context) && (
+      {canSee(navItem('fees'), context) && !navItem('fees').soon && (
         <ButtonLink href="/fees" variant="outline" data-testid="quick-fees" className={other}>
           <WalletIcon aria-hidden />
           {t('collectFee')}
@@ -780,12 +762,15 @@ function QuickActions({ context, onHero = false }: { context: MeContext; onHero?
   );
 }
 
-/** The real setup sequence for a new institute, ticked from data the institute already has. */
-function GettingStarted({ context }: { context: MeContext }) {
+/**
+ * The real setup sequence for a new institute, ticked from data the institute already has.
+ * `after`: wait for it (the overview loads its own first screen first).
+ */
+function GettingStarted({ context, after = true }: { context: MeContext; after?: boolean }) {
   const t = useTranslations('dashboard');
   const locale = useLocale() as Locale;
-  const { steps, done, wizard, loading } = useSetupChecklist(context);
-  if (!loading && done === steps.length && !wizard) return null;
+  const { steps, done, wizard, loading } = useSetupChecklist(context, after);
+  if (!after || (!loading && done === steps.length && !wizard)) return null;
   const nextKey = steps.find((s) => !s.done)?.key;
 
   return (
@@ -1049,7 +1034,10 @@ function ChildCard({ child, showAttendance }: { child: GuardianChild; showAttend
     { term: t('roll'), value: e?.roll != null ? formatIdentifier(e.roll) : '—', id: true },
   ];
   return (
-    <li className="bg-card flex flex-col overflow-hidden rounded-xl border shadow-xs">
+    <li
+      data-slot="card"
+      className="bg-card rounded-card shadow-card flex flex-col overflow-hidden border"
+    >
       <div className="flex items-center gap-4 p-4 sm:p-5">
         <PersonAvatar name={name} photoUrl={child.photoUrl} size="xl" />
         <div className="flex min-w-0 flex-col">

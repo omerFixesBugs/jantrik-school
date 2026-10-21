@@ -160,6 +160,8 @@ export interface TrendPoint {
   detail?: string;
   /** A reason there is no value (a holiday): shown instead of "—". */
   note?: string;
+  /** A day off (holiday, weekly off day): in the table, not on the line. */
+  rest?: boolean;
 }
 
 /**
@@ -172,7 +174,7 @@ export interface TrendPoint {
  * line (the 90 % the school aims for); with either, a small legend names the lines.
  */
 export function TrendChart({
-  points,
+  points: given,
   formatValue,
   formatKey,
   formatAxis,
@@ -180,7 +182,7 @@ export function TrendChart({
   height = 180,
   domain,
   tone = 'accent',
-  previous,
+  previous: givenPrevious,
   target,
   currentLabel,
   className,
@@ -206,6 +208,11 @@ export function TrendChart({
   const t = useTranslations('charts');
   const gradient = `trend-${useId().replace(/:/g, '')}`;
   const [box, width] = useWidth<HTMLDivElement>();
+  // Days off are left out of the line (it runs school day to school day); the table keeps them.
+  const tableRows = given.map((p, i) => ({ p, ghost: givenPrevious?.values[i] ?? null }));
+  const kept = tableRows.filter((r) => !r.p.rest);
+  const points = kept.map((r) => r.p);
+  const previous = givenPrevious && { ...givenPrevious, values: kept.map((r) => r.ghost) };
   const [active, setActive] = useState<number | null>(null);
   const [asTable, setAsTable] = useState(false);
   const values = points.map((p) => p.value);
@@ -386,7 +393,7 @@ export function TrendChart({
               </tr>
             </thead>
             <tbody>
-              {points.map((p, i) => (
+              {tableRows.map(({ p, ghost: g }) => (
                 <tr key={p.key} className="border-t">
                   <td className="px-3 py-1.5">{formatKey(p.key)}</td>
                   <td className="num px-3 py-1.5">
@@ -394,9 +401,7 @@ export function TrendChart({
                     {p.detail && <span className="text-muted-foreground ms-2">{p.detail}</span>}
                   </td>
                   {previous && (
-                    <td className="num px-3 py-1.5">
-                      {ghost[i] == null ? '—' : formatValue(ghost[i]!)}
-                    </td>
+                    <td className="num px-3 py-1.5">{g == null ? '—' : formatValue(g)}</td>
                   )}
                 </tr>
               ))}
@@ -507,7 +512,12 @@ export function TrendChart({
                     cx={x(lowest)}
                     cy={y(values[lowest]!)}
                     r={4}
-                    fill="var(--destructive)"
+                    // Red only when it is under the target; otherwise just the lowest.
+                    fill={
+                      target && values[lowest]! >= target.value
+                        ? 'var(--muted-foreground)'
+                        : 'var(--destructive)'
+                    }
                     stroke="var(--card)"
                     strokeWidth={2}
                   />

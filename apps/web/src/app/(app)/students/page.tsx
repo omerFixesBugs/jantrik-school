@@ -275,7 +275,7 @@ function Students() {
       sortKey: 'code',
       hideable: true,
       cell: (s) => (
-        <span className="tabular-nums" dir="ltr">
+        <span className="whitespace-nowrap tabular-nums" dir="ltr">
           {formatIdentifier(s.studentCode)}
         </span>
       ),
@@ -313,7 +313,7 @@ function Students() {
         s.primaryGuardian ? (
           <span className="flex flex-wrap items-baseline gap-x-2">
             <span>{displayName(s.primaryGuardian.nameBn, s.primaryGuardian.nameEn, locale)}</span>
-            <span className="text-muted-foreground tabular-nums" dir="ltr">
+            <span className="text-muted-foreground whitespace-nowrap tabular-nums" dir="ltr">
               {formatBdPhone(s.primaryGuardian.phone)}
             </span>
           </span>
@@ -688,15 +688,9 @@ function SummaryChips({ summary }: { summary: StudentsSummary }) {
   const t = useTranslations('students');
   const locale = useLocale() as Locale;
   const f = (n: number) => formatCount(n, locale);
-  const all = Object.values(summary.byStatus).reduce((a, n) => a + n, 0);
   const added = summary.addedByMonth.at(-1)?.count ?? 0;
   return (
     <ul className="flex flex-wrap gap-2" aria-label={t('summary')} data-testid="students-summary">
-      <li>
-        <Pill tone="neutral" className="text-sm">
-          {t('summaryAll', { count: f(all) })}
-        </Pill>
-      </li>
       <li>
         <Pill tone="success" className="text-sm">
           {t('summaryActive', { count: f(summary.byStatus.ACTIVE ?? 0) })}
@@ -884,72 +878,66 @@ function StudentCards({
 }) {
   const t = useTranslations('students');
   return (
-    <ul className="flex flex-col gap-2 md:hidden" data-testid="students-cards">
+    <ul
+      className="bg-card rounded-card shadow-card flex flex-col divide-y overflow-hidden border md:hidden"
+      data-testid="students-cards"
+    >
       {items.map((s) => {
         const name = displayName(s.nameBn, s.nameEn, locale);
         const g = s.primaryGuardian;
         const guardianName = g ? displayName(g.nameBn, g.nameEn, locale) : '';
+        const place = s.enrolment
+          ? [
+              classLevelName(s.enrolment, locale),
+              s.enrolment.section && `${sectionLabel} ${s.enrolment.section.name}`,
+              s.enrolment.roll != null && `${t('roll')} ${formatIdentifier(s.enrolment.roll)}`,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : t('notEnrolled');
         return (
-          <li key={s.id} className="bg-card overflow-hidden rounded-lg border">
-            <div className="flex items-start gap-3 p-3">
-              <PersonAvatar name={name} photoUrl={s.photoUrl} size="lg" />
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <div className="flex items-start justify-between gap-2">
-                  <span className="flex min-w-0 flex-col">
-                    {/* The card's way into the record: a full 44 px target on a phone. */}
-                    <Link
-                      href={`/students/${s.id}`}
-                      className="block max-w-full truncate py-2 text-base font-semibold underline-offset-2 hover:underline"
-                    >
-                      {name}
-                    </Link>
-                    <span className="text-muted-foreground text-sm tabular-nums" dir="ltr">
-                      {formatIdentifier(s.studentCode)}
-                    </span>
-                  </span>
-                  {s.status !== 'ACTIVE' && <StatusMark status={s.status} />}
-                </div>
-                <p className="text-sm">
-                  {s.enrolment ? (
-                    <>
-                      {classLevelName(s.enrolment, locale)}
-                      {s.enrolment.section && (
-                        <>
-                          {' · '}
-                          {sectionLabel} {s.enrolment.section.name}
-                        </>
-                      )}
-                      {s.enrolment.roll != null && (
-                        <>
-                          {' · '}
-                          {t('roll')}{' '}
-                          <span className="tabular-nums">{formatIdentifier(s.enrolment.roll)}</span>
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-muted-foreground">{t('notEnrolled')}</span>
-                  )}
-                </p>
-              </div>
-            </div>
-            {g && (
-              <div className="bg-canvas flex items-center gap-3 border-t px-3 py-2">
-                <span className="flex min-w-0 flex-1 flex-col leading-snug">
-                  <span className="text-muted-foreground text-xs">{t('guardian')}</span>
-                  <span className="truncate text-sm font-medium">{guardianName}</span>
-                  <span className="text-sm tabular-nums" dir="ltr">
+          <li key={s.id} className="hover:bg-muted/40 relative flex items-center gap-3 px-3 py-2.5">
+            {/* The whole row is the way into the record: one full-size target, named by the
+                student (the call button sits above it). */}
+            <Link
+              href={`/students/${s.id}`}
+              aria-label={name}
+              className="focus-visible:ring-ring absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset"
+            />
+            <PersonAvatar name={name} photoUrl={s.photoUrl} />
+            <div className="flex min-w-0 flex-1 flex-col leading-5">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 truncate font-semibold">{name}</span>
+                {s.status !== 'ACTIVE' && <StatusMark status={s.status} />}
+              </span>
+              <span className="text-muted-foreground truncate text-sm">
+                {place}
+                {' · '}
+                <span className="tabular-nums" dir="ltr">
+                  {formatIdentifier(s.studentCode)}
+                </span>
+              </span>
+              {g && (
+                <span className="text-muted-foreground truncate text-sm">
+                  {guardianName}{' '}
+                  <span className="tabular-nums" dir="ltr">
                     {formatBdPhone(g.phone)}
                   </span>
                 </span>
-                <a
-                  href={`tel:${g.phone}`}
-                  className={buttonVariants({ variant: 'outline', size: 'icon-lg' })}
-                  aria-label={t('call', { name: guardianName })}
-                >
-                  <PhoneIcon aria-hidden className="size-5" />
-                </a>
-              </div>
+              )}
+            </div>
+            {g && (
+              <a
+                href={`tel:${g.phone}`}
+                className={buttonVariants({
+                  variant: 'outline',
+                  size: 'icon-lg',
+                  className: 'relative z-10 shrink-0 rounded-full',
+                })}
+                aria-label={t('call', { name: guardianName })}
+              >
+                <PhoneIcon aria-hidden className="size-5" />
+              </a>
             )}
           </li>
         );

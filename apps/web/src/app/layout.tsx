@@ -24,12 +24,14 @@ const body = Noto_Sans_Bengali({
   display: 'swap',
   variable: '--font-body',
 });
-// Display: Anek Bangla, for the wordmark and page titles only: one static weight (600), 55 KB,
-// instead of the variable width × weight file (437 KB) v1 preloaded.
+// Display: Anek Bangla, for the wordmark, page titles and the greeting only: one static weight
+// (600), 55 KB. Not preloaded: on a slow phone it would share the link with the app's JavaScript;
+// titles show in the body face for a moment and swap (design v2.1 performance budget).
 const display = Anek_Bangla({
   subsets: ['bengali'],
   weight: '600',
   display: 'swap',
+  preload: false,
   variable: '--font-display',
 });
 // Latin text (English UI, IDs, phone numbers, Latin digits): Plus Jakarta Sans, first in the

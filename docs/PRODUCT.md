@@ -70,6 +70,13 @@ day in it faster than on paper and Excel, and guardians trust what it tells them
   no apologies in errors, no hype.
 - Open for design v2 (decided 2026-10-21): the colours, the mark and the alphabet-chart pattern
   may be reworked, not only density, layout and typography.
+- Each institute looks like itself (design v2.1, decided 2026-10-21): one of four themes (School,
+  Madrasa, Coaching, English medium), the institute type's default unless the owner picks another
+  or an accent colour. Madrasa: an Arabic font for Arabic text and a geometric pattern, no religious
+  text and no living beings.
+- Light, dark or the device's: each person's own choice, kept on their account. Nobody is put in
+  dark by default (coaching included); screens used outdoors on phones (taking attendance, the
+  guardian's) must be excellent in light.
 
 ## Evidence on Hand
 
@@ -96,4 +103,8 @@ day in it faster than on paper and Excel, and guardians trust what it tells them
 - Touch targets at least 44 × 44 px on phones.
 - Bangla text never smaller than the readable minimum, never letter-spaced, never clipped.
 - Status never by colour alone (sunlight, colour blindness): always a word or an icon too.
-- Works on low-end Android phones and slow networks.
+- Works on low-end Android phones and slow networks: the budget is interactive within 3 s on a
+  390 px phone with 4× CPU throttling and slow 4G (measured for the dashboard and the students
+  list; anything over it is flagged).
+- Every theme passes AA in light and dark, tested (themes.test.ts) and measured on the rendered
+  screens (themes.spec.ts).

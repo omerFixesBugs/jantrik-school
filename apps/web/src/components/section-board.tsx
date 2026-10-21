@@ -118,7 +118,7 @@ export function SectionBoard({
                       href={href(s)}
                       data-testid="board-section"
                       className={cn(
-                        'focus-visible:ring-sidebar-ring focus-visible:ring-offset-board flex min-h-16 flex-col justify-between rounded-md px-2.5 py-2 transition-[filter] outline-none hover:brightness-110 focus-visible:ring-2 focus-visible:ring-offset-2',
+                        'focus-visible:ring-sidebar-ring focus-visible:ring-offset-board flex min-h-16 flex-col justify-between rounded-xl px-2.5 py-2 transition-[filter] outline-none hover:brightness-110 focus-visible:ring-2 focus-visible:ring-offset-2',
                         step === null
                           ? 'border-board-muted/70 text-board-foreground border border-dashed'
                           : RAMP_TEXT[step],

@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Panel } from '@/components/dashboard/attendance-overview';
 import { DeltaPill } from '@/components/kit/pill';
 import { BarList } from '@/components/charts';
@@ -31,7 +31,7 @@ import { Donut } from '@/components/story-charts';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useLabel } from '@/lib/hooks';
-import { displayName } from '@/lib/names';
+import { bnGenitive, displayName } from '@/lib/names';
 import { cn } from '@/lib/utils';
 
 /*
@@ -89,37 +89,70 @@ export function Deferred({
 
 // ───────────────────────────── The insight ─────────────────────────────
 
-/** Today in one line: the facts dashboardInsight chose, in the institute's words. */
+/**
+ * Today in one line: the facts dashboardInsight chose, in the institute's words. Each clause that
+ * asks for something (registers still to come, guardians to call) links to where it is done.
+ */
 export function useInsightText() {
   const t = useTranslations('dashboard');
   const locale = useLocale() as Locale;
   const label = useLabel();
   const f = (n: number) => formatCount(n, locale);
   const section = label('section', 'Section', { inText: true });
+  const sectionOf = locale === 'bn' ? bnGenitive(section) : section;
   const classLevel = label('class_level', 'Class', { inText: true });
-  return (facts: InsightFact[]) =>
-    facts
-      .map((fact) => {
-        switch (fact.kind) {
-          case 'coverage':
-            return t('insightCoverage', { taken: f(fact.taken), total: f(fact.total), section });
-          case 'allTaken':
-            return t('insightAllTaken', { section });
-          case 'present':
-            return t('insightPresent', { present: f(fact.present), counted: f(fact.counted) });
-          case 'call':
-            return t('insightCall', { count: f(fact.count), n: fact.count });
-          case 'week':
-            return t(fact.change > 0 ? 'insightWeekUp' : 'insightWeekDown', {
-              change: formatCount(Math.abs(fact.change), locale),
-            });
-          case 'dayOff':
-            return fact.name ? t('insightHoliday', { name: fact.name }) : t('insightDayOff');
-          case 'setup':
-            return t('insightSetup', { classLevel, section });
-        }
-      })
-      .join(' · ');
+  const text = (fact: InsightFact): string => {
+    switch (fact.kind) {
+      case 'coverage':
+        return t('insightCoverage', {
+          taken: f(fact.taken),
+          total: f(fact.total),
+          section,
+          sectionOf,
+        });
+      case 'allTaken':
+        return t('insightAllTaken', { section, sectionOf });
+      case 'present':
+        return t('insightPresent', { present: f(fact.present), counted: f(fact.counted) });
+      case 'call':
+        return t('insightCall', { count: f(fact.count), n: fact.count });
+      case 'week':
+        return t(fact.change > 0 ? 'insightWeekUp' : 'insightWeekDown', {
+          change: formatCount(Math.abs(fact.change), locale),
+        });
+      case 'dayOff':
+        return fact.name ? t('insightHoliday', { name: fact.name }) : t('insightDayOff');
+      case 'setup':
+        return t('insightSetup', { classLevel, section });
+    }
+  };
+  const href = (fact: InsightFact): string | null =>
+    fact.kind === 'coverage' || fact.kind === 'call'
+      ? '/attendance/today'
+      : fact.kind === 'setup'
+        ? '/setup/classes'
+        : null;
+  return (facts: InsightFact[]): ReactNode =>
+    facts.map((fact, i) => {
+      const words = text(fact);
+      const to = href(fact);
+      return (
+        // Fragments: each link sits inside the sentence (an inline link, not a lone target).
+        <Fragment key={fact.kind}>
+          {i > 0 && ' · '}
+          {to ? (
+            <Link
+              href={to}
+              className="decoration-hero-foreground/40 hover:decoration-hero-foreground focus-visible:ring-hero-foreground rounded-sm underline underline-offset-4 outline-none focus-visible:ring-2"
+            >
+              {words}
+            </Link>
+          ) : (
+            words
+          )}
+        </Fragment>
+      );
+    });
 }
 
 // ───────────────────────────── Needs attention ─────────────────────────────
@@ -163,7 +196,11 @@ export function AttentionCard({
         return { text: t('attHeldSms', { count: f(item.count) }), href: '#held-sms' };
       case 'notTaken':
         return {
-          text: t('attNotTaken', { count: f(item.sectionIds.length), section }),
+          text: t('attNotTaken', {
+            count: f(item.sectionIds.length),
+            section,
+            sectionOf: locale === 'bn' ? bnGenitive(section) : section,
+          }),
           detail: item.sectionIds.slice(0, 3).map(sectionName).join(', '),
           href: '/attendance/today',
         };
@@ -405,7 +442,7 @@ export function DashboardHero({
 }: {
   date: ReactNode;
   greeting: string;
-  insight: string;
+  insight: ReactNode;
   /** This week's present % and its change against last week, in points (null: not known). */
   week: { percent: number | null; change: number | null; loading?: boolean };
   actions: ReactNode;

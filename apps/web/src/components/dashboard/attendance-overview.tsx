@@ -65,7 +65,7 @@ export function Panel({
       data-testid={testId}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <h2 className="text-base font-semibold">{title}</h2>
+        <h2 className="text-lg font-semibold">{title}</h2>
         {aside}
       </div>
       {children}
@@ -369,6 +369,8 @@ export function trendPoints(
       value,
       detail: counts ? text.detail(counts.present + counts.late, total) : undefined,
       note: off ? (off.reason === 'HOLIDAY' ? text.holiday(off) : text.offDay) : text.notTaken,
+      // A day off with no register: in the table, not on the line.
+      rest: Boolean(off) && value === null,
     };
   });
 }
@@ -408,12 +410,19 @@ export function AttendanceTrend({
     length,
   );
   const points = current.map((c) => all[c.i]!);
-  // Day k of this period meets day k of the one before (aligned from the end when the year began
-  // inside the earlier period).
-  const offset = current.length - previous.length;
-  const ghost = current.map((_, k) =>
-    k - offset >= 0 ? (all[previous[k - offset]!.i]!.value ?? null) : null,
+  // The k-th school day of this period meets the k-th of the one before (aligned from the end
+  // when the year began inside the earlier period); days off have no ghost.
+  const school = (list: { i: number }[]) => list.filter((c) => !all[c.i]!.rest);
+  const nowDays = school(current);
+  const thenDays = school(previous);
+  const offset = nowDays.length - thenDays.length;
+  const ghostOf = new Map(
+    nowDays.map((c, k) => [
+      c.i,
+      k - offset >= 0 ? (all[thenDays[k - offset]!.i]!.value ?? null) : null,
+    ]),
   );
+  const ghost = current.map((c) => ghostOf.get(c.i) ?? null);
   const chosen = classId
     ? report.sections.find((s) => s.section.classLevel.id === classId)?.section.classLevel
     : null;
