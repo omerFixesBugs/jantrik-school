@@ -66,7 +66,8 @@
   --color-board-line: var(--board-line);
   --color-board-foreground: var(--board-foreground);
   --color-board-muted: var(--board-muted);
-  /* Coloured chalk: the only data colours. `-ink` variants are for lines and text on white. */
+  /* The blackboard's chalk names (design v2), now aliases of theme tokens (status and accent inks),
+     kept for the components not yet rebuilt. Data series are --chart-1…5 (themes.ts). */
   --color-chalk-yellow: var(--chalk-yellow);
   --color-chalk-pink: var(--chalk-pink);
   --color-chalk-sky: var(--chalk-sky);

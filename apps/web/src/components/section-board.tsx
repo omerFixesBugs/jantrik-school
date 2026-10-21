@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 /*
  * The section board (docs/design.md → Brand): today's attendance as a class × section chart, like
  * the বর্ণমালা chart, on a small blackboard. Every tile shows its percentage as text and opens
- * that section's register; tiles not taken yet are dashed; the lowest is ringed in chalk pink.
+ * that section's register; tiles not taken yet are dashed; the lowest is ringed (destructive).
  * Colour is the one fixed ramp (percentRampStep), so 90 % looks the same on every screen.
  */
 
