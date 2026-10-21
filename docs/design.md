@@ -181,6 +181,7 @@ browser showed (or the screen width), so pages never jump; `DensityProvider`
 | `--cell-px` / `--cell-py`             | 12 / 6 px           | 16 / 10 px          |
 | `--panel-p` (panel padding)           | 16 px               | 20 px               |
 | `--section-gap`                       | 16 px               | 24 px               |
+| `--gap` (between tiles and panels)    | 12 px               | 16 px               |
 | `--topbar-h` (bn / en)                | 56 / 52 px          | 60 px               |
 
 - **Defaults** (`defaultDensity` in packages/shared): compact on screens ≥ 1024 px for owners,

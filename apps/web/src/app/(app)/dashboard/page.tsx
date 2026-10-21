@@ -8,15 +8,17 @@ import {
   formatCount,
   formatDate,
   formatIdentifier,
+  type AttendanceTodayReport,
   type AttendanceTodaySummary,
+  type AttendanceTrendReport,
   type SendHeldSmsResult,
   type SmsDailyStatus,
   type GuardianChild,
   type MeContext,
   type StudentsPage,
+  type StudentsSummary,
 } from '@jantrik/shared';
 import {
-  BookOpenCheckIcon,
   CalendarCheckIcon,
   CalendarDaysIcon,
   CheckIcon,
@@ -26,20 +28,24 @@ import {
   HeartHandshakeIcon,
   MessageSquareWarningIcon,
   UserPlusIcon,
-  UsersIcon,
   WalletIcon,
-  type LucideIcon,
 } from 'lucide-react';
-import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
 import { BillingNoticeBanner } from '@/components/billing-notice';
+import { Meter, Sparkline } from '@/components/charts';
+import {
+  AttendanceTrend,
+  LONG_ABSENCE,
+  TodayAbsentees,
+  TodayBoard,
+} from '@/components/dashboard/attendance-overview';
+import { KpiPlaceholder, KpiTile } from '@/components/dashboard/kpi';
 import { InvitationsBanner } from '@/components/invitations-banner';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button, ButtonLink } from '@/components/ui/button';
 import {
   Dialog,
@@ -134,22 +140,45 @@ function StaffDashboard({ context }: { context: MeContext }) {
   const label = useLabel();
   const { client, session } = useAuth();
   const tenantId = session?.tenant?.id;
-  const canSeeStudents = canSee(navItem('students'), context);
   const isAdmin = context.roles.some((r) => r === 'OWNER' || r === 'ADMIN');
+  const canSeeStudents = canSee(navItem('students'), context);
+  const canSeeAttendance = canSee(navItem('attendance'), context);
+  // Owners and admins get the whole picture; everyone else their figures (teachers: part 5).
+  const overview = isAdmin && canSeeAttendance;
+  const f = (n: number) => formatCount(n, locale);
 
+  const summary = useQuery({
+    queryKey: ['students-summary', tenantId],
+    queryFn: () => client.api<StudentsSummary>('/students/summary'),
+    enabled: isAdmin && canSeeStudents,
+  });
   const students = useQuery({
     queryKey: ['students-total', tenantId],
     queryFn: () => client.api<StudentsPage>('/students?pageSize=1'),
-    enabled: canSeeStudents,
+    enabled: !isAdmin && canSeeStudents,
   });
-
-  const canSeeAttendance = canSee(navItem('attendance'), context);
-  const summary = useQuery({
+  const todaySummary = useQuery({
     queryKey: ['attendance-summary', tenantId],
     queryFn: () => client.api<AttendanceTodaySummary>('/attendance/summary/today'),
-    enabled: canSeeAttendance,
+    enabled: canSeeAttendance && !overview,
   });
-  const attendanceAdmin = canSeeAttendance && isAdmin;
+  const report = useQuery({
+    queryKey: ['attendance-report-today', tenantId],
+    queryFn: () => client.api<AttendanceTodayReport>('/attendance/reports/today'),
+    enabled: overview,
+  });
+  const trend = useQuery({
+    queryKey: ['attendance-trend', tenantId, 30],
+    queryFn: () =>
+      client.api<AttendanceTrendReport>('/attendance/reports/trend?days=30&bySection=1'),
+    enabled: overview,
+  });
+  const sms = useQuery({
+    queryKey: ['sms-today', tenantId],
+    queryFn: () => client.api<SmsDailyStatus>('/attendance/sms/today'),
+    enabled: overview,
+  });
+  const [classId, setClassId] = useState<string | null>(null);
   // Attendance kept on this phone that the server doesn't have yet.
   const [unsent] = useState(() =>
     session?.tenant ? listDrafts(session.user.id, session.tenant.id).length : 0,
@@ -158,22 +187,51 @@ function StaffDashboard({ context }: { context: MeContext }) {
   const studentLabel = label('student', 'Student', { inText: true });
   const classLabel = label('class_level', 'Class', { inText: true });
   const sectionLabel = label('section', 'Section', { inText: true });
-  const total = students.data?.total ?? null;
-  const today = summary.data;
-  const present = today ? today.counts.present + today.counts.late : 0;
+
+  // Today's figures, from the report (owners, admins) or the summary (everyone else).
+  const day = overview
+    ? report.data && {
+        counts: report.data.totals.counts,
+        percent: report.data.totals.percent,
+        sectionsTaken: report.data.totals.sectionsTaken,
+        sectionsTotal: report.data.totals.sectionsTotal,
+      }
+    : todaySummary.data;
+  const dayLoading = overview ? report.isPending : todaySummary.isPending;
+  const counted = day
+    ? day.counts.present + day.counts.absent + day.counts.late + day.counts.leave
+    : 0;
+  const present = day ? day.counts.present + day.counts.late : 0;
+  const longAbsent = (report.data?.sections ?? [])
+    .flatMap((s) => s.register?.absent ?? [])
+    .filter((st) => st.streak >= LONG_ABSENCE).length;
+
+  // The KPI's comparison (docs/design.md → Principles 9): the school day before today.
+  const before = trend.data?.days.slice(0, -1).findLast((d) => d.percent !== null) ?? null;
+  const dayFailed = overview
+    ? report.isError && !report.data
+    : todaySummary.isError && !todaySummary.data;
+
+  const total = isAdmin
+    ? summary.data && Object.values(summary.data.byStatus).reduce((a, n) => a + n, 0)
+    : students.data?.total;
+  const addedNow = summary.data?.addedByMonth.at(-1)?.count ?? 0;
 
   return (
     <>
-      <Greeting subtitle={t('subtitle', { institute: context.tenant.name })} />
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+        <Greeting subtitle={t('subtitle', { institute: context.tenant.name })} />
+        <QuickActions context={context} />
+      </div>
 
       {unsent > 0 && (
         <div
-          className="border-warning/40 bg-warning-soft flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3"
+          className="border-warning/40 bg-warning-soft flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"
           data-testid="unsent-banner"
         >
           <span className="flex items-center gap-2 font-medium">
             <CloudOffIcon aria-hidden className="text-warning size-5" />
-            {t('unsentBanner', { count: formatCount(unsent, locale) })}
+            {t('unsentBanner', { count: f(unsent) })}
           </span>
           <ButtonLink size="sm" variant="outline" href="/attendance">
             {t('unsentOpen')}
@@ -181,258 +239,291 @@ function StaffDashboard({ context }: { context: MeContext }) {
         </div>
       )}
 
-      {attendanceAdmin && <HeldSmsBanner />}
+      {overview && <HeldSmsBanner />}
 
-      <ul className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <ul
+        className={cn(
+          'grid grid-cols-2 gap-(--gap)',
+          overview ? 'md:grid-cols-3 xl:grid-cols-5' : 'md:grid-cols-3',
+        )}
+        aria-label={t('figures')}
+      >
         {canSeeStudents && (
-          <StatCard
-            icon={UsersIcon}
+          <KpiTile
             label={t('totalStudents', { student: studentLabel })}
-            hint={t('totalStudentsHint', { classLevel: classLabel })}
-            value={total}
-            loading={students.isPending}
+            value={total === undefined ? null : f(total)}
+            loading={isAdmin ? summary.isPending : students.isPending}
+            failed={isAdmin ? summary.isError && !summary.data : students.isError && !students.data}
             href="/students"
+            chart={
+              summary.data && (
+                <Sparkline
+                  values={summary.data.addedByMonth.map((m) => m.count)}
+                  tone="sky"
+                  className="h-6 w-full max-w-24"
+                />
+              )
+            }
+            hint={
+              <>
+                {t('totalStudentsHint', { classLevel: classLabel })}
+                {summary.data && addedNow > 0 && (
+                  <span className="block">{t('addedThisMonth', { count: f(addedNow) })}</span>
+                )}
+              </>
+            }
           />
         )}
         {canSeeAttendance && (
-          <StatCard
+          <KpiTile
             testId="module-card-attendance"
-            icon={CalendarCheckIcon}
             label={t('presentToday')}
-            href="/attendance"
-            loading={summary.isPending}
-            value={today ? (today.students > 0 ? present : null) : undefined}
-            display={
-              today && today.students > 0 ? (
+            href="/attendance/today"
+            loading={dayLoading}
+            failed={dayFailed}
+            value={
+              day && counted > 0 ? (
                 <>
-                  {formatCount(present, locale)}
+                  {f(present)}
                   <span className="text-muted-foreground text-xl font-medium">
                     {' / '}
-                    {formatCount(today.students, locale)}
+                    {f(counted)}
                   </span>
                 </>
-              ) : undefined
+              ) : null
+            }
+            chart={
+              trend.data && (
+                <Sparkline
+                  values={trend.data.days.map((d) => d.percent)}
+                  className="h-6 w-full max-w-24"
+                />
+              )
             }
             hint={
-              !today ? (
+              !day ? (
                 t('presentTodayHint')
-              ) : today.students === 0 ? (
+              ) : counted === 0 ? (
                 t('presentTodayNone')
               ) : (
                 <>
-                  {today.percent !== null && (
+                  {day.percent !== null && (
                     <span className="text-foreground block font-medium">
-                      {t('presentTodayPercent', {
-                        percent: formatCount(Math.round(today.percent), locale),
-                      })}
+                      {t('presentTodayPercent', { percent: f(Math.round(day.percent)) })}
                     </span>
                   )}
-                  {t('presentTodaySectionsOf', {
-                    taken: formatCount(today.sectionsTaken, locale),
-                    total: formatCount(today.sectionsTotal, locale),
-                    section: sectionLabel,
-                  })}
+                  {before && (
+                    <span className="block">
+                      {t('prevDay', { percent: f(Math.round(before.percent!)) })}
+                    </span>
+                  )}
+                  {!overview &&
+                    t('presentTodaySectionsOf', {
+                      taken: f(day.sectionsTaken),
+                      total: f(day.sectionsTotal),
+                      section: sectionLabel,
+                    })}
                 </>
               )
             }
           />
         )}
-        {canSee(navItem('fees'), context) && (
-          <StatCard
-            testId="module-card-fees"
-            icon={WalletIcon}
-            label={t('feesThisMonth')}
-            hint={t('feesThisMonthHint')}
+        {overview && (
+          <KpiTile
+            testId="kpi-absent"
+            label={t('absentToday')}
+            href="/attendance/today"
+            loading={dayLoading}
+            failed={dayFailed}
+            value={day && counted > 0 ? f(day.counts.absent) : null}
+            hint={
+              day && counted > 0
+                ? longAbsent > 0
+                  ? t('absentRun', { count: f(longAbsent), days: f(LONG_ABSENCE) })
+                  : t('absentRunNone', { days: f(LONG_ABSENCE) })
+                : t('presentTodayHint')
+            }
           />
         )}
-        {canSee(navItem('exams'), context) && (
-          <StatCard
-            testId="module-card-exams"
-            icon={BookOpenCheckIcon}
-            label={t('upcomingExam')}
-            hint={t('upcomingExamHint')}
+        {overview && (
+          <KpiTile
+            testId="kpi-registers"
+            label={t('registersTaken')}
+            href="/attendance/today"
+            loading={dayLoading}
+            failed={dayFailed}
+            value={
+              day && day.sectionsTotal > 0 ? (
+                <>
+                  {f(day.sectionsTaken)}
+                  <span className="text-muted-foreground text-xl font-medium">
+                    {' / '}
+                    {f(day.sectionsTotal)}
+                  </span>
+                </>
+              ) : null
+            }
+            meter={
+              day &&
+              day.sectionsTotal > 0 && (
+                <Meter
+                  value={day.sectionsTaken}
+                  max={day.sectionsTotal}
+                  label={t('registersMeter', {
+                    taken: f(day.sectionsTaken),
+                    total: f(day.sectionsTotal),
+                    section: sectionLabel,
+                  })}
+                />
+              )
+            }
+            hint={
+              day && day.sectionsTotal > 0
+                ? day.sectionsTaken < day.sectionsTotal
+                  ? t('registersLeft', {
+                      count: f(day.sectionsTotal - day.sectionsTaken),
+                      n: day.sectionsTotal - day.sectionsTaken,
+                      section: sectionLabel,
+                    })
+                  : t('registersDone', { section: sectionLabel })
+                : t('boardEmpty', { section: sectionLabel })
+            }
+          />
+        )}
+        {overview && (
+          <KpiTile
+            testId="kpi-sms"
+            // The fifth tile: the whole row on a phone (two columns there).
+            className="col-span-2 md:col-span-1"
+            label={t('smsToday')}
+            href="/attendance/settings#settings-sms"
+            loading={sms.isPending}
+            failed={sms.isError && !sms.data}
+            value={
+              sms.data ? (
+                <>
+                  {f(sms.data.used)}
+                  <span className="text-muted-foreground text-xl font-medium">
+                    {' / '}
+                    {f(sms.data.cap)}
+                  </span>
+                </>
+              ) : null
+            }
+            meter={
+              sms.data && (
+                <Meter
+                  value={sms.data.used}
+                  max={sms.data.cap}
+                  tone={sms.data.held > 0 || sms.data.used >= sms.data.cap ? 'warning' : 'board'}
+                  label={t('smsMeter', { used: f(sms.data.used), cap: f(sms.data.cap) })}
+                />
+              )
+            }
+            hint={
+              sms.data &&
+              (sms.data.held > 0
+                ? t('smsHeld', { count: f(sms.data.held) })
+                : t('smsLeft', { count: f(Math.max(0, sms.data.cap - sms.data.used)) }))
+            }
           />
         )}
       </ul>
 
-      <div
-        className={cn(
-          'grid items-start gap-6',
-          isAdmin && 'lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]',
-        )}
-      >
-        {isAdmin && <GettingStarted context={context} />}
-        <QuickActions context={context} wide={!isAdmin} />
-      </div>
-    </>
-  );
-}
-
-/**
- * Real numbers sit on a solid card; modules that are not running yet use a dashed outline and
- * say what will appear, instead of showing a made-up number.
- */
-function StatCard({
-  icon: Icon,
-  label,
-  hint,
-  value,
-  display,
-  loading,
-  href,
-  testId,
-}: {
-  icon: LucideIcon;
-  label: string;
-  hint: ReactNode;
-  value?: number | null;
-  /** Custom rendering of the value (e.g. "4 / 5"). */
-  display?: ReactNode;
-  loading?: boolean;
-  href?: string;
-  testId?: string;
-}) {
-  const t = useTranslations('dashboard');
-  const locale = useLocale() as Locale;
-  const placeholder = value === undefined && display === undefined;
-  const body = (
-    <>
-      <span className="flex items-center justify-between gap-2">
-        <span className="text-muted-foreground text-sm font-medium">{label}</span>
-        <span
-          className={cn(
-            'hidden size-9 shrink-0 items-center justify-center rounded-lg sm:flex',
-            placeholder ? 'bg-muted text-muted-foreground' : 'bg-primary-soft text-primary',
-          )}
-        >
-          <Icon aria-hidden className="size-4.5" />
-        </span>
-      </span>
-      {loading ? (
-        <Skeleton className="h-10 w-20" />
-      ) : (
-        <span
-          className={cn(
-            'font-numeric text-3xl leading-none font-semibold',
-            placeholder && 'text-muted-foreground',
-          )}
-        >
-          {display ??
-            (placeholder || value === null ? (
-              <>
-                <span aria-hidden>—</span>
-                <span className="sr-only">{t('notYet')}</span>
-              </>
+      {overview && (
+        <div className="grid items-start gap-(--gap) xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <div className="flex min-w-0 flex-col gap-(--gap)">
+            {report.isError && !report.data ? (
+              <LoadError error={report.error} onRetry={() => void report.refetch()} />
+            ) : report.data ? (
+              <TodayBoard report={report.data} classId={classId} onClassChange={setClassId} />
             ) : (
-              formatCount(value ?? 0, locale)
-            ))}
-        </span>
+              <Skeleton className="h-64 rounded-lg" />
+            )}
+            <GettingStarted context={context} />
+          </div>
+          <div className="flex min-w-0 flex-col gap-(--gap)">
+            {report.isError && !report.data ? null : report.data ? (
+              <TodayAbsentees report={report.data} classId={classId} />
+            ) : (
+              <Skeleton className="h-48 rounded-lg" />
+            )}
+            {trend.isError && !trend.data ? (
+              <LoadError error={trend.error} onRetry={() => void trend.refetch()} />
+            ) : trend.data ? (
+              <AttendanceTrend report={trend.data} classId={classId} />
+            ) : (
+              <Skeleton className="h-56 rounded-lg" />
+            )}
+          </div>
+        </div>
       )}
-      <span className="text-muted-foreground text-xs leading-snug sm:text-sm">{hint}</span>
-    </>
-  );
-  const className = cn(
-    'flex h-full flex-col gap-2 rounded-xl p-3.5 sm:gap-3 sm:p-5',
-    placeholder ? 'border border-dashed border-input' : 'bg-card border shadow-xs',
-  );
-  return (
-    <li data-testid={testId}>
-      {href ? (
-        <Link
-          href={href}
-          className={cn(
-            className,
-            'hover:border-primary/40 focus-visible:ring-ring transition-colors outline-none focus-visible:ring-3',
+      {!overview && isAdmin && <GettingStarted context={context} />}
+
+      {(canSee(navItem('fees'), context) || canSee(navItem('exams'), context)) && (
+        <ul className="grid gap-(--gap) sm:grid-cols-2" aria-label={t('modulesSoon')}>
+          {canSee(navItem('fees'), context) && (
+            <KpiPlaceholder
+              testId="module-card-fees"
+              label={t('feesThisMonth')}
+              hint={t('feesThisMonthHint')}
+            />
           )}
-        >
-          {body}
-        </Link>
-      ) : (
-        <div className={className}>{body}</div>
+          {canSee(navItem('exams'), context) && (
+            <KpiPlaceholder
+              testId="module-card-exams"
+              label={t('upcomingExam')}
+              hint={t('upcomingExamHint')}
+            />
+          )}
+        </ul>
       )}
-    </li>
+    </>
   );
 }
 
-function QuickActions({ context, wide }: { context: MeContext; wide?: boolean }) {
-  const t = useTranslations('dashboard');
+/** A part of the dashboard that could not be loaded: why, and a way to try again. */
+function LoadError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   const tCommon = useTranslations('common');
+  const describe = useErrorMessage();
+  return (
+    <Alert variant="destructive">
+      <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+        {describe(error)}
+        <Button size="sm" variant="outline" onClick={onRetry}>
+          {tCommon('retry')}
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/** The day's main jobs, beside the greeting: taking attendance first. */
+function QuickActions({ context }: { context: MeContext }) {
+  const t = useTranslations('dashboard');
   const label = useLabel();
   const isAdmin = context.roles.some((r) => r === 'OWNER' || r === 'ADMIN');
-  const actions: { key: string; icon: LucideIcon; title: string; text: string; href?: string }[] =
-    [];
-  if (isAdmin)
-    actions.push({
-      key: 'add-student',
-      icon: UserPlusIcon,
-      title: t('addStudent', { student: label('student', 'Student', { inText: true }) }),
-      text: t('addStudentText'),
-    });
-  if (canSee(navItem('attendance'), context))
-    actions.push({
-      key: 'attendance',
-      icon: CalendarCheckIcon,
-      title: t('takeAttendance'),
-      text: t('takeAttendanceText'),
-      href: '/attendance',
-    });
-  if (canSee(navItem('fees'), context))
-    actions.push({
-      key: 'fees',
-      icon: WalletIcon,
-      title: t('collectFee'),
-      text: t('collectFeeText'),
-      href: '/fees',
-    });
-  if (actions.length === 0) return null;
-
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="quick-actions">
-      <SectionTitle>
-        <span id="quick-actions">{t('quickActions')}</span>
-      </SectionTitle>
-      <ul className={cn('grid gap-3', wide && 'md:grid-cols-3')}>
-        {actions.map((a) => {
-          const inner = (
-            <>
-              <span className="bg-primary-soft text-primary flex size-11 shrink-0 items-center justify-center rounded-lg">
-                <a.icon aria-hidden className="size-5" />
-              </span>
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="font-medium">{a.title}</span>
-                <span className="text-muted-foreground text-sm">{a.text}</span>
-              </span>
-              {a.href ? (
-                <ChevronRightIcon aria-hidden className="text-muted-foreground size-5 shrink-0" />
-              ) : (
-                <Badge variant="secondary">{tCommon('comingSoon')}</Badge>
-              )}
-            </>
-          );
-          const base = 'bg-card flex min-h-[76px] items-center gap-3 rounded-xl border p-3 sm:p-4';
-          return (
-            <li key={a.key}>
-              {a.href ? (
-                <Link
-                  href={a.href}
-                  data-testid={`quick-${a.key}`}
-                  className={cn(
-                    base,
-                    'hover:border-primary/40 hover:bg-primary-soft/40 focus-visible:ring-ring shadow-xs transition-colors outline-none focus-visible:ring-3',
-                  )}
-                >
-                  {inner}
-                </Link>
-              ) : (
-                <div className={cn(base, 'bg-card/60')} aria-disabled="true">
-                  {inner}
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <div className="flex flex-wrap gap-2" aria-label={t('quickActions')} role="group">
+      {canSee(navItem('attendance'), context) && (
+        <ButtonLink href="/attendance" data-testid="quick-attendance">
+          <CalendarCheckIcon aria-hidden />
+          {t('takeAttendance')}
+        </ButtonLink>
+      )}
+      {isAdmin && canSee(navItem('students'), context) && (
+        <ButtonLink href="/students/new" variant="outline" data-testid="quick-add-student">
+          <UserPlusIcon aria-hidden />
+          {t('addStudent', { student: label('student', 'Student', { inText: true }) })}
+        </ButtonLink>
+      )}
+      {canSee(navItem('fees'), context) && (
+        <ButtonLink href="/fees" variant="outline" data-testid="quick-fees">
+          <WalletIcon aria-hidden />
+          {t('collectFee')}
+        </ButtonLink>
+      )}
+    </div>
   );
 }
 
@@ -446,7 +537,7 @@ function GettingStarted({ context }: { context: MeContext }) {
 
   return (
     <section
-      className="bg-card flex flex-col gap-4 rounded-xl border p-4 shadow-xs sm:p-5"
+      className="bg-card flex flex-col gap-3 rounded-lg border p-(--panel-p)"
       aria-labelledby="getting-started"
       data-testid="getting-started"
     >
@@ -488,44 +579,46 @@ function GettingStarted({ context }: { context: MeContext }) {
           />
         </div>
       </div>
+      {/* Compact: what is done is one line of ticks; only what is left gets a row. */}
+      {done > 0 && (
+        <ul className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {steps
+            .filter((s) => s.done)
+            .map((s) => (
+              <li key={s.key} className="inline-flex items-center gap-1.5">
+                <CheckIcon aria-hidden className="text-success size-4 shrink-0" />
+                {s.title}
+                <span className="sr-only"> ({t('done')})</span>
+              </li>
+            ))}
+        </ul>
+      )}
       <ol className="flex flex-col">
-        {steps.map((s, i) => {
-          const isNext = s.key === nextKey;
-          return (
-            <li
-              key={s.key}
-              className={cn(
-                'flex gap-3 border-t py-3 first:border-t-0 first:pt-1 last:pb-0',
-                isNext && 'items-start',
-              )}
-            >
+        {steps.map((s, i) =>
+          s.done ? null : (
+            <li key={s.key} className="flex items-start gap-3 border-t py-2.5 last:pb-0">
               <span
                 className={cn(
-                  'font-numeric flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold',
-                  s.done
-                    ? 'bg-success-soft text-success'
-                    : isNext
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground border',
+                  'font-numeric flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold',
+                  s.key === nextKey
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground border',
                 )}
               >
-                {s.done ? <CheckIcon aria-hidden className="size-4" /> : formatCount(i + 1, locale)}
+                {formatCount(i + 1, locale)}
               </span>
               <span className="flex min-w-0 flex-1 flex-col">
-                <span className={cn('font-medium', s.done && 'text-muted-foreground')}>
-                  {s.title}
-                  {s.done && <span className="sr-only"> ({t('done')})</span>}
-                </span>
-                {!s.done && <span className="text-muted-foreground text-sm">{s.text}</span>}
+                <span className="font-medium">{s.title}</span>
+                <span className="text-muted-foreground text-sm">{s.text}</span>
               </span>
-              {!s.done && s.href && isNext && (
+              {s.href && s.key === nextKey && (
                 <ButtonLink size="sm" variant="outline" href={s.href} className="shrink-0">
                   {t('open')}
                 </ButtonLink>
               )}
             </li>
-          );
-        })}
+          ),
+        )}
       </ol>
     </section>
   );
@@ -574,7 +667,7 @@ function HeldSmsBanner() {
   const count = formatCount(held, locale);
   return (
     <div
-      className="border-warning/40 bg-warning-soft flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+      className="border-warning/40 bg-warning-soft flex flex-col gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
       data-testid="held-sms"
     >
       <div className="flex min-w-0 gap-3">

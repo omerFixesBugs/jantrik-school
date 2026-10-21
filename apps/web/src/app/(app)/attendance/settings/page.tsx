@@ -132,7 +132,14 @@ function RulesAndSms() {
       initial={settings.data}
       onSaved={(next) => {
         queryClient.setQueryData(key, next);
-        void queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
+        // The leave rule, off days and the SMS cap change what the dashboard shows.
+        for (const k of [
+          'attendance-summary',
+          'attendance-report-today',
+          'attendance-trend',
+          'sms-today',
+        ])
+          void queryClient.invalidateQueries({ queryKey: [k] });
       }}
     />
   );
@@ -512,7 +519,11 @@ function Holidays() {
   });
   const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: key });
+  const refresh = () => {
+    // A holiday changes which days count (the trend, today's report).
+    for (const k of [key, ['attendance-report-today'], ['attendance-trend']])
+      void queryClient.invalidateQueries({ queryKey: k });
+  };
 
   const create = useMutation({
     mutationFn: (h: Omit<Holiday, 'id'>) =>

@@ -45,27 +45,41 @@ export function SavedViews({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5" data-testid="saved-views">
-      <nav aria-label={t('views')} className="flex flex-wrap items-center gap-1.5">
-        <ViewTab label={t('allView')} current={now === ''} onClick={() => onSelect('')} />
-        {views.map((v) => (
-          <span key={v.id} className="group/view relative inline-flex">
-            <ViewTab
-              label={v.name}
-              current={active?.id === v.id}
-              onClick={() => onSelect(v.query)}
-              className="pe-8"
-            />
-            <button
-              type="button"
-              aria-label={t('removeView', { name: v.name })}
-              onClick={() => onRemove(v.id)}
-              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring absolute inset-y-0 end-0 flex w-8 items-center justify-center rounded-e-md outline-none focus-visible:ring-2"
-            >
-              <XIcon aria-hidden className="size-3.5" />
-            </button>
-          </span>
-        ))}
-      </nav>
+      {/* Tabs once there is a view to switch to; until then only "keep this filter". */}
+      {views.length > 0 && (
+        <nav aria-label={t('views')} className="flex flex-wrap items-center gap-1.5">
+          <ViewTab label={t('allView')} current={now === ''} onClick={() => onSelect('')} />
+          {views.map((v) => {
+            const current = active?.id === v.id;
+            // One frame, two buttons side by side: the view, and removing it.
+            return (
+              <span
+                key={v.id}
+                className={cn(
+                  'inline-flex rounded-md border',
+                  current ? 'border-primary bg-primary-soft' : 'bg-card',
+                )}
+              >
+                <ViewTab
+                  label={v.name}
+                  current={current}
+                  onClick={() => onSelect(v.query)}
+                  framed={false}
+                  className="rounded-e-none pe-1.5"
+                />
+                <button
+                  type="button"
+                  aria-label={t('removeView', { name: v.name })}
+                  onClick={() => onRemove(v.id)}
+                  className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex min-w-(--control-h-sm) items-center justify-center rounded-e-md outline-none focus-visible:ring-2"
+                >
+                  <XIcon aria-hidden className="size-3.5" />
+                </button>
+              </span>
+            );
+          })}
+        </nav>
+      )}
       {naming ? (
         <form
           onSubmit={(e) => {
@@ -116,11 +130,14 @@ function ViewTab({
   label,
   current,
   onClick,
+  framed = true,
   className,
 }: {
   label: string;
   current: boolean;
   onClick: () => void;
+  /** Its own border and fill (false inside a saved view's frame). */
+  framed?: boolean;
   className?: string;
 }) {
   return (
@@ -129,10 +146,10 @@ function ViewTab({
       aria-current={current ? 'true' : undefined}
       onClick={onClick}
       className={cn(
-        'focus-visible:ring-ring inline-flex min-h-(--control-h-sm) items-center rounded-md border px-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
-        current
-          ? 'border-primary bg-primary-soft text-accent-foreground'
-          : 'bg-card text-muted-foreground hover:text-foreground',
+        'focus-visible:ring-ring inline-flex min-h-(--control-h-sm) items-center rounded-md px-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+        current ? 'text-accent-foreground' : 'text-muted-foreground hover:text-foreground',
+        framed && 'border',
+        framed && (current ? 'border-primary bg-primary-soft' : 'bg-card'),
         className,
       )}
     >

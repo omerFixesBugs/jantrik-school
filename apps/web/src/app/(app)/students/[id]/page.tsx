@@ -77,7 +77,7 @@ function useStudentMutation<I>(
     mutationFn: fn,
     onSuccess: (p) => {
       queryClient.setQueryData(['student', session?.tenant?.id, id], p);
-      for (const key of ['students', 'students-total', 'setup'])
+      for (const key of ['students', 'students-total', 'students-summary', 'setup'])
         void queryClient.invalidateQueries({ queryKey: [key] });
       toast.success(t('saved'));
       done?.();

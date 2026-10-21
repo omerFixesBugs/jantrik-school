@@ -335,7 +335,14 @@ function ImportView({ id, onRestart }: { id: string; onRestart: () => void }) {
   const s = summary.data;
   useEffect(() => {
     if (s?.status === 'DONE') {
-      for (const k of ['students', 'students-total', 'student-filters', 'setup', 'student-imports'])
+      for (const k of [
+        'students',
+        'students-total',
+        'students-summary',
+        'student-filters',
+        'setup',
+        'student-imports',
+      ])
         void queryClient.invalidateQueries({ queryKey: [k] });
     }
   }, [s?.status, queryClient]);

@@ -39,6 +39,8 @@ export function layoutProblemsInPage(): LayoutProblem[] {
     node: Text;
     el: Element;
     rects: DOMRect[];
+    /** The part of each rect that is painted: inside every box that clips it (an ellipsis). */
+    shown: { left: number; right: number; top: number; bottom: number; height: number }[];
     /** The sticky/fixed box the text rides in (the top bar, a sticky footer), or null. */
     layer: Element | null;
   }
@@ -52,6 +54,23 @@ export function layoutProblemsInPage(): LayoutProblem[] {
         return e;
     }
     return null;
+  };
+  // Glyphs past a clipping box (truncated with "…") are not painted, so they overlap nothing.
+  const shownPart = (r: DOMRect, el: Element) => {
+    let { left, right, top, bottom } = r;
+    for (let e: Element | null = el; e && e !== document.body; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      const box = e.getBoundingClientRect();
+      if (cs.overflowX !== 'visible') {
+        left = Math.max(left, box.left);
+        right = Math.min(right, box.right);
+      }
+      if (cs.overflowY !== 'visible') {
+        top = Math.max(top, box.top);
+        bottom = Math.min(bottom, box.bottom);
+      }
+    }
+    return { left, right, top, bottom, height: bottom - top };
   };
   const items: Item[] = [];
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -73,7 +92,10 @@ export function layoutProblemsInPage(): LayoutProblem[] {
       Math.min(Math.max(top.top + top.height / 2, 0), window.innerHeight - 1),
     );
     const onTop = !!hit && (hit === el || el.contains(hit) || hit.contains(el));
-    items.push({ node, el, rects: onTop ? rects : [], layer: layerOf(el) });
+    const shown = onTop
+      ? rects.map((r) => shownPart(r, el)).filter((r) => r.right - r.left > 0.5 && r.height > 0.5)
+      : [];
+    items.push({ node, el, rects: onTop ? rects : [], shown, layer: layerOf(el) });
   }
 
   // 1. Overflow / clipping, per element (once).
@@ -111,17 +133,19 @@ export function layoutProblemsInPage(): LayoutProblem[] {
         break; // scrollable: fine
       const box = e.getBoundingClientRect();
       const truncated = cs.textOverflow === 'ellipsis' || cs.webkitLineClamp !== 'none';
-      const out = rects.some(
+      const out = rects.find(
         (r) =>
           (clipsX && (r.right > box.right + 1 || r.left < box.left - 1)) ||
           (clipsY && (r.bottom > box.bottom + 1 || r.top < box.top - 1)),
       );
       if (out && !truncated && !seen.has(e)) {
         seen.add(e);
+        const at = (r: DOMRect) =>
+          [r.left, r.right, r.top, r.bottom].map((v) => Math.round(v)).join(',');
         problems.push({
           kind: 'clipped',
           text: short(node.textContent!),
-          detail: `cut by <${e.tagName.toLowerCase()} class="${(e.getAttribute('class') ?? '').slice(0, 60)}">`,
+          detail: `cut by <${e.tagName.toLowerCase()} class="${(e.getAttribute('class') ?? '').slice(0, 60)}"> (text ${at(out)}, box ${at(box)})`,
         });
       }
       break;
@@ -145,14 +169,14 @@ export function layoutProblemsInPage(): LayoutProblem[] {
   }
 
   // 2. Glyphs of different text nodes painted on top of each other.
-  const visible = items.filter((i) => i.rects.length > 0);
+  const visible = items.filter((i) => i.shown.length > 0);
   for (let a = 0; a < visible.length; a++) {
     for (let b = a + 1; b < visible.length; b++) {
       const A = visible[a]!;
       const B = visible[b]!;
       if (A.layer !== B.layer) continue;
-      for (const ra of A.rects) {
-        const hit = B.rects.find((rb) => {
+      for (const ra of A.shown) {
+        const hit = B.shown.find((rb) => {
           const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
           const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
           // Bangla glyph boxes have generous line boxes; require real overlap.

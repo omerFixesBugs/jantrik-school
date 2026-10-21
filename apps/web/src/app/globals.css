@@ -164,6 +164,8 @@
   --cell-py: 6px;
   --panel-p: 16px;
   --section-gap: 16px;
+  /* Between tiles and panels in a grid. */
+  --gap: 12px;
   --topbar-h: 52px;
   --input-fs-density: var(--fs-sm);
 
@@ -234,6 +236,7 @@
   --cell-py: 10px;
   --panel-p: 20px;
   --section-gap: 24px;
+  --gap: 16px;
   --topbar-h: 60px;
   --input-fs-density: var(--fs-base);
 }

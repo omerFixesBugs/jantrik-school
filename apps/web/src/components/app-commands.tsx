@@ -353,7 +353,7 @@ export function PaletteButton({ onClick }: { onClick: () => void }) {
       className="text-muted-foreground hover:text-foreground focus-visible:ring-ring bg-muted/60 hover:bg-muted flex h-(--control-h) min-w-(--control-h) shrink-0 items-center justify-center gap-2 rounded-md border px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-offset-2 lg:w-72 lg:justify-start"
     >
       <SearchIcon aria-hidden className="size-4 shrink-0" />
-      <span className="hidden lg:inline">{t('button')}</span>
+      <span className="hidden min-w-0 truncate lg:block">{t('button')}</span>
       <span className="sr-only lg:hidden">{t('title')}</span>
       <span aria-hidden className="ms-auto hidden gap-1 lg:flex">
         <Kbd>{mac ? '⌘' : 'Ctrl'}</Kbd>

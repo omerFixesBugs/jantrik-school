@@ -59,6 +59,7 @@ export function DataTable<T>({
   footer,
   caption,
   testId,
+  scrollX = false,
   className,
 }: {
   columns: DataColumn<T>[];
@@ -78,6 +79,11 @@ export function DataTable<T>({
   footer?: ReactNode;
   caption: string;
   testId?: string;
+  /**
+   * Scroll sideways at every width, the header not sticking: for a table that shares the width
+   * with a side peek, where it may no longer fit.
+   */
+  scrollX?: boolean;
   className?: string;
 }) {
   const t = useTranslations('table');
@@ -105,8 +111,15 @@ export function DataTable<T>({
 
   return (
     // From 1280 px the table fits and the header sticks under the top bar (overflow-x clip: an
-    // auto box would trap the sticky header inside it); narrower, it scrolls sideways instead.
-    <div className={cn('bg-card overflow-x-auto rounded-lg border xl:overflow-x-clip', className)}>
+    // auto box would trap the sticky header inside it); narrower, it scrolls sideways instead and
+    // the header does not stick (inside the scrolling box its top offset would cover the rows).
+    <div
+      className={cn(
+        'bg-card overflow-x-auto rounded-lg border',
+        !scrollX && 'xl:overflow-x-clip',
+        className,
+      )}
+    >
       <table className="w-full text-sm" data-testid={testId}>
         <caption className="sr-only">{caption}</caption>
         <thead>
@@ -122,7 +135,8 @@ export function DataTable<T>({
                     sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : undefined
                   }
                   className={cn(
-                    'bg-card text-muted-foreground sticky top-(--topbar-h) z-10 h-(--row-h) border-b px-(--cell-px) text-sm font-medium whitespace-nowrap first:ps-4',
+                    'bg-card text-muted-foreground h-(--row-h) border-b px-(--cell-px) text-sm font-medium whitespace-nowrap first:ps-4',
+                    !scrollX && 'xl:sticky xl:top-(--topbar-h) xl:z-10',
                     c.align === 'end' ? 'text-end' : 'text-start',
                     c.className,
                   )}
@@ -158,7 +172,13 @@ export function DataTable<T>({
               );
             })}
             {actions && (
-              <th scope="col" className="bg-card sticky top-(--topbar-h) z-10 w-px border-b pe-3">
+              <th
+                scope="col"
+                className={cn(
+                  'bg-card w-px border-b pe-3',
+                  !scrollX && 'xl:sticky xl:top-(--topbar-h) xl:z-10',
+                )}
+              >
                 <span className="sr-only">{t('actions')}</span>
               </th>
             )}

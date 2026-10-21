@@ -1,8 +1,10 @@
 'use client';
 
 import { percentRampStep, type SectionRef } from '@jantrik/shared';
+import { CheckIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
+import { useId } from 'react';
 import type { Locale } from '@/i18n/config';
 import { useLabel } from '@/lib/hooks';
 import { displayName } from '@/lib/names';
@@ -35,6 +37,8 @@ export function SectionBoard({
   sections,
   href,
   legend,
+  selectedClass = null,
+  onSelectClass,
   className,
 }: {
   sections: readonly BoardSection[];
@@ -42,11 +46,17 @@ export function SectionBoard({
   href: (s: BoardSection) => string;
   /** The ramp's ranges as text, already formatted ("৮৫–৮৭"). */
   legend: readonly string[];
+  /** The chosen class row (its series burns brightest elsewhere on the page). */
+  selectedClass?: string | null;
+  /** Makes each class name a toggle; null = every class. */
+  onSelectClass?: (classLevelId: string | null) => void;
   className?: string;
 }) {
   const t = useTranslations('board');
   const locale = useLocale() as Locale;
   const label = useLabel();
+  const classLabel = label('class_level', 'Class', { inText: true });
+  const hintId = useId();
   const classLevelName = (c: SectionRef['classLevel']) => displayName(c.nameBn, c.nameEn, locale);
   // Rows in the order the API gives (class order), sections in their order within each class.
   const rows: { classLevel: SectionRef['classLevel']; items: BoardSection[] }[] = [];
@@ -75,13 +85,33 @@ export function SectionBoard({
             key={row.classLevel.id}
             className="grid grid-cols-[minmax(4.5rem,7rem)_1fr] items-stretch gap-2"
           >
-            <span className="flex items-center text-sm font-semibold text-white">
-              {classLevelName(row.classLevel)}
-            </span>
+            {onSelectClass ? (
+              <button
+                type="button"
+                aria-pressed={selectedClass === row.classLevel.id}
+                aria-describedby={hintId}
+                onClick={() =>
+                  onSelectClass(selectedClass === row.classLevel.id ? null : row.classLevel.id)
+                }
+                // Chosen: the raised board, chalk-yellow, and a tick (a shape, not colour alone).
+                className="hover:bg-board-raised focus-visible:ring-chalk-yellow aria-pressed:bg-board-raised aria-pressed:text-chalk-yellow flex min-h-(--control-h) items-center gap-1.5 rounded-md px-2 text-start text-sm font-semibold text-white outline-none focus-visible:ring-2"
+              >
+                {selectedClass === row.classLevel.id && (
+                  <CheckIcon aria-hidden className="size-4 shrink-0" />
+                )}
+                {classLevelName(row.classLevel)}
+              </button>
+            ) : (
+              <span className="flex items-center text-sm font-semibold text-white">
+                {classLevelName(row.classLevel)}
+              </span>
+            )}
             <ul className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-2">
               {row.items.map((s) => {
                 const isLowest = s.section.id === lowest;
-                const step = s.percent === null ? null : percentRampStep(s.percent);
+                // The step of the value shown (rounded), so a tile reading ৯১% is never in the
+                // ৮৮–৯০ colour.
+                const step = s.percent === null ? null : percentRampStep(Math.round(s.percent));
                 return (
                   <li key={s.section.id}>
                     <Link
@@ -141,6 +171,20 @@ export function SectionBoard({
           {t('notTaken')}
         </span>
       </div>
+      {onSelectClass && (
+        <div className="text-board-muted flex flex-wrap items-center justify-between gap-2 text-xs">
+          <span id={hintId}>{t('chooseClass', { classLevel: classLabel })}</span>
+          {selectedClass && (
+            <button
+              type="button"
+              onClick={() => onSelectClass(null)}
+              className="focus-visible:ring-chalk-yellow min-h-(--control-h-xs) rounded px-1 font-medium text-white underline underline-offset-2 outline-none focus-visible:ring-2"
+            >
+              {t('allClasses', { classLevel: classLabel })}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

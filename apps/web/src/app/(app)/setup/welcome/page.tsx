@@ -705,7 +705,13 @@ function AttendanceStep(actions: StepActionsProps) {
       }),
     onSuccess: (next) => {
       queryClient.setQueryData(key, next);
-      void queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
+      for (const k of [
+        'attendance-summary',
+        'attendance-report-today',
+        'attendance-trend',
+        'sms-today',
+      ])
+        void queryClient.invalidateQueries({ queryKey: [k] });
       actions.onDone();
     },
     onError: (e) => toast.error(describe(e)),

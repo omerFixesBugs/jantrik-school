@@ -121,8 +121,10 @@ export function useInvalidateSetup() {
       'attendance-my-sections',
       'attendance-report-today',
       'attendance-summary',
+      'attendance-trend',
       'students',
       'students-total',
+      'students-summary',
     ])
       void queryClient.invalidateQueries({ queryKey: [key] });
   };

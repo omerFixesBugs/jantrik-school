@@ -25,12 +25,26 @@ export function SidePeek({
   testId?: string;
 }) {
   const t = useTranslations('table');
+  const panel = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => heading.current?.focus(), [title]);
-  // Back to the row (or whatever opened the peek) when it closes.
+  // What opened the peek (a row), remembered before focus moves into it, and again when another
+  // row is opened while it is open; focus goes back there when it closes.
+  const opener = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    return () => opener?.focus?.();
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && !panel.current?.contains(active)) opener.current = active;
+    heading.current?.focus();
+  }, [href]);
+  useEffect(() => {
+    const back = opener;
+    const box = panel.current;
+    return () => {
+      // Only when focus was in the panel (or went with it): someone typing in the search box or
+      // sorting the list keeps their place.
+      const now = document.activeElement;
+      const lost = !now || now === document.body || Boolean(box?.contains(now));
+      if (lost && back.current?.isConnected) back.current.focus();
+    };
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -45,6 +59,7 @@ export function SidePeek({
 
   return (
     <aside
+      ref={panel}
       aria-label={title}
       data-testid={testId}
       className="bg-card fixed top-(--topbar-h) end-0 bottom-0 z-20 flex w-[min(26rem,40vw)] flex-col border-s shadow-lg"

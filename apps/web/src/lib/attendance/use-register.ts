@@ -34,6 +34,9 @@ export function useRegister({ sectionId, periodNo, date, sectionName }: Options)
         onSaved: () => {
           void queryClient.invalidateQueries({ queryKey: ['attendance-my-sections'] });
           void queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
+          void queryClient.invalidateQueries({ queryKey: ['attendance-report-today'] });
+          void queryClient.invalidateQueries({ queryKey: ['attendance-trend'] });
+          void queryClient.invalidateQueries({ queryKey: ['sms-today'] });
         },
       }),
   );

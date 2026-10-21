@@ -2,7 +2,7 @@
 
 import { indexOfMin, linearScale, niceTicks, percentDomain } from '@jantrik/shared';
 import { useTranslations } from 'next-intl';
-import { useLayoutEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 /*
@@ -180,17 +180,57 @@ export function TrendChart({
   const [asTable, setAsTable] = useState(false);
   const values = points.map((p) => p.value);
   const [d0, d1] = domain ?? percentDomain(values);
-  const pad = { top: 18, right: 44, bottom: 24, left: 36 };
+  const ticks = niceTicks(d0, d1, 4);
+  const lastIndex = values.findLastIndex((v) => v !== null);
+  // The y labels and the last point's label are measured once drawn ("১০০%" is wider in Bangla
+  // and in the comfortable density): the plot leaves just the room they need on either side.
+  const endText = lastIndex >= 0 ? formatValue(values[lastIndex]!) : '';
+  const measureKey = `${ticks.map(formatValue).join('|')}|${endText}@${width}`;
+  const [labelW, setLabelW] = useState({ axis: 0, end: 0 });
+  const measureLabels = useCallback(
+    (svg: SVGSVGElement | null) => {
+      if (!svg) return;
+      const widest = (selector: string) => {
+        let max = 0;
+        svg.querySelectorAll<SVGTextElement>(selector).forEach((el) => {
+          // Never less than the characters would need at this size: before the web font
+          // arrives, the fallback face measures narrower than what is drawn a moment later.
+          const size = parseFloat(getComputedStyle(el).fontSize) || 12;
+          const floor = (el.textContent?.length ?? 0) * size * 0.68;
+          max = Math.max(max, el.getComputedTextLength(), floor);
+        });
+        return Math.ceil(max);
+      };
+      const measure = () => {
+        const next = { axis: widest('[data-axis-label]'), end: widest('[data-end-label]') };
+        setLabelW((w) =>
+          Math.abs(w.axis - next.axis) < 1 && Math.abs(w.end - next.end) < 1 ? w : next,
+        );
+      };
+      measure();
+      void document.fonts?.ready.then(measure);
+      document.fonts?.addEventListener('loadingdone', measure);
+      return () => document.fonts?.removeEventListener('loadingdone', measure);
+    },
+    // A new callback (and a new measurement) whenever the labels or the width change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [measureKey],
+  );
+  const pad = {
+    top: 18,
+    // The last point's label starts 8 px after it.
+    right: Math.max(44, labelW.end + 14),
+    bottom: 24,
+    left: Math.max(36, labelW.axis + 12),
+  };
   const plotW = Math.max(0, width - pad.left - pad.right);
   const plotH = height - pad.top - pad.bottom;
   const x = linearScale([0, Math.max(1, points.length - 1)], [pad.left, pad.left + plotW]);
   const y = linearScale([d0, d1], [pad.top + plotH, pad.top]);
-  const ticks = niceTicks(d0, d1, 4);
   const real = values.filter((v): v is number => v !== null);
   // A flat series has no "lowest" worth a label.
   const lowest =
     real.length > 1 && Math.min(...real) !== Math.max(...real) ? indexOfMin(values) : -1;
-  const lastIndex = values.findLastIndex((v) => v !== null);
   const stroke = `var(--chalk-${tone}-ink)`;
 
   // Runs of consecutive values: gaps (null) split the line and the area.
@@ -285,6 +325,7 @@ export function TrendChart({
         <div ref={box} className="relative w-full" style={{ height }} dir="ltr">
           {width > 0 && (
             <svg
+              ref={measureLabels}
               width={width}
               height={height}
               role="img"
@@ -300,26 +341,29 @@ export function TrendChart({
               onBlur={() => setActive(null)}
               onKeyDown={onKey}
             >
-              {ticks.map((v) => (
-                <g key={v}>
-                  <line
-                    x1={pad.left}
-                    x2={pad.left + plotW}
-                    y1={y(v)}
-                    y2={y(v)}
-                    stroke="var(--border)"
-                  />
-                  <text
-                    x={pad.left - 6}
-                    y={y(v)}
-                    dy="0.32em"
-                    textAnchor="end"
-                    className="fill-muted-foreground text-xs"
-                  >
-                    {formatValue(v)}
-                  </text>
-                </g>
-              ))}
+              <g>
+                {ticks.map((v) => (
+                  <g key={v}>
+                    <line
+                      x1={pad.left}
+                      x2={pad.left + plotW}
+                      y1={y(v)}
+                      y2={y(v)}
+                      stroke="var(--border)"
+                    />
+                    <text
+                      data-axis-label
+                      x={pad.left - 6}
+                      y={y(v)}
+                      dy="0.32em"
+                      textAnchor="end"
+                      className="fill-muted-foreground text-xs"
+                    >
+                      {formatValue(v)}
+                    </text>
+                  </g>
+                ))}
+              </g>
               {xLabels.map((i) => (
                 <text
                   key={points[i]!.key}
@@ -374,6 +418,7 @@ export function TrendChart({
                     strokeWidth={2}
                   />
                   <text
+                    data-end-label
                     x={x(lastIndex) + 8}
                     y={y(values[lastIndex]!)}
                     dy="0.32em"

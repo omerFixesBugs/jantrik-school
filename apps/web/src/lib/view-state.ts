@@ -1,6 +1,6 @@
 'use client';
 
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
 import { randomId } from '@/lib/uuid';
 
@@ -10,30 +10,38 @@ import { randomId } from '@/lib/uuid';
  * personal, per browser, keyed by person and institute (or "platform"), versioned.
  */
 
-/** URL query params as state. `set` merges a patch (null removes a key) and keeps the scroll. */
+/**
+ * URL query params as state. `set` merges a patch (null removes a key) into the address as it is
+ * now (not as it was when the caller rendered), so a delayed write never undoes a newer one.
+ * Writes use the native history API, which Next keeps in step with useSearchParams: no
+ * navigation, no scroll, and nothing once the page has been left. A write while a navigation is
+ * in flight cancels it, so callers write before the person moves on (e.g. on blur), not after.
+ */
 export function useUrlParams(): {
   params: URLSearchParams;
   set: (patch: Record<string, string | null>) => void;
   replace: (query: string) => void;
 } {
-  const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
   const params = useMemo(() => new URLSearchParams(search.toString()), [search]);
   const replace = useCallback(
-    (query: string) => router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false }),
-    [router, pathname],
+    (query: string) => {
+      if (window.location.pathname !== pathname) return;
+      window.history.replaceState(null, '', query ? `${pathname}?${query}` : pathname);
+    },
+    [pathname],
   );
   const set = useCallback(
     (patch: Record<string, string | null>) => {
-      const next = new URLSearchParams(search.toString());
+      const next = new URLSearchParams(window.location.search);
       for (const [k, v] of Object.entries(patch)) {
         if (v === null || v === '') next.delete(k);
         else next.set(k, v);
       }
       replace(next.toString());
     },
-    [search, replace],
+    [replace],
   );
   return { params, set, replace };
 }

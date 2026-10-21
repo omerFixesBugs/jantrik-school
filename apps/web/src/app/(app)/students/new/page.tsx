@@ -118,6 +118,7 @@ function Admission() {
       for (const key of [
         'students',
         'students-total',
+        'students-summary',
         'student-filters',
         'setup',
         'student-settings',
