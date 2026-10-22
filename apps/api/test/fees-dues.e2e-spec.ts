@@ -172,6 +172,33 @@ describe('fee dues', () => {
     expect(family?.rank).toBeDefined();
   });
 
+  it('only an admin links or unlinks a family; once unlinked, recalculating ends the discount', async () => {
+    const [a, b] = [s.students[0]!.id, s.students[1]!.id];
+    const discounted = (await ledger(a)).dues.some((d) => d.concessionSource === 'SIBLING') ? a : b;
+    const groupId = (await ledger(discounted)).family!.groupId;
+    const accountant = api(s.tokens.accountant);
+    await accountant.post('/fees/siblings', { studentIds: [a, b] }).expect(403);
+    await accountant
+      .post(`/fees/siblings/${groupId}/members/${discounted}/remove`, { reason: 'ভুল পরিবার' })
+      .expect(403);
+    await accountant.post('/fees/dues/recalculate', { studentIds: [a, b] }).expect(403);
+
+    await api(s.tokens.admin)
+      .post(`/fees/siblings/${groupId}/members/${discounted}/remove`, {
+        reason: 'একই ফোন, কিন্তু ভাইবোন নয়',
+      })
+      .expect(200);
+    expect((await ledger(discounted)).family).toBeNull();
+    const res = await api(s.tokens.admin)
+      .post('/fees/dues/recalculate', { studentIds: [a, b] })
+      .expect(200);
+    expect(res.body.updated).toBe(2);
+    const after = [...(await ledger(a)).dues, ...(await ledger(b)).dues];
+    expect(after.every((d) => d.concessionPaisa === 0 && d.concessionSource !== 'SIBLING')).toBe(
+      true,
+    );
+  });
+
   it('an admin waives part or all of a fine, with a reason; the accountant cannot', async () => {
     const due = (await ledger(s.students[2]!.id)).dues[0]!;
     await api(s.tokens.accountant)
