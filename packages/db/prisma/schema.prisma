@@ -1634,7 +1634,8 @@ model FeeHead {
   concessions FeeConcession[]
 
   @@unique([tenantId, id])
-  @@unique([tenantId, nameBn])
+  // Unique among active heads only: a deactivated head frees its name.
+  @@unique([tenantId, nameBn], map: "fee_heads_active_name", where: raw("is_active"))
   @@index([tenantId, sortOrder])
   @@map("fee_heads")
 }

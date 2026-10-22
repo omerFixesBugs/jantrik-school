@@ -12,8 +12,9 @@ async function school(app: PrismaClient, instituteTypeKey = 'NCTB_SCHOOL_BN') {
     const classLevel = await tx.classLevel.findFirstOrThrow({ orderBy: { sortOrder: 'asc' } });
     const adminId = await findOrCreateUser(tx, randomPhone(), 'Admin');
     await tx.membership.create({ data: { tenantId, userId: adminId, role: 'ADMIN' } });
-    const [s1, s2] = await Promise.all(
-      ['1', '2'].map((n) =>
+    // s1 and s2 form a confirmed family; s3 is in none.
+    const [s1, s2, s3] = await Promise.all(
+      ['1', '2', '3'].map((n) =>
         tx.student.create({
           data: { tenantId, studentCode: `S${n}-${randomUUID().slice(0, 6)}`, nameEn: 'S' },
         }),
@@ -87,6 +88,7 @@ async function school(app: PrismaClient, instituteTypeKey = 'NCTB_SCHOOL_BN') {
       yearId: year.id,
       classLevelId: classLevel.id,
       studentIds: [s1!.id, s2!.id],
+      loneStudentId: s3!.id,
       adminId,
       headId: tuition.id,
       termId: term.id,
@@ -135,10 +137,9 @@ describe('fee setup tables: tenant isolation', () => {
     expect(rowsB.every((r) => r.tenantId === b.tenantId)).toBe(true);
   });
 
-  it('no context sees no fee rows', async () => {
-    expect(await app.feeHead.count()).toBe(0);
-    expect(await app.feeConcession.count()).toBe(0);
-    expect(await app.feeSiblingMember.count()).toBe(0);
+  it.each(TABLES)('%s: no context sees no rows', async (model) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(await (app[model] as any).count()).toBe(0);
   });
 
   it("another tenant cannot change, delete or write into A's rows", async () => {
@@ -208,12 +209,96 @@ describe('fee setup tables: tenant isolation', () => {
           data: {
             tenantId: a.tenantId,
             groupId: b.groupId,
-            studentId: a.studentIds[0]!,
+            studentId: a.loneStudentId, // in no family, so only the foreign key can refuse it
             addedById: a.adminId,
           },
         }),
       ),
     ).rejects.toThrow(/foreign key/i);
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feeConcession.create({
+          data: {
+            tenantId: a.tenantId,
+            studentId: a.loneStudentId,
+            feeHeadId: b.headId,
+            academicYearId: a.yearId,
+            category: 'GENERAL',
+            type: 'FIXED',
+            value: 100,
+            validFrom: new Date('2026-01-01'),
+            createdById: a.adminId,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/foreign key/i);
+    // B (a coaching centre, no study groups of its own) cannot price A's study group.
+    const groupOfA = await withTenant(app, a.tenantId, (tx) => tx.studyGroup.findFirstOrThrow());
+    await expect(
+      withTenant(app, b.tenantId, (tx) =>
+        tx.feeAmount.create({
+          data: {
+            tenantId: b.tenantId,
+            academicYearId: b.yearId,
+            feeHeadId: b.headId,
+            classLevelId: b.classLevelId,
+            studyGroupId: groupOfA.id,
+            amountPaisa: 100,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/foreign key/i);
+  });
+
+  it('ended concessions, removed members and families are not rewritten (column grants)', async () => {
+    for (const sql of [
+      `UPDATE fee_concessions SET value = 1`,
+      `UPDATE fee_concessions SET student_id = '${a.loneStudentId}'`,
+      `UPDATE fee_sibling_members SET student_id = '${a.loneStudentId}'`,
+      `UPDATE fee_sibling_members SET group_id = '${a.groupId}'`,
+      `UPDATE fee_sibling_groups SET created_by_id = '${a.adminId}'`,
+    ]) {
+      await expect(withTenant(app, a.tenantId, (tx) => tx.$executeRawUnsafe(sql))).rejects.toThrow(
+        /permission denied/i,
+      );
+    }
+  });
+
+  it('a deactivated head frees its name for a new head', async () => {
+    await withTenant(app, a.tenantId, async (tx) => {
+      const old = await tx.feeHead.create({
+        data: {
+          tenantId: a.tenantId,
+          nameBn: 'পুরনো',
+          nameEn: 'Old',
+          kind: 'OTHER',
+          frequency: 'YEARLY',
+        },
+      });
+      await tx.feeHead.update({ where: { id: old.id }, data: { isActive: false } });
+      await tx.feeHead.create({
+        data: {
+          tenantId: a.tenantId,
+          nameBn: 'পুরনো',
+          nameEn: 'Old',
+          kind: 'OTHER',
+          frequency: 'YEARLY',
+        },
+      });
+    });
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feeHead.create({
+          data: {
+            tenantId: a.tenantId,
+            nameBn: 'পুরনো',
+            nameEn: 'Old',
+            kind: 'OTHER',
+            frequency: 'YEARLY',
+          },
+        }),
+      ),
+    ).rejects.toThrow(/unique/i);
   });
 
   it('heads, concessions, families and settings are never deleted by the app role', async () => {
@@ -409,7 +494,31 @@ describe('fee setup tables: tenant isolation', () => {
           data: { siblingDiscountValue: null },
         }),
       ),
-    ).rejects.toThrow(/fee_settings_sibling_rule/);
+    ).rejects.toThrow(/fee_settings_sibling_(rule|pair)/);
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feeSettings.update({
+          where: { tenantId: a.tenantId },
+          data: { siblingDiscountType: null },
+        }),
+      ),
+    ).rejects.toThrow(/fee_settings_sibling_pair/);
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feeConcession.update({
+          where: { id: a.concessionId },
+          data: { endedOn: new Date('2026-12-01'), endedById: a.adminId, endedReason: null },
+        }),
+      ),
+    ).rejects.toThrow(/fee_concessions_end/);
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feeSiblingMember.updateMany({
+          where: { studentId: a.studentIds[0]!, removedAt: null },
+          data: { removedAt: new Date(), removedById: a.adminId, removedReason: null },
+        }),
+      ),
+    ).rejects.toThrow(/fee_sibling_members_removal/);
     await expect(
       withTenant(app, a.tenantId, (tx) =>
         tx.feeTerm.create({
@@ -426,8 +535,12 @@ describe('fee setup tables: tenant isolation', () => {
     ).rejects.toThrow(/fee_terms_date_order/);
     await expect(
       withTenant(app, a.tenantId, (tx) =>
-        tx.feeAmount.update({ where: { id: a.amountId }, data: { amountPaisa: 0 } }),
+        tx.feeAmount.update({ where: { id: a.amountId }, data: { amountPaisa: -1 } }),
       ),
     ).rejects.toThrow(/fee_amounts_amount_range/);
+    // 0 is allowed: a study-group override that makes the head free for that group.
+    await withTenant(app, a.tenantId, (tx) =>
+      tx.feeAmount.update({ where: { id: a.amountId }, data: { amountPaisa: 0 } }),
+    );
   });
 });
