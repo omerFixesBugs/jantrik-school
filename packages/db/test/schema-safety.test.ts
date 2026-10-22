@@ -33,6 +33,13 @@ describe('schema safety net', () => {
         'platform_payments',
         'onboarding_progress',
         'appearance_settings',
+        'fee_settings',
+        'fee_heads',
+        'fee_terms',
+        'fee_amounts',
+        'fee_concessions',
+        'fee_sibling_groups',
+        'fee_sibling_members',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

@@ -400,6 +400,12 @@ model User {
   studentImports            StudentImport[]
   staffProfiles             StaffProfile[]
 
+  feeConcessionsCreated    FeeConcession[]    @relation("FeeConcessionCreatedBy")
+  feeConcessionsEnded      FeeConcession[]    @relation("FeeConcessionEndedBy")
+  feeSiblingGroupsCreated  FeeSiblingGroup[]  @relation("FeeSiblingGroupCreatedBy")
+  feeSiblingMembersAdded   FeeSiblingMember[] @relation("FeeSiblingMemberAddedBy")
+  feeSiblingMembersRemoved FeeSiblingMember[] @relation("FeeSiblingMemberRemovedBy")
+
   @@map("users")
 }
 
@@ -456,6 +462,14 @@ model Tenant {
   invoices            PlatformInvoice[]
   invoiceLines        PlatformInvoiceLine[]
   payments            PlatformPayment[]
+
+  feeSettings       FeeSettings?
+  feeHeads          FeeHead[]
+  feeTerms          FeeTerm[]
+  feeAmounts        FeeAmount[]
+  feeConcessions    FeeConcession[]
+  feeSiblingGroups  FeeSiblingGroup[]
+  feeSiblingMembers FeeSiblingMember[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -525,6 +539,10 @@ model AcademicYear {
   tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   sections   Section[]
   enrolments Enrolment[]
+
+  feeTerms       FeeTerm[]
+  feeAmounts     FeeAmount[]
+  feeConcessions FeeConcession[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, name])
@@ -620,6 +638,7 @@ model ClassLevel {
   subjects       Subject[]
   sections       Section[]
   enrolments     Enrolment[]
+  feeAmounts     FeeAmount[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -643,6 +662,7 @@ model StudyGroup {
   sourceTemplate TemplateStudyGroup? @relation(fields: [sourceTemplateId], references: [id], onDelete: SetNull)
   subjects       Subject[]
   enrolments     Enrolment[]
+  feeAmounts     FeeAmount[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -764,6 +784,8 @@ model Student {
   enrolments Enrolment[]
 
   attendanceRecords AttendanceRecord[]
+  feeConcessions    FeeConcession[]
+  feeSiblingMembers FeeSiblingMember[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
@@ -1505,4 +1527,236 @@ model PlatformSettings {
   updatedBy PlatformAdmin? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@map("platform_settings")
+}
+
+// ───────────────────────────── Fees (module FEES, step 9) ─────────────────────────────
+// Rules: docs/fees.md. Money is integer paisa; dates are calendar dates in the tenant's timezone.
+
+enum FeeHeadKind {
+  ADMISSION
+  TUITION
+  EXAM
+  SESSION
+  OTHER
+
+  @@map("fee_head_kind")
+}
+
+enum FeeFrequency {
+  ONE_TIME
+  MONTHLY
+  PER_TERM
+  YEARLY
+
+  @@map("fee_frequency")
+}
+
+enum FeeFineType {
+  NONE
+  /// A fixed amount once the due date has passed.
+  FLAT
+  /// An amount per day after the due date, up to a cap.
+  PER_DAY
+
+  @@map("fee_fine_type")
+}
+
+/// FIXED: paisa. PERCENT: whole percent 1–100.
+enum FeeAmountType {
+  FIXED
+  PERCENT
+
+  @@map("fee_amount_type")
+}
+
+enum FeeConcessionCategory {
+  GENERAL
+  /// Full free studentship (100 %).
+  FREE_FULL
+  /// Half free studentship (50 %).
+  FREE_HALF
+  /// Needs a reason.
+  SCHOLARSHIP
+
+  @@map("fee_concession_category")
+}
+
+/// One row per tenant once an admin saves it; defaults live in code until then (no backfill).
+model FeeSettings {
+  id                   String         @id @default(uuid(7)) @db.Uuid
+  tenantId             String         @unique @map("tenant_id") @db.Uuid
+  /// First day of the first month that gets dues. Null: no dues are generated yet, so switching
+  /// fees on mid-year never charges earlier months.
+  duesFrom             DateTime?      @map("dues_from") @db.Date
+  receiptSmsEnabled    Boolean        @default(true) @map("receipt_sms_enabled")
+  /// Discount for the from_child-th and later child of a confirmed family; null = none.
+  siblingDiscountType  FeeAmountType? @map("sibling_discount_type")
+  siblingDiscountValue Int?           @map("sibling_discount_value")
+  siblingFromChild     Int            @default(2) @map("sibling_from_child") @db.SmallInt
+  /// A line printed at the foot of every receipt (address, phone, thanks).
+  receiptNote          String?        @map("receipt_note")
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("fee_settings")
+}
+
+/// What is charged (tuition, admission, exam…) and how often. Deactivated, never deleted.
+model FeeHead {
+  id              String       @id @default(uuid(7)) @db.Uuid
+  tenantId        String       @map("tenant_id") @db.Uuid
+  nameBn          String       @map("name_bn")
+  nameEn          String       @map("name_en")
+  kind            FeeHeadKind
+  frequency       FeeFrequency
+  /// MONTHLY only: day of the month the fee is due (1–28).
+  dueDay          Int?         @map("due_day") @db.SmallInt
+  /// YEARLY: days after the year starts; ONE_TIME: days after admission.
+  dueOffsetDays   Int          @default(0) @map("due_offset_days") @db.SmallInt
+  /// ONE_TIME only: charged to students admitted on or after this date; null = never automatic.
+  oneTimeFrom     DateTime?    @map("one_time_from") @db.Date
+  fineType        FeeFineType  @default(NONE) @map("fine_type")
+  fineAmountPaisa Int          @default(0) @map("fine_amount_paisa")
+  /// PER_DAY only: the most a due's fine can reach.
+  fineCapPaisa    Int?         @map("fine_cap_paisa")
+  /// The sibling discount applies to this head.
+  siblingEligible Boolean      @default(false) @map("sibling_eligible")
+  isActive        Boolean      @default(true) @map("is_active")
+  sortOrder       Int          @default(0) @map("sort_order")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  amounts     FeeAmount[]
+  concessions FeeConcession[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, nameBn])
+  @@index([tenantId, sortOrder])
+  @@map("fee_heads")
+}
+
+/// A term of an academic year, for PER_TERM heads (opens, then falls due).
+model FeeTerm {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  academicYearId String   @map("academic_year_id") @db.Uuid
+  nameBn         String   @map("name_bn")
+  nameEn         String   @map("name_en")
+  opensOn        DateTime @map("opens_on") @db.Date
+  dueDate        DateTime @map("due_date") @db.Date
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, academicYearId, nameBn])
+  @@index([tenantId, academicYearId])
+  @@map("fee_terms")
+}
+
+/// How much a head costs for a class level in a year; a study-group row overrides the class row.
+model FeeAmount {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  academicYearId String   @map("academic_year_id") @db.Uuid
+  feeHeadId      String   @map("fee_head_id") @db.Uuid
+  classLevelId   String   @map("class_level_id") @db.Uuid
+  studyGroupId   String?  @map("study_group_id") @db.Uuid
+  amountPaisa    Int      @map("amount_paisa")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict)
+  feeHead      FeeHead      @relation(fields: [tenantId, feeHeadId], references: [tenantId, id], onDelete: Restrict)
+  classLevel   ClassLevel   @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict)
+  studyGroup   StudyGroup?  @relation(fields: [tenantId, studyGroupId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, academicYearId, feeHeadId, classLevelId], map: "fee_amounts_class_default", where: raw("study_group_id IS NULL"))
+  @@unique([tenantId, academicYearId, feeHeadId, classLevelId, studyGroupId], map: "fee_amounts_group_override", where: raw("study_group_id IS NOT NULL"))
+  @@index([tenantId, academicYearId, classLevelId])
+  @@map("fee_amounts")
+}
+
+/// A student's concession on one head for one year. Ended (ended_on), never deleted.
+model FeeConcession {
+  id             String                @id @default(uuid(7)) @db.Uuid
+  tenantId       String                @map("tenant_id") @db.Uuid
+  studentId      String                @map("student_id") @db.Uuid
+  feeHeadId      String                @map("fee_head_id") @db.Uuid
+  academicYearId String                @map("academic_year_id") @db.Uuid
+  category       FeeConcessionCategory
+  type           FeeAmountType
+  value          Int
+  reason         String?
+  /// Applies to dues falling due on or after this date.
+  validFrom      DateTime              @map("valid_from") @db.Date
+  /// Applies to dues falling due before this date; null = still active.
+  endedOn        DateTime?             @map("ended_on") @db.Date
+  endedReason    String?               @map("ended_reason")
+  createdById    String                @map("created_by_id") @db.Uuid
+  endedById      String?               @map("ended_by_id") @db.Uuid
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  student      Student      @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  feeHead      FeeHead      @relation(fields: [tenantId, feeHeadId], references: [tenantId, id], onDelete: Restrict)
+  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict)
+  createdBy    User         @relation("FeeConcessionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  endedBy      User?        @relation("FeeConcessionEndedBy", fields: [endedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, studentId, feeHeadId, academicYearId], map: "fee_concessions_one_active", where: raw("ended_on IS NULL"))
+  @@index([tenantId, studentId])
+  @@map("fee_concessions")
+}
+
+/// A family confirmed by an admin (siblings get the sibling discount only once confirmed).
+model FeeSiblingGroup {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy User               @relation("FeeSiblingGroupCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  members   FeeSiblingMember[]
+
+  @@unique([tenantId, id])
+  @@map("fee_sibling_groups")
+}
+
+/// A student in a confirmed family. Removed (removed_at), never deleted.
+model FeeSiblingMember {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  groupId       String    @map("group_id") @db.Uuid
+  studentId     String    @map("student_id") @db.Uuid
+  addedById     String    @map("added_by_id") @db.Uuid
+  removedAt     DateTime? @map("removed_at") @db.Timestamptz(3)
+  removedById   String?   @map("removed_by_id") @db.Uuid
+  removedReason String?   @map("removed_reason")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  group     FeeSiblingGroup @relation(fields: [tenantId, groupId], references: [tenantId, id], onDelete: Restrict)
+  student   Student         @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  addedBy   User            @relation("FeeSiblingMemberAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+  removedBy User?           @relation("FeeSiblingMemberRemovedBy", fields: [removedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, studentId], map: "fee_sibling_members_one_family", where: raw("removed_at IS NULL"))
+  @@index([tenantId, groupId])
+  @@map("fee_sibling_members")
 }
