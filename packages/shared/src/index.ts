@@ -26,3 +26,4 @@ export * from './shortcuts.js';
 export * from './color.js';
 export * from './themes.js';
 export * from './fees.js';
+export * from './fees-api.js';

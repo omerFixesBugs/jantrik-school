@@ -73,7 +73,7 @@ function databaseOrder(
 }
 
 /** Digits to look for inside guardian phones, or null when the query is not phone-like. */
-function phoneDigits(q: string): string | null {
+export function phoneDigits(q: string): string | null {
   const e164 = normalizeBdPhone(q);
   if (e164) return e164.slice(4); // +880 1712345678 → 1712345678
   const digits = q.replace(/[\s\-+]/g, '');
