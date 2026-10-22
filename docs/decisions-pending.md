@@ -51,12 +51,28 @@ first review) or _Changed_ (done differently, as described).
 17. **_Approved._ Deactivated staff keep their section assignments** (restored on reactivation); they do not count when choosing a section's class teacher.
 18. **CI: the end-to-end step failed on GitHub.** _Resolved after review:_ the logs (`gh run view --log-failed`) showed a test race (`layout.spec.ts` typed into the OTP tab while the password panel was still mounted) and a job hitting the 10-minute limit while waiting out OTP cooldowns. Fixed in the tests; e2e now runs as its own CI job (20-minute limit) next to the checks job.
 19. **Teachers and student data.** _Resolved after review:_ teachers list every student with the basics; date of birth, birth registration no., addresses, parents' names and guardians (incl. phones) only for OWNER/ADMIN and the teachers of the student's current-year section (`StudentAccess`), in the list, the profile and today's attendance report (absentees' guardian phones). Search by guardian phone is admin-only. Exports (attendance register CSV) carry no such fields; import reports are admin-only.
+    - _Step 9 (approved by the owner):_ the ACCOUNTANT may search fee students by a **whole** guardian phone (never part of one) and sees phones masked (`018•••••101`) at the counter, in reports and on transfers; no full phones on ledgers or receipts. OWNER/ADMIN see them in full.
 20. **_Approved._ A revoked (DISABLED) GUARDIAN membership is not reactivated** when that person is added as a guardian again; an admin has to restore access deliberately.
 21. **_Approved._ Imports go into the current academic year only.**
     - To change: add a year picker to the upload step.
 22. **Possible duplicates in an import.** _Changed after review:_ rows with a student ID or birth registration number that is already here are still skipped as "already exists". Other rows are flagged **possible duplicate** when the name (Bangla or English; case, spaces and dots ignored), the class and a guardian phone match an active student of this year, or an earlier row of the same file. They are skipped by default; per row the admin can choose **Import anyway** (`PUT /student-imports/:id/rows/:row/duplicate`, audited, kept in `student_imports.duplicate_overrides`; a new column mapping clears the choices). The preview, the counts, a "Possible duplicates" filter and the report show who the row looks like (the matched student's ID and name stay in the import's results as history). Only rows without errors count as earlier rows; an imported-anyway duplicate takes a seat in its section like any other row.
 23. **Import data retention.** _Changed after review:_ raw rows (phones, birth registration numbers) are cleared when an import finishes or fails, after 7 days unfinished, or after a day stuck in a run, by a daily BullMQ job (`expire-imports`, 00:20 Asia/Dhaka, so at most a day after those limits) as well as lazily on upload and listing. Like the held-SMS job it never queries across institutes: uploads record the institute in a Redis sorted set (`imports:raw-tenants`; before the rows are stored, so a Redis outage fails the upload rather than leaving rows unswept, and again after commit), and the job visits only those, one institute per RLS transaction (`TenantJobRunner`), forgetting an institute once none of its imports hold raw rows (and only if it did not upload again meanwhile). The per-row results (row number, status, name, the offending value) are kept as history.
     - To change: also drop names and values from results after N days.
+
+24. **_Approved (step 9)._ Fees: who changes where money goes.** Only the OWNER adds or (de)activates the institute's bKash/Nagad numbers (the bKash merchant credentials too, when the gateway is built); ADMIN sees them.
+25. **_Approved (step 9)._ Receipt numbers restart every calendar year** (by the day the payment is recorded, Asia/Dhaka): `2026-000123`.
+26. **_Approved (step 9)._ Late fines can be waived** (part or all) by OWNER/ADMIN with a reason; audited and shown on the ledger.
+27. **_Approved (step 9)._ Receipt SMS is on by default** (each institute can switch it off).
+28. **_Approved (step 9)._ Siblings are confirmed, not automatic:** a shared guardian phone is only a suggestion; the sibling discount applies after an OWNER/ADMIN confirms the family (stored, audited, removable).
+29. **Fees: decided in step 9 (open to change).**
+    - One receipt per student (no family receipts yet).
+    - In a confirmed family the student in the highest class pays full; ties go to the earlier admission.
+    - Concessions never stack: a due gets the larger of the manual concession and the sibling discount.
+    - Fee SMS texts are fixed Bangla (`receiptSmsText`, `reminderSmsText`); editable templates later.
+    - Teachers without ACCOUNTANT get no fee route; a teacher may also hold ACCOUNTANT.
+    - The daily closing counts a payment on the day it was recorded and a void on the day it is made, so a closed day never changes.
+    - The sender's number of a bKash/Nagad transfer is masked for the accountant (the TrxID and amount suffice to check it).
+30. **_Approved (step 9)._ The bKash gateway (tokenized checkout) is a later step:** plan in [backlog.md](backlog.md).
 
 ## Deployment requirements (step 11)
 

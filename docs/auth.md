@@ -214,6 +214,12 @@ A queue worker has no request. Wrap its work in **`TenantJobRunner.run(tenantId,
 and `afterCommit` work exactly as in a request. The tenant id must come from a job we enqueued
 ourselves, never from user input.
 
+- Inside a job, `RequestContext.requireTenantId()` returns the job's tenant. Without an actor
+  (the nightly fee dues run), `AuditService.record` writes `actor_user_id = NULL`; outside any
+  request or job it still refuses.
+- With `{ actorUserId }` the job acts as that person (audit names them); re-check that they still
+  hold the role (fee jobs: OWNER/ADMIN for "generate now", recalculation and reminders).
+
 ## Tenant-switch safety: `X-Jantrik-Tenant`
 
 A browser tab is bound to the institute it was loaded for. It sends that institute's id as

@@ -54,7 +54,7 @@ Do NOT build hostel, transport, AI tutor, virtual labs yet.
 - UI labels that differ by institute type (Section vs Batch, Class vs Course) come from
   `tenant_labels` (`useLabel()` in the web app), never from institute-type checks.
 - New screens must use the v3 kit, themes and tokens (docs/design.md). Deferred design work and
-  open decisions: docs/design-backlog.md.
+  open decisions: docs/design-backlog.md. Deferred product work (the bKash gateway): docs/backlog.md.
 
 ## How Claude should work in this repo
 - **Plan first only for large or risky changes**: propose the plan, wait for approval, then
@@ -93,4 +93,5 @@ Run from the repo root (see README.md for first-time setup).
 - UI design system (colours, Bangla type scale, density, components): docs/design.md
 - `pnpm e2e` — Playwright (build first; stop dev servers on 3000/4000); resets and seeds jantrik_e2e every run
 - Attendance rules, drafts/offline sync, absent SMS: docs/attendance.md
+- Fees: setup, dues, fines, receipts, voids, bKash/Nagad, reminders: docs/fees.md
 - Single package: `pnpm --filter @jantrik/api <script>`
