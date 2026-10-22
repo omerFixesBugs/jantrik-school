@@ -240,6 +240,7 @@ export class ChildAttendanceController {
     AttendanceAdminService,
     AttendanceReportsService,
   ],
-  exports: [AttendanceService],
+  // AttendanceSettingsService: the shared daily SMS cap (smsDailyCap) for the fees module.
+  exports: [AttendanceService, AttendanceSettingsService],
 })
 export class AttendanceModule {}

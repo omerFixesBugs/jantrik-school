@@ -26,6 +26,8 @@ export interface JantrikClsStore extends ClsStore {
   tx?: TenantTx;
   /** Side effects to run once the request transaction has committed. */
   afterCommit?: (() => unknown | Promise<unknown>)[];
+  /** The tenant of a background job (TenantJobRunner), which may run without a person. */
+  jobTenantId?: string;
 }
 
 /**
@@ -64,6 +66,17 @@ export class RequestContext {
     const principal = this.principal;
     if (!principal) throw new InternalServerErrorException('No authenticated principal');
     return principal;
+  }
+
+  /**
+   * The tenant this work belongs to: the caller's selected tenant, or the tenant of a background
+   * job (which may run with no person, e.g. the nightly fee dues run).
+   */
+  requireTenantId(): string {
+    const tenantId =
+      this.principal?.tenantId ?? (this.cls.isActive() ? this.cls.get('jobTenantId') : undefined);
+    if (!tenantId) throw new InternalServerErrorException('No tenant selected');
+    return tenantId;
   }
 
   get tx(): TenantTx | undefined {

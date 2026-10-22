@@ -15,7 +15,8 @@ export interface AuditEntry {
 /**
  * Writes audit_logs (CLAUDE.md rule 6: every create/update/delete on marks, fees, payments and
  * attendance). It writes through the request transaction, so an audit row commits or rolls back
- * together with the change it describes. The actor is the authenticated caller.
+ * together with the change it describes. The actor is the authenticated caller; a background job
+ * run without a person (TenantJobRunner with no actor) writes no actor.
  */
 @Injectable()
 export class AuditService {
@@ -25,14 +26,17 @@ export class AuditService {
   ) {}
 
   async record(entry: AuditEntry): Promise<void> {
-    const principal = this.context.requirePrincipal();
-    if (!principal.tenantId) {
+    const principal = this.context.principal;
+    let tenantId: string;
+    try {
+      tenantId = this.context.requireTenantId();
+    } catch {
       throw new InternalServerErrorException('Audit entries need a selected tenant');
     }
     await this.db.tx.auditLog.create({
       data: {
-        tenantId: principal.tenantId,
-        actorUserId: principal.userId,
+        tenantId,
+        actorUserId: principal?.userId ?? null,
         entity: entry.entity,
         entityId: entry.entityId,
         action: entry.action,
