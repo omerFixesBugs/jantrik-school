@@ -40,6 +40,8 @@ describe('schema safety net', () => {
         'fee_concessions',
         'fee_sibling_groups',
         'fee_sibling_members',
+        'fee_dues',
+        'fee_fine_waivers',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
