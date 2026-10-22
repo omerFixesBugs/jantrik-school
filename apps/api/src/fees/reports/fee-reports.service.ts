@@ -26,6 +26,15 @@ type CollectionsQuery = z.output<typeof feeCollectionsQuerySchema>;
 /** Paisa as taka with two decimals and ASCII digits (files people re-use in other software). */
 const taka = (paisa: number) => (paisa / 100).toFixed(2);
 
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Who the due list and the dashboard's overdue count are about: students still here (active, not
+ * deleted; both also need a current-year enrolment). A student who left keeps their arrears on
+ * their own ledger.
+ */
+const STILL_HERE = { status: 'ACTIVE', deletedAt: null } as const;
+
 /**
  * Fee reports (OWNER/ADMIN/ACCOUNTANT): who owes what by class and section (defaulters: overdue
  * only), collections by day/month/head/method/collector, their CSV, and the dashboard card.
@@ -57,7 +66,7 @@ export class FeeReportsService {
         academicYearId: ctx.year.id,
         ...(q.classLevelId ? { classLevelId: q.classLevelId } : {}),
         ...(q.sectionId ? { sectionId: q.sectionId } : {}),
-        student: { deletedAt: null },
+        student: STILL_HERE,
       },
       select: {
         roll: true,
@@ -351,7 +360,16 @@ export class FeeReportsService {
     const [month, previous, overdueDues, pending] = await Promise.all([
       sumBetween(monthStart, today),
       sumBetween(prevStart, prevTo),
-      tx.feeDue.findMany({ where: { status: 'OPEN', dueDate: { lt: dateToDb(today) } } }),
+      tx.feeDue.findMany({
+        where: {
+          status: 'OPEN',
+          dueDate: { lt: dateToDb(today) },
+          student: {
+            ...STILL_HERE,
+            enrolments: { some: { academicYearId: ctx.year?.id ?? NIL_UUID } },
+          },
+        },
+      }),
       tx.feeMobileSubmission.count({ where: { status: 'PENDING' } }),
     ]);
     let overdue = 0;

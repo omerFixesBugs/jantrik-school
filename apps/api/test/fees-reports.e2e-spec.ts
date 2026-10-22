@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { withTenant } from '@jantrik/db';
+import { addDays, dateToDb } from '@jantrik/shared';
 import type {
   FeeCollections,
   FeeDueList,
@@ -311,6 +312,70 @@ describe('fee reports and reminders', () => {
     expect(summary.pendingSubmissions).toBe(0);
     await api(s.tokens.teacher).get('/fees/summary').expect(403);
     await api(s.tokens.guardian).get('/fees/summary').expect(403);
+  });
+
+  it('overdue counts only students still here: active, not deleted, enrolled this year', async () => {
+    const fresh = await feesSchool(h);
+    const admin = api(fresh.tokens.admin);
+    const head = (
+      await admin
+        .post('/fees/heads', {
+          nameBn: 'বেতন',
+          nameEn: 'Tuition',
+          kind: 'TUITION',
+          frequency: 'MONTHLY',
+          dueDay: 1,
+        })
+        .expect(201)
+    ).body as FeeHeadView;
+    await admin
+      .put('/fees/amounts', {
+        academicYearId: fresh.yearId,
+        amounts: [
+          { feeHeadId: head.id, classLevelId: fresh.class6, amountPaisa: 100000 },
+          { feeHeadId: head.id, classLevelId: fresh.class9, amountPaisa: 100000 },
+        ],
+      })
+      .expect(200);
+    await admin
+      .put('/fees/settings', {
+        duesFrom: `${fresh.months.previous}-01`,
+        receiptSmsEnabled: false,
+        sibling: null,
+        receiptNote: null,
+      })
+      .expect(200);
+    for (const st of fresh.students) {
+      await api(fresh.tokens.accountant).get(`/fees/students/${st.id}/ledger`).expect(200);
+    }
+    const [stays, left, deleted, moved] = fresh.students.map((st) => st.id);
+    await withTenant(h.prisma, fresh.tenantId, async (tx) => {
+      await tx.student.update({ where: { id: left }, data: { status: 'INACTIVE' } });
+      await tx.student.update({ where: { id: deleted }, data: { deletedAt: new Date() } });
+      const past = await tx.academicYear.create({
+        data: {
+          tenantId: fresh.tenantId,
+          name: 'Earlier',
+          startDate: dateToDb(addDays(fresh.yearStart, -365)),
+          endDate: dateToDb(addDays(fresh.yearStart, -1)),
+          isCurrent: false,
+        },
+      });
+      await tx.enrolment.updateMany({
+        where: { studentId: moved },
+        data: { academicYearId: past.id, sectionId: null },
+      });
+    });
+
+    const summary = (await api(fresh.tokens.accountant).get('/fees/summary').expect(200))
+      .body as FeeSummary;
+    const list = (
+      await api(fresh.tokens.accountant)
+        .get('/fees/reports/dues?overdueOnly=1&minDays=1')
+        .expect(200)
+    ).body as FeeDueList;
+    expect(list.rows.map((r) => r.student.id)).toEqual([stays]);
+    expect(summary.overdue).toEqual({ paisa: list.totals.overduePaisa, students: 1 });
   });
 
   it('a whole-institute reminder preview never generates dues inside the request', async () => {
