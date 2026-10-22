@@ -35,7 +35,13 @@ gateway (phase F) is not built; its plan is in [docs/backlog.md](../backlog.md).
 | -     | `756648a` | Playwright: the counter, bKash/Nagad verification, a teacher who collects fees            |
 | -     | `5ac0c23` | Format the bKash/Nagad API test                                                           |
 | Final | `c798abc` | Final review: receipts print on their own page, cash in hand, fresh screens               |
-| -     | (this)    | this report and the plan                                                                  |
+| -     | `085f52f` | This report and the plan                                                                  |
+| Merge | `dd230ac` | Tests: only an admin links or unlinks a family; unlinked, the discount ends               |
+| Merge | `828c526` | The dashboard's overdue and the due list count only students still here                   |
+| Merge | `d49ac23` | A guardian's retried bKash/Nagad submission returns the saved one                         |
+| Merge | `9682908` | E2E on a fixed day: no test depends on the real date or weekday                           |
+| Merge | `2940c0d` | Receipt: the receipt number, student ID and roll never break in the middle                |
+| -     | (this)    | This report, updated before merge                                                         |
 
 Every part ran its own tests (shared unit, database RLS, and that part's API file) before its
 commit. A separate review agent checked every migration and the money parts (C1, C3/C4, D1/D2),
@@ -46,10 +52,10 @@ and a fresh reviewer checked the whole branch at the end. Their findings were fi
 
 | Suite                       | After this step | New in this step                                                                                      |
 | --------------------------- | --------------: | ----------------------------------------------------------------------------------------------------- |
-| `@jantrik/shared` (Vitest)  |             334 | `fees.test.ts`                                                                                        |
+| `@jantrik/shared` (Vitest)  |             337 | `fees.test.ts`, `dates.test.ts` (the fixed test day)                                                  |
 | `@jantrik/db` (Vitest, RLS) |             216 | `fees-setup-rls`, `fees-dues-rls`, `fees-payments-rls`, `fees-mobile-rls`, schema-safety list         |
-| `@jantrik/api` (Vitest e2e) |             346 | `fees-setup`, `fees-dues`, `fees-collect`, `fees-mobile`, `fees-reports`, `fees-roles`, `job-context` |
-| Playwright e2e              |              69 | `fees-counter` (bn, en), `fees-mobile` (bn, en), `fees-staff`; fee pages in `layout.spec.ts`          |
+| `@jantrik/api` (Vitest e2e) |             350 | `fees-setup`, `fees-dues`, `fees-collect`, `fees-mobile`, `fees-reports`, `fees-roles`, `job-context` |
+| Playwright e2e              |              70 | `fees-counter` (bn, en), `fees-mobile` (bn, en), `fees-staff`; fee pages in `layout.spec.ts`          |
 
 What the tests you asked for cover:
 
@@ -74,17 +80,54 @@ What the tests you asked for cover:
   phone (shown masked), collects part of two months, prints the receipt (one A5 page) and an
   admin voids it; a guardian submits a TrxID and the accountant verifies it.
 
-**About Playwright.** You asked me not to reset any database, so I did not run `pnpm e2e` on this
-machine. GitHub CI runs it on every push, on its own database:
+**About Playwright.** GitHub CI runs it on every push, on its own database.
 
-- **`756648a` (Thursday evening, Dhaka time):** all 69 Playwright tests passed, the fee specs
-  among them. That run's other job failed only on Prettier, fixed in `5ac0c23`.
-- **`5ac0c23` (crossed midnight into Friday):** 67 passed. The two failures are older specs that
-  assume today is a school day: `principal.spec.ts` (the dashboard says "আজ সাপ্তাহিক ছুটি") and
-  the register test in `layout.spec.ts`. The demo's weekly holiday is Friday. Nothing in this
-  branch touches that logic; the same specs fail on main on any Friday in Dhaka.
-- **`c798abc` (Friday):** the checks job passed; Playwright the same as above, 67 passed and the
-  same two failures. Every fee spec passed, including the receipt printing on one A5 page.
+- **Fridays:** before merge it failed twice on a Friday in Dhaka, because two older specs assumed a school day (the demo's weekly holiday is Friday). The suite now lives on a fixed day (below), and CI was green on a Friday: 70 of 70 (`9682908`).
+- **Too many requests:** on `2940c0d` one of its two runs failed `setup.spec`, because the section save got 429. The e2e run plays the owner in most specs and passed the API's 300-requests-a-minute limit per person; this step's extra fee pages made that likelier. The e2e API now runs with higher general request limits (login and code limits unchanged).
+
+## Before merge (your review)
+
+1. **Confirmed, with tests:**
+   - **The sibling discount applies only after an ADMIN/OWNER confirms the family:**
+     - `fees-setup` › "a shared guardian phone is only a suggestion until an admin confirms the family";
+     - `fees-dues` › "only a confirmed family gets the sibling discount";
+     - new: `fees-dues` › "only an admin links or unlinks a family; once unlinked, recalculating ends the discount".
+   - **A teacher can also be the accountant:**
+     - `fees-roles` › "teacher and accountant together" (3 tests);
+     - Playwright `fees-staff` › "the owner lets a teacher collect fees in one step; the teacher then sees the counter".
+2. **E2E on a fixed day.**
+   - `todayIn` returns `JANTRIK_TEST_TODAY` when set, in a Node process that is not in production. Browsers never read it, and the API refuses to start with it unless `NODE_ENV=test`.
+   - Playwright sets it to 2026-10-21, a Wednesday and a working day in the demo year. The seed, the API and the specs all use it; timestamps stay real.
+   - The web no longer takes dates from the device. The dashboard's date line and the SMS preview use the server's today, and the platform pages get it from `GET /platform/auth/me`.
+   - A sanity test checks that the specs, the API and the dashboard agree on the date.
+3. **Fixed:**
+   - **The dashboard's overdue count (and the due list)** now count only students who are active, not deleted, and enrolled this year.
+   - **A guardian's bKash/Nagad retry after a server error:**
+     - the sheet keeps its request id, and the API returns the saved submission;
+     - the same id with other details, or from another person, is 422;
+     - tested in the API and in Playwright, where the first send is saved but answered with a 500.
+4. **Found in the walkthrough and fixed:** on a phone the receipt number and student ID broke across lines ("2026-/000001"). They no longer break; checked at 360 and 390 px, and in A5 and 80 mm print.
+5. **Walkthrough** (a scratch database, `jantrik_walkthrough`, seeded and then dropped; your `jantrik` database was not touched). Every step passed:
+   1. the owner confirms the suggested family;
+   2. the teacher-accountant finds Tasnim by phone (shown `018•••••101`), takes ৳500 for two months and gets receipt `2026-000001`;
+   3. the admin voids it with a reason;
+   4. the guardian sends a bKash TrxID;
+   5. the accountant verifies it and opens the closing;
+   6. the admin previews reminders (৳18);
+   7. the owner sees the dashboard card and reports.
+
+   There are 35 bn screenshots at 390 and 1366 px.
+
+6. **The 3-second check:** a 390 px phone, 4× slower CPU, slow 4G, cold cache, signed in; 7 interleaved rounds against a main build.
+
+   | Page                  | Interactive, median (range) |
+   | --------------------- | --------------------------- |
+   | `/fees` (counter)     | 3.66 s (3.50–3.79)          |
+   | `/dashboard` (branch) | 3.93 s (3.91–4.30)          |
+   | `/dashboard` (main)   | 3.78 s (3.75–4.01)          |
+   - **The counter is over the budget by about 0.7 s.** It is faster than the dashboard on either build.
+   - **Where the time goes:** a cold load is about 600 KB (337 KB scripts, 187 KB fonts, 53 KB page), about 3 s of transfer on slow 4G, and the same app shell as main. Getting under 3 s needs app-wide work on fonts and JS splitting.
+   - **The dashboard ranges overlap,** so the fees card is not a clear regression.
 
 ## What was built
 
@@ -247,12 +290,10 @@ None of these changes money or access:
   make a collection wait briefly.
 - Re-picking dues when verifying a transfer shows today's balance, and a second refusal does not
   show the server's figure (the ledger now refreshes, which eases it).
-- If the guardian's submission gets a server error, a retry may say "TrxID already used" when the
-  first attempt was in fact saved.
 - Phone cells in the due-list CSV start with an apostrophe (the formula guard on `+880…`).
 - The nightly job id uses `:` (fine in BullMQ 6; a future major may not allow it).
-- The dashboard's overdue count includes students no longer enrolled; the due list covers this
-  year's enrolments only.
+- Every page's HTML is about 15 KB larger than on main (53 vs 38 KB): most likely the fee messages,
+  sent with every page; they could go only to fee pages.
 - Printing the due list from a phone prints only the cards shown (50 at a time).
 
 ## Skipped or left for later
@@ -260,10 +301,9 @@ None of these changes money or access:
 - **Phase F, bKash tokenized checkout:** not built (your change 2). Its plan is in
   [docs/backlog.md](../backlog.md). Building it needs bKash **sandbox** credentials from you
   (bKash publishes none) and no live keys.
-- **Playwright on this machine, the manual walkthrough and screenshots:** not done. You chose to
-  run `pnpm e2e` yourself, and `pnpm db:seed` waits for your approval.
-- **The 3-second check of the counter page** (390 px, 4× CPU, slow 4G, against main): not done,
-  for the same reason (it needs the seeded app).
+- **Playwright on this machine:** not run here; CI runs it on every push. `pnpm e2e` resets
+  `jantrik_e2e`, and Prisma refuses that reset from an AI agent without your consent.
+- **The 3-second budget on the counter:** not met (3.66 s); see above. This is app-wide work.
 - **Design backlog** (`docs/design-backlog.md` §6):
   - Move the SMS cap and "send held SMS" out of the attendance settings, so an institute with
     fees and without attendance can change them.
@@ -276,9 +316,11 @@ None of these changes money or access:
 - **Database:** nothing. The fee migrations are already applied to your local `jantrik`
   database (`prisma migrate status`: up to date). There are no new `.env` lines.
 - **Playwright:** `pnpm e2e`. It drops and reseeds only `jantrik_e2e`, and needs ports 3000 and
-  4000 free. On a Friday (Dhaka time), expect the two weekly-holiday failures above.
-- **Demo data:** when you approve, `pnpm db:seed` adds Shapla's fee setup and the admin and
-  accountant logins to your local `jantrik` database (see `docs/demo-accounts.md`).
+  4000 free; any day works now.
+- **Demo data:** your local `jantrik` database already has Shapla and Alo, and the seed skips
+  institutes that exist, so `pnpm db:seed` adds no fee data there. To get the fee demo locally,
+  either `pnpm db:reset` (drops your local data, then reseeds everything) or set fees up through
+  the screens as the owner.
 - **Manual walkthrough** (`pnpm dev`; every password `Jantrik@2026`):
   1. Owner `01711000001`: Fees → Setup → Siblings, confirm Tasnim and Tahmid.
   2. Teacher `01711000002` (also the accountant) on a phone: Fees, find Tasnim by `01811000101`,
