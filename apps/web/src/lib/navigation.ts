@@ -74,7 +74,6 @@ export const NAV_ITEMS: NavItem[] = [
     group: 'accounts',
     module: 'FEES',
     roles: ['OWNER', 'ADMIN', 'ACCOUNTANT'],
-    soon: true,
   },
   {
     key: 'exams',

@@ -543,4 +543,27 @@
   .register-off {
     background-image: repeating-linear-gradient(45deg, #ccc 0 1px, transparent 1px 4px);
   }
+  /* Fee receipts (components/fees/receipt.tsx) print on their own page size: named pages leave
+     the A4 landscape register above as it is. Thermal printers may ignore the height; the
+     receipt fits 80 mm by width alone. */
+  @page receipt-a5 {
+    size: A5 portrait;
+    margin: 8mm;
+  }
+  @page receipt-80 {
+    size: 80mm 297mm;
+    margin: 3mm;
+  }
+  .receipt[data-paper='a5'] {
+    page: receipt-a5;
+    max-width: none;
+    border: 0;
+  }
+  .receipt[data-paper='80'] {
+    page: receipt-80;
+    width: 74mm;
+    max-width: none;
+    border: 0;
+    padding: 0;
+  }
 }

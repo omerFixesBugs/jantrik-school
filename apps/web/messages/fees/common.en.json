@@ -1,0 +1,87 @@
+{
+  "common": {
+    "tabs": {
+      "counter": "Collect",
+      "submissions": "bKash/Nagad",
+      "closing": "Daily closing",
+      "reports": "Reports",
+      "reminders": "Reminders",
+      "setup": "Setup"
+    },
+    "method": {
+      "CASH": "Cash",
+      "BKASH": "bKash",
+      "NAGAD": "Nagad"
+    },
+    "channel": {
+      "COUNTER": "Counter",
+      "MOBILE_MANUAL": "Mobile banking"
+    },
+    "status": {
+      "ACTIVE": "Active",
+      "VOID": "Void",
+      "OPEN": "Due",
+      "CANCELLED": "Cancelled",
+      "PENDING": "Waiting to be checked",
+      "VERIFIED": "Verified",
+      "REJECTED": "Returned",
+      "VOIDED": "Voided"
+    },
+    "kind": {
+      "ADMISSION": "Admission",
+      "TUITION": "Tuition",
+      "EXAM": "Exam",
+      "SESSION": "Session",
+      "OTHER": "Other"
+    },
+    "frequency": {
+      "ONE_TIME": "One-time",
+      "MONTHLY": "Monthly",
+      "PER_TERM": "Per term",
+      "YEARLY": "Yearly"
+    },
+    "fineType": {
+      "NONE": "No fine",
+      "FLAT": "Fixed fine",
+      "PER_DAY": "Fine per day"
+    },
+    "period": {
+      "ONCE": "One-time",
+      "Y": "Yearly"
+    },
+    "money": {
+      "taka": "৳",
+      "invalid": "Enter an amount (e.g. 1250 or 1250.50)"
+    },
+    "receipt": {
+      "title": "Money receipt",
+      "number": "Receipt no.",
+      "date": "Date",
+      "paidOn": "Paid on",
+      "student": "Student",
+      "id": "ID",
+      "class": "Class",
+      "section": "Section",
+      "roll": "Roll",
+      "head": "Fee",
+      "period": "Period",
+      "amount": "Amount",
+      "fine": "Fine",
+      "total": "Total",
+      "inWords": "In words",
+      "method": "Method",
+      "trxId": "TrxID",
+      "sender": "Sender",
+      "collectedBy": "Received by",
+      "balanceToday": "Still owed today",
+      "void": "VOID",
+      "voidReason": "Reason",
+      "voidedBy": "Voided by",
+      "signature": "Signature",
+      "print": "Print receipt",
+      "paper": "Paper",
+      "paperA5": "A5",
+      "paper80": "Thermal 80 mm"
+    }
+  }
+}
