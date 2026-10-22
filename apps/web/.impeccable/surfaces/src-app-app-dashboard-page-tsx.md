@@ -57,7 +57,8 @@ greeting by name, the insight, হাজিরা নিন first, this week's p
 KPI cards: icon chip, a light figure counting up once, a delta pill coloured by meaning, a hatched
 week or a half gauge.
 
-FORM: Pinned by the owner's brief and nineteen reference dashboards (docs/design/, not committed):
+FORM: Pinned by the owner's brief and nineteen reference dashboards (docs/design/references/,
+git-ignored):
 hero numbers, delta pills, floating cards, pill tabs, story charts (smooth curve with gradient,
 dashed ghost, target line, floating tooltip; hatched bars with one solid; rounded heatmap; half
 gauge; donut with the total in the middle), an Academia-style greeting with a real insight, a term

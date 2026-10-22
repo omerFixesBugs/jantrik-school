@@ -40,3 +40,6 @@ Thumbs.db
 # Playwright
 apps/web/test-results/
 apps/web/playwright-report/
+
+# design reference images (local only, never committed)
+docs/design/references/

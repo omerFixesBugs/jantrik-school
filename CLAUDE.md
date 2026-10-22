@@ -53,9 +53,12 @@ Do NOT build hostel, transport, AI tutor, virtual labs yet.
   `normalizeBdPhone` (packages/shared) before validating or searching.
 - UI labels that differ by institute type (Section vs Batch, Class vs Course) come from
   `tenant_labels` (`useLabel()` in the web app), never from institute-type checks.
+- New screens must use the v3 kit, themes and tokens (docs/design.md). Deferred design work and
+  open decisions: docs/design-backlog.md.
 
 ## How Claude should work in this repo
-- For any non-trivial task: **propose a plan first**, wait for approval, then implement.
+- **Plan first only for large or risky changes**: propose the plan, wait for approval, then
+  implement.
 - **Always present a plan and wait for approval for any database, auth, security or API
   change**, even if the brief is detailed.
 - **Never bypass or tamper with auth:** don't edit OTPs, sessions, tokens, passwords or
@@ -64,7 +67,13 @@ Do NOT build hostel, transport, AI tutor, virtual labs yet.
 - Keep changes small and focused on the task asked. Don't refactor unrelated code.
 - Write tests for business logic (grading, fee calculation, tenant isolation).
 - After finishing, list: files changed, how to run/test it, and anything left undone.
-- Run lint, typecheck and tests before saying a task is done.
+- During a phase, run only the affected tests; run the full gates (lint, typecheck, format, all
+  tests, build and all of Playwright) once at the end of each step. CI runs everything on every
+  push.
+- Use a review subagent only for security, auth, RLS, money and database changes, not for pure
+  UI.
+- Screenshot checks during work: bn at 1366 and 390 px only. The full matrix (widths, languages,
+  themes, modes) only when the owner asks for a gallery.
 - If something in this file conflicts with a request, ask before proceeding.
 
 ## Commands
