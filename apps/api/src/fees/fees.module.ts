@@ -15,6 +15,11 @@ import {
 } from '@nestjs/common';
 import {
   cancelFeeDueSchema,
+  collectFeeSchema,
+  feeClosingQuerySchema,
+  voidFeePaymentSchema,
+  type FeeClosing,
+  type FeeReceipt,
   confirmSiblingsSchema,
   copyFeeAmountsSchema,
   createFeeConcessionSchema,
@@ -42,8 +47,10 @@ import {
   type FeeStudentHit,
   type FeeTermView,
 } from '@jantrik/shared';
+import { AttendanceModule } from '../attendance/attendance.module.js';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
+import { FeeCollectionService } from './collection/fee-collection.service.js';
 import { FEES_QUEUE, FeeDuesService } from './dues/fee-dues.service.js';
 import { FeeDuesProcessor } from './dues/fee-dues.processor.js';
 import { FeeLedgerService } from './dues/fee-ledger.service.js';
@@ -70,6 +77,9 @@ class FeeLedgerQueryDto extends zodDto(feeLedgerQuerySchema) {}
 class CancelFeeDueDto extends zodDto(cancelFeeDueSchema) {}
 class WaiveFeeFineDto extends zodDto(waiveFeeFineSchema) {}
 class RecalculateFeeDuesDto extends zodDto(recalculateFeeDuesSchema) {}
+export class CollectFeeDto extends zodDto(collectFeeSchema) {}
+class VoidFeePaymentDto extends zodDto(voidFeePaymentSchema) {}
+class FeeClosingQueryDto extends zodDto(feeClosingQuerySchema) {}
 
 const Id = (name = 'id') => Param(name, ParseUUIDPipe);
 
@@ -204,6 +214,36 @@ export class FeeStudentsController {
   }
 }
 
+/** The fee counter: OWNER/ADMIN/ACCOUNTANT collect and print; only OWNER/ADMIN void. */
+@Controller('fees')
+@RequireModule('FEES')
+@Roles('OWNER', 'ADMIN', 'ACCOUNTANT')
+export class FeeCounterController {
+  constructor(private readonly collection: FeeCollectionService) {}
+
+  @Post('payments')
+  collect(@Body() dto: CollectFeeDto): Promise<FeeReceipt> {
+    return this.collection.collect(dto);
+  }
+
+  @Get('payments/:id')
+  receipt(@Id() id: string): Promise<FeeReceipt> {
+    return this.collection.receipt(id);
+  }
+
+  @Post('payments/:id/void')
+  @Roles('OWNER', 'ADMIN')
+  @HttpCode(200)
+  void(@Id() id: string, @Body() dto: VoidFeePaymentDto): Promise<FeeReceipt> {
+    return this.collection.void(id, dto.reason);
+  }
+
+  @Get('closing')
+  closing(@Query() query: FeeClosingQueryDto): Promise<FeeClosing> {
+    return this.collection.closing(query);
+  }
+}
+
 /** Corrections to dues: OWNER/ADMIN (cancel, waive a fine, recalculate, generate now). */
 @Controller('fees/dues')
 @RequireModule('FEES')
@@ -239,8 +279,9 @@ export class FeeDuesController {
 }
 
 @Module({
-  imports: [BullModule.registerQueue({ name: FEES_QUEUE })],
-  controllers: [FeeSetupController, FeeStudentsController, FeeDuesController],
+  // AttendanceModule: the shared daily SMS cap (AttendanceSettingsService.smsDailyCap).
+  imports: [BullModule.registerQueue({ name: FEES_QUEUE }), AttendanceModule],
+  controllers: [FeeSetupController, FeeStudentsController, FeeCounterController, FeeDuesController],
   providers: [
     FeeSetupService,
     FeeSiblingsService,
@@ -248,6 +289,8 @@ export class FeeDuesController {
     FeeDuesService,
     FeeDuesProcessor,
     FeeLedgerService,
+    FeeCollectionService,
   ],
+  exports: [FeeCollectionService],
 })
 export class FeesModule {}

@@ -12,11 +12,14 @@ import {
   parseTaka,
   planStudentDues,
   receiptNumber,
+  receiptSmsText,
+  reminderSmsText,
   siblingRanks,
   type DueBalanceInput,
   type FineRule,
   type PlanInput,
 } from './fees.js';
+import { smsLength } from './sms.js';
 
 describe('parseTaka (what people type → paisa)', () => {
   it.each([
@@ -552,5 +555,52 @@ describe('identifiers', () => {
     expect(normalizeTrxId('abc')).toBeNull();
     expect(normalizeTrxId('ABC!DEF12')).toBeNull();
     expect(normalizeTrxId('A'.repeat(21))).toBeNull();
+  });
+});
+
+describe('fee SMS (fixed Bangla text)', () => {
+  it('receipt: Bangla amounts, ASCII receipt number, the balance only when something is left', () => {
+    const text = receiptSmsText({
+      institute: 'শাপলা উচ্চ বিদ্যালয়',
+      student: 'তাসনিম',
+      amountPaisa: 125000,
+      receiptNumber: '2026-000123',
+      date: '২২ অক্টো ২০২৬',
+      balancePaisa: 50000,
+    });
+    expect(text).toContain('৳১,২৫০');
+    expect(text).toContain('2026-000123');
+    expect(text).toContain('বাকি ৳৫০০');
+    expect(
+      receiptSmsText({
+        institute: 'x',
+        student: 'y',
+        amountPaisa: 100,
+        receiptNumber: 'r',
+        date: 'd',
+        balancePaisa: 0,
+      }),
+    ).not.toContain('বাকি');
+  });
+
+  it('stays within 2 SMS even with long names', () => {
+    const text = receiptSmsText({
+      institute: 'শাপলা উচ্চ বিদ্যালয় ও কলেজ',
+      student: 'মোছাম্মৎ তাসনিম রহমান চৌধুরী',
+      amountPaisa: 1234567,
+      receiptNumber: '2026-012345',
+      date: '৩০ সেপ্টেম্বর ২০২৬',
+      balancePaisa: 9876543,
+    });
+    expect(smsLength(text).segments).toBeLessThanOrEqual(2);
+    expect(
+      smsLength(
+        reminderSmsText({
+          institute: 'শাপলা উচ্চ বিদ্যালয় ও কলেজ',
+          student: 'মোছাম্মৎ তাসনিম রহমান চৌধুরী',
+          duePaisa: 9876543,
+        }),
+      ).segments,
+    ).toBeLessThanOrEqual(2);
   });
 });

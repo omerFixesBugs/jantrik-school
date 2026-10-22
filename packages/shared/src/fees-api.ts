@@ -431,5 +431,110 @@ export interface FeeLedger {
   upcoming: FeeUpcomingDue[];
   concessions: FeeConcessionView[];
   waivers: FeeWaiverView[];
+  /** Receipts, newest first (void ones included). */
+  payments: FeePaymentSummary[];
   totals: { charged: number; concession: number; paid: number; balance: number; overdue: number };
+}
+
+// ─────────────────────────── Collection, receipts, void, closing ───────────────────────────
+
+export const FEE_PAYMENT_METHODS = ['CASH', 'BKASH', 'NAGAD'] as const;
+export type FeePaymentMethod = (typeof FEE_PAYMENT_METHODS)[number];
+
+/** POST /fees/payments (OWNER/ADMIN/ACCOUNTANT): cash at the counter for one student. */
+export const collectFeeSchema = z
+  .object({
+    studentId: z.uuid(),
+    dueIds: z.array(z.uuid()).max(60).default([]),
+    /** Periods paid ahead (from the ledger's `upcoming`): created inside the payment. */
+    advance: z
+      .array(z.object({ headId: z.uuid(), periodKey: z.string().min(1).max(60) }))
+      .max(24)
+      .default([]),
+    amountPaisa: z.number().int().min(1).max(1_000_000_000),
+    /** What the counter showed as owed for the chosen dues (409 DUES_CHANGED if it moved). */
+    expectedOutstandingPaisa: z.number().int().min(0),
+    /** New for every attempt; a retried request returns the same receipt. */
+    clientRequestId: z.uuid(),
+  })
+  .refine((c) => c.dueIds.length + c.advance.length > 0, {
+    message: 'Choose at least one due',
+    path: ['dueIds'],
+  });
+export type CollectFeeInput = z.input<typeof collectFeeSchema>;
+
+/** POST /fees/payments/:id/void (OWNER/ADMIN). */
+export const voidFeePaymentSchema = z.object({ reason: reasonSchema });
+
+export const feeClosingQuerySchema = z.object({
+  date: isoDateSchema.optional(),
+  collectorId: z.uuid().optional(),
+});
+
+export interface FeeReceiptLine {
+  dueId: string;
+  head: { nameBn: string; nameEn: string };
+  periodKey: string;
+  term: { nameBn: string; nameEn: string } | null;
+  principalPaisa: number;
+  finePaisa: number;
+}
+
+export interface FeeReceipt {
+  id: string;
+  /** "2026-000123" (ASCII: an identifier). */
+  receiptNumber: string;
+  status: 'ACTIVE' | 'VOID';
+  void: {
+    at: string;
+    reason: string;
+    by: { id: string; name: string; nameBn: string | null };
+  } | null;
+  method: FeePaymentMethod;
+  channel: 'COUNTER' | 'MOBILE_MANUAL';
+  trxId: string | null;
+  /** The sender's number, masked. */
+  senderPhone: string | null;
+  amountPaisa: number;
+  paidOn: IsoDate;
+  recordedOn: IsoDate;
+  createdAt: string;
+  institute: { name: string; receiptNote: string | null };
+  student: FeeStudentRef & {
+    classLevel: { nameBn: string; nameEn: string } | null;
+    section: string | null;
+    roll: number | null;
+  };
+  lines: FeeReceiptLine[];
+  collectedBy: { id: string; name: string; nameBn: string | null } | null;
+  /** The student's balance today (not at the time of the receipt). */
+  balanceTodayPaisa: number;
+  /** A retried request answered with the receipt it already made. */
+  replayed?: boolean;
+}
+
+export interface FeePaymentSummary {
+  id: string;
+  receiptNumber: string;
+  status: 'ACTIVE' | 'VOID';
+  method: FeePaymentMethod;
+  amountPaisa: number;
+  paidOn: IsoDate;
+  recordedOn: IsoDate;
+}
+
+export interface FeeClosingCollector {
+  collector: { id: string; name: string; nameBn: string | null };
+  byMethod: { method: FeePaymentMethod; count: number; amountPaisa: number }[];
+  total: { count: number; amountPaisa: number };
+  /** First and last receipt numbers recorded that day (void ones included). */
+  receipts: { first: string; last: string } | null;
+  voided: { id: string; receiptNumber: string; amountPaisa: number; reason: string }[];
+}
+
+/** GET /fees/closing: money recorded on one day, per collector and method (void excluded). */
+export interface FeeClosing {
+  date: IsoDate;
+  collectors: FeeClosingCollector[];
+  total: { count: number; amountPaisa: number };
 }

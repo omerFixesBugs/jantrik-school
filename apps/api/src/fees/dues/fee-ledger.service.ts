@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   dateFromDb,
   dueBalance,
+  receiptNumber,
   type FeeDueView,
   type FeeLedger,
   type FeeUpcomingDue,
@@ -41,7 +42,7 @@ export class FeeLedgerService {
     await this.dues.ensureForStudents([studentId], { ctx });
     const today = ctx.today;
 
-    const [rows, waivers, membership] = await Promise.all([
+    const [rows, waivers, membership, payments] = await Promise.all([
       tx.feeDue.findMany({
         where: { studentId },
         include: dueInclude,
@@ -51,6 +52,20 @@ export class FeeLedgerService {
       tx.feeSiblingMember.findFirst({
         where: { studentId, removedAt: null },
         select: { groupId: true },
+      }),
+      tx.feePayment.findMany({
+        where: { studentId },
+        orderBy: [{ createdAt: 'desc' }],
+        select: {
+          id: true,
+          receiptYear: true,
+          receiptNo: true,
+          status: true,
+          method: true,
+          amountPaisa: true,
+          paidOn: true,
+          recordedOn: true,
+        },
       }),
     ]);
     const dues: FeeDueView[] = rows
@@ -162,6 +177,15 @@ export class FeeLedgerService {
         amountPaisa: w.amountPaisa,
         reason: w.reason,
         createdAt: w.createdAt.toISOString(),
+      })),
+      payments: payments.map((p) => ({
+        id: p.id,
+        receiptNumber: receiptNumber(p.receiptYear, p.receiptNo),
+        status: p.status,
+        method: p.method,
+        amountPaisa: p.amountPaisa,
+        paidOn: dateFromDb(p.paidOn),
+        recordedOn: dateFromDb(p.recordedOn),
       })),
       totals: {
         charged: open.reduce((s, d) => s + d.amountPaisa, 0),

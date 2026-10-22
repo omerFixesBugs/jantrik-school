@@ -467,23 +467,85 @@ export class FeeDuesService implements OnModuleInit {
   }
 
   /**
-   * The only writer of the cached totals: re-derived from the waivers (and, from phase C, the
-   * allocations of payments that are not void). Call with the student's lock held.
+   * The only writer of the cached totals, re-derived from scratch (never incremented): paid
+   * principal and fine from the allocations of payments that are not void, the day the principal
+   * was cleared (the payer's date of the payment that completed it, so the fine stops there;
+   * a void reopens it), and the waived fine. Call with the student's lock held.
    */
   async recomputeDues(dueIds: string[]): Promise<void> {
     const tx = this.db.tx;
-    for (const id of dueIds) {
-      const waivers = await tx.feeFineWaiver.findMany({
-        where: { dueId: id },
-        select: { amountPaisa: true },
+    for (const id of [...new Set(dueIds)]) {
+      const due = await tx.feeDue.findUniqueOrThrow({
+        where: { id },
+        select: { amountPaisa: true, concessionPaisa: true },
       });
+      const [allocations, waivers] = await Promise.all([
+        tx.feePaymentAllocation.findMany({
+          where: { dueId: id, payment: { status: 'ACTIVE' } },
+          select: {
+            principalPaisa: true,
+            finePaisa: true,
+            payment: { select: { paidOn: true, createdAt: true } },
+          },
+        }),
+        tx.feeFineWaiver.findMany({ where: { dueId: id }, select: { amountPaisa: true } }),
+      ]);
+      allocations.sort(
+        (a, b) =>
+          a.payment.paidOn.getTime() - b.payment.paidOn.getTime() ||
+          a.payment.createdAt.getTime() - b.payment.createdAt.getTime(),
+      );
+      const net = due.amountPaisa - due.concessionPaisa;
+      let principal = 0;
+      let clearedOn: Date | null = null;
+      for (const a of allocations) {
+        principal += a.principalPaisa;
+        if (clearedOn === null && net > 0 && principal >= net) clearedOn = a.payment.paidOn;
+      }
       await tx.feeDue.update({
         where: { id },
         data: {
+          paidPrincipalPaisa: principal,
+          paidFinePaisa: allocations.reduce((sum, a) => sum + a.finePaisa, 0),
+          principalClearedOn: clearedOn,
           fineWaivedPaisa: waivers.reduce((sum, w) => sum + (w.amountPaisa ?? 0), 0),
           fineWaivedAll: waivers.some((w) => w.amountPaisa === null),
         },
       });
     }
+  }
+
+  /**
+   * Paying ahead: create exactly these future periods (head + period key from the ledger's
+   * upcoming list) for this student, and return their ids. 422 for a period the student does
+   * not have this year.
+   */
+  async ensureAdvance(
+    studentId: string,
+    periods: { headId: string; periodKey: string }[],
+    ctx: PlanContext,
+  ): Promise<string[]> {
+    if (periods.length === 0) return [];
+    if (!ctx.year) throw apiError(422, 'NO_CURRENT_YEAR', 'Set a current academic year first');
+    const wanted = new Set(periods.map((p) => `${p.headId}|${p.periodKey}`));
+    const [planned] = await this.plan([studentId], ctx, ctx.year.endDate);
+    const rows = (planned?.dues ?? []).filter((d) => wanted.has(`${d.feeHeadId}|${d.periodKey}`));
+    if (rows.length !== wanted.size) {
+      throw apiError(422, 'INVALID_ADVANCE', 'This period cannot be paid for this student');
+    }
+    const tenantId = this.context.requireTenantId();
+    await this.db.tx.feeDue.createMany({
+      data: rows.map((d) => this.toRow(tenantId, ctx.year!.id, studentId, d)),
+      skipDuplicates: true,
+    });
+    const found = await this.db.tx.feeDue.findMany({
+      where: {
+        studentId,
+        academicYearId: ctx.year.id,
+        OR: periods.map((p) => ({ feeHeadId: p.headId, periodKey: p.periodKey })),
+      },
+      select: { id: true },
+    });
+    return found.map((f) => f.id);
   }
 }

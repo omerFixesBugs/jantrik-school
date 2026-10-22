@@ -5,7 +5,7 @@
  */
 import { addDays, type IsoDate } from './dates.js';
 import { toAsciiDigits } from './digits.js';
-import type { UiLocale } from './format.js';
+import { formatTaka, type UiLocale } from './format.js';
 
 export const FEE_HEAD_KINDS = ['ADMISSION', 'TUITION', 'EXAM', 'SESSION', 'OTHER'] as const;
 export type FeeHeadKind = (typeof FEE_HEAD_KINDS)[number];
@@ -537,4 +537,36 @@ const TRX_ID = /^[A-Z0-9]{6,20}$/;
 export function normalizeTrxId(input: string): string | null {
   const id = toAsciiDigits(input).replace(/[\s-]/g, '').toUpperCase();
   return TRX_ID.test(id) ? id : null;
+}
+
+// ─────────────────────────── SMS (fixed Bangla text) ───────────────────────────
+
+/**
+ * The receipt SMS to the primary guardian (after the payment commits): proof of every payment,
+ * which also catches cash taken without a receipt. Bangla digits for amounts and the date; the
+ * receipt number stays ASCII (an identifier).
+ */
+export function receiptSmsText(input: {
+  institute: string;
+  student: string;
+  amountPaisa: number;
+  receiptNumber: string;
+  date: string;
+  balancePaisa: number;
+}): string {
+  const due = input.balancePaisa > 0 ? ` বাকি ${takaBn(input.balancePaisa)}।` : '';
+  return `${input.institute}: ${input.student}-এর ${takaBn(input.amountPaisa)} জমা, রসিদ ${input.receiptNumber}, ${input.date}।${due}`;
+}
+
+/** A due reminder to the primary guardian. */
+export function reminderSmsText(input: {
+  institute: string;
+  student: string;
+  duePaisa: number;
+}): string {
+  return `প্রিয় অভিভাবক, ${input.student}-এর ফি ${takaBn(input.duePaisa)} বকেয়া আছে। অনুগ্রহ করে পরিশোধ করুন। ${input.institute}`;
+}
+
+function takaBn(paisa: number): string {
+  return formatTaka(paisa, 'bn');
 }
