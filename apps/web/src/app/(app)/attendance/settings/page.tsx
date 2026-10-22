@@ -408,7 +408,8 @@ function TemplateEditor({
   const ref = useRef<HTMLTextAreaElement>(null);
   const preview = renderSmsTemplate(value, {
     student: 'আরিফ হোসেন',
-    date: formatDate(new Date(), 'bn', 'long'),
+    // The server's today (never the device's date), as the real SMS will have it.
+    date: context ? formatDate(dateToDb(context.today), 'bn', 'long') : '',
     institute: context?.tenant.name ?? '',
   });
   const len = smsLength(preview);

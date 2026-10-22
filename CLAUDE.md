@@ -91,7 +91,10 @@ Run from the repo root (see README.md for first-time setup).
 - Database rules, RLS and the new-table checklist: docs/database.md
 - Auth, request pipeline, Db.tx / afterCommit rules for services: docs/auth.md
 - UI design system (colours, Bangla type scale, density, components): docs/design.md
-- `pnpm e2e` — Playwright (build first; stop dev servers on 3000/4000); resets and seeds jantrik_e2e every run
+- `pnpm e2e` — Playwright (build first; stop dev servers on 3000/4000); resets and seeds jantrik_e2e every run.
+  The suite lives on a fixed day (`E2E_TODAY` in `apps/web/playwright.config.ts`, passed as
+  `JANTRIK_TEST_TODAY`, read by `todayIn`; the API accepts it only with NODE_ENV=test), so it never
+  depends on the real date or weekday. Specs take dates from `todayIn`, never `Date.now()`
 - Attendance rules, drafts/offline sync, absent SMS: docs/attendance.md
 - Fees: setup, dues, fines, receipts, voids, bKash/Nagad, reminders: docs/fees.md
 - Single package: `pnpm --filter @jantrik/api <script>`

@@ -1,14 +1,30 @@
 import { expect, test } from '@playwright/test';
 import {
   addDays,
+  dateToDb,
+  formatDate,
   formatDayMonth,
   todayIn,
   type AttendanceTodayReport,
   type AttendanceTrendReport,
+  type MeContext,
   type SmsDailyStatus,
 } from '@jantrik/shared';
-import { DEMO, otpLoginWithBanglaDigits, passwordLogin } from './helpers';
+import { E2E_TODAY } from '../playwright.config';
+import { DEMO, api, apiLogin, otpLoginWithBanglaDigits, passwordLogin } from './helpers';
 import { findLayoutProblems } from './layout-check';
+
+test('the suite lives on its fixed day: the specs, the API and the dashboard agree', async ({
+  page,
+}) => {
+  expect(todayIn('Asia/Dhaka')).toBe(E2E_TODAY);
+  const me = await api<MeContext>(await apiLogin(DEMO.shaplaOwner), '/me/context');
+  expect(me.today).toBe(E2E_TODAY);
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  // The date line is the server's, never the device's.
+  await expect(page.getByText(formatDate(dateToDb(E2E_TODAY), 'bn', 'full')).first()).toBeVisible();
+});
 
 test('staff dashboard: Bangla date, student total, getting-started steps', async ({ page }) => {
   await passwordLogin(page, DEMO.shaplaOwner);

@@ -9,7 +9,6 @@ import {
   formatMonth,
   formatTaka,
   normalizeBdPhone,
-  todayIn,
   type IsoDate,
   type PlatformInstituteDetail,
   type PlatformInvoicePage,
@@ -61,6 +60,7 @@ import { Button, ButtonLink } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
+import { usePlatformToday } from '@/lib/platform/hooks';
 import { platformApi } from '@/lib/platform/platform-api';
 
 const textareaClass =
@@ -609,6 +609,7 @@ function Plan({ d, locale }: { d: PlatformInstituteDetail; locale: Locale }) {
 }
 
 function PlanDialog({ d, onClose }: { d: PlatformInstituteDetail; onClose: () => void }) {
+  const today = usePlatformToday();
   const t = useTranslations('platformInstitutes');
   const locale = useLocale() as Locale;
   const s = d.subscription;
@@ -616,7 +617,7 @@ function PlanDialog({ d, onClose }: { d: PlatformInstituteDetail; onClose: () =>
   const [trialEndsOn, setTrialEndsOn] = useState<string>(s?.trialEndsOn ?? '');
   const [billingStartsOn, setBillingStartsOn] = useState<string>(s?.billingStartsOn ?? '');
   const [problems, setProblems] = useState<Set<string>>(new Set());
-  const thisMonth = todayIn('Asia/Dhaka').slice(0, 7);
+  const thisMonth = today.slice(0, 7);
   const months = Array.from({ length: 19 }, (_, i) => `${addMonths(thisMonth, i - 12)}-01`);
   if (billingStartsOn && !months.includes(billingStartsOn)) months.unshift(billingStartsOn);
   const save = useInstituteAction(

@@ -20,6 +20,28 @@ describe('env: loosened settings never leave development', () => {
     }
   });
 
+  it('a fixed test date (JANTRIK_TEST_TODAY) is accepted only in tests, and only a real date', () => {
+    expect(
+      envSchema.safeParse({ ...base, NODE_ENV: 'test', JANTRIK_TEST_TODAY: '2026-10-21' }).success,
+    ).toBe(true);
+    for (const NODE_ENV of ['development', 'production']) {
+      const result = envSchema.safeParse({
+        ...base,
+        NODE_ENV,
+        PLATFORM_TOTP_KEY: 'k'.repeat(32),
+        JANTRIK_TEST_TODAY: '2026-10-21',
+      });
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error)).toContain('JANTRIK_TEST_TODAY');
+    }
+    const bad = envSchema.safeParse({
+      ...base,
+      NODE_ENV: 'test',
+      JANTRIK_TEST_TODAY: '2026-02-30',
+    });
+    expect(bad.success).toBe(false);
+  });
+
   it('COOKIE_SECURE=false is refused in production', () => {
     const prod = { ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'k'.repeat(32) };
     const result = envSchema.safeParse({ ...prod, COOKIE_SECURE: 'false' });

@@ -5,7 +5,6 @@ import {
   addMonths,
   formatCount,
   formatMonth,
-  todayIn,
   type PlatformGenerateResult,
   type PlatformInvoicePage,
 } from '@jantrik/shared';
@@ -22,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
+import { usePlatformToday } from '@/lib/platform/hooks';
 import { platformApi } from '@/lib/platform/platform-api';
 
 const PAGE_SIZE = 25;
@@ -51,11 +51,12 @@ export default function PlatformBillingPage() {
 }
 
 function Generate() {
+  const today = usePlatformToday();
   const t = useTranslations('platformBilling');
   const locale = useLocale() as Locale;
   const explain = usePlatformError();
   const queryClient = useQueryClient();
-  const thisMonth = todayIn('Asia/Dhaka').slice(0, 7);
+  const thisMonth = today.slice(0, 7);
   const months = [-3, -2, -1, 0, 1].map((d) => addMonths(thisMonth, d));
   const [month, setMonth] = useState(thisMonth);
   const [issuedOn, setIssuedOn] = useState('');
@@ -97,7 +98,7 @@ function Generate() {
             <DateInput
               id="generate-issued"
               value={issuedOn}
-              max={todayIn('Asia/Dhaka')}
+              max={today}
               onValueChange={setIssuedOn}
             />
           </Field>
@@ -140,10 +141,11 @@ function Generate() {
 }
 
 function Invoices() {
+  const today = usePlatformToday();
   const t = useTranslations('platformBilling');
   const locale = useLocale() as Locale;
   const explain = usePlatformError();
-  const thisMonth = todayIn('Asia/Dhaka').slice(0, 7);
+  const thisMonth = today.slice(0, 7);
   const [status, setStatus] = useState('');
   const [overdue, setOverdue] = useState(false);
   const [month, setMonth] = useState('');

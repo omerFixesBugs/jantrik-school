@@ -7,7 +7,6 @@ import {
   formatDate,
   formatMonth,
   formatTaka,
-  todayIn,
   type InvoiceStatus,
   type PaymentMethod,
   type PlatformInvoiceDetail,
@@ -35,6 +34,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
+import { usePlatformToday } from '@/lib/platform/hooks';
 import { platformApi } from '@/lib/platform/platform-api';
 import { cn } from '@/lib/utils';
 
@@ -388,11 +388,12 @@ function PaymentForm({
   const t = useTranslations('platformBilling');
   const explain = usePlatformError();
   const refresh = useBillingRefresh(inv);
+  const today = usePlatformToday();
   const left = inv.totalPaisa - inv.paidPaisa;
   const [amount, setAmount] = useState((left / 100).toString());
   const [method, setMethod] = useState<PaymentMethod>('BKASH');
   const [reference, setReference] = useState('');
-  const [paidOn, setPaidOn] = useState<string>(todayIn('Asia/Dhaka'));
+  const [paidOn, setPaidOn] = useState<string>(today);
   const [invalid, setInvalid] = useState(false);
   const pay = useMutation({
     mutationFn: (body: {
@@ -463,12 +464,7 @@ function PaymentForm({
           maxLength={100}
         />
         <Field id="payment-date" label={t('paidOn')}>
-          <DateInput
-            id="payment-date"
-            value={paidOn}
-            max={todayIn('Asia/Dhaka')}
-            onValueChange={setPaidOn}
-          />
+          <DateInput id="payment-date" value={paidOn} max={today} onValueChange={setPaidOn} />
         </Field>
       </div>
       <div className="flex flex-wrap gap-2">

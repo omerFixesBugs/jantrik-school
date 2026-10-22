@@ -6,6 +6,7 @@ import {
   ATTENDANCE_TARGET,
   attentionItems,
   dashboardInsight,
+  dateToDb,
   dayPeriod,
   dhakaHour,
   formatBanglaCalendarDate,
@@ -24,6 +25,7 @@ import {
   type SendHeldSmsResult,
   type SmsDailyStatus,
   type GuardianChild,
+  type IsoDate,
   type MeContext,
   type StudentsPage,
   type StudentsSummary,
@@ -104,7 +106,7 @@ export default function DashboardPage() {
       ) : context.roles.includes('GUARDIAN') ? (
         <GuardianDashboard context={context} />
       ) : (
-        <Greeting subtitle={null} />
+        <Greeting subtitle={null} today={context.today} />
       )}
     </>
   );
@@ -117,26 +119,29 @@ const GREETING = {
   night: 'greetingNight',
 } as const;
 
-/** Greeting by time of day in Dhaka, with today's date in both calendars. */
-function Greeting({ subtitle }: { subtitle: ReactNode }) {
+/**
+ * Greeting by time of day in Dhaka, with today's date in both calendars. The date is the
+ * server's (`today`): phones often have the wrong date; only the hour comes from the device.
+ */
+function Greeting({ subtitle, today }: { subtitle: ReactNode; today: IsoDate }) {
   const t = useTranslations('dashboard');
   const locale = useLocale() as Locale;
   const { session } = useAuth();
-  const now = new Date();
-  const key = GREETING[dayPeriod(dhakaHour(now))];
+  const key = GREETING[dayPeriod(dhakaHour(new Date()))];
+  const day = dateToDb(today);
   return (
     <div className="flex flex-col gap-3">
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
         <span className="flex items-center gap-1.5">
           <CalendarDaysIcon aria-hidden className="size-4" />
-          {formatDate(now, locale, 'full')}
+          {formatDate(day, locale, 'full')}
         </span>
         <span
           className="bg-accent-warm-soft text-foreground inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium"
           title={t('banglaDate')}
         >
           <span aria-hidden className="bg-accent-warm size-1.5 rounded-full" />
-          {formatBanglaCalendarDate(now, locale)}
+          {formatBanglaCalendarDate(day, locale)}
           <span className="sr-only"> ({t('banglaDate')})</span>
         </span>
       </div>
@@ -287,7 +292,10 @@ function StaffDashboard({ context }: { context: MeContext }) {
     return (
       <>
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-          <Greeting subtitle={t('subtitle', { institute: context.tenant.name })} />
+          <Greeting
+            subtitle={t('subtitle', { institute: context.tenant.name })}
+            today={context.today}
+          />
           <QuickActions context={context} />
         </div>
         <UnsentBanner count={unsent} />
@@ -417,7 +425,8 @@ function StaffDashboard({ context }: { context: MeContext }) {
       })
     : [];
 
-  const now = new Date();
+  // The date is the server's (phones often have the wrong one); the greeting's hour the device's.
+  const todayDate = dateToDb(context.today);
   return (
     <>
       <DashboardHero
@@ -425,18 +434,18 @@ function StaffDashboard({ context }: { context: MeContext }) {
           <>
             <span className="flex items-center gap-1.5">
               <CalendarDaysIcon aria-hidden className="size-4" />
-              {formatDate(now, locale, 'full')}
+              {formatDate(todayDate, locale, 'full')}
             </span>
             <span
               className="border-hero-foreground/30 inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium"
               title={t('banglaDate')}
             >
-              {formatBanglaCalendarDate(now, locale)}
+              {formatBanglaCalendarDate(todayDate, locale)}
               <span className="sr-only"> ({t('banglaDate')})</span>
             </span>
           </>
         }
-        greeting={t(GREETING[dayPeriod(dhakaHour(now))], {
+        greeting={t(GREETING[dayPeriod(dhakaHour(new Date()))], {
           name: displayUserName(session?.user, locale),
         })}
         insight={
@@ -1097,7 +1106,10 @@ function GuardianDashboard({ context }: { context: MeContext }) {
 
   return (
     <>
-      <Greeting subtitle={t('subtitle', { institute: context.tenant.name })} />
+      <Greeting
+        subtitle={t('subtitle', { institute: context.tenant.name })}
+        today={context.today}
+      />
       <section className="flex flex-col gap-3" aria-labelledby="my-children">
         <SectionTitle>
           <span id="my-children">{t('childrenTitle')}</span>
