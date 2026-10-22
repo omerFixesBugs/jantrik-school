@@ -428,6 +428,8 @@ async function seedTenantData(
     const student = await tx.student.create({
       data: {
         tenantId,
+        // Admitted when the demo year began (fees charge months from the admission month).
+        createdAt: year.startDate,
         studentCode: st.code,
         nameBn: st.nameBn,
         nameEn: st.nameEn,

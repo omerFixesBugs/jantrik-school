@@ -41,4 +41,5 @@ dues from the month two months before the seed date (within 2026); a 50 % siblin
 tuition (Tasnim and Tahmid are **suggested**, not confirmed: confirm them under Fees → Setup →
 Siblings); a half free studentship for Arpita; bKash `01711000901` and Nagad `01711000902` as the
 institute's numbers. Dues appear when a student's fees are first opened (or after the nightly
-run). Alo has FEES switched on but nothing set up (the empty states).
+run). Demo students count as admitted on 1 January 2026 (the start of the demo year), so
+they owe from the start month and no admission fee; a student admitted now pays it. Alo has FEES switched on but nothing set up (the empty states).
