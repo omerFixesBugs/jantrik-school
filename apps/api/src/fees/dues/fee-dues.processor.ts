@@ -6,6 +6,11 @@ import { REDIS } from '../../redis/redis.constants.js';
 import { TenantAccessService } from '../../tenancy/tenant-access.service.js';
 import { TenantJobRunner } from '../../tenancy/tenant-job-runner.service.js';
 import {
+  FeeRemindersService,
+  SEND_REMINDERS_JOB,
+  type ReminderJobData,
+} from '../reminders/fee-reminders.service.js';
+import {
   FEES_QUEUE,
   FEES_TENANTS_KEY,
   FeeDuesService,
@@ -31,6 +36,7 @@ export class FeeDuesProcessor extends WorkerHost {
     private readonly jobs: TenantJobRunner,
     private readonly dues: FeeDuesService,
     private readonly access: TenantAccessService,
+    private readonly reminders: FeeRemindersService,
     @Inject(REDIS) private readonly redis: Redis,
   ) {
     super();
@@ -41,6 +47,30 @@ export class FeeDuesProcessor extends WorkerHost {
     if (job.name === GENERATE_TENANT_JOB) await this.generateTenant(job.data as TenantJobData);
     if (job.name === RECALCULATE_TENANT_JOB)
       await this.recalculateTenant(job.data as TenantJobData);
+    if (job.name === SEND_REMINDERS_JOB) await this.sendReminders(job.data as ReminderJobData);
+  }
+
+  /** A confirmed reminder run: 25 students per transaction, acting as the admin who sent it. */
+  async sendReminders(data: ReminderJobData): Promise<void> {
+    try {
+      if (!(await this.actorMayStill(data))) return;
+      const opts = { actorUserId: data.actorUserId };
+      const ids = await this.jobs.run(
+        data.tenantId,
+        async () => (await this.reminders.candidates(data.filter)).map((c) => c.studentId),
+        opts,
+      );
+      for (let i = 0; i < ids.length; i += 25) {
+        const chunk = ids.slice(i, i + 25);
+        await this.jobs.run(
+          data.tenantId,
+          () => this.reminders.sendChunk(data.runId, data.filter, chunk),
+          opts,
+        );
+      }
+    } catch (error) {
+      this.logger.error(`Fee reminders failed for ${data.tenantId}: ${(error as Error).name}`);
+    }
   }
 
   /** Is the admin who asked still OWNER/ADMIN? (Their request was checked; this is later.) */

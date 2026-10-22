@@ -16,6 +16,16 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  feeCollectionsQuerySchema,
+  feeDueListQuerySchema,
+  feeReminderFilterSchema,
+  sendFeeRemindersSchema,
+  type FeeCollections,
+  type FeeDueList,
+  type FeeReminderPreview,
+  type FeeReminderRun,
+  type FeeReminderStatus,
+  type FeeSummary,
   createMobileAccountSchema,
   feeSubmissionsQuerySchema,
   guardianSubmissionSchema,
@@ -72,6 +82,8 @@ import {
 import { FeeDuesProcessor } from './dues/fee-dues.processor.js';
 import { FeeLedgerService } from './dues/fee-ledger.service.js';
 import { FeeMobileService } from './mobile/fee-mobile.service.js';
+import { FeeRemindersService } from './reminders/fee-reminders.service.js';
+import { FeeReportsService } from './reports/fee-reports.service.js';
 import { FeeStudentsService } from './fee-students.service.js';
 import { FeeSetupService } from './setup/fee-setup.service.js';
 import { FeeSiblingsService } from './setup/fee-siblings.service.js';
@@ -105,6 +117,18 @@ class StaffSubmissionDto extends zodDto(staffSubmissionSchema) {}
 class FeeSubmissionsQueryDto extends zodDto(feeSubmissionsQuerySchema) {}
 class VerifySubmissionDto extends zodDto(verifySubmissionSchema) {}
 class RejectSubmissionDto extends zodDto(rejectSubmissionSchema) {}
+class FeeDueListQueryDto extends zodDto(feeDueListQuerySchema) {}
+class FeeCollectionsQueryDto extends zodDto(feeCollectionsQuerySchema) {}
+class FeeReminderFilterDto extends zodDto(feeReminderFilterSchema) {}
+class SendFeeRemindersDto extends zodDto(sendFeeRemindersSchema) {}
+
+/** A CSV download (attendance's pattern): UTF-8 with BOM, an ASCII filename, never cached. */
+function sendCsv(res: Response, file: { filename: string; csv: string }): string {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  return file.csv;
+}
 
 const Id = (name = 'id') => Param(name, ParseUUIDPipe);
 
@@ -347,6 +371,71 @@ export class GuardianFeesController {
   }
 }
 
+/** Reports and the dashboard card: OWNER/ADMIN/ACCOUNTANT. */
+@Controller('fees')
+@RequireModule('FEES')
+@Roles('OWNER', 'ADMIN', 'ACCOUNTANT')
+export class FeeReportsController {
+  constructor(private readonly reports: FeeReportsService) {}
+
+  @Get('summary')
+  summary(): Promise<FeeSummary> {
+    return this.reports.summary();
+  }
+
+  @Get('reports/dues')
+  dues(@Query() q: FeeDueListQueryDto): Promise<FeeDueList> {
+    return this.reports.dueList(q);
+  }
+
+  @Get('reports/dues/csv')
+  async duesCsv(
+    @Query() q: FeeDueListQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    return sendCsv(res, await this.reports.dueListCsv(q));
+  }
+
+  @Get('reports/collections')
+  collections(@Query() q: FeeCollectionsQueryDto): Promise<FeeCollections> {
+    return this.reports.collections(q);
+  }
+
+  @Get('reports/collections/csv')
+  async collectionsCsv(
+    @Query() q: FeeCollectionsQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    return sendCsv(res, await this.reports.collectionsCsv(q));
+  }
+}
+
+/** Due reminder SMS: OWNER/ADMIN (they cost the institute money). */
+@Controller('fees/reminders')
+@RequireModule('FEES')
+@Roles('OWNER', 'ADMIN')
+export class FeeRemindersController {
+  constructor(private readonly reminders: FeeRemindersService) {}
+
+  @Post('preview')
+  @HttpCode(200)
+  preview(@Body() dto: FeeReminderFilterDto): Promise<FeeReminderPreview> {
+    return this.reminders.preview(dto);
+  }
+
+  @Post()
+  @HttpCode(202)
+  send(@Body() dto: SendFeeRemindersDto): Promise<FeeReminderRun> {
+    const { expectedRecipients, ...filter } = dto;
+    return this.reminders.send(filter, expectedRecipients);
+  }
+
+  @Get(':runId')
+  status(@Id('runId') runId: string): Promise<FeeReminderStatus> {
+    return this.reminders.status(runId);
+  }
+}
+
 /** Corrections to dues: OWNER/ADMIN (cancel, waive a fine, recalculate, generate now). */
 @Controller('fees/dues')
 @RequireModule('FEES')
@@ -403,6 +492,8 @@ export class FeeDuesController {
     FeeMobileAccountsController,
     FeeSubmissionsController,
     GuardianFeesController,
+    FeeReportsController,
+    FeeRemindersController,
   ],
   providers: [
     FeeSetupService,
@@ -413,6 +504,8 @@ export class FeeDuesController {
     FeeLedgerService,
     FeeCollectionService,
     FeeMobileService,
+    FeeReportsService,
+    FeeRemindersService,
   ],
   exports: [FeeCollectionService],
 })

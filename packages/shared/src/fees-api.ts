@@ -672,3 +672,132 @@ export interface FeeGuardianView {
   /** Where to send money: the institute's active numbers. */
   accounts: Pick<FeeMobileAccountView, 'id' | 'method' | 'phone' | 'kind' | 'label'>[];
 }
+
+// ─────────────────────────── Reports, reminders, dashboard ───────────────────────────
+
+const flag = z
+  .enum(['0', '1', 'true', 'false'])
+  .optional()
+  .transform((v) => v === '1' || v === 'true');
+
+/** GET /fees/reports/dues: who owes what, by class/section (defaulters: overdueOnly=1). */
+export const feeDueListQuerySchema = z.object({
+  classLevelId: z.uuid().optional(),
+  sectionId: z.uuid().optional(),
+  /** Only students with something overdue for at least `minDays` and `minAmountPaisa`. */
+  overdueOnly: flag,
+  minDays: z.coerce.number().int().min(0).max(3650).default(0),
+  minAmountPaisa: z.coerce.number().int().min(0).max(1_000_000_000).default(0),
+  locale: z.enum(['bn', 'en']).default('bn'),
+});
+
+export interface FeeDueListRow {
+  student: FeeStudentRef;
+  classLevel: { id: string; nameBn: string; nameEn: string } | null;
+  section: { id: string; name: string } | null;
+  roll: number | null;
+  /** Primary guardian; the phone masked for the accountant. */
+  guardian: { nameBn: string | null; nameEn: string | null; phone: string } | null;
+  openDues: number;
+  principalPaisa: number;
+  finePaisa: number;
+  totalPaisa: number;
+  overduePaisa: number;
+  oldestOverdue: IsoDate | null;
+}
+
+export interface FeeDueList {
+  today: IsoDate;
+  rows: FeeDueListRow[];
+  totals: {
+    students: number;
+    principalPaisa: number;
+    finePaisa: number;
+    totalPaisa: number;
+    overduePaisa: number;
+  };
+}
+
+export const FEE_COLLECTION_GROUPS = ['day', 'month', 'head', 'method', 'collector'] as const;
+/** GET /fees/reports/collections: money kept (void payments left out), recorded in a range. */
+export const feeCollectionsQuerySchema = z
+  .object({
+    from: isoDateSchema,
+    to: isoDateSchema,
+    groupBy: z.enum(FEE_COLLECTION_GROUPS),
+    locale: z.enum(['bn', 'en']).default('bn'),
+  })
+  .refine((q) => q.to >= q.from, { message: 'The end is before the start', path: ['to'] })
+  .refine((q) => Date.parse(q.to) - Date.parse(q.from) <= 366 * 86_400_000, {
+    message: 'At most a year',
+    path: ['to'],
+  });
+
+export interface FeeCollectionRow {
+  /** 'YYYY-MM-DD', 'YYYY-MM', a method, a head id or a collector id. */
+  key: string;
+  nameBn: string | null;
+  nameEn: string | null;
+  /** Receipts (for heads: receipts that paid that head). */
+  count: number;
+  amountPaisa: number;
+}
+
+export interface FeeCollections {
+  from: IsoDate;
+  to: IsoDate;
+  groupBy: (typeof FEE_COLLECTION_GROUPS)[number];
+  rows: FeeCollectionRow[];
+  total: { count: number; amountPaisa: number };
+}
+
+/** Due reminders (OWNER/ADMIN): who is overdue, in a class/section or the whole institute. */
+export const feeReminderFilterSchema = z.object({
+  classLevelId: z.uuid().optional(),
+  sectionId: z.uuid().optional(),
+  minDays: z.number().int().min(1).max(3650).default(1),
+});
+/** POST /fees/reminders: send after the preview; refused (409) when the count changed. */
+export const sendFeeRemindersSchema = feeReminderFilterSchema.extend({
+  expectedRecipients: z.number().int().min(0),
+});
+
+export interface FeeReminderPreview {
+  /** Students with something overdue. */
+  students: number;
+  withoutPhone: number;
+  /** Already reminded for their latest overdue period (never twice). */
+  alreadyReminded: number;
+  toSend: number;
+  segments: number;
+  costPaisa: number;
+  /** SMS left under today's cap, and how many of these would be held over it. */
+  capLeftToday: number;
+  wouldBeHeld: number;
+  /** One message as it will read (the first student). */
+  sampleText: string | null;
+}
+
+export interface FeeReminderRun {
+  runId: string;
+  queued: number;
+}
+
+export interface FeeReminderStatus {
+  runId: string;
+  counts: Record<
+    'QUEUED' | 'SENT' | 'FAILED' | 'CANCELLED' | 'HELD_OVER_LIMIT' | 'EXPIRED',
+    number
+  >;
+}
+
+/** GET /fees/summary: the dashboard's fee card. */
+export interface FeeSummary {
+  today: IsoDate;
+  /** Kept this month so far (void payments left out). */
+  month: { collectedPaisa: number; count: number };
+  /** The same days of last month, for comparison. */
+  previousMonthToDate: { collectedPaisa: number };
+  overdue: { paisa: number; students: number };
+  pendingSubmissions: number;
+}
