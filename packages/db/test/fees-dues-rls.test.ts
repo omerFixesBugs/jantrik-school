@@ -241,4 +241,83 @@ describe('fee dues tables: tenant isolation and integrity', () => {
       ),
     ).rejects.toThrow(/fee_fine_waivers_amount/);
   });
+  it("a due's concession is its own student's, head's and year's; its term its year's", async () => {
+    const concessionOfOther = await withTenant(app, a.tenantId, (tx) =>
+      tx.feeConcession.create({
+        data: {
+          tenantId: a.tenantId,
+          studentId: a.studentIds[0]!,
+          feeHeadId: a.headId,
+          academicYearId: a.yearId,
+          category: 'GENERAL',
+          type: 'FIXED',
+          value: 100,
+          validFrom: new Date('2026-01-01'),
+          createdById: a.adminId,
+        },
+      }),
+    );
+    await expect(
+      createDue({
+        periodKey: '2026-12',
+        periodStart: new Date('2026-12-01'),
+        dueDate: new Date('2026-12-10'),
+        concessionPaisa: 100,
+        concessionSource: 'MANUAL',
+        concessionId: concessionOfOther.id, // student 0's, the due is student 1's
+      }),
+    ).rejects.toThrow(/foreign key/i);
+    const otherYear = await withTenant(app, a.tenantId, (tx) =>
+      tx.academicYear.create({
+        data: {
+          tenantId: a.tenantId,
+          name: `2028-${randomUUID().slice(0, 4)}`,
+          startDate: new Date('2028-01-01'),
+          endDate: new Date('2028-12-31'),
+        },
+      }),
+    );
+    await expect(
+      createDue({
+        academicYearId: otherYear.id,
+        periodKey: `T:${a.termId}`, // a term of the current year on a due of 2028
+        feeTermId: a.termId,
+        periodStart: new Date('2026-04-20'),
+        dueDate: new Date('2026-05-05'),
+      }),
+    ).rejects.toThrow(/foreign key/i);
+  });
+
+  it('a cancelled due stays cancelled; open dues take their money columns', async () => {
+    const due = await createDue({
+      periodKey: '2026-08',
+      periodStart: new Date('2026-08-01'),
+      dueDate: new Date('2026-08-10'),
+    });
+    await withTenant(app, a.tenantId, (tx) =>
+      tx.feeDue.update({
+        where: { id: due.id },
+        data: { amountPaisa: 90000, fineWaivedAll: true },
+      }),
+    );
+    await withTenant(app, a.tenantId, (tx) =>
+      tx.feeDue.update({
+        where: { id: due.id },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: new Date(),
+          cancelledById: a.adminId,
+          cancelReason: 'ভুল করে তৈরি',
+        },
+      }),
+    );
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feeDue.update({
+          where: { id: due.id },
+          data: { status: 'OPEN', cancelledAt: null, cancelledById: null, cancelReason: null },
+        }),
+      ),
+    ).rejects.toThrow(/cancelled due/i);
+  });
 });

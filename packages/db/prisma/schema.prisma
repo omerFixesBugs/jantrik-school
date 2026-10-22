@@ -1677,6 +1677,8 @@ model FeeTerm {
   dues         FeeDue[]
 
   @@unique([tenantId, id])
+  /// Composite target for dues: a term due names a term of its own year.
+  @@unique([tenantId, id, academicYearId])
   @@unique([tenantId, academicYearId, nameBn])
   @@index([tenantId, academicYearId])
   @@map("fee_terms")
@@ -1737,6 +1739,8 @@ model FeeConcession {
   dues         FeeDue[]
 
   @@unique([tenantId, id])
+  /// Composite target for dues: a due may only name its own student's concession on its head and year.
+  @@unique([tenantId, id, studentId, feeHeadId, academicYearId])
   @@unique([tenantId, studentId, feeHeadId, academicYearId], map: "fee_concessions_one_active", where: raw("ended_on IS NULL"))
   @@index([tenantId, studentId])
   @@map("fee_concessions")
@@ -1837,8 +1841,8 @@ model FeeDue {
   student      Student                @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
   feeHead      FeeHead                @relation(fields: [tenantId, feeHeadId], references: [tenantId, id], onDelete: Restrict)
   academicYear AcademicYear           @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict)
-  feeTerm      FeeTerm?               @relation(fields: [tenantId, feeTermId], references: [tenantId, id], onDelete: Restrict)
-  concession   FeeConcession?         @relation(fields: [tenantId, concessionId], references: [tenantId, id], onDelete: Restrict)
+  feeTerm      FeeTerm?               @relation(fields: [tenantId, feeTermId, academicYearId], references: [tenantId, id, academicYearId], onDelete: Restrict)
+  concession   FeeConcession?         @relation(fields: [tenantId, concessionId, studentId, feeHeadId, academicYearId], references: [tenantId, id, studentId, feeHeadId, academicYearId], onDelete: Restrict)
   cancelledBy  User?                  @relation("FeeDueCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
   fineWaivers  FeeFineWaiver[]
   allocations  FeePaymentAllocation[]
@@ -1935,7 +1939,7 @@ model FeePayment {
   trxId           String?           @map("trx_id")
   senderPhone     String?           @map("sender_phone")
   /// Who took the cash or verified the transfer.
-  collectedById   String?           @map("collected_by_id") @db.Uuid
+  collectedById   String            @map("collected_by_id") @db.Uuid
   /// The client's id for this attempt: a retried request returns the same receipt.
   clientRequestId String            @map("client_request_id") @db.Uuid
   status          FeePaymentStatus  @default(ACTIVE)
@@ -1947,7 +1951,7 @@ model FeePayment {
 
   tenant      Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   student     Student                @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
-  collectedBy User?                  @relation("FeePaymentCollectedBy", fields: [collectedById], references: [id], onDelete: Restrict)
+  collectedBy User                   @relation("FeePaymentCollectedBy", fields: [collectedById], references: [id], onDelete: Restrict)
   voidedBy    User?                  @relation("FeePaymentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
   allocations FeePaymentAllocation[]
 

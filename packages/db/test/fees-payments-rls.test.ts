@@ -98,11 +98,12 @@ describe('fee payment tables', () => {
   let a: Awaited<ReturnType<typeof school>>;
   let b: Awaited<ReturnType<typeof school>>;
 
+  let nextNo = 0;
   const payment = (over: Record<string, unknown> = {}) => ({
     tenantId: a.tenantId,
     studentId: a.studentIds[1]!,
     receiptYear: 2026,
-    receiptNo: 900000 + Math.floor(Math.random() * 99999),
+    receiptNo: 900000 + nextNo++,
     method: 'CASH' as const,
     channel: 'COUNTER' as const,
     amountPaisa: 100,
@@ -276,5 +277,85 @@ describe('fee payment tables', () => {
     expect(committed.sort((x, y) => x - y)).toEqual(
       Array.from({ length: committed.length }, (_, i) => i + 1),
     );
+  });
+  it('allocations: never to a void payment or a cancelled due, never more than the payment', async () => {
+    const allocate = (paymentId: string, dueId: string, principalPaisa: number) =>
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feePaymentAllocation.create({
+          data: {
+            tenantId: a.tenantId,
+            paymentId,
+            studentId: a.studentIds[1]!,
+            dueId,
+            principalPaisa,
+            finePaisa: 0,
+          },
+        }),
+      );
+    const p = await createPayment({ amountPaisa: 500 });
+    await expect(allocate(p.id, a.dueIds[1]!, 501)).rejects.toThrow(/more than the payment/i);
+    await allocate(p.id, a.dueIds[1]!, 500);
+    const voided = await createPayment({ amountPaisa: 500 });
+    await withTenant(app, a.tenantId, (tx) =>
+      tx.feePayment.update({
+        where: { id: voided.id },
+        data: {
+          status: 'VOID',
+          voidedAt: new Date(),
+          voidedById: a.userId,
+          voidReason: 'ভুল টাকা',
+        },
+      }),
+    );
+    await expect(allocate(voided.id, a.dueIds[1]!, 100)).rejects.toThrow(/void payment/i);
+    const due = await withTenant(app, a.tenantId, async (tx) => {
+      const year = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
+      const head = await tx.feeHead.findFirstOrThrow();
+      return tx.feeDue.create({
+        data: {
+          tenantId: a.tenantId,
+          studentId: a.studentIds[1]!,
+          feeHeadId: head.id,
+          academicYearId: year.id,
+          periodKey: '2026-11',
+          periodStart: new Date('2026-11-01'),
+          dueDate: new Date('2026-11-10'),
+          amountPaisa: 1000,
+          fineType: 'NONE',
+          fineAmountPaisa: 0,
+          status: 'CANCELLED',
+          cancelledAt: new Date(),
+          cancelledById: a.userId,
+          cancelReason: 'ভুল করে তৈরি',
+        },
+      });
+    });
+    const fresh = await createPayment({ amountPaisa: 100 });
+    await expect(allocate(fresh.id, due.id, 100)).rejects.toThrow(/cancelled due/i);
+  });
+
+  it('a payment is never created already void; across tenants the payment side is refused too', async () => {
+    await expect(
+      createPayment({
+        status: 'VOID',
+        voidedAt: new Date(),
+        voidedById: a.userId,
+        voidReason: 'আগেই বাতিল',
+      }),
+    ).rejects.toThrow(/created active/i);
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feePaymentAllocation.create({
+          data: {
+            tenantId: a.tenantId,
+            paymentId: b.paymentId, // another tenant's payment
+            studentId: a.studentIds[0]!,
+            dueId: a.dueIds[0]!,
+            principalPaisa: 1,
+            finePaisa: 0,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/foreign key/i);
   });
 });
