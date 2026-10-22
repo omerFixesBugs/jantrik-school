@@ -1,3 +1,134 @@
 {
-  "guardian": {}
+  "guardian": {
+    "title": "Fees and payments",
+    "back": "Back to the dashboard",
+    "roll": "Roll",
+    "studentId": "ID",
+    "loadFailed": "Could not load the fees.",
+    "notFoundTitle": "These fees cannot be shown",
+    "notFoundText": "This student is not linked to your mobile number. If that seems wrong, please tell the institute's office.",
+    "summary": {
+      "title": "Fees",
+      "owedNow": "To pay now",
+      "allPaid": "All paid",
+      "allPaidText": "Nothing is owed right now. Thank you!",
+      "overdue": "Overdue: {amount}",
+      "fineIncluded": "Includes a {amount} late fine",
+      "pending": "{n, plural, one {# payment is} other {# payments are}} waiting to be checked",
+      "view": "View fees",
+      "payAtOffice": "You can also pay in cash at the office."
+    },
+    "dues": {
+      "owedTitle": "To pay",
+      "settledTitle": "Earlier fees (paid and cancelled)",
+      "empty": "No fees have been added yet.",
+      "dueDate": "Due by {date}",
+      "amount": "Fee",
+      "concession": "Discount",
+      "concessionSibling": "Sibling discount",
+      "category": {
+        "GENERAL": "Discount",
+        "FREE_FULL": "Free",
+        "FREE_HALF": "Half free",
+        "SCHOLARSHIP": "Scholarship"
+      },
+      "fine": "Late fine",
+      "fineWaived": "{amount} waived",
+      "paid": "Paid",
+      "left": "Left to pay",
+      "pending": "Your payment for this is waiting to be checked",
+      "cancelReason": "Reason: {reason}",
+      "status": {
+        "OVERDUE": "Overdue",
+        "OPEN": "To pay",
+        "PAID": "Paid",
+        "CANCELLED": "Cancelled"
+      }
+    },
+    "submissions": {
+      "title": "Your bKash/Nagad payments",
+      "sent": "Sent {date}",
+      "to": "To {number}",
+      "for": "For: {list}",
+      "trx": "TrxID",
+      "receipt": "View receipt",
+      "pendingHint": "You will get a receipt by SMS once the institute has checked it.",
+      "rejectReason": "Why it was returned: {reason}",
+      "rejectHint": "If something was wrong, submit again with the right details. If you are unsure, contact the office.",
+      "status": {
+        "PENDING": "Waiting to be checked",
+        "VERIFIED": "Verified",
+        "REJECTED": "Returned",
+        "VOIDED": "Cancelled"
+      }
+    },
+    "payments": {
+      "title": "Payment receipts",
+      "empty": "No receipts yet. A receipt appears here once a payment is recorded.",
+      "receiptNo": "Receipt no.",
+      "void": "Void"
+    },
+    "pay": {
+      "open": "I paid by bKash/Nagad",
+      "noAccounts": "The institute has not shared a bKash or Nagad number yet. You can pay at the office.",
+      "pendingFull": "{n, plural, one {# payment is} other {# payments are}} still waiting to be checked. You can report another once they are checked.",
+      "title": "Pay by bKash/Nagad",
+      "step": "Step {step} of {total}",
+      "sendTitle": "First, send the money",
+      "sendText": "Send the money from your bKash or Nagad app to the number below. Keep the SMS you get back: you will need it in the next step.",
+      "kind": {
+        "PERSONAL": "Use “Send Money” in the app",
+        "MERCHANT": "Use “Payment” in the app",
+        "AGENT": "Use “Cash Out” in the app"
+      },
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyNumber": "Copy the number {number}",
+      "copyId": "Copy the ID {id}",
+      "copyFailed": "Could not copy. Please write the number down.",
+      "reference": "In “Reference”, write your child's ID",
+      "sent": "I have sent it",
+      "formTitle": "Tell us what you sent",
+      "method": "Sent with",
+      "account": "Sent to",
+      "accountRequired": "Choose the number you sent the money to.",
+      "dues": "For which fees",
+      "duesHint": "Tick the fees this money is for.",
+      "duesRequired": "Choose at least one fee.",
+      "duesMax": "You can choose up to {max} fees at a time.",
+      "duePending": "An earlier payment is waiting to be checked",
+      "chosenTotal": "Chosen fees in all",
+      "amount": "Amount you sent",
+      "amountHint": "The total of the chosen fees is filled in. If you sent less, enter what you sent.",
+      "amountRequired": "Enter the amount you sent.",
+      "amountTooMuch": "This is more than the chosen fees ({amount} at most). If you sent more, tick more fees or tell the office.",
+      "trx": "TrxID (transaction ID)",
+      "trxHint": "It is in the SMS bKash/Nagad sends after the payment, next to “TrxID” (e.g. 9JK3L2M8XQ). You can also find it in the app's transaction list.",
+      "trxInvalid": "A TrxID has 6 to 20 letters and digits. Check the SMS and type it again.",
+      "trxUsed": "This TrxID has already been used. Check it against the SMS.",
+      "sender": "Sent from (your number)",
+      "senderHint": "The bKash/Nagad number the money came from.",
+      "senderInvalid": "Enter a valid mobile number (e.g. 01712345678).",
+      "submit": "Submit",
+      "submitting": "Submitting…",
+      "backStep": "Back",
+      "successTitle": "Thank you, we have it",
+      "successText": "The institute will check the payment and send you a receipt by SMS. You can follow it on this page too.",
+      "done": "Done",
+      "errors": {
+        "amountExceeds": "These fees come to {amount} now: enter that or less.",
+        "tooManyPending": "{max} payments for this child are still waiting to be checked. Submit again once they are checked.",
+        "accountInactive": "The institute no longer uses this number. The list is updated: choose another number.",
+        "rateLimited": "Too many submissions in a short time. Try again in {n, plural, one {# minute} other {# minutes}}.",
+        "changed": "The fees changed meanwhile. The list is updated: check it and submit again.",
+        "check": "Some details need fixing: see the messages below."
+      }
+    },
+    "receipt": {
+      "title": "Receipt",
+      "back": "Back to fees",
+      "print": "Print or save as PDF",
+      "notFound": "This receipt could not be found."
+    }
+  }
 }

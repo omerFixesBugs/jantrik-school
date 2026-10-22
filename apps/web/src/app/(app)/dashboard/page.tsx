@@ -12,6 +12,7 @@ import {
   formatCount,
   formatDate,
   formatIdentifier,
+  formatTaka,
   LONG_ABSENCE_DAYS,
   periodPercent,
   pointChange,
@@ -19,6 +20,7 @@ import {
   type AttendanceTodayReport,
   type AttendanceTodaySummary,
   type AttendanceTrendReport,
+  type FeeSummary,
   type SendHeldSmsResult,
   type SmsDailyStatus,
   type GuardianChild,
@@ -37,16 +39,19 @@ import {
   HeartHandshakeIcon,
   MessageSquareTextIcon,
   MessageSquareWarningIcon,
+  SmartphoneIcon,
   UserCheckIcon,
   UserPlusIcon,
   UsersIcon,
   UserXIcon,
   WalletIcon,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
+import { ChildFeesSummary } from '@/components/fees/guardian/child-fees-summary';
 import { BillingNoticeBanner } from '@/components/billing-notice';
 import {
   AttendanceTrend,
@@ -165,6 +170,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
   const isAdmin = context.roles.some((r) => r === 'OWNER' || r === 'ADMIN');
   const canSeeStudents = canSee(navItem('students'), context);
   const canSeeAttendance = canSee(navItem('attendance'), context);
+  const canSeeFees = canSee(navItem('fees'), context);
   // Owners and admins get the whole picture; everyone else their figures (teachers: part 5).
   const overview = isAdmin && canSeeAttendance;
   const f = (n: number) => formatCount(n, locale);
@@ -285,6 +291,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
           <QuickActions context={context} />
         </div>
         <UnsentBanner count={unsent} />
+        {canSeeFees && <PendingFeeSubmissions />}
         <ul className="grid grid-cols-2 gap-(--gap) md:grid-cols-3" aria-label={t('figures')}>
           {studentsTile}
           {canSeeAttendance && (
@@ -319,6 +326,8 @@ function StaffDashboard({ context }: { context: MeContext }) {
               }
             />
           )}
+          {/* Money needs the room of two tiles: a lakh in Bangla digits is wide. */}
+          {canSeeFees && <FeesTile className="col-span-2" />}
         </ul>
         {isAdmin && <GettingStarted context={context} />}
         <ModulesSoon context={context} />
@@ -445,6 +454,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
 
       <UnsentBanner count={unsent} />
       <HeldSmsBanner />
+      {canSeeFees && <PendingFeeSubmissions />}
 
       <ul
         className="grid grid-cols-2 gap-(--gap) md:grid-cols-3 xl:grid-cols-5"
@@ -649,6 +659,11 @@ function StaffDashboard({ context }: { context: MeContext }) {
           ) : (
             !report.isError && <Skeleton className="rounded-card h-40" />
           )}
+          {canSeeFees && (
+            <ul aria-label={t('feesFigures')}>
+              <FeesTile />
+            </ul>
+          )}
           {report.isError && !report.data ? null : report.data ? (
             <TodayAbsentees report={report.data} classId={classId} />
           ) : (
@@ -701,26 +716,121 @@ function UnsentBanner({ count }: { count: number }) {
 /** Modules not running yet: what will appear here, never a made-up number. */
 function ModulesSoon({ context }: { context: MeContext }) {
   const t = useTranslations('dashboard');
-  const fees = canSee(navItem('fees'), context);
   const exams = canSee(navItem('exams'), context);
-  if (!fees && !exams) return null;
+  if (!exams) return null;
   return (
     <ul className="grid gap-(--gap) sm:grid-cols-2" aria-label={t('modulesSoon')}>
-      {fees && (
-        <KpiPlaceholder
-          testId="module-card-fees"
-          label={t('feesThisMonth')}
-          hint={t('feesThisMonthHint')}
-        />
-      )}
-      {exams && (
-        <KpiPlaceholder
-          testId="module-card-exams"
-          label={t('upcomingExam')}
-          hint={t('upcomingExamHint')}
-        />
-      )}
+      <KpiPlaceholder
+        testId="module-card-exams"
+        label={t('upcomingExam')}
+        hint={t('upcomingExamHint')}
+      />
     </ul>
+  );
+}
+
+/** The fee card's figures (OWNER/ADMIN/ACCOUNTANT): one request for the tile and the reminder. */
+function useFeeSummary() {
+  const { client, session } = useAuth();
+  return useQuery({
+    queryKey: ['fee-summary', session?.tenant?.id],
+    queryFn: () => client.api<FeeSummary>('/fees/summary'),
+  });
+}
+
+/**
+ * Collected this month, against the same days of last month (more is better), with what is
+ * overdue under it. Opens this month's collections.
+ */
+function FeesTile({ className }: { className?: string }) {
+  const t = useTranslations('dashboard');
+  const locale = useLocale() as Locale;
+  const label = useLabel();
+  const summary = useFeeSummary();
+  const s = summary.data;
+  const taka = (paisa: number) => formatTaka(paisa, locale);
+  const now = s?.month.collectedPaisa ?? 0;
+  const before = s?.previousMonthToDate.collectedPaisa ?? 0;
+  // A percentage needs something to compare with: none when last month had nothing by now.
+  const change = s && before > 0 ? Math.round(((now - before) / before) * 100) : null;
+  return (
+    <KpiTile
+      testId="module-card-fees"
+      className={className}
+      label={t('feesThisMonth')}
+      icon={WalletIcon}
+      href="/fees/reports?tab=collections"
+      loading={summary.isPending}
+      failed={summary.isError && !summary.data}
+      // Counting up in whole taka; the paisa only in the final figure.
+      count={s ? { to: now, format: (n) => taka(n === now ? n : Math.round(n / 100) * 100) } : null}
+      delta={
+        change !== null && (
+          <DeltaPill
+            change={change}
+            display={`${formatCount(Math.abs(change), locale)}%`}
+            better="up"
+            label={t('feesChangeLabel', {
+              change: formatCount(Math.abs(change), locale),
+              more: change > 0 ? 'true' : 'false',
+              amount: taka(before),
+            })}
+          />
+        )
+      }
+      compare={
+        s
+          ? before > 0
+            ? t('feesVsLastMonth', { amount: taka(before) })
+            : t('feesVsLastMonthNone')
+          : undefined
+      }
+      hint={
+        s &&
+        (s.overdue.paisa > 0
+          ? t('feesOverdue', {
+              amount: taka(s.overdue.paisa),
+              count: formatCount(s.overdue.students, locale),
+              n: s.overdue.students,
+              student: label('student', 'Student', { inText: true }),
+            })
+          : t('feesOverdueNone'))
+      }
+    />
+  );
+}
+
+/** bKash/Nagad payments waiting to be checked: the guardians are waiting for their receipts. */
+function PendingFeeSubmissions() {
+  const t = useTranslations('dashboard');
+  const locale = useLocale() as Locale;
+  const summary = useFeeSummary();
+  const pending = summary.data?.pendingSubmissions ?? 0;
+  if (pending === 0) return null;
+  return (
+    <Link
+      href="/fees/submissions"
+      data-slot="card"
+      data-testid="attention-fee-submissions"
+      className="bg-card rounded-card shadow-card lift focus-visible:ring-ring flex min-h-(--control-h) items-center gap-3 border px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+    >
+      <span className="bg-warning-soft text-warning flex size-9 shrink-0 items-center justify-center rounded-xl">
+        <SmartphoneIcon aria-hidden className="size-4.5" />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="font-medium">
+          {t('feesPendingTitle', { count: formatCount(pending, locale), n: pending })}
+        </span>
+        <span className="text-muted-foreground text-sm">{t('feesPendingText')}</span>
+      </span>
+      <span className="text-link hidden shrink-0 text-sm font-medium sm:inline">
+        {t('feesPendingOpen')}
+      </span>
+      <ChevronRightIcon
+        aria-hidden
+        className="text-muted-foreground size-4 shrink-0 rtl:rotate-180"
+      />
+    </Link>
   );
 }
 
@@ -1028,6 +1138,7 @@ function GuardianDashboard({ context }: { context: MeContext }) {
                 key={c.id}
                 child={c}
                 showAttendance={context.modules.includes('ATTENDANCE')}
+                showFees={context.modules.includes('FEES')}
               />
             ))}
           </ul>
@@ -1037,7 +1148,15 @@ function GuardianDashboard({ context }: { context: MeContext }) {
   );
 }
 
-function ChildCard({ child, showAttendance }: { child: GuardianChild; showAttendance: boolean }) {
+function ChildCard({
+  child,
+  showAttendance,
+  showFees,
+}: {
+  child: GuardianChild;
+  showAttendance: boolean;
+  showFees: boolean;
+}) {
   const t = useTranslations('guardian');
   const tStudents = useTranslations('students');
   const locale = useLocale() as Locale;
@@ -1080,10 +1199,11 @@ function ChildCard({ child, showAttendance }: { child: GuardianChild; showAttend
           </div>
         ))}
       </dl>
+      {showFees && <ChildFeesSummary childId={child.id} />}
       {showAttendance && <ChildCalendar studentId={child.id} />}
       <p className="bg-canvas text-muted-foreground flex items-center gap-2 border-t px-4 py-3 text-sm sm:px-5">
         <ClockIcon aria-hidden className="size-4 shrink-0" />
-        {t('comingSoon')}
+        {showFees ? t('examsSoon') : t('comingSoon')}
       </p>
     </li>
   );
