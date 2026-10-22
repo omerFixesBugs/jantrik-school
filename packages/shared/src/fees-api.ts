@@ -4,6 +4,7 @@
  */
 import { z } from 'zod';
 import { isoDateSchema, type IsoDate } from './dates.js';
+import { bdPhoneSchema } from './phone.js';
 import {
   FEE_AMOUNT_TYPES,
   FEE_CONCESSION_CATEGORIES,
@@ -11,6 +12,7 @@ import {
   FEE_FREQUENCIES,
   FEE_HEAD_KINDS,
   MAX_FEE_PAISA,
+  normalizeTrxId,
   type FeeAmountType,
   type FeeConcessionCategory,
   type FeeFineType,
@@ -537,4 +539,122 @@ export interface FeeClosing {
   date: IsoDate;
   collectors: FeeClosingCollector[];
   total: { count: number; amountPaisa: number };
+}
+
+// ─────────────────────────── Manual bKash/Nagad ───────────────────────────
+
+export const FEE_MOBILE_METHODS = ['BKASH', 'NAGAD'] as const;
+export type FeeMobileMethod = (typeof FEE_MOBILE_METHODS)[number];
+export const FEE_MOBILE_ACCOUNT_KINDS = ['PERSONAL', 'MERCHANT', 'AGENT'] as const;
+
+/** POST /fees/mobile-accounts (OWNER): the institute's own number. */
+export const createMobileAccountSchema = z.object({
+  method: z.enum(FEE_MOBILE_METHODS),
+  phone: bdPhoneSchema,
+  kind: z.enum(FEE_MOBILE_ACCOUNT_KINDS),
+  label: z
+    .string()
+    .trim()
+    .max(60)
+    .nullish()
+    .transform((v) => v || null),
+  sortOrder: z.number().int().min(0).max(9999).default(0),
+});
+/** PATCH /fees/mobile-accounts/:id (OWNER): a number is never edited, only (de)activated. */
+export const updateMobileAccountSchema = z.object({
+  label: z
+    .string()
+    .trim()
+    .max(60)
+    .nullish()
+    .transform((v) => v || null),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+});
+
+export interface FeeMobileAccountView {
+  id: string;
+  method: FeeMobileMethod;
+  phone: string;
+  kind: (typeof FEE_MOBILE_ACCOUNT_KINDS)[number];
+  label: string | null;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+/** A transaction ID as typed (Bangla digits, spaces, lower case accepted). */
+export const trxIdSchema = z.string().transform((value, ctx) => {
+  const id = normalizeTrxId(value);
+  if (!id) {
+    ctx.addIssue({ code: 'custom', message: 'A TrxID is 6–20 letters and digits' });
+    return z.NEVER;
+  }
+  return id;
+});
+
+const submissionFields = {
+  method: z.enum(FEE_MOBILE_METHODS),
+  accountId: z.uuid(),
+  amountPaisa: z.number().int().min(1).max(1_000_000_000),
+  trxId: trxIdSchema,
+  senderPhone: bdPhoneSchema,
+  dueIds: z.array(z.uuid()).min(1).max(24),
+  clientRequestId: z.uuid(),
+};
+/** POST /me/children/:id/fees/submissions (the guardian). */
+export const guardianSubmissionSchema = z.object(submissionFields);
+/** POST /fees/submissions (staff, for a student). */
+export const staffSubmissionSchema = z.object({ ...submissionFields, studentId: z.uuid() });
+export type FeeSubmissionInput = z.input<typeof guardianSubmissionSchema>;
+
+export const FEE_SUBMISSION_STATUSES = ['PENDING', 'VERIFIED', 'REJECTED', 'VOIDED'] as const;
+export const feeSubmissionsQuerySchema = z.object({
+  status: z.enum(FEE_SUBMISSION_STATUSES).optional(),
+});
+
+/**
+ * POST /fees/submissions/:id/verify: checked in the institute's own app → a payment and receipt.
+ * The dues may be re-picked (and months paid ahead) when the original ones were paid meanwhile.
+ */
+export const verifySubmissionSchema = z.object({
+  clientRequestId: z.uuid(),
+  dueIds: z.array(z.uuid()).max(24).optional(),
+  advance: z
+    .array(z.object({ headId: z.uuid(), periodKey: z.string().min(1).max(60) }))
+    .max(24)
+    .default([]),
+});
+export const rejectSubmissionSchema = z.object({ reason: reasonSchema });
+
+export interface FeeSubmissionView {
+  id: string;
+  student: FeeStudentRef & { classLevel: { nameBn: string; nameEn: string } | null };
+  method: FeeMobileMethod;
+  account: { id: string; phone: string; label: string | null };
+  amountPaisa: number;
+  trxId: string;
+  /** Masked for the accountant (decision #19). */
+  senderPhone: string;
+  sentOn: IsoDate;
+  submitter: 'GUARDIAN' | 'STAFF';
+  status: (typeof FEE_SUBMISSION_STATUSES)[number];
+  dues: {
+    id: string;
+    head: { nameBn: string; nameEn: string };
+    periodKey: string;
+    term: { nameBn: string; nameEn: string } | null;
+  }[];
+  rejectReason: string | null;
+  reviewedAt: string | null;
+  receipt: { id: string; receiptNumber: string } | null;
+  createdAt: string;
+}
+
+/** GET /me/children/:id/fees: a guardian's view of one child's fees. */
+export interface FeeGuardianView {
+  today: IsoDate;
+  ledger: FeeLedger;
+  submissions: FeeSubmissionView[];
+  /** Where to send money: the institute's active numbers. */
+  accounts: Pick<FeeMobileAccountView, 'id' | 'method' | 'phone' | 'kind' | 'label'>[];
 }

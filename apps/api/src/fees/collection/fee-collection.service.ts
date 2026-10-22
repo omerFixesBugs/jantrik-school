@@ -58,6 +58,9 @@ const paymentInclude = {
   },
 } as const;
 type PaymentRow = Prisma.FeePaymentGetPayload<{ include: typeof paymentInclude }>;
+export type DueRow = Prisma.FeeDueGetPayload<{
+  include: { feeHead: { select: { sortOrder: true } } };
+}>;
 
 const METHOD_ORDER: FeePaymentMethod[] = ['CASH', 'BKASH', 'NAGAD'];
 
@@ -137,35 +140,90 @@ export class FeeCollectionService implements OnModuleInit {
     await lockStudentFees(tx, student.id);
 
     // A retry of a request that already succeeded gets the same receipt (checked under the lock).
-    const previous = await tx.feePayment.findFirst({
-      where: { clientRequestId: input.clientRequestId },
-      select: { id: true, studentId: true, amountPaisa: true },
-    });
-    if (previous) {
-      if (previous.studentId !== student.id || previous.amountPaisa !== input.amountPaisa) {
-        throw apiError(422, 'IDEMPOTENCY_MISMATCH', 'This request id was used for another payment');
-      }
-      return { ...(await this.receipt(previous.id)), replayed: true };
-    }
+    const replay = await this.replay(input.clientRequestId, student.id, input.amountPaisa);
+    if (replay) return replay;
 
     const ctx = await this.dues.planContext();
     await this.dues.ensureForStudents([student.id], { ctx });
     const advanceIds = await this.dues.ensureAdvance(student.id, input.advance, ctx);
-    const ids = [...new Set([...input.dueIds, ...advanceIds])];
-    const rows = await tx.feeDue.findMany({
-      where: { id: { in: ids }, studentId: student.id, status: 'OPEN' },
-      include: { feeHead: { select: { sortOrder: true } } },
-    });
-    if (rows.length !== ids.length) throw new NotFoundException('Due not found');
-
-    const today = ctx.today;
-    const owed = rows.map((d) => ({ row: d, balance: dueBalance(this.balanceInput(d), today) }));
-    const outstanding = owed.reduce((sum, d) => sum + d.balance.total, 0);
+    const rows = await this.openDues(student.id, [...input.dueIds, ...advanceIds]);
+    const outstanding = this.outstanding(rows, ctx.today);
     if (outstanding !== input.expectedOutstandingPaisa) {
       throw apiError(409, 'DUES_CHANGED', 'These dues changed: check the amount again', {
         outstandingPaisa: outstanding,
       });
     }
+    const paymentId = await this.recordPayment({
+      studentId: student.id,
+      dues: rows,
+      amountPaisa: input.amountPaisa,
+      method: 'CASH',
+      channel: 'COUNTER',
+      trxId: null,
+      senderPhone: null,
+      paidOn: ctx.today,
+      recordedOn: ctx.today,
+      clientRequestId: input.clientRequestId,
+    });
+    return this.receipt(paymentId);
+  }
+
+  /** The receipt of an earlier request with this id, or null; 422 when it was another payment. */
+  async replay(
+    clientRequestId: string,
+    studentId: string,
+    amountPaisa: number,
+  ): Promise<FeeReceipt | null> {
+    const previous = await this.db.tx.feePayment.findFirst({
+      where: { clientRequestId },
+      select: { id: true, studentId: true, amountPaisa: true },
+    });
+    if (!previous) return null;
+    if (previous.studentId !== studentId || previous.amountPaisa !== amountPaisa) {
+      throw apiError(422, 'IDEMPOTENCY_MISMATCH', 'This request id was used for another payment');
+    }
+    return { ...(await this.receipt(previous.id)), replayed: true };
+  }
+
+  /** These dues of the student, all open (404 for anything else). */
+  async openDues(studentId: string, ids: string[]): Promise<DueRow[]> {
+    const unique = [...new Set(ids)];
+    const rows = await this.db.tx.feeDue.findMany({
+      where: { id: { in: unique }, studentId, status: 'OPEN' },
+      include: { feeHead: { select: { sortOrder: true } } },
+    });
+    if (rows.length !== unique.length) throw new NotFoundException('Due not found');
+    return rows;
+  }
+
+  /** What these dues owe on a day (fines counted to that day). */
+  outstanding(rows: DueRow[], asOf: IsoDate): number {
+    return rows.reduce((sum, d) => sum + dueBalance(this.balanceInput(d), asOf).total, 0);
+  }
+
+  /**
+   * Record money for these dues (the caller holds the student's lock): allocate it as owed on the
+   * day it was paid, take the next receipt number, write the payment and its allocations,
+   * re-derive the dues' totals, audit, and queue the receipt SMS. Returns the payment's id.
+   */
+  async recordPayment(input: {
+    studentId: string;
+    dues: DueRow[];
+    amountPaisa: number;
+    method: FeePaymentMethod;
+    channel: 'COUNTER' | 'MOBILE_MANUAL';
+    trxId: string | null;
+    senderPhone: string | null;
+    paidOn: IsoDate;
+    recordedOn: IsoDate;
+    clientRequestId: string;
+  }): Promise<string> {
+    const tx = this.db.tx;
+    const owed = input.dues.map((d) => ({
+      row: d,
+      balance: dueBalance(this.balanceInput(d), input.paidOn),
+    }));
+    const outstanding = owed.reduce((sum, d) => sum + d.balance.total, 0);
     if (outstanding === 0) throw apiError(422, 'NOTHING_DUE', 'Nothing is owed on these dues');
     if (input.amountPaisa > outstanding) {
       throw apiError(422, 'AMOUNT_EXCEEDS_DUE', 'More than these dues owe', {
@@ -184,18 +242,20 @@ export class FeeCollectionService implements OnModuleInit {
     );
 
     const tenantId = this.context.requireTenantId();
-    const year = Number(today.slice(0, 4));
+    const year = Number(input.recordedOn.slice(0, 4));
     const payment = await tx.feePayment.create({
       data: {
         tenantId,
-        studentId: student.id,
+        studentId: input.studentId,
         receiptYear: year,
         receiptNo: await this.nextReceiptNo(year),
-        method: 'CASH',
-        channel: 'COUNTER',
+        method: input.method,
+        channel: input.channel,
         amountPaisa: input.amountPaisa,
-        paidOn: dateToDb(today),
-        recordedOn: dateToDb(today),
+        paidOn: dateToDb(input.paidOn),
+        recordedOn: dateToDb(input.recordedOn),
+        trxId: input.trxId,
+        senderPhone: input.senderPhone,
         collectedById: this.context.requirePrincipal().userId,
         clientRequestId: input.clientRequestId,
       },
@@ -205,27 +265,29 @@ export class FeeCollectionService implements OnModuleInit {
       data: allocations.map((a) => ({
         tenantId,
         paymentId: payment.id,
-        studentId: student.id,
+        studentId: input.studentId,
         dueId: a.dueId,
         principalPaisa: a.principalPaisa,
         finePaisa: a.finePaisa,
       })),
     });
     await this.dues.recomputeDues(allocations.map((a) => a.dueId));
-    const number = receiptNumber(payment.receiptYear, payment.receiptNo);
     await this.audit.record({
       entity: 'fee_payment',
       entityId: payment.id,
       action: 'CREATE',
       newValues: {
-        receiptNumber: number,
+        receiptNumber: receiptNumber(payment.receiptYear, payment.receiptNo),
         amountPaisa: input.amountPaisa,
-        method: 'CASH',
+        method: input.method,
+        channel: input.channel,
+        trxId: input.trxId,
+        paidOn: input.paidOn,
         allocations: allocations.map((a) => ({ ...a })),
       },
     });
-    await this.queueReceiptSms(payment.id, today);
-    return this.receipt(payment.id);
+    await this.queueReceiptSms(payment.id, input.recordedOn);
+    return payment.id;
   }
 
   /** The receipt SMS to the primary guardian (queued after commit; the daily cap applies). */
@@ -356,6 +418,11 @@ export class FeeCollectionService implements OnModuleInit {
       },
     });
     await this.dues.recomputeDues(payment.allocations.map((a) => a.dueId));
+    // A verified bKash/Nagad submission goes with its payment: its TrxID is free again.
+    await tx.feeMobileSubmission.updateMany({
+      where: { paymentId: id, status: 'VERIFIED' },
+      data: { status: 'VOIDED' },
+    });
     await this.audit.record({
       entity: 'fee_payment',
       entityId: id,

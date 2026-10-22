@@ -14,6 +14,16 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  createMobileAccountSchema,
+  feeSubmissionsQuerySchema,
+  guardianSubmissionSchema,
+  rejectSubmissionSchema,
+  staffSubmissionSchema,
+  updateMobileAccountSchema,
+  verifySubmissionSchema,
+  type FeeGuardianView,
+  type FeeMobileAccountView,
+  type FeeSubmissionView,
   cancelFeeDueSchema,
   collectFeeSchema,
   feeClosingQuerySchema,
@@ -54,6 +64,7 @@ import { FeeCollectionService } from './collection/fee-collection.service.js';
 import { FEES_QUEUE, FeeDuesService } from './dues/fee-dues.service.js';
 import { FeeDuesProcessor } from './dues/fee-dues.processor.js';
 import { FeeLedgerService } from './dues/fee-ledger.service.js';
+import { FeeMobileService } from './mobile/fee-mobile.service.js';
 import { FeeStudentsService } from './fee-students.service.js';
 import { FeeSetupService } from './setup/fee-setup.service.js';
 import { FeeSiblingsService } from './setup/fee-siblings.service.js';
@@ -80,6 +91,13 @@ class RecalculateFeeDuesDto extends zodDto(recalculateFeeDuesSchema) {}
 export class CollectFeeDto extends zodDto(collectFeeSchema) {}
 class VoidFeePaymentDto extends zodDto(voidFeePaymentSchema) {}
 class FeeClosingQueryDto extends zodDto(feeClosingQuerySchema) {}
+class CreateMobileAccountDto extends zodDto(createMobileAccountSchema) {}
+class UpdateMobileAccountDto extends zodDto(updateMobileAccountSchema) {}
+class GuardianSubmissionDto extends zodDto(guardianSubmissionSchema) {}
+class StaffSubmissionDto extends zodDto(staffSubmissionSchema) {}
+class FeeSubmissionsQueryDto extends zodDto(feeSubmissionsQuerySchema) {}
+class VerifySubmissionDto extends zodDto(verifySubmissionSchema) {}
+class RejectSubmissionDto extends zodDto(rejectSubmissionSchema) {}
 
 const Id = (name = 'id') => Param(name, ParseUUIDPipe);
 
@@ -244,6 +262,84 @@ export class FeeCounterController {
   }
 }
 
+/** The institute's own bKash/Nagad numbers: everyone at the counter reads, only the OWNER changes. */
+@Controller('fees/mobile-accounts')
+@RequireModule('FEES')
+@Roles('OWNER', 'ADMIN', 'ACCOUNTANT')
+export class FeeMobileAccountsController {
+  constructor(private readonly mobile: FeeMobileService) {}
+
+  @Get()
+  list(): Promise<FeeMobileAccountView[]> {
+    return this.mobile.listAccounts();
+  }
+
+  @Post()
+  @Roles('OWNER')
+  create(@Body() dto: CreateMobileAccountDto): Promise<FeeMobileAccountView> {
+    return this.mobile.createAccount(dto);
+  }
+
+  @Patch(':id')
+  @Roles('OWNER')
+  update(@Id() id: string, @Body() dto: UpdateMobileAccountDto): Promise<FeeMobileAccountView> {
+    return this.mobile.updateAccount(id, dto);
+  }
+}
+
+/** bKash/Nagad transfers waiting to be checked: staff record, verify or reject them. */
+@Controller('fees/submissions')
+@RequireModule('FEES')
+@Roles('OWNER', 'ADMIN', 'ACCOUNTANT')
+export class FeeSubmissionsController {
+  constructor(private readonly mobile: FeeMobileService) {}
+
+  @Get()
+  list(@Query() query: FeeSubmissionsQueryDto): Promise<FeeSubmissionView[]> {
+    return this.mobile.list(query.status);
+  }
+
+  @Post()
+  create(@Body() dto: StaffSubmissionDto): Promise<FeeSubmissionView> {
+    return this.mobile.submitAsStaff(dto);
+  }
+
+  @Post(':id/verify')
+  @HttpCode(200)
+  verify(@Id() id: string, @Body() dto: VerifySubmissionDto): Promise<FeeReceipt> {
+    return this.mobile.verify(id, dto);
+  }
+
+  @Post(':id/reject')
+  @HttpCode(200)
+  reject(@Id() id: string, @Body() dto: RejectSubmissionDto): Promise<FeeSubmissionView> {
+    return this.mobile.reject(id, dto.reason);
+  }
+}
+
+/** A guardian's view of their own child's fees (404 for any other child). */
+@Controller('me/children')
+@RequireModule('FEES')
+@Roles('GUARDIAN')
+export class GuardianFeesController {
+  constructor(private readonly mobile: FeeMobileService) {}
+
+  @Get(':id/fees')
+  fees(@Id() id: string): Promise<FeeGuardianView> {
+    return this.mobile.guardianView(id);
+  }
+
+  @Post(':id/fees/submissions')
+  submit(@Id() id: string, @Body() dto: GuardianSubmissionDto): Promise<FeeSubmissionView> {
+    return this.mobile.submitAsGuardian(id, dto);
+  }
+
+  @Get(':id/fees/payments/:paymentId')
+  receipt(@Id() id: string, @Id('paymentId') paymentId: string): Promise<FeeReceipt> {
+    return this.mobile.guardianReceipt(id, paymentId);
+  }
+}
+
 /** Corrections to dues: OWNER/ADMIN (cancel, waive a fine, recalculate, generate now). */
 @Controller('fees/dues')
 @RequireModule('FEES')
@@ -281,7 +377,15 @@ export class FeeDuesController {
 @Module({
   // AttendanceModule: the shared daily SMS cap (AttendanceSettingsService.smsDailyCap).
   imports: [BullModule.registerQueue({ name: FEES_QUEUE }), AttendanceModule],
-  controllers: [FeeSetupController, FeeStudentsController, FeeCounterController, FeeDuesController],
+  controllers: [
+    FeeSetupController,
+    FeeStudentsController,
+    FeeCounterController,
+    FeeDuesController,
+    FeeMobileAccountsController,
+    FeeSubmissionsController,
+    GuardianFeesController,
+  ],
   providers: [
     FeeSetupService,
     FeeSiblingsService,
@@ -290,6 +394,7 @@ export class FeeDuesController {
     FeeDuesProcessor,
     FeeLedgerService,
     FeeCollectionService,
+    FeeMobileService,
   ],
   exports: [FeeCollectionService],
 })
