@@ -6,14 +6,16 @@ the API log (`SMS_PROVIDER=console`).
 
 ## Institutes
 
-| Who             | Phone         | Login           | Institute                                      |
-| --------------- | ------------- | --------------- | ---------------------------------------------- |
-| Owner           | `01711000001` | password or OTP | শাপলা উচ্চ বিদ্যালয় (Shapla High School)      |
-| Teacher         | `01711000002` | password or OTP | Shapla, class teacher of ষষ্ঠ শ্রেণি ক         |
-| Owner           | `01511000001` | password or OTP | আলো কোচিং সেন্টার (Alo Coaching Centre)        |
-| Teacher at both | `01911000999` | password or OTP | Shapla and Alo (gets the institute picker)     |
-| Guardian        | `01811000101` | OTP only        | father of two Shapla students (Tasnim, Tahmid) |
-| Guardian        | `01811000102` | OTP only        | mother of Tasnim (Shapla)                      |
+| Who             | Phone         | Login           | Institute                                                                         |
+| --------------- | ------------- | --------------- | --------------------------------------------------------------------------------- |
+| Owner           | `01711000001` | password or OTP | শাপলা উচ্চ বিদ্যালয় (Shapla High School)                                         |
+| Teacher         | `01711000002` | password or OTP | Shapla, class teacher of ষষ্ঠ শ্রেণি ক, also collects fees (TEACHER + ACCOUNTANT) |
+| Admin           | `01711000003` | password or OTP | Shapla (setup, voids, reminders)                                                  |
+| Accountant      | `01711000004` | password or OTP | Shapla (fee counter, closing, bKash/Nagad)                                        |
+| Owner           | `01511000001` | password or OTP | আলো কোচিং সেন্টার (Alo Coaching Centre)                                           |
+| Teacher at both | `01911000999` | password or OTP | Shapla and Alo (gets the institute picker)                                        |
+| Guardian        | `01811000101` | OTP only        | father of two Shapla students (Tasnim, Tahmid)                                    |
+| Guardian        | `01811000102` | OTP only        | mother of Tasnim (Shapla)                                                         |
 
 ## Platform (Jantrik staff, `/platform`)
 
@@ -30,3 +32,13 @@ the API log (`SMS_PROVIDER=console`).
   `pnpm platform:admin reset-2fa --phone 01700000001 --reason "dev reset"` (after `pnpm build`),
   then sign in again.
 - Real platform admins are created with `pnpm platform:admin` (see [platform.md](platform.md)).
+
+## Fees (Shapla)
+
+The seed sets up fees for Shapla: admission, monthly tuition (৳10 a day late, at most ৳100),
+two exam terms and a session fee; amounts for classes 6 and 9 (science group: its own tuition);
+dues from the month two months before the seed date (within 2026); a 50 % sibling rule on
+tuition (Tasnim and Tahmid are **suggested**, not confirmed: confirm them under Fees → Setup →
+Siblings); a half free studentship for Arpita; bKash `01711000901` and Nagad `01711000902` as the
+institute's numbers. Dues appear when a student's fees are first opened (or after the nightly
+run). Alo has FEES switched on but nothing set up (the empty states).

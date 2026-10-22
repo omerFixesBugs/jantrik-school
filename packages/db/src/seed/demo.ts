@@ -10,6 +10,7 @@ import { hash } from '@node-rs/argon2';
 import { withContext, withTenant, type TenantTx } from '../tenancy/context.js';
 import { provisionTenant } from '../tenancy/provision.js';
 import { findOrCreateUser } from '../tenancy/users.js';
+import { seedDemoFees } from './demo-fees.js';
 import { seedPastAttendance } from './past-attendance.js';
 
 // Two demo tenants for local development. Created through provisionTenant() as the app role,
@@ -71,6 +72,8 @@ interface DemoTenant {
   /** Who takes attendance where: `classLevel/section` keys as in `sections`. */
   sectionTeachers: { phone: string; section: string; classTeacher?: boolean }[];
   students: DemoStudent[];
+  /** A fee setup (heads, amounts, terms, numbers): docs/fees.md. */
+  fees?: boolean;
 }
 
 /** National holidays (same for every demo tenant). */
@@ -157,9 +160,14 @@ const DEMO_TENANTS: DemoTenant[] = [
     staff: [
       { phone: '01711000001', name: 'Abdul Karim', nameBn: 'আব্দুল করিম', role: 'OWNER' },
       { phone: '01711000002', name: 'Nasrin Akter', nameBn: 'নাসরিন আক্তার', role: 'TEACHER' },
+      // The class teacher also collects the monthly fees (TEACHER + ACCOUNTANT).
+      { phone: '01711000002', name: 'Nasrin Akter', nameBn: 'নাসরিন আক্তার', role: 'ACCOUNTANT' },
+      { phone: '01711000003', name: 'Rafiqul Islam', nameBn: 'রফিকুল ইসলাম', role: 'ADMIN' },
+      { phone: '01711000004', name: 'Shahana Parvin', nameBn: 'শাহানা পারভীন', role: 'ACCOUNTANT' },
       // Teaches at both institutes: one person, two memberships (exercises /select-institute).
       { phone: '01911000999', name: 'Sharmin Sultana', nameBn: 'শারমিন সুলতানা', role: 'TEACHER' },
     ],
+    fees: true,
     sectionTeachers: [
       { phone: '01711000002', section: 'CLASS_6/ক', classTeacher: true },
       { phone: '01911000999', section: 'CLASS_9/ক', classTeacher: true },
@@ -483,6 +491,10 @@ async function seedTenantData(
     data: { tenantId, codePrefix: def.studentCode.prefix, codePattern: def.studentCode.pattern },
   });
   const sessions = await seedPastAttendance(tx, tenantId);
+  if (def.fees) {
+    const owner = def.staff.findIndex((m) => m.role === 'OWNER');
+    await seedDemoFees(tx, tenantId, staffUserIds[owner]!);
+  }
   return { staffUserIds, namesBn, sessions };
 }
 
