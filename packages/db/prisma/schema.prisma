@@ -404,15 +404,17 @@ model User {
   studentImports            StudentImport[]
   staffProfiles             StaffProfile[]
 
-  feeConcessionsCreated    FeeConcession[]    @relation("FeeConcessionCreatedBy")
-  feeConcessionsEnded      FeeConcession[]    @relation("FeeConcessionEndedBy")
-  feeSiblingGroupsCreated  FeeSiblingGroup[]  @relation("FeeSiblingGroupCreatedBy")
-  feeSiblingMembersAdded   FeeSiblingMember[] @relation("FeeSiblingMemberAddedBy")
-  feeSiblingMembersRemoved FeeSiblingMember[] @relation("FeeSiblingMemberRemovedBy")
-  feeDuesCancelled         FeeDue[]           @relation("FeeDueCancelledBy")
-  feeFineWaiversCreated    FeeFineWaiver[]    @relation("FeeFineWaiverCreatedBy")
-  feePaymentsCollected     FeePayment[]       @relation("FeePaymentCollectedBy")
-  feePaymentsVoided        FeePayment[]       @relation("FeePaymentVoidedBy")
+  feeConcessionsCreated    FeeConcession[]       @relation("FeeConcessionCreatedBy")
+  feeConcessionsEnded      FeeConcession[]       @relation("FeeConcessionEndedBy")
+  feeSiblingGroupsCreated  FeeSiblingGroup[]     @relation("FeeSiblingGroupCreatedBy")
+  feeSiblingMembersAdded   FeeSiblingMember[]    @relation("FeeSiblingMemberAddedBy")
+  feeSiblingMembersRemoved FeeSiblingMember[]    @relation("FeeSiblingMemberRemovedBy")
+  feeDuesCancelled         FeeDue[]              @relation("FeeDueCancelledBy")
+  feeFineWaiversCreated    FeeFineWaiver[]       @relation("FeeFineWaiverCreatedBy")
+  feePaymentsCollected     FeePayment[]          @relation("FeePaymentCollectedBy")
+  feePaymentsVoided        FeePayment[]          @relation("FeePaymentVoidedBy")
+  feeSubmissionsSubmitted  FeeMobileSubmission[] @relation("FeeSubmissionSubmittedBy")
+  feeSubmissionsReviewed   FeeMobileSubmission[] @relation("FeeSubmissionReviewedBy")
 
   @@map("users")
 }
@@ -471,18 +473,21 @@ model Tenant {
   invoiceLines        PlatformInvoiceLine[]
   payments            PlatformPayment[]
 
-  feeSettings           FeeSettings?
-  feeHeads              FeeHead[]
-  feeTerms              FeeTerm[]
-  feeAmounts            FeeAmount[]
-  feeConcessions        FeeConcession[]
-  feeSiblingGroups      FeeSiblingGroup[]
-  feeSiblingMembers     FeeSiblingMember[]
-  feeDues               FeeDue[]
-  feeFineWaivers        FeeFineWaiver[]
-  feeReceiptCounters    FeeReceiptCounter[]
-  feePayments           FeePayment[]
-  feePaymentAllocations FeePaymentAllocation[]
+  feeSettings             FeeSettings?
+  feeHeads                FeeHead[]
+  feeTerms                FeeTerm[]
+  feeAmounts              FeeAmount[]
+  feeConcessions          FeeConcession[]
+  feeSiblingGroups        FeeSiblingGroup[]
+  feeSiblingMembers       FeeSiblingMember[]
+  feeDues                 FeeDue[]
+  feeFineWaivers          FeeFineWaiver[]
+  feeReceiptCounters      FeeReceiptCounter[]
+  feePayments             FeePayment[]
+  feePaymentAllocations   FeePaymentAllocation[]
+  feeMobileAccounts       FeeMobileAccount[]
+  feeMobileSubmissions    FeeMobileSubmission[]
+  feeMobileSubmissionDues FeeMobileSubmissionDue[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -797,13 +802,15 @@ model Student {
   guardians  StudentGuardian[]
   enrolments Enrolment[]
 
-  attendanceRecords     AttendanceRecord[]
-  feeConcessions        FeeConcession[]
-  feeSiblingMembers     FeeSiblingMember[]
-  feeDues               FeeDue[]
-  feeFineWaivers        FeeFineWaiver[]
-  feePayments           FeePayment[]
-  feePaymentAllocations FeePaymentAllocation[]
+  attendanceRecords       AttendanceRecord[]
+  feeConcessions          FeeConcession[]
+  feeSiblingMembers       FeeSiblingMember[]
+  feeDues                 FeeDue[]
+  feeFineWaivers          FeeFineWaiver[]
+  feePayments             FeePayment[]
+  feePaymentAllocations   FeePaymentAllocation[]
+  feeMobileSubmissions    FeeMobileSubmission[]
+  feeMobileSubmissionDues FeeMobileSubmissionDue[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
@@ -1616,7 +1623,7 @@ model FeeSettings {
   createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@map("fee_settings")
@@ -1647,7 +1654,7 @@ model FeeHead {
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   amounts     FeeAmount[]
   concessions FeeConcession[]
   dues        FeeDue[]
@@ -1672,8 +1679,8 @@ model FeeTerm {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict)
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   dues         FeeDue[]
 
   @@unique([tenantId, id])
@@ -1696,11 +1703,11 @@ model FeeAmount {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict)
-  feeHead      FeeHead      @relation(fields: [tenantId, feeHeadId], references: [tenantId, id], onDelete: Restrict)
-  classLevel   ClassLevel   @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict)
-  studyGroup   StudyGroup?  @relation(fields: [tenantId, studyGroupId], references: [tenantId, id], onDelete: Restrict)
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  feeHead      FeeHead      @relation(fields: [tenantId, feeHeadId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel   ClassLevel   @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  studyGroup   StudyGroup?  @relation(fields: [tenantId, studyGroupId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, academicYearId, feeHeadId, classLevelId], map: "fee_amounts_class_default", where: raw("study_group_id IS NULL"))
@@ -1730,12 +1737,12 @@ model FeeConcession {
   createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  student      Student      @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
-  feeHead      FeeHead      @relation(fields: [tenantId, feeHeadId], references: [tenantId, id], onDelete: Restrict)
-  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict)
-  createdBy    User         @relation("FeeConcessionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  endedBy      User?        @relation("FeeConcessionEndedBy", fields: [endedById], references: [id], onDelete: Restrict)
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  student      Student      @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  feeHead      FeeHead      @relation(fields: [tenantId, feeHeadId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy    User         @relation("FeeConcessionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  endedBy      User?        @relation("FeeConcessionEndedBy", fields: [endedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   dues         FeeDue[]
 
   @@unique([tenantId, id])
@@ -1754,8 +1761,8 @@ model FeeSiblingGroup {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdBy User               @relation("FeeSiblingGroupCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User               @relation("FeeSiblingGroupCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   members   FeeSiblingMember[]
 
   @@unique([tenantId, id])
@@ -1775,11 +1782,11 @@ model FeeSiblingMember {
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  group     FeeSiblingGroup @relation(fields: [tenantId, groupId], references: [tenantId, id], onDelete: Restrict)
-  student   Student         @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
-  addedBy   User            @relation("FeeSiblingMemberAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
-  removedBy User?           @relation("FeeSiblingMemberRemovedBy", fields: [removedById], references: [id], onDelete: Restrict)
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  group     FeeSiblingGroup @relation(fields: [tenantId, groupId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  student   Student         @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  addedBy   User            @relation("FeeSiblingMemberAddedBy", fields: [addedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  removedBy User?           @relation("FeeSiblingMemberRemovedBy", fields: [removedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentId], map: "fee_sibling_members_one_family", where: raw("removed_at IS NULL"))
@@ -1837,15 +1844,16 @@ model FeeDue {
   createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  student      Student                @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
-  feeHead      FeeHead                @relation(fields: [tenantId, feeHeadId], references: [tenantId, id], onDelete: Restrict)
-  academicYear AcademicYear           @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict)
-  feeTerm      FeeTerm?               @relation(fields: [tenantId, feeTermId, academicYearId], references: [tenantId, id, academicYearId], onDelete: Restrict)
-  concession   FeeConcession?         @relation(fields: [tenantId, concessionId, studentId, feeHeadId, academicYearId], references: [tenantId, id, studentId, feeHeadId, academicYearId], onDelete: Restrict)
-  cancelledBy  User?                  @relation("FeeDueCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  tenant       Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  student      Student                  @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  feeHead      FeeHead                  @relation(fields: [tenantId, feeHeadId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  academicYear AcademicYear             @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  feeTerm      FeeTerm?                 @relation(fields: [tenantId, feeTermId, academicYearId], references: [tenantId, id, academicYearId], onDelete: Restrict, onUpdate: Restrict)
+  concession   FeeConcession?           @relation(fields: [tenantId, concessionId, studentId, feeHeadId, academicYearId], references: [tenantId, id, studentId, feeHeadId, academicYearId], onDelete: Restrict, onUpdate: Restrict)
+  cancelledBy  User?                    @relation("FeeDueCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   fineWaivers  FeeFineWaiver[]
   allocations  FeePaymentAllocation[]
+  submissions  FeeMobileSubmissionDue[]
 
   @@unique([tenantId, id])
   /// Composite target for rows that must name the due's own student (allocations, waivers).
@@ -1869,10 +1877,10 @@ model FeeFineWaiver {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  due       FeeDue  @relation(fields: [tenantId, dueId, studentId], references: [tenantId, id, studentId], onDelete: Restrict)
-  student   Student @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
-  createdBy User    @relation("FeeFineWaiverCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  due       FeeDue  @relation(fields: [tenantId, dueId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  student   Student @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User    @relation("FeeFineWaiverCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@index([tenantId, dueId])
@@ -1913,7 +1921,7 @@ model FeeReceiptCounter {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, year])
@@ -1949,11 +1957,12 @@ model FeePayment {
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant      Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  student     Student                @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
-  collectedBy User                   @relation("FeePaymentCollectedBy", fields: [collectedById], references: [id], onDelete: Restrict)
-  voidedBy    User?                  @relation("FeePaymentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  tenant      Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  student     Student                @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  collectedBy User                   @relation("FeePaymentCollectedBy", fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  voidedBy    User?                  @relation("FeePaymentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   allocations FeePaymentAllocation[]
+  submissions FeeMobileSubmission[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, id, studentId])
@@ -1978,14 +1987,128 @@ model FeePaymentAllocation {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant  Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant  Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// Payment and due share the student: a payment can never pay another student's due.
-  payment FeePayment @relation(fields: [tenantId, paymentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict)
-  due     FeeDue     @relation(fields: [tenantId, dueId, studentId], references: [tenantId, id, studentId], onDelete: Restrict)
-  student Student    @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  payment FeePayment @relation(fields: [tenantId, paymentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  due     FeeDue     @relation(fields: [tenantId, dueId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  student Student    @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, paymentId, dueId])
   @@index([tenantId, dueId])
   @@map("fee_payment_allocations")
+}
+
+enum FeeMobileAccountKind {
+  PERSONAL
+  MERCHANT
+  AGENT
+
+  @@map("fee_mobile_account_kind")
+}
+
+enum FeeSubmissionStatus {
+  PENDING
+  /// Checked by staff in the institute's bKash/Nagad app: a payment and receipt were made.
+  VERIFIED
+  /// Not found or wrong (reason given); the TrxID may be submitted again.
+  REJECTED
+  /// Verified, then its payment was voided; the TrxID is free again.
+  VOIDED
+
+  @@map("fee_submission_status")
+}
+
+enum FeeSubmitter {
+  GUARDIAN
+  STAFF
+
+  @@map("fee_submitter")
+}
+
+/// The institute's own bKash/Nagad number that guardians send money to (OWNER sets them).
+model FeeMobileAccount {
+  id        String               @id @default(uuid(7)) @db.Uuid
+  tenantId  String               @map("tenant_id") @db.Uuid
+  method    FeePaymentMethod
+  phone     String
+  kind      FeeMobileAccountKind
+  label     String?
+  isActive  Boolean              @default(true) @map("is_active")
+  sortOrder Int                  @default(0) @map("sort_order")
+  createdAt DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submissions FeeMobileSubmission[]
+
+  @@unique([tenantId, id])
+  /// Composite target: a submission's method matches its account's.
+  @@unique([tenantId, id, method])
+  @@unique([tenantId, method, phone])
+  @@index([tenantId, isActive])
+  @@map("fee_mobile_accounts")
+}
+
+/// "I paid by bKash/Nagad": amount, TrxID and sender number for chosen dues, from a guardian or
+/// staff. Staff verify it against the institute's own app (→ a payment and receipt) or reject it.
+model FeeMobileSubmission {
+  id              String              @id @default(uuid(7)) @db.Uuid
+  tenantId        String              @map("tenant_id") @db.Uuid
+  studentId       String              @map("student_id") @db.Uuid
+  method          FeePaymentMethod
+  accountId       String              @map("account_id") @db.Uuid
+  amountPaisa     Int                 @map("amount_paisa")
+  trxId           String              @map("trx_id")
+  senderPhone     String              @map("sender_phone")
+  /// The day it was submitted (the payment's paid_on: fines stop there).
+  sentOn          DateTime            @map("sent_on") @db.Date
+  submittedById   String              @map("submitted_by_id") @db.Uuid
+  submitter       FeeSubmitter
+  status          FeeSubmissionStatus @default(PENDING)
+  reviewedById    String?             @map("reviewed_by_id") @db.Uuid
+  reviewedAt      DateTime?           @map("reviewed_at") @db.Timestamptz(3)
+  rejectReason    String?             @map("reject_reason")
+  paymentId       String?             @map("payment_id") @db.Uuid
+  clientRequestId String              @map("client_request_id") @db.Uuid
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  student     Student                  @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  account     FeeMobileAccount         @relation(fields: [tenantId, accountId, method], references: [tenantId, id, method], onDelete: Restrict, onUpdate: Restrict)
+  payment     FeePayment?              @relation(fields: [tenantId, paymentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  submittedBy User                     @relation("FeeSubmissionSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reviewedBy  User?                    @relation("FeeSubmissionReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  dues        FeeMobileSubmissionDue[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, id, studentId])
+  @@unique([tenantId, clientRequestId])
+  /// A TrxID is open (pending or verified) once per method.
+  @@unique([tenantId, method, trxId], map: "fee_mobile_submissions_open_trx", where: raw("status = ANY (ARRAY['PENDING'::fee_submission_status, 'VERIFIED'::fee_submission_status])"))
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, studentId])
+  @@map("fee_mobile_submissions")
+}
+
+/// The dues a submission is for (the student's own, by composite keys).
+model FeeMobileSubmissionDue {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  submissionId String   @map("submission_id") @db.Uuid
+  studentId    String   @map("student_id") @db.Uuid
+  dueId        String   @map("due_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submission FeeMobileSubmission @relation(fields: [tenantId, submissionId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  due        FeeDue              @relation(fields: [tenantId, dueId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  student    Student             @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, submissionId, dueId])
+  @@index([tenantId, dueId])
+  @@map("fee_mobile_submission_dues")
 }

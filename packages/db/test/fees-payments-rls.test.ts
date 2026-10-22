@@ -311,7 +311,7 @@ describe('fee payment tables', () => {
     const due = await withTenant(app, a.tenantId, async (tx) => {
       const year = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
       const head = await tx.feeHead.findFirstOrThrow();
-      return tx.feeDue.create({
+      const open = await tx.feeDue.create({
         data: {
           tenantId: a.tenantId,
           studentId: a.studentIds[1]!,
@@ -323,6 +323,11 @@ describe('fee payment tables', () => {
           amountPaisa: 1000,
           fineType: 'NONE',
           fineAmountPaisa: 0,
+        },
+      });
+      return tx.feeDue.update({
+        where: { id: open.id },
+        data: {
           status: 'CANCELLED',
           cancelledAt: new Date(),
           cancelledById: a.userId,
@@ -332,6 +337,24 @@ describe('fee payment tables', () => {
     });
     const fresh = await createPayment({ amountPaisa: 100 });
     await expect(allocate(fresh.id, due.id, 100)).rejects.toThrow(/cancelled due/i);
+  });
+
+  it('a due with money on it cannot be cancelled, even if its cached total says otherwise', async () => {
+    // The fixture's first due has a live 60 000 allocation; its cached paid total was never
+    // written (the cache is the service's job), so only the trigger can refuse this.
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feeDue.update({
+          where: { id: a.dueIds[0]! },
+          data: {
+            status: 'CANCELLED',
+            cancelledAt: new Date(),
+            cancelledById: a.userId,
+            cancelReason: 'ভুল করে তৈরি',
+          },
+        }),
+      ),
+    ).rejects.toThrow(/payments on it/i);
   });
 
   it('a payment is never created already void; across tenants the payment side is refused too', async () => {

@@ -45,6 +45,9 @@ describe('schema safety net', () => {
         'fee_receipt_counters',
         'fee_payments',
         'fee_payment_allocations',
+        'fee_mobile_accounts',
+        'fee_mobile_submissions',
+        'fee_mobile_submission_dues',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

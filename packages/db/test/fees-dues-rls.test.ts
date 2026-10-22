@@ -214,17 +214,24 @@ describe('fee dues tables: tenant isolation and integrity', () => {
         status: 'CANCELLED',
         cancelledAt: new Date(),
         cancelledById: a.adminId,
-        cancelReason: 'না',
-      }),
-    ).rejects.toThrow(/fee_dues_cancel/); // reason too short
-    await expect(
-      createDue({
-        status: 'CANCELLED',
-        cancelledAt: new Date(),
-        cancelledById: a.adminId,
         cancelReason: 'ভুল ক্লাসে ছিল',
-        paidPrincipalPaisa: 100,
       }),
+    ).rejects.toThrow(/created open/i); // cancelling is an update, never an insert
+    const open = await createDue({
+      periodKey: '2026-07',
+      periodStart: new Date('2026-07-01'),
+      dueDate: new Date('2026-07-10'),
+    });
+    const cancel = (data: Record<string, unknown>) =>
+      withTenant(app, a.tenantId, (tx) =>
+        tx.feeDue.update({
+          where: { id: open.id },
+          data: { status: 'CANCELLED', cancelledAt: new Date(), cancelledById: a.adminId, ...data },
+        }),
+      );
+    await expect(cancel({ cancelReason: 'না' })).rejects.toThrow(/fee_dues_cancel/); // too short
+    await expect(
+      cancel({ cancelReason: 'ভুল ক্লাসে ছিল', paidPrincipalPaisa: 100 }),
     ).rejects.toThrow(/fee_dues_cancel/); // something was paid
     await expect(
       withTenant(app, a.tenantId, (tx) =>
@@ -319,5 +326,32 @@ describe('fee dues tables: tenant isolation and integrity', () => {
         }),
       ),
     ).rejects.toThrow(/cancelled due/i);
+  });
+
+  it("changing a parent's key never rewrites a due (no ON UPDATE CASCADE)", async () => {
+    await createDue({
+      periodKey: `T:${a.termId}`,
+      feeTermId: a.termId,
+      periodStart: new Date('2026-04-20'),
+      dueDate: new Date('2026-05-05'),
+    });
+    const otherYear = await withTenant(app, a.tenantId, (tx) =>
+      tx.academicYear.create({
+        data: {
+          tenantId: a.tenantId,
+          name: `2029-${randomUUID().slice(0, 4)}`,
+          startDate: new Date('2029-01-01'),
+          endDate: new Date('2029-12-31'),
+        },
+      }),
+    );
+    await expect(
+      withTenant(
+        app,
+        a.tenantId,
+        (tx) =>
+          tx.$executeRaw`UPDATE fee_terms SET academic_year_id = ${otherYear.id}::uuid WHERE id = ${a.termId}::uuid`,
+      ),
+    ).rejects.toThrow(/foreign key|permission denied/i);
   });
 });
