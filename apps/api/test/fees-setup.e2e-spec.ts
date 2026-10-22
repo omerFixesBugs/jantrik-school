@@ -474,6 +474,18 @@ describe('fee setup', () => {
       expect(asAccountant[0]!.guardian?.phone).toMatch(/^01\d•+\d{3}$/);
       expect(JSON.stringify(asAccountant)).not.toContain(phone.slice(4));
 
+      // Part of a number is no search for the accountant: guessing digit by digit against
+      // masked results would reveal the hidden ones. Admins may still search by part.
+      const partial = local.slice(0, 8);
+      const partialAsAccountant = (
+        await api(s.tokens.accountant).get(`/fees/students?q=${partial}`).expect(200)
+      ).body as FeeStudentHit[];
+      expect(partialAsAccountant).toEqual([]);
+      const partialAsAdmin = (
+        await api(s.tokens.admin).get(`/fees/students?q=${partial}`).expect(200)
+      ).body as FeeStudentHit[];
+      expect(partialAsAdmin.map((x) => x.id)).toContain(s.students[2]!.id);
+
       const byName = (
         await api(s.tokens.accountant)
           .get(`/fees/students?q=${encodeURIComponent('Student 4')}`)

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { searchStudentIds } from '@jantrik/db';
-import { maskPhone, type FeeStudentHit } from '@jantrik/shared';
+import { maskPhone, normalizeBdPhone, type FeeStudentHit } from '@jantrik/shared';
 import { RequestContext } from '../common/request-context.js';
 import { phoneDigits } from '../students/students.module.js';
 import { Db } from '../tenancy/db.service.js';
@@ -8,8 +8,10 @@ import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 
 /**
  * Finding a student at the fee counter (OWNER/ADMIN/ACCOUNTANT): by name, student ID or a
- * guardian's phone. Decision #19 (updated in step 9): the accountant may search by phone but
- * sees it masked, so they learn nothing they did not type; OWNER/ADMIN see it in full.
+ * guardian's phone. Decision #19 (updated in step 9): the accountant may search by a whole
+ * phone number and sees it masked, so they learn nothing they did not type. Part of a number is
+ * no phone search for them: guessing digit by digit against masked results would reveal the
+ * hidden digits. OWNER/ADMIN may search by part and see phones in full.
  */
 @Injectable()
 export class FeeStudentsService {
@@ -28,9 +30,10 @@ export class FeeStudentsService {
 
   async search(q: string): Promise<FeeStudentHit[]> {
     const tx = this.db.tx;
-    const ids = await searchStudentIds(tx, { term: q, phone: phoneDigits(q), limit: 20 });
-    if (ids.length === 0) return [];
     const full = await this.seesPhones();
+    const phone = full || normalizeBdPhone(q) ? phoneDigits(q) : null;
+    const ids = await searchStudentIds(tx, { term: q, phone, limit: 20 });
+    if (ids.length === 0) return [];
     const year = await tx.academicYear.findFirst({
       where: { isCurrent: true },
       select: { id: true },
