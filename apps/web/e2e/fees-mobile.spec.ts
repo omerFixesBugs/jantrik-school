@@ -58,11 +58,32 @@ for (const c of CASES) {
     await page.getByTestId('pay-amount').fill(c.amount);
     await page.getByTestId('pay-trx').fill(`${trx.slice(0, 4).toLowerCase()} ${trx.slice(4)}`);
     await page.getByTestId('pay-sender').fill(toBanglaDigits('01811222333'));
+
+    // The first send is saved, but its answer is lost (a 500 on the way back). Sending again
+    // shows it sent (the same request id), never "TrxID already used".
+    const submissions = /\/me\/children\/[^/]+\/fees\/submissions$/;
+    let lost = false;
+    await page.route(submissions, async (route) => {
+      if (route.request().method() !== 'POST' || lost) return route.fallback();
+      lost = true;
+      const saved = await route.fetch();
+      expect(saved.status()).toBe(201);
+      await route.fulfill({
+        response: saved,
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ statusCode: 500, message: 'Internal server error' }),
+      });
+    });
+    await page.getByTestId('pay-submit').click();
+    await expect(page.getByTestId('pay-error')).toBeVisible();
     await page.getByTestId('pay-submit').click();
     await expect(page.getByTestId('pay-success')).toBeVisible();
+    await page.unroute(submissions);
 
     const mine = page.locator(`[data-testid="child-submission"][data-trx="${trx}"]`);
     await page.reload();
+    await expect(mine).toHaveCount(1);
     await expect(mine).toHaveAttribute('data-status', 'PENDING');
 
     // The accountant checks it in the institute's bKash app, then verifies it.

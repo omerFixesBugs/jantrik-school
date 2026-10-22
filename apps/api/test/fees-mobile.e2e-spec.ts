@@ -316,4 +316,48 @@ describe('manual bKash/Nagad payments', () => {
     expect(mine.cashInHandPaisa).toBe(0);
     expect(closing.total.cashInHandPaisa).toBe(0);
   });
+
+  it('a retry with the same request id gets the saved submission, never "TrxID already used"', async () => {
+    const child = s.students[2]!.id;
+    const due = (await childView(child, s.tokens.otherGuardian)).ledger.dues.find(
+      (d) => d.status === 'OPEN' && d.balance.total > 0,
+    )!;
+    const body = {
+      method: 'BKASH',
+      accountId: bkash.id,
+      amountPaisa: 100,
+      trxId: 'RETRY00001',
+      senderPhone: '01811222444',
+      dueIds: [due.id],
+      clientRequestId: randomUUID(),
+    };
+    const send = (json: object = body) =>
+      api(s.tokens.otherGuardian).post(`/me/children/${child}/fees/submissions`, json);
+    const first = (await send().expect(201)).body as FeeSubmissionView;
+
+    // The answer was lost on the way back (a 5xx): the phone sends the same request again, twice.
+    const again = await Promise.all([send(), send()]);
+    for (const res of again) {
+      expect(res.status).toBe(201);
+      expect((res.body as FeeSubmissionView).id).toBe(first.id);
+    }
+    const saved = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.feeMobileSubmission.count({ where: { trxId: 'RETRY00001' } }),
+    );
+    expect(saved).toBe(1);
+
+    // The same id with other details, or from someone else, is refused rather than replayed.
+    for (const changed of [
+      { amountPaisa: 200 },
+      { senderPhone: '01811222555' },
+      { method: 'NAGAD', accountId: nagad.id },
+    ]) {
+      const res = await send({ ...body, ...changed }).expect(422);
+      expect(res.body.code).toBe('IDEMPOTENCY_MISMATCH');
+    }
+    const staff = await api(s.tokens.accountant)
+      .post('/fees/submissions', { ...body, studentId: child })
+      .expect(422);
+    expect(staff.body.code).toBe('IDEMPOTENCY_MISMATCH');
+  });
 });

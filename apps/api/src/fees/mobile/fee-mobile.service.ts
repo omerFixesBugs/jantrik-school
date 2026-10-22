@@ -261,18 +261,29 @@ export class FeeMobileService {
       include: submissionInclude,
     });
     if (previous) {
-      if (previous.studentId !== studentId || previous.trxId !== input.trxId) {
+      // A retry (the answer was lost) is the same submission by the same person; anything else
+      // reusing the id is refused, never answered with someone's saved submission.
+      const me = this.context.requirePrincipal().userId;
+      const sameDues =
+        previous.dues.length === input.dueIds.length &&
+        previous.dues.every((d) => input.dueIds.includes(d.due.id));
+      const same =
+        previous.submittedById === me &&
+        previous.studentId === studentId &&
+        previous.method === input.method &&
+        previous.accountId === input.accountId &&
+        previous.amountPaisa === input.amountPaisa &&
+        previous.trxId === input.trxId &&
+        previous.senderPhone === input.senderPhone &&
+        sameDues;
+      if (!same) {
         throw apiError(
           422,
           'IDEMPOTENCY_MISMATCH',
           'This request id was used for another submission',
         );
       }
-      const me = this.context.requirePrincipal().userId;
-      return this.toView(
-        previous,
-        previous.submittedById === me || (await this.students.seesPhones()),
-      );
+      return this.toView(previous, true);
     }
     const account = await tx.feeMobileAccount.findUnique({ where: { id: input.accountId } });
     if (!account || account.method !== input.method)

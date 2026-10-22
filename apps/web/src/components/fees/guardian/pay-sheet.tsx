@@ -240,7 +240,11 @@ function PayFlow({
   const [tried, setTried] = useState(false);
   const [server, setServer] = useState<Problems>({});
   const [result, setResult] = useState<FeeSubmissionView | null>(null);
-  /** The id of an attempt that hit a network error: a retry of the same details reuses it. */
+  /**
+   * The id of an attempt whose outcome is unknown (no answer, or a 5xx: it may have been saved).
+   * A retry of the same details reuses it, so the API answers with the saved submission instead
+   * of "TrxID already used".
+   */
   const retry = useRef<{ id: string; signature: string } | null>(null);
   const sendTitle = useRef<HTMLHeadingElement>(null);
   const formTitle = useRef<HTMLHeadingElement>(null);
@@ -368,7 +372,9 @@ function PayFlow({
           refresh();
         },
         onError: (error) => {
-          retry.current = error instanceof NetworkError ? { id: clientRequestId, signature } : null;
+          const unknownOutcome =
+            error instanceof NetworkError || (error instanceof ApiError && error.status >= 500);
+          retry.current = unknownOutcome ? { id: clientRequestId, signature } : null;
           setServer(explain(error));
         },
       },

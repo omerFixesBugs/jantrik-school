@@ -132,7 +132,10 @@ never changes afterwards. Totals: collected, voided, net. An accountant sees onl
 1. The OWNER lists the institute's own numbers (personal, merchant or agent).
 2. A guardian (or staff, for a student) submits the amount, the TrxID and the sender's number for
    chosen dues. TrxIDs are typed loosely (spaces, lower case, Bangla digits) and stored upper case.
-   At most 5 waiting per child, 20 per person per hour.
+   At most 5 waiting per child, 20 per person per hour. Each submission carries a
+   `clientRequestId`: a retry whose answer was lost (no answer, or a 5xx) reuses it and gets the
+   saved submission back, never "TrxID already used". The same id with other details, or from
+   another person, is refused (422 `IDEMPOTENCY_MISMATCH`).
 3. Staff check it in the institute's own app, then **verify** (a payment and receipt dated the day
    it was submitted, so a fine stops there; the dues may be re-picked if they were paid meanwhile)
    or **reject** with a reason.
@@ -145,13 +148,15 @@ number is masked for the accountant.
 
 - Due list by class/section, defaulters (overdue for at least N days and ৳ amount), collections by
   day, month, head, method or collector (money kept: void payments left out). CSV with a BOM,
-  ASCII digits and formula-safe cells; print.
+  ASCII digits and formula-safe cells; print. The due list (and the dashboard's overdue) covers
+  students still here: active, not deleted, enrolled this year. A student who left keeps their
+  arrears on their own ledger.
 - Reminders (OWNER/ADMIN): a preview gives the students, those without a phone, those already
   reminded, segments, cost and what today's SMS cap leaves; sending needs the same count (409
   `PREVIEW_CHANGED`) and runs in the background. One reminder per student per overdue period
   (dedupe key `fee-reminder:<student>:<latest overdue due>`); cancelled at send time if they paid.
 - Dashboard card: this month so far against the same days of last month, overdue (amount and
-  students), transfers waiting to be checked.
+  students, as the defaulters list counts them), transfers waiting to be checked.
 
 ## SMS
 
