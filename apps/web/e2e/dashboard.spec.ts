@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
-import type { SmsDailyStatus } from '@jantrik/shared';
+import {
+  addDays,
+  formatDayMonth,
+  todayIn,
+  type AttendanceTodayReport,
+  type AttendanceTrendReport,
+  type SmsDailyStatus,
+} from '@jantrik/shared';
 import { DEMO, otpLoginWithBanglaDigits, passwordLogin } from './helpers';
 import { findLayoutProblems } from './layout-check';
 
@@ -22,6 +29,82 @@ test('staff dashboard: Bangla date, student total, getting-started steps', async
   );
   await page.getByTestId('quick-attendance').click();
   await expect(page).toHaveURL(/\/attendance$/);
+});
+
+test('owner dashboard: the section board, absentees and the last 30 days', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await passwordLogin(page, DEMO.shaplaOwner);
+  const board = page.getByTestId('today-board');
+  const tiles = board.getByTestId('board-section');
+  await expect(tiles.first()).toBeVisible();
+  // A tile opens that section's register for today.
+  await expect(tiles.first()).toHaveAttribute('href', /^\/attendance\?section=[0-9a-f-]{36}/);
+  await expect(page.getByTestId('kpi-registers')).toContainText('/');
+
+  // The trend, also as a table: every one of the 30 days, today last.
+  const trend = page.getByTestId('attendance-trend');
+  await expect(trend.getByRole('heading')).toHaveText('উপস্থিতি, গত ৩০ দিন');
+  await trend.getByRole('button', { name: 'টেবিলে দেখুন' }).click();
+  const days = trend.getByRole('table').locator('tbody tr');
+  await expect(days).toHaveCount(30);
+  const today = todayIn('Asia/Dhaka');
+  await expect(days.last()).toContainText(formatDayMonth(today, 'bn'));
+
+  // Choosing a class narrows the trend to it.
+  const sixth = board.getByRole('button', { name: 'ষষ্ঠ শ্রেণি', exact: true });
+  await sixth.click();
+  await expect(sixth).toHaveAttribute('aria-pressed', 'true');
+  await expect(trend.getByRole('heading')).toHaveText('ষষ্ঠ শ্রেণি: উপস্থিতি, গত ৩০ দিন');
+  await board.getByRole('button', { name: 'সব শ্রেণি' }).click();
+  await expect(sixth).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('owner dashboard before any attendance: what will appear, never made-up numbers', async ({
+  page,
+}) => {
+  // A new institute's reads, stubbed: no sections taken, no days.
+  const today = todayIn('Asia/Dhaka');
+  const counts = { present: 0, absent: 0, late: 0, leave: 0 };
+  const report: AttendanceTodayReport = {
+    today,
+    mode: 'DAILY',
+    nonWorkingDay: null,
+    leaveCountsAsAbsent: false,
+    sections: [],
+    totals: { sectionsTotal: 0, sectionsTaken: 0, counts, percent: null },
+  };
+  const days = Array.from({ length: 30 }, (_, i) => ({
+    date: addDays(today, i - 29),
+    counts: null,
+    percent: null,
+    nonWorkingDay: null,
+    sectionsTaken: 0,
+  }));
+  const trend: AttendanceTrendReport = {
+    today,
+    from: days[0]!.date,
+    to: today,
+    leaveCountsAsAbsent: false,
+    days,
+    sections: [],
+  };
+  await page.route('**/attendance/reports/today', (r) => r.fulfill({ json: report }));
+  await page.route('**/attendance/reports/trend?*', (r) => r.fulfill({ json: trend }));
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await passwordLogin(page, DEMO.shaplaOwner);
+
+  await expect(page.getByTestId('today-board')).toContainText('এখনো কোনো শাখা নেই।');
+  await expect(page.getByTestId('today-absentees')).toContainText(
+    'হাজিরা নেওয়া হলে এখানে দেখাবে।',
+  );
+  const present = page.getByTestId('module-card-attendance');
+  await expect(present).toContainText('আজ এখনো কোনো হাজিরা নেওয়া হয়নি');
+  await expect(present).toContainText('—');
+  await expect(page.getByTestId('kpi-absent')).toContainText('—');
+  // Every day says why it has no value, in the table too.
+  const chart = page.getByTestId('attendance-trend');
+  await chart.getByRole('button', { name: 'টেবিলে দেখুন' }).click();
+  await expect(chart.getByRole('table')).toContainText('হাজিরা নেওয়া হয়নি');
 });
 
 test('held SMS: the confirm dialog shows the messages and total SMS segments', async ({ page }) => {

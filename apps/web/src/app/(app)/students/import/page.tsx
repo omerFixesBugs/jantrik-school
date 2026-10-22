@@ -172,7 +172,7 @@ function Steps({ current }: { current: number }) {
           className={cn(
             'rounded-full border px-3 py-1',
             i + 1 === current
-              ? 'border-primary bg-primary-soft font-medium'
+              ? 'border-primary-ink bg-primary-soft font-medium'
               : 'text-muted-foreground',
           )}
         >
@@ -240,7 +240,7 @@ function UploadCard({ onUploaded }: { onUploaded: (s: StudentImportSummary) => v
       <label
         className={cn(
           'bg-canvas hover:border-primary/50 flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-4 text-center',
-          'has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-3',
+          'has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-3',
         )}
       >
         <UploadIcon aria-hidden className="text-muted-foreground size-6" />
@@ -335,7 +335,14 @@ function ImportView({ id, onRestart }: { id: string; onRestart: () => void }) {
   const s = summary.data;
   useEffect(() => {
     if (s?.status === 'DONE') {
-      for (const k of ['students', 'students-total', 'student-filters', 'setup', 'student-imports'])
+      for (const k of [
+        'students',
+        'students-total',
+        'students-summary',
+        'student-filters',
+        'setup',
+        'student-imports',
+      ])
         void queryClient.invalidateQueries({ queryKey: [k] });
     }
   }, [s?.status, queryClient]);

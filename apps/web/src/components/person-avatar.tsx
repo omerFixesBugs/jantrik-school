@@ -26,12 +26,16 @@ export function initials(name: string): string {
   return (graphemes(first)[0]! + (last ? graphemes(last)[0]! : '')).toUpperCase();
 }
 
+/**
+ * Soft tints (mint, yellow, sky, pink, orange) that tell people apart, each with an ink at ≥ 7:1;
+ * in dark mode a deep tint with a light ink, so an avatar never glares on a dark card.
+ */
 const TONES = [
-  'bg-[#dcefe8] text-[#0b4a3f] dark:bg-[#173a33] dark:text-[#bfe9de]',
-  'bg-[#fbeccb] text-[#6b4a07] dark:bg-[#3a2f15] dark:text-[#f5d58e]',
-  'bg-[#dcebf5] text-[#1d4d6b] dark:bg-[#16303f] dark:text-[#a9d3ea]',
-  'bg-[#f6e1e8] text-[#7a2846] dark:bg-[#3b1d27] dark:text-[#f0b5c8]',
-  'bg-[#e9e3f5] text-[#4a3577] dark:bg-[#2a2240] dark:text-[#cdbdf0]',
+  'bg-[#dcefe4] text-[#173f35] dark:bg-[#173a2b] dark:text-[#a8e0c2]',
+  'bg-[#fbf1cf] text-[#5c4706] dark:bg-[#3a3012] dark:text-[#f1d98a]',
+  'bg-[#ddeef7] text-[#1d4d6b] dark:bg-[#132f44] dark:text-[#a9d4ef]',
+  'bg-[#f9e2ea] text-[#7a2846] dark:bg-[#3d1a28] dark:text-[#f3b5ca]',
+  'bg-[#fbe8d6] text-[#6e3a0c] dark:bg-[#3d2512] dark:text-[#f6c49a]',
 ];
 
 /** Same name → same soft colour, so people learn to recognise each other at a glance. */

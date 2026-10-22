@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DateInput } from '@/components/date-input';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 
@@ -24,13 +25,14 @@ export function SectionCard({
 }) {
   return (
     <section
-      className="bg-card flex min-w-0 flex-col gap-4 rounded-xl border p-4 shadow-xs sm:p-5"
+      data-slot="card"
+      className="bg-card rounded-card shadow-card flex min-w-0 flex-col gap-4 border p-(--panel-p)"
       aria-labelledby={`${id}-title`}
       data-testid={id}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <h3 id={`${id}-title`} className="text-lg font-semibold break-words">
+          <h3 id={`${id}-title`} className="text-base font-semibold break-words">
             {title}
           </h3>
           {hint && <p className="text-muted-foreground text-sm">{hint}</p>}
@@ -85,6 +87,21 @@ export function Field({
   );
 }
 
+/** An input's props as the date field takes them (min/max as ISO strings, no `type`). */
+function dateProps({
+  type: _type,
+  min,
+  max,
+  defaultValue: _defaultValue,
+  ...rest
+}: Omit<React.ComponentProps<typeof Input>, 'value' | 'onChange' | 'id'>) {
+  return {
+    ...rest,
+    min: typeof min === 'string' ? min : undefined,
+    max: typeof max === 'string' ? max : undefined,
+  };
+}
+
 /** A text input inside a Field. */
 export function TextField({
   id,
@@ -115,15 +132,28 @@ export function TextField({
       required={required}
       className={className}
     >
-      <Input
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        required={required}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
-        {...props}
-      />
+      {props.type === 'date' ? (
+        // Day-first, Bangla-digit date field instead of the browser's (date-input.tsx).
+        <DateInput
+          {...dateProps(props)}
+          id={id}
+          value={value}
+          onValueChange={onChange}
+          required={required}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
+        />
+      ) : (
+        <Input
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
+          {...props}
+        />
+      )}
     </Field>
   );
 }
@@ -172,9 +202,9 @@ export function SelectField({
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
         className={cn(
-          'border-input bg-card h-10 w-full min-w-0 rounded-lg border px-3 text-base shadow-xs outline-none',
-          'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3',
-          'aria-invalid:border-destructive disabled:opacity-50 dark:bg-input/30',
+          'border-input bg-card h-(--control-h) w-full min-w-0 rounded-md border ps-2.5 pe-2 text-(length:--input-fs) outline-none',
+          'focus-visible:border-ring focus-visible:ring-ring focus-visible:ring-3',
+          'aria-invalid:border-destructive disabled:opacity-60',
         )}
       >
         {placeholder !== undefined && <option value="">{placeholder}</option>}
@@ -213,7 +243,10 @@ export function ToggleField({
         className="accent-primary mt-0.5 size-5 shrink-0"
       />
       <div className="flex min-w-0 flex-col gap-1">
-        <label htmlFor={id} className="leading-snug font-medium">
+        <label
+          htmlFor={id}
+          className="flex min-h-(--control-h-xs) items-center leading-snug font-medium"
+        >
           {label}
         </label>
         {hint && <p className="text-muted-foreground text-sm">{hint}</p>}
@@ -265,10 +298,10 @@ export function ChoiceChip({
   return (
     <label
       className={cn(
-        'flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors',
-        'has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-3',
+        'flex min-h-(--control-h) cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors',
+        'has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-3',
         checked
-          ? 'border-primary bg-primary-soft text-accent-foreground'
+          ? 'border-primary-ink bg-primary-soft text-accent-foreground'
           : 'bg-card hover:border-primary/40',
       )}
     >

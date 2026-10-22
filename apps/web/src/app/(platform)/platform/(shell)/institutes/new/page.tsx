@@ -28,7 +28,7 @@ import {
 } from '@/components/platform/plan-fields';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
 import { platformApi } from '@/lib/platform/platform-api';
 
@@ -221,7 +221,7 @@ export default function NewInstitutePage() {
           <fieldset className="flex flex-col gap-2">
             <legend className="mb-2 text-sm font-medium">{t('modulesTitle')}</legend>
             <div className="flex flex-wrap gap-2">
-              <span className="border-primary bg-primary-soft text-accent-foreground flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium">
+              <span className="border-primary-ink bg-primary-soft text-accent-foreground flex min-h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium">
                 <CheckIcon aria-hidden className="size-4" />
                 {tModules('CORE')}
                 <span className="sr-only">({t('alwaysOn')})</span>
@@ -282,11 +282,10 @@ export default function NewInstitutePage() {
 
         <SectionCard id="new-institute-limits" title={t('trialLimitsTitle')}>
           <Field id="trial-ends" label={t('trialEndsOn')} hint={t('trialEndsHint')}>
-            <Input
+            <DateInput
               id="trial-ends"
-              type="date"
               value={form.trialEndsOn}
-              onChange={(e) => set('trialEndsOn', e.target.value)}
+              onValueChange={(v) => set('trialEndsOn', v)}
             />
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -319,19 +318,17 @@ export default function NewInstitutePage() {
                 onChange={(v) => set('yearName', v)}
               />
               <Field id="year-start" label={t('yearStart')}>
-                <Input
+                <DateInput
                   id="year-start"
-                  type="date"
                   value={form.yearStart}
-                  onChange={(e) => set('yearStart', e.target.value)}
+                  onValueChange={(v) => set('yearStart', v)}
                 />
               </Field>
               <Field id="year-end" label={t('yearEnd')}>
-                <Input
+                <DateInput
                   id="year-end"
-                  type="date"
                   value={form.yearEnd}
-                  onChange={(e) => set('yearEnd', e.target.value)}
+                  onValueChange={(v) => set('yearEnd', v)}
                 />
               </Field>
             </div>

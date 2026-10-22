@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
 import { ApiError } from '@/lib/api/errors';
 import { useAuth } from '@/lib/auth/auth-provider';
@@ -99,7 +100,7 @@ function Card({
 }
 
 const textareaClass =
-  'min-h-28 w-full min-w-0 rounded-lg border border-input bg-card px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive dark:bg-input/30';
+  'min-h-28 w-full min-w-0 rounded-lg border border-input bg-card px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive dark:bg-input/30';
 
 /** Saturday first, as on a Bangladeshi calendar. ISO numbers (1 = Monday). */
 const WEEK = [6, 7, 1, 2, 3, 4, 5] as const;
@@ -131,7 +132,14 @@ function RulesAndSms() {
       initial={settings.data}
       onSaved={(next) => {
         queryClient.setQueryData(key, next);
-        void queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
+        // The leave rule, off days and the SMS cap change what the dashboard shows.
+        for (const k of [
+          'attendance-summary',
+          'attendance-report-today',
+          'attendance-trend',
+          'sms-today',
+        ])
+          void queryClient.invalidateQueries({ queryKey: [k] });
       }}
     />
   );
@@ -372,7 +380,10 @@ function Toggle({
         className="accent-primary mt-0.5 size-5 shrink-0"
       />
       <div className="flex min-w-0 flex-col gap-1">
-        <label htmlFor={id} className="leading-snug font-medium">
+        <label
+          htmlFor={id}
+          className="flex min-h-(--control-h-xs) items-center leading-snug font-medium"
+        >
           {label}
         </label>
         {hint && <p className="text-muted-foreground text-sm">{hint}</p>}
@@ -508,7 +519,11 @@ function Holidays() {
   });
   const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: key });
+  const refresh = () => {
+    // A holiday changes which days count (the trend, today's report).
+    for (const k of [key, ['attendance-report-today'], ['attendance-trend']])
+      void queryClient.invalidateQueries({ queryKey: k });
+  };
 
   const create = useMutation({
     mutationFn: (h: Omit<Holiday, 'id'>) =>
@@ -643,24 +658,22 @@ function HolidayForm({
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="holiday-start">{t('start')}</Label>
-          <Input
+          <DateInput
             id="holiday-start"
-            type="date"
             required
             min={`${year}-01-01`}
             max={`${year + 1}-12-31`}
             value={start}
-            onChange={(e) => setStart(e.target.value)}
+            onValueChange={setStart}
           />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="holiday-end">{t('end')}</Label>
-          <Input
+          <DateInput
             id="holiday-end"
-            type="date"
             min={start || `${year}-01-01`}
             value={end}
-            onChange={(e) => setEnd(e.target.value)}
+            onValueChange={setEnd}
           />
         </div>
       </div>
@@ -770,7 +783,7 @@ function SectionTeacherRow({
                 key={c.user.id}
                 className={cn(
                   'inline-flex max-w-full min-w-0 items-center gap-1 rounded-lg border py-0.5 pr-0.5 pl-2.5 text-sm',
-                  c.isClassTeacher && 'border-primary bg-primary-soft',
+                  c.isClassTeacher && 'border-primary-ink bg-primary-soft',
                 )}
               >
                 <span className="min-w-0 truncate">{person}</span>

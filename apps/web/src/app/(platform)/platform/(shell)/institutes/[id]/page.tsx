@@ -58,13 +58,13 @@ import {
 import { FormDialog } from '@/components/setup/setup-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, ButtonLink } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
 import { platformApi } from '@/lib/platform/platform-api';
 
 const textareaClass =
-  'min-h-24 w-full min-w-0 rounded-lg border border-input bg-card px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive dark:bg-input/30';
+  'min-h-24 w-full min-w-0 rounded-lg border border-input bg-card px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive dark:bg-input/30';
 
 /** One institute from the platform side: metadata, usage counts and the platform's controls. */
 export default function PlatformInstitutePage() {
@@ -206,10 +206,11 @@ function Usage({ d, locale }: { d: PlatformInstituteDetail; locale: Locale }) {
   ];
   return (
     <SectionCard id="institute-usage" title={t('usageTitle')} hint={t('usageHint')}>
-      <dl className="grid grid-cols-2 gap-4">
+      {/* One column on a phone: Bangla words like "পাঠানোগুলোর" need the width. */}
+      <dl className="grid gap-4 sm:grid-cols-2">
         {items.map((i) => (
           <div key={i.label} className="flex items-start gap-3">
-            <span className="bg-primary-soft text-primary flex size-10 shrink-0 items-center justify-center rounded-lg">
+            <span className="bg-primary-soft text-primary-ink flex size-10 shrink-0 items-center justify-center rounded-lg">
               <i.icon aria-hidden className="size-5" />
             </span>
             <div className="flex min-w-0 flex-col">
@@ -320,7 +321,7 @@ function OwnerRow({
         {o.phone && (
           <a
             href={`tel:${o.phone}`}
-            className="text-primary tabular-nums underline-offset-2 hover:underline"
+            className="text-primary-ink tabular-nums underline-offset-2 hover:underline"
             dir="ltr"
           >
             {formatBdPhone(o.phone)}
@@ -667,12 +668,7 @@ function PlanDialog({ d, onClose }: { d: PlatformInstituteDetail; onClose: () =>
       <PlanFields form={plan} onChange={setPlan} err={err} />
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id="plan-trial-ends" label={t('trialEndsOn')}>
-          <Input
-            id="plan-trial-ends"
-            type="date"
-            value={trialEndsOn}
-            onChange={(e) => setTrialEndsOn(e.target.value)}
-          />
+          <DateInput id="plan-trial-ends" value={trialEndsOn} onValueChange={setTrialEndsOn} />
         </Field>
         <SelectField
           id="plan-billing-start"

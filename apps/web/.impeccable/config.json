@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/*.html"
+        ],
+        "createdAt": "2026-10-20T20:43:49.828Z",
+        "reason": "Agent: direction-round sketches (decision page skeletons), never shipped or committed"
+      }
+    ]
+  }
+}

@@ -11,6 +11,14 @@ export const displayUserName = (
   locale: Locale,
 ): string => (user ? (locale === 'bn' ? (user.nameBn ?? user.name) : user.name) || '—' : '');
 
+/**
+ * A Bangla noun "of" (the genitive), for an institute's own labels inside a sentence: শাখা →
+ * শাখার, শ্রেণি → শ্রেণির, ব্যাচ → ব্যাচের. A vowel ending takes র, a consonant (its inherent অ)
+ * takes ের. Never "শাখা-এর".
+ */
+export const bnGenitive = (word: string): string =>
+  /[\u0985-\u0994\u09BE-\u09CC]$/.test(word.trim()) ? `${word.trim()}র` : `${word.trim()}ের`;
+
 /** "ষষ্ঠ শ্রেণি" for an enrolment's class level. */
 export const classLevelName = (
   enrolment: NonNullable<StudentListItem['enrolment']>,

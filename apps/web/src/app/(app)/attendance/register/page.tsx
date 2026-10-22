@@ -354,7 +354,8 @@ function RegisterReport() {
                           >
                             <Link
                               href={`/attendance/students/${row.id}?${new URLSearchParams({ from: r.days[0]!.date, to: r.days.at(-1)!.date })}`}
-                              className="flex items-center gap-2 hover:underline"
+                              // 44 px tall on touch screens (control-h-xs), as before on a desk.
+                              className="flex min-h-(--control-h-xs) items-center gap-2 hover:underline"
                             >
                               <span className="text-muted-foreground w-6 shrink-0 text-xs tabular-nums">
                                 {row.roll != null ? formatIdentifier(row.roll) : ''}

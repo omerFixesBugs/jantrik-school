@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { StudentStatus } from './api.js';
 import { isoDateSchema, type IsoDate } from './dates.js';
 import { toAsciiDigits } from './digits.js';
 import { bdPhoneSchema } from './phone.js';
@@ -329,7 +330,7 @@ export interface StudentProfile {
   presentAddress: string | null;
   permanentAddress: string | null;
   photoUrl: string | null;
-  status: 'ACTIVE' | 'INACTIVE' | 'GRADUATED' | 'TRANSFERRED' | 'DROPPED_OUT';
+  status: StudentStatus;
   /** Set when deactivated (soft delete). */
   deletedAt: string | null;
   /**

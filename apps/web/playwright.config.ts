@@ -41,6 +41,8 @@ export default defineConfig({
     baseURL: 'http://localhost:3000',
     locale: 'bn-BD',
     timezoneId: 'Asia/Dhaka',
+    // Count-ups and draw-ins land on their final state at once (docs/design.md → Motion).
+    reducedMotion: 'reduce',
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],

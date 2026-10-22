@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { API_URL, DEMO, otpLoginWithBanglaDigits, otpPhoneInput, passwordLogin } from './helpers';
-import { findLayoutProblems } from './layout-check';
+import { findLayoutProblems, findSmallTargets } from './layout-check';
 
 // Long Bangla strings must wrap or truncate with "…", never clip or overlap: checked on a small
 // Android phone (360 px), and the busiest screens again at 320 px (a phone with larger text).
@@ -10,6 +10,9 @@ async function expectClean(page: Page, where: string) {
   await page.waitForLoadState('networkidle');
   const problems = await findLayoutProblems(page);
   expect(problems, `${where}: ${JSON.stringify(problems, null, 1)}`).toEqual([]);
+  // A phone (touch): every control at least 44 × 44 px (docs/design.md → Density).
+  const small = await findSmallTargets(page);
+  expect(small, `${where}: targets under 44 px: ${JSON.stringify(small, null, 1)}`).toEqual([]);
 }
 
 async function english(page: Page) {
@@ -133,4 +136,46 @@ test('guardian dashboard', async ({ page }) => {
   await otpLoginWithBanglaDigits(page, DEMO.shaplaGuardian2);
   await expect(page.getByTestId('children')).toBeVisible();
   await expectClean(page, 'guardian dashboard');
+});
+
+test.describe('desktop', () => {
+  test.use({ viewport: { width: 1366, height: 900 }, isMobile: false, hasTouch: false });
+
+  test('dashboard and students list at 1366 and 1920 px, bn and en', async ({ page }) => {
+    test.setTimeout(90_000);
+    await passwordLogin(page, DEMO.shaplaOwner);
+    await expect(page).toHaveURL(/\/dashboard$/);
+    try {
+      for (const lang of ['bn', 'en']) {
+        await page.context().addCookies([{ name: 'NEXT_LOCALE', value: lang, url: page.url() }]);
+        for (const width of [1366, 1920]) {
+          await page.setViewportSize({ width, height: 900 });
+          await page.goto('/dashboard');
+          await expect(page.getByTestId('attendance-trend')).toBeVisible();
+          await page.waitForLoadState('networkidle');
+          const dashboard = await findLayoutProblems(page);
+          expect(dashboard, `dashboard ${width} ${lang}: ${JSON.stringify(dashboard)}`).toEqual([]);
+          await page.goto('/students');
+          await expect(page.getByTestId('students-table')).toBeVisible();
+          await page.waitForLoadState('networkidle');
+          const students = await findLayoutProblems(page);
+          expect(students, `students ${width} ${lang}: ${JSON.stringify(students)}`).toEqual([]);
+        }
+        // The narrowest width with a side peek: the list shares the screen with it.
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page
+          .getByTestId('students-table')
+          .locator('tbody tr')
+          .first()
+          .getByRole('cell')
+          .nth(1)
+          .click();
+        await expect(page.getByTestId('student-peek')).toBeVisible();
+        const peek = await findLayoutProblems(page);
+        expect(peek, `students with the peek 1280 ${lang}: ${JSON.stringify(peek)}`).toEqual([]);
+      }
+    } finally {
+      await page.context().addCookies([{ name: 'NEXT_LOCALE', value: 'bn', url: page.url() }]);
+    }
+  });
 });

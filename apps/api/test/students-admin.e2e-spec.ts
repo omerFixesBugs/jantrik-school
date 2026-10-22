@@ -374,7 +374,8 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
     expect(off).toMatchObject({ status: 'INACTIVE' });
     expect(off.deletedAt).not.toBeNull();
     expect(off.enrolments[0]!.roll).toBeNull();
-    const list = (await http(h).get('/students?limit=100').set(bearer(admin)).expect(200)).body as {
+    const list = (await http(h).get('/students?pageSize=100').set(bearer(admin)).expect(200))
+      .body as {
       items: { id: string }[];
     };
     expect(list.items.map((i) => i.id)).not.toContain(p.id);

@@ -2,44 +2,72 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  addDays,
+  ATTENDANCE_TARGET,
+  attentionItems,
+  dashboardInsight,
   dayPeriod,
   dhakaHour,
   formatBanglaCalendarDate,
   formatCount,
   formatDate,
   formatIdentifier,
+  LONG_ABSENCE_DAYS,
+  periodPercent,
+  pointChange,
+  splitPeriods,
+  type AttendanceTodayReport,
   type AttendanceTodaySummary,
+  type AttendanceTrendReport,
   type SendHeldSmsResult,
   type SmsDailyStatus,
   type GuardianChild,
   type MeContext,
   type StudentsPage,
+  type StudentsSummary,
 } from '@jantrik/shared';
 import {
-  BookOpenCheckIcon,
   CalendarCheckIcon,
   CalendarDaysIcon,
   CheckIcon,
   ChevronRightIcon,
+  ClipboardCheckIcon,
   ClockIcon,
   CloudOffIcon,
   HeartHandshakeIcon,
+  MessageSquareTextIcon,
   MessageSquareWarningIcon,
+  UserCheckIcon,
   UserPlusIcon,
   UsersIcon,
+  UserXIcon,
   WalletIcon,
-  type LucideIcon,
 } from 'lucide-react';
-import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
-import { useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
 import { BillingNoticeBanner } from '@/components/billing-notice';
+import {
+  AttendanceTrend,
+  TodayAbsentees,
+  TodayBoard,
+  type BoardPeriod,
+} from '@/components/dashboard/attendance-overview';
+import { KpiPlaceholder, KpiTile } from '@/components/dashboard/kpi';
+import {
+  AttentionCard,
+  DashboardHero,
+  Deferred,
+  StudentsByClass,
+  TermTimeline,
+  useInsightText,
+} from '@/components/dashboard/principal';
+import { DeltaPill, Pill } from '@/components/kit/pill';
+import { HalfGauge, HatchedColumns } from '@/components/story-charts';
 import { InvitationsBanner } from '@/components/invitations-banner';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button, ButtonLink } from '@/components/ui/button';
 import {
   Dialog,
@@ -54,7 +82,7 @@ import type { Locale } from '@/i18n/config';
 import { listDrafts } from '@/lib/attendance/drafts';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
-import { classLevelName, displayName, displayUserName } from '@/lib/names';
+import { bnGenitive, classLevelName, displayName, displayUserName } from '@/lib/names';
 import { canSee, isStaff, navItem } from '@/lib/navigation';
 import { useSetupChecklist, wizardHref } from '@/lib/setup-checklist';
 import { cn } from '@/lib/utils';
@@ -134,22 +162,62 @@ function StaffDashboard({ context }: { context: MeContext }) {
   const label = useLabel();
   const { client, session } = useAuth();
   const tenantId = session?.tenant?.id;
-  const canSeeStudents = canSee(navItem('students'), context);
   const isAdmin = context.roles.some((r) => r === 'OWNER' || r === 'ADMIN');
+  const canSeeStudents = canSee(navItem('students'), context);
+  const canSeeAttendance = canSee(navItem('attendance'), context);
+  // Owners and admins get the whole picture; everyone else their figures (teachers: part 5).
+  const overview = isAdmin && canSeeAttendance;
+  const f = (n: number) => formatCount(n, locale);
+  const pct = (n: number) => `${f(Math.round(n))}%`;
 
+  const summary = useQuery({
+    queryKey: ['students-summary', tenantId],
+    queryFn: () => client.api<StudentsSummary>('/students/summary'),
+    enabled: isAdmin && canSeeStudents,
+  });
   const students = useQuery({
     queryKey: ['students-total', tenantId],
-    queryFn: () => client.api<StudentsPage>('/students?limit=1'),
-    enabled: canSeeStudents,
+    queryFn: () => client.api<StudentsPage>('/students?pageSize=1'),
+    enabled: !isAdmin && canSeeStudents,
   });
-
-  const canSeeAttendance = canSee(navItem('attendance'), context);
-  const summary = useQuery({
+  const todaySummary = useQuery({
     queryKey: ['attendance-summary', tenantId],
     queryFn: () => client.api<AttendanceTodaySummary>('/attendance/summary/today'),
-    enabled: canSeeAttendance,
+    enabled: canSeeAttendance && !overview,
   });
-  const attendanceAdmin = canSeeAttendance && isAdmin;
+  const report = useQuery({
+    queryKey: ['attendance-report-today', tenantId],
+    queryFn: () => client.api<AttendanceTodayReport>('/attendance/reports/today'),
+    enabled: overview,
+  });
+  // The last 14 days, all sections together: the hero's and the KPIs' comparisons.
+  const recent = useQuery({
+    queryKey: ['attendance-trend', tenantId, 14],
+    queryFn: () => client.api<AttendanceTrendReport>('/attendance/reports/trend?days=14'),
+    enabled: overview,
+  });
+  // 60 days by section (the board's week and month, the trend against the period before):
+  // loaded once those come near the screen, or a period is chosen.
+  const [wantHistory, setWantHistory] = useState(false);
+  const loadHistory = useCallback(() => setWantHistory(true), []);
+  const history = useQuery({
+    queryKey: ['attendance-trend', tenantId, 60, 'bySection'],
+    queryFn: () =>
+      client.api<AttendanceTrendReport>('/attendance/reports/trend?days=60&bySection=1'),
+    enabled: overview && wantHistory,
+  });
+  const sms = useQuery({
+    queryKey: ['sms-today', tenantId],
+    queryFn: () => client.api<SmsDailyStatus>('/attendance/sms/today'),
+    enabled: overview,
+  });
+  // The next setup step (the attention list): owners' and admins' overview only, and after the
+  // first screen's own data (five requests that would otherwise queue ahead of it on a phone).
+  const checklist = useSetupChecklist(context, overview && Boolean(report.data));
+  const insightText = useInsightText();
+  const [classId, setClassId] = useState<string | null>(null);
+  const [boardPeriod, setBoardPeriod] = useState<BoardPeriod>('today');
+  const [trendPeriod, setTrendPeriod] = useState<'week' | 'month'>('month');
   // Attendance kept on this phone that the server doesn't have yet.
   const [unsent] = useState(() =>
     session?.tenant ? listDrafts(session.user.id, session.tenant.id).length : 0,
@@ -158,295 +226,575 @@ function StaffDashboard({ context }: { context: MeContext }) {
   const studentLabel = label('student', 'Student', { inText: true });
   const classLabel = label('class_level', 'Class', { inText: true });
   const sectionLabel = label('section', 'Section', { inText: true });
-  const total = students.data?.total ?? null;
-  const today = summary.data;
-  const present = today ? today.counts.present + today.counts.late : 0;
 
+  // Today's figures, from the report (owners, admins) or the summary (everyone else).
+  const day = overview
+    ? report.data && {
+        counts: report.data.totals.counts,
+        percent: report.data.totals.percent,
+        sectionsTaken: report.data.totals.sectionsTaken,
+        sectionsTotal: report.data.totals.sectionsTotal,
+      }
+    : todaySummary.data;
+  const dayLoading = overview ? report.isPending : todaySummary.isPending;
+  const counted = day
+    ? day.counts.present + day.counts.absent + day.counts.late + day.counts.leave
+    : 0;
+  const present = day ? day.counts.present + day.counts.late : 0;
+  const longAway = (report.data?.sections ?? []).flatMap((s) =>
+    (s.register?.absent ?? []).filter((st) => st.streak >= LONG_ABSENCE_DAYS),
+  );
+  const longAbsent = longAway.length;
+  const dayFailed = overview
+    ? report.isError && !report.data
+    : todaySummary.isError && !todaySummary.data;
+
+  const total = isAdmin
+    ? summary.data && Object.values(summary.data.byStatus).reduce((a, n) => a + n, 0)
+    : students.data?.total;
+  const addedNow = summary.data?.addedByMonth.at(-1)?.count ?? 0;
+
+  const studentsTile = canSeeStudents && (
+    <KpiTile
+      label={t('totalStudents', { student: studentLabel })}
+      icon={UsersIcon}
+      count={total === undefined ? null : { to: total, format: f }}
+      loading={isAdmin ? summary.isPending : students.isPending}
+      failed={isAdmin ? summary.isError && !summary.data : students.isError && !students.data}
+      href="/students"
+      delta={
+        addedNow > 0 && (
+          <DeltaPill
+            change={addedNow}
+            display={f(addedNow)}
+            better="up"
+            label={t('addedChangeLabel', { count: f(addedNow) })}
+          />
+        )
+      }
+      compare={addedNow > 0 ? t('thisMonth') : undefined}
+      hint={t('totalStudentsHint', { classLevel: classLabel })}
+    />
+  );
+
+  if (!overview) {
+    return (
+      <>
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+          <Greeting subtitle={t('subtitle', { institute: context.tenant.name })} />
+          <QuickActions context={context} />
+        </div>
+        <UnsentBanner count={unsent} />
+        <ul className="grid grid-cols-2 gap-(--gap) md:grid-cols-3" aria-label={t('figures')}>
+          {studentsTile}
+          {canSeeAttendance && (
+            <KpiTile
+              testId="module-card-attendance"
+              label={t('presentToday')}
+              icon={UserCheckIcon}
+              href="/attendance/today"
+              loading={dayLoading}
+              failed={dayFailed}
+              count={day && counted > 0 ? { to: present, format: f } : null}
+              suffix={day && counted > 0 ? `/ ${f(counted)}` : undefined}
+              hint={
+                !day ? (
+                  t('presentTodayHint')
+                ) : counted === 0 ? (
+                  t('presentTodayNone')
+                ) : (
+                  <>
+                    {day.percent !== null && (
+                      <span className="text-foreground block font-medium">
+                        {t('presentTodayPercent', { percent: f(Math.round(day.percent)) })}
+                      </span>
+                    )}
+                    {t('presentTodaySectionsOf', {
+                      taken: f(day.sectionsTaken),
+                      total: f(day.sectionsTotal),
+                      section: sectionLabel,
+                    })}
+                  </>
+                )
+              }
+            />
+          )}
+        </ul>
+        {isAdmin && <GettingStarted context={context} />}
+        <ModulesSoon context={context} />
+      </>
+    );
+  }
+
+  // The last 7 days against the 7 before (the hero), and today against the last 7 days' average
+  // (the KPIs).
+  const r = recent.data;
+  const leave = r?.leaveCountsAsAbsent ?? false;
+  const weeks = r ? splitPeriods(r.days, r.today, 7) : null;
+  const weekNow = weeks ? periodPercent(weeks.current, leave) : null;
+  const weekBefore = weeks ? periodPercent(weeks.previous, leave) : null;
+  const lastWeek = r
+    ? periodPercent(
+        r.days.filter((d) => d.date < r.today && d.date >= addDays(r.today, -7)),
+        leave,
+      )
+    : null;
+  const todayChange =
+    day?.percent !== null && day?.percent !== undefined ? pointChange(day.percent, lastWeek) : null;
+  const schoolDays = (weeks?.current ?? []).filter((d) => !d.nonWorkingDay);
+  // The hatched week's scale starts under its lowest day (at 80 at most), so a 93 % day and a
+  // 97 % day look different and no day looks like none.
+  const lowestDay = Math.min(100, ...schoolDays.map((d) => d.percent ?? 100));
+  const weekFloor = Math.max(0, Math.min(80, Math.floor(lowestDay / 10) * 10 - 10));
+
+  const offDay = report.data?.nonWorkingDay ?? null;
+  const facts = report.data
+    ? dashboardInsight({
+        sectionsTotal: report.data.totals.sectionsTotal,
+        sectionsTaken: report.data.totals.sectionsTaken,
+        counts: report.data.totals.counts,
+        longAbsent,
+        week: { now: weekNow, before: weekBefore },
+        dayOff: offDay
+          ? {
+              name:
+                offDay.reason === 'HOLIDAY'
+                  ? locale === 'bn'
+                    ? offDay.nameBn
+                    : offDay.nameEn
+                  : null,
+            }
+          : null,
+      })
+    : null;
+
+  const sectionNames = new Map(
+    (report.data?.sections ?? []).map((s) => [
+      s.section.id,
+      `${displayName(s.section.classLevel.nameBn, s.section.classLevel.nameEn, locale)} ${s.section.name}`,
+    ]),
+  );
+  const nextStep = checklist.loading ? undefined : checklist.steps.find((s) => !s.done);
+  // Off only once the setting has loaded as off (not while it is on its way, nor if it failed).
+  const smsOff = checklist.absentSms === false;
+  // "Call their guardian": one student opens their record (the guardian, a call button and the
+  // number to dial from a desk phone); more go to today's absentees.
+  const callHref = longAway.length === 1 ? `/students/${longAway[0]!.id}` : '/attendance/today';
+  const h = history.data;
+  const attention = report.data
+    ? attentionItems({
+        absent: report.data.sections.flatMap((s) =>
+          (s.register?.absent ?? []).map((st) => ({
+            id: st.id,
+            sectionId: s.section.id,
+            streak: st.streak,
+          })),
+        ),
+        notTaken: offDay
+          ? []
+          : report.data.sections.filter((s) => !s.register).map((s) => s.section.id),
+        heldSms: sms.data?.held ?? 0,
+        week: h
+          ? h.sections.map((l) => ({
+              sectionId: l.section.id,
+              percent: periodPercent(
+                splitPeriods(l.days, h.today, 7).current,
+                h.leaveCountsAsAbsent,
+              ),
+            }))
+          : [],
+        // "Getting started" is on this page and says it already.
+        nextSetupStep: null,
+      })
+    : [];
+
+  const now = new Date();
   return (
     <>
-      <Greeting subtitle={t('subtitle', { institute: context.tenant.name })} />
+      <DashboardHero
+        date={
+          <>
+            <span className="flex items-center gap-1.5">
+              <CalendarDaysIcon aria-hidden className="size-4" />
+              {formatDate(now, locale, 'full')}
+            </span>
+            <span
+              className="border-hero-foreground/30 inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium"
+              title={t('banglaDate')}
+            >
+              {formatBanglaCalendarDate(now, locale)}
+              <span className="sr-only"> ({t('banglaDate')})</span>
+            </span>
+          </>
+        }
+        greeting={t(GREETING[dayPeriod(dhakaHour(now))], {
+          name: displayUserName(session?.user, locale),
+        })}
+        insight={
+          facts
+            ? insightText(facts, { callHref })
+            : t('subtitle', { institute: context.tenant.name })
+        }
+        week={{
+          percent: weekNow,
+          change: pointChange(weekNow, weekBefore),
+          loading: recent.isPending,
+        }}
+        actions={<QuickActions context={context} onHero />}
+      />
 
-      {unsent > 0 && (
-        <div
-          className="border-warning/40 bg-warning-soft flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3"
-          data-testid="unsent-banner"
-        >
-          <span className="flex items-center gap-2 font-medium">
-            <CloudOffIcon aria-hidden className="text-warning size-5" />
-            {t('unsentBanner', { count: formatCount(unsent, locale) })}
-          </span>
-          <ButtonLink size="sm" variant="outline" href="/attendance">
-            {t('unsentOpen')}
-          </ButtonLink>
-        </div>
-      )}
+      <UnsentBanner count={unsent} />
+      <HeldSmsBanner />
 
-      {attendanceAdmin && <HeldSmsBanner />}
-
-      <ul className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        {canSeeStudents && (
-          <StatCard
-            icon={UsersIcon}
-            label={t('totalStudents', { student: studentLabel })}
-            hint={t('totalStudentsHint', { classLevel: classLabel })}
-            value={total}
-            loading={students.isPending}
-            href="/students"
-          />
-        )}
-        {canSeeAttendance && (
-          <StatCard
-            testId="module-card-attendance"
-            icon={CalendarCheckIcon}
-            label={t('presentToday')}
-            href="/attendance"
-            loading={summary.isPending}
-            value={today ? (today.students > 0 ? present : null) : undefined}
-            display={
-              today && today.students > 0 ? (
-                <>
-                  {formatCount(present, locale)}
-                  <span className="text-muted-foreground text-xl font-medium">
-                    {' / '}
-                    {formatCount(today.students, locale)}
-                  </span>
-                </>
-              ) : undefined
-            }
-            hint={
-              !today ? (
-                t('presentTodayHint')
-              ) : today.students === 0 ? (
-                t('presentTodayNone')
+      <ul
+        className="grid grid-cols-2 gap-(--gap) md:grid-cols-3 xl:grid-cols-5"
+        aria-label={t('figures')}
+      >
+        {studentsTile}
+        <KpiTile
+          testId="module-card-attendance"
+          label={t('presentToday')}
+          icon={UserCheckIcon}
+          href="/attendance/today"
+          loading={dayLoading}
+          failed={dayFailed}
+          count={day && counted > 0 ? { to: present, format: f } : null}
+          suffix={day && counted > 0 ? `/ ${f(counted)}` : undefined}
+          delta={
+            todayChange !== null && (
+              <DeltaPill
+                change={todayChange}
+                display={`${formatCount(Math.abs(todayChange), locale)}%`}
+                better="up"
+                label={t('todayChangeLabel', {
+                  change: formatCount(Math.abs(todayChange), locale),
+                  more: todayChange > 0 ? 'true' : 'false',
+                })}
+              />
+            )
+          }
+          compare={todayChange !== null ? t('vsLastWeekAverage') : undefined}
+          // The last 7 days' school days hatched, today solid, beside the figure.
+          aside={
+            schoolDays.length > 1 && (
+              <HatchedColumns
+                decorative
+                min={weekFloor}
+                height={40}
+                title={t('presentToday')}
+                highlight={r?.today}
+                items={schoolDays.map((d) => ({
+                  key: d.date,
+                  label: d.date,
+                  value: d.percent,
+                  display: d.percent === null ? '' : pct(d.percent),
+                }))}
+                // 80 px fits beside a two-digit figure in a five-tile row at 1280.
+                className="w-20 2xl:w-24"
+              />
+            )
+          }
+          hint={
+            !day
+              ? t('presentTodayHint')
+              : counted === 0
+                ? t('presentTodayNone')
+                : day.percent !== null &&
+                  t('presentTodayPercent', { percent: f(Math.round(day.percent)) })
+          }
+        />
+        <KpiTile
+          testId="kpi-absent"
+          label={t('absentToday')}
+          icon={UserXIcon}
+          href="/attendance/today"
+          loading={dayLoading}
+          failed={dayFailed}
+          count={day && counted > 0 ? { to: day.counts.absent, format: f } : null}
+          hint={
+            day && counted > 0 ? (
+              longAbsent > 0 ? (
+                <Pill tone="destructive" className="whitespace-normal">
+                  {t('absentRun', { count: f(longAbsent), days: f(LONG_ABSENCE_DAYS) })}
+                </Pill>
               ) : (
-                <>
-                  {today.percent !== null && (
-                    <span className="text-foreground block font-medium">
-                      {t('presentTodayPercent', {
-                        percent: formatCount(Math.round(today.percent), locale),
-                      })}
-                    </span>
-                  )}
-                  {t('presentTodaySectionsOf', {
-                    taken: formatCount(today.sectionsTaken, locale),
-                    total: formatCount(today.sectionsTotal, locale),
-                    section: sectionLabel,
-                  })}
-                </>
+                t('absentRunNone', { days: f(LONG_ABSENCE_DAYS) })
               )
-            }
-          />
-        )}
-        {canSee(navItem('fees'), context) && (
-          <StatCard
-            testId="module-card-fees"
-            icon={WalletIcon}
-            label={t('feesThisMonth')}
-            hint={t('feesThisMonthHint')}
-          />
-        )}
-        {canSee(navItem('exams'), context) && (
-          <StatCard
-            testId="module-card-exams"
-            icon={BookOpenCheckIcon}
-            label={t('upcomingExam')}
-            hint={t('upcomingExamHint')}
-          />
-        )}
+            ) : (
+              t('presentTodayHint')
+            )
+          }
+        />
+        <KpiTile
+          testId="kpi-registers"
+          label={t('registersTaken')}
+          icon={ClipboardCheckIcon}
+          href="/attendance/today"
+          loading={dayLoading}
+          failed={dayFailed}
+          count={day && day.sectionsTotal > 0 ? { to: day.sectionsTaken, format: f } : null}
+          suffix={day && day.sectionsTotal > 0 ? `/ ${f(day.sectionsTotal)}` : undefined}
+          aside={
+            day &&
+            day.sectionsTotal > 0 && (
+              <HalfGauge
+                size={72}
+                value={day.sectionsTaken}
+                max={day.sectionsTotal}
+                display={pct((day.sectionsTaken / day.sectionsTotal) * 100)}
+                label={t('registersMeter', {
+                  taken: f(day.sectionsTaken),
+                  total: f(day.sectionsTotal),
+                  section: sectionLabel,
+                  sectionOf: locale === 'bn' ? bnGenitive(sectionLabel) : sectionLabel,
+                })}
+              />
+            )
+          }
+          hint={
+            day && day.sectionsTotal > 0
+              ? day.sectionsTaken < day.sectionsTotal
+                ? t('registersLeft', {
+                    count: f(day.sectionsTotal - day.sectionsTaken),
+                    n: day.sectionsTotal - day.sectionsTaken,
+                    section: sectionLabel,
+                  })
+                : t('registersDone', { section: sectionLabel })
+              : t('boardEmpty', { section: sectionLabel })
+          }
+        />
+        <KpiTile
+          testId="kpi-sms"
+          // The fifth tile: the whole row on a phone (two columns there).
+          className="col-span-2 md:col-span-1"
+          label={t('smsToday')}
+          icon={MessageSquareTextIcon}
+          href="/attendance/settings#settings-sms"
+          loading={sms.isPending}
+          failed={sms.isError && !sms.data}
+          value={smsOff ? t('smsOffValue') : undefined}
+          count={sms.data && !smsOff ? { to: sms.data.used, format: f } : null}
+          suffix={sms.data && !smsOff ? `/ ${f(sms.data.cap)}` : undefined}
+          aside={
+            sms.data &&
+            !smsOff &&
+            sms.data.cap > 0 && (
+              <HalfGauge
+                size={72}
+                value={sms.data.used}
+                max={sms.data.cap}
+                tone={sms.data.held > 0 || sms.data.used >= sms.data.cap ? 'warning' : 'accent'}
+                display={pct((sms.data.used / sms.data.cap) * 100)}
+                label={t('smsMeter', { used: f(sms.data.used), cap: f(sms.data.cap) })}
+              />
+            )
+          }
+          hint={
+            sms.data &&
+            (smsOff
+              ? t('smsOff')
+              : sms.data.held > 0
+                ? t('smsHeld', { count: f(sms.data.held) })
+                : t('smsLeft', { count: f(Math.max(0, sms.data.cap - sms.data.used)) }))
+          }
+        />
       </ul>
 
-      <div
-        className={cn(
-          'grid items-start gap-6',
-          isAdmin && 'lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]',
-        )}
-      >
-        {isAdmin && <GettingStarted context={context} />}
-        <QuickActions context={context} wide={!isAdmin} />
+      <div className="grid items-start gap-(--gap) xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div className="flex min-w-0 flex-col gap-(--gap)">
+          {report.isError && !report.data ? (
+            <LoadError error={report.error} onRetry={() => void report.refetch()} />
+          ) : report.data ? (
+            <TodayBoard
+              report={report.data}
+              history={history.data}
+              historyFailed={history.isError && !history.data}
+              onRetryHistory={() => void history.refetch()}
+              period={boardPeriod}
+              onPeriodChange={(p) => {
+                setBoardPeriod(p);
+                if (p !== 'today') loadHistory();
+              }}
+              classId={classId}
+              onClassChange={setClassId}
+            />
+          ) : (
+            <Skeleton className="rounded-card h-64" />
+          )}
+          {report.data && (
+            <Deferred height={300} onVisible={loadHistory}>
+              {history.isError && !history.data ? (
+                <LoadError error={history.error} onRetry={() => void history.refetch()} />
+              ) : history.data ? (
+                <AttendanceTrend
+                  report={history.data}
+                  classId={classId}
+                  period={trendPeriod}
+                  onPeriodChange={setTrendPeriod}
+                />
+              ) : (
+                <Skeleton className="rounded-card h-72" />
+              )}
+            </Deferred>
+          )}
+        </div>
+        <div className="flex min-w-0 flex-col gap-(--gap)">
+          {report.data ? (
+            <AttentionCard
+              items={attention}
+              sectionName={(id) => sectionNames.get(id) ?? ''}
+              setupStep={nextStep?.href ? { title: nextStep.title, href: nextStep.href } : null}
+              target={ATTENDANCE_TARGET}
+            />
+          ) : (
+            !report.isError && <Skeleton className="rounded-card h-40" />
+          )}
+          {report.isError && !report.data ? null : report.data ? (
+            <TodayAbsentees report={report.data} classId={classId} />
+          ) : (
+            <Skeleton className="rounded-card h-48" />
+          )}
+          {/* Beside the trend, so the right column does not end halfway down the page. */}
+          {canSeeStudents && (
+            <Deferred height={220}>
+              {summary.data ? (
+                <StudentsByClass summary={summary.data} />
+              ) : (
+                <Skeleton className="rounded-card h-56" />
+              )}
+            </Deferred>
+          )}
+        </div>
       </div>
+
+      <Deferred height={200}>
+        <TermTimeline context={context} />
+      </Deferred>
+
+      <GettingStarted context={context} after={Boolean(report.data)} />
+      <ModulesSoon context={context} />
     </>
+  );
+}
+
+/** Attendance kept on this phone that the server doesn't have yet. */
+function UnsentBanner({ count }: { count: number }) {
+  const t = useTranslations('dashboard');
+  const locale = useLocale() as Locale;
+  if (count <= 0) return null;
+  return (
+    <div
+      className="border-warning/40 bg-warning-soft rounded-card flex flex-wrap items-center justify-between gap-3 border px-4 py-3"
+      data-testid="unsent-banner"
+    >
+      <span className="flex items-center gap-2 font-medium">
+        <CloudOffIcon aria-hidden className="text-warning size-5" />
+        {t('unsentBanner', { count: formatCount(count, locale) })}
+      </span>
+      <ButtonLink size="sm" variant="outline" href="/attendance">
+        {t('unsentOpen')}
+      </ButtonLink>
+    </div>
+  );
+}
+
+/** Modules not running yet: what will appear here, never a made-up number. */
+function ModulesSoon({ context }: { context: MeContext }) {
+  const t = useTranslations('dashboard');
+  const fees = canSee(navItem('fees'), context);
+  const exams = canSee(navItem('exams'), context);
+  if (!fees && !exams) return null;
+  return (
+    <ul className="grid gap-(--gap) sm:grid-cols-2" aria-label={t('modulesSoon')}>
+      {fees && (
+        <KpiPlaceholder
+          testId="module-card-fees"
+          label={t('feesThisMonth')}
+          hint={t('feesThisMonthHint')}
+        />
+      )}
+      {exams && (
+        <KpiPlaceholder
+          testId="module-card-exams"
+          label={t('upcomingExam')}
+          hint={t('upcomingExamHint')}
+        />
+      )}
+    </ul>
+  );
+}
+
+/** A part of the dashboard that could not be loaded: why, and a way to try again. */
+function LoadError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const tCommon = useTranslations('common');
+  const describe = useErrorMessage();
+  return (
+    <Alert variant="destructive">
+      <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+        {describe(error)}
+        <Button size="sm" variant="outline" onClick={onRetry}>
+          {tCommon('retry')}
+        </Button>
+      </AlertDescription>
+    </Alert>
   );
 }
 
 /**
- * Real numbers sit on a solid card; modules that are not running yet use a dashed outline and
- * say what will appear, instead of showing a made-up number.
+ * The day's main jobs, beside the greeting: taking attendance first. `onHero`: drawn on the
+ * hero (its text colour as the fill, outlines in it), every pair tested on both gradient stops.
  */
-function StatCard({
-  icon: Icon,
-  label,
-  hint,
-  value,
-  display,
-  loading,
-  href,
-  testId,
-}: {
-  icon: LucideIcon;
-  label: string;
-  hint: ReactNode;
-  value?: number | null;
-  /** Custom rendering of the value (e.g. "4 / 5"). */
-  display?: ReactNode;
-  loading?: boolean;
-  href?: string;
-  testId?: string;
-}) {
+function QuickActions({ context, onHero = false }: { context: MeContext; onHero?: boolean }) {
   const t = useTranslations('dashboard');
-  const locale = useLocale() as Locale;
-  const placeholder = value === undefined && display === undefined;
-  const body = (
-    <>
-      <span className="flex items-center justify-between gap-2">
-        <span className="text-muted-foreground text-sm font-medium">{label}</span>
-        <span
-          className={cn(
-            'hidden size-9 shrink-0 items-center justify-center rounded-lg sm:flex',
-            placeholder ? 'bg-muted text-muted-foreground' : 'bg-primary-soft text-primary',
-          )}
-        >
-          <Icon aria-hidden className="size-4.5" />
-        </span>
-      </span>
-      {loading ? (
-        <Skeleton className="h-10 w-20" />
-      ) : (
-        <span
-          className={cn(
-            'font-numeric text-3xl leading-none font-semibold',
-            placeholder && 'text-muted-foreground',
-          )}
-        >
-          {display ??
-            (placeholder || value === null ? (
-              <>
-                <span aria-hidden>—</span>
-                <span className="sr-only">{t('notYet')}</span>
-              </>
-            ) : (
-              formatCount(value ?? 0, locale)
-            ))}
-        </span>
-      )}
-      <span className="text-muted-foreground text-xs leading-snug sm:text-sm">{hint}</span>
-    </>
-  );
-  const className = cn(
-    'flex h-full flex-col gap-2 rounded-xl p-3.5 sm:gap-3 sm:p-5',
-    placeholder ? 'border border-dashed border-input' : 'bg-card border shadow-xs',
-  );
-  return (
-    <li data-testid={testId}>
-      {href ? (
-        <Link
-          href={href}
-          className={cn(
-            className,
-            'hover:border-primary/40 focus-visible:ring-ring/40 transition-colors outline-none focus-visible:ring-3',
-          )}
-        >
-          {body}
-        </Link>
-      ) : (
-        <div className={className}>{body}</div>
-      )}
-    </li>
-  );
-}
-
-function QuickActions({ context, wide }: { context: MeContext; wide?: boolean }) {
-  const t = useTranslations('dashboard');
-  const tCommon = useTranslations('common');
   const label = useLabel();
   const isAdmin = context.roles.some((r) => r === 'OWNER' || r === 'ADMIN');
-  const actions: { key: string; icon: LucideIcon; title: string; text: string; href?: string }[] =
-    [];
-  if (isAdmin)
-    actions.push({
-      key: 'add-student',
-      icon: UserPlusIcon,
-      title: t('addStudent', { student: label('student', 'Student', { inText: true }) }),
-      text: t('addStudentText'),
-    });
-  if (canSee(navItem('attendance'), context))
-    actions.push({
-      key: 'attendance',
-      icon: CalendarCheckIcon,
-      title: t('takeAttendance'),
-      text: t('takeAttendanceText'),
-      href: '/attendance',
-    });
-  if (canSee(navItem('fees'), context))
-    actions.push({
-      key: 'fees',
-      icon: WalletIcon,
-      title: t('collectFee'),
-      text: t('collectFeeText'),
-      href: '/fees',
-    });
-  if (actions.length === 0) return null;
-
+  const main = onHero ? 'bg-hero-foreground text-hero-from hover:bg-hero-foreground/90' : undefined;
+  const other = onHero
+    ? 'border-hero-foreground/40 text-hero-foreground hover:bg-hero-foreground/10 hover:text-hero-foreground bg-transparent'
+    : undefined;
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="quick-actions">
-      <SectionTitle>
-        <span id="quick-actions">{t('quickActions')}</span>
-      </SectionTitle>
-      <ul className={cn('grid gap-3', wide && 'md:grid-cols-3')}>
-        {actions.map((a) => {
-          const inner = (
-            <>
-              <span className="bg-primary-soft text-primary flex size-11 shrink-0 items-center justify-center rounded-lg">
-                <a.icon aria-hidden className="size-5" />
-              </span>
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="font-medium">{a.title}</span>
-                <span className="text-muted-foreground text-sm">{a.text}</span>
-              </span>
-              {a.href ? (
-                <ChevronRightIcon aria-hidden className="text-muted-foreground size-5 shrink-0" />
-              ) : (
-                <Badge variant="secondary">{tCommon('comingSoon')}</Badge>
-              )}
-            </>
-          );
-          const base = 'bg-card flex min-h-[76px] items-center gap-3 rounded-xl border p-3 sm:p-4';
-          return (
-            <li key={a.key}>
-              {a.href ? (
-                <Link
-                  href={a.href}
-                  data-testid={`quick-${a.key}`}
-                  className={cn(
-                    base,
-                    'hover:border-primary/40 hover:bg-primary-soft/40 focus-visible:ring-ring/40 shadow-xs transition-colors outline-none focus-visible:ring-3',
-                  )}
-                >
-                  {inner}
-                </Link>
-              ) : (
-                <div className={cn(base, 'bg-card/60')} aria-disabled="true">
-                  {inner}
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <div className="flex flex-wrap gap-2" aria-label={t('quickActions')} role="group">
+      {canSee(navItem('attendance'), context) && (
+        <ButtonLink href="/attendance" data-testid="quick-attendance" className={main}>
+          <CalendarCheckIcon aria-hidden />
+          {t('takeAttendance')}
+        </ButtonLink>
+      )}
+      {isAdmin && canSee(navItem('students'), context) && (
+        <ButtonLink
+          href="/students/new"
+          variant="outline"
+          data-testid="quick-add-student"
+          className={other}
+        >
+          <UserPlusIcon aria-hidden />
+          {t('addStudent', { student: label('student', 'Student', { inText: true }) })}
+        </ButtonLink>
+      )}
+      {canSee(navItem('fees'), context) && !navItem('fees').soon && (
+        <ButtonLink href="/fees" variant="outline" data-testid="quick-fees" className={other}>
+          <WalletIcon aria-hidden />
+          {t('collectFee')}
+        </ButtonLink>
+      )}
+    </div>
   );
 }
 
-/** The real setup sequence for a new institute, ticked from data the institute already has. */
-function GettingStarted({ context }: { context: MeContext }) {
+/**
+ * The real setup sequence for a new institute, ticked from data the institute already has.
+ * `after`: wait for it (the overview loads its own first screen first).
+ */
+function GettingStarted({ context, after = true }: { context: MeContext; after?: boolean }) {
   const t = useTranslations('dashboard');
   const locale = useLocale() as Locale;
-  const { steps, done, wizard, loading } = useSetupChecklist(context);
-  if (!loading && done === steps.length && !wizard) return null;
+  const { steps, done, wizard, loading } = useSetupChecklist(context, after);
+  if (!after || (!loading && done === steps.length && !wizard)) return null;
   const nextKey = steps.find((s) => !s.done)?.key;
 
   return (
     <section
-      className="bg-card flex flex-col gap-4 rounded-xl border p-4 shadow-xs sm:p-5"
+      className="bg-card flex flex-col gap-3 rounded-lg border p-(--panel-p)"
       aria-labelledby="getting-started"
       data-testid="getting-started"
     >
@@ -488,44 +836,46 @@ function GettingStarted({ context }: { context: MeContext }) {
           />
         </div>
       </div>
+      {/* Compact: what is done is one line of ticks; only what is left gets a row. */}
+      {done > 0 && (
+        <ul className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {steps
+            .filter((s) => s.done)
+            .map((s) => (
+              <li key={s.key} className="inline-flex items-center gap-1.5">
+                <CheckIcon aria-hidden className="text-success size-4 shrink-0" />
+                {s.title}
+                <span className="sr-only"> ({t('done')})</span>
+              </li>
+            ))}
+        </ul>
+      )}
       <ol className="flex flex-col">
-        {steps.map((s, i) => {
-          const isNext = s.key === nextKey;
-          return (
-            <li
-              key={s.key}
-              className={cn(
-                'flex gap-3 border-t py-3 first:border-t-0 first:pt-1 last:pb-0',
-                isNext && 'items-start',
-              )}
-            >
+        {steps.map((s, i) =>
+          s.done ? null : (
+            <li key={s.key} className="flex items-start gap-3 border-t py-2.5 last:pb-0">
               <span
                 className={cn(
-                  'font-numeric flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold',
-                  s.done
-                    ? 'bg-success-soft text-success'
-                    : isNext
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground border',
+                  'font-numeric flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold',
+                  s.key === nextKey
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground border',
                 )}
               >
-                {s.done ? <CheckIcon aria-hidden className="size-4" /> : formatCount(i + 1, locale)}
+                {formatCount(i + 1, locale)}
               </span>
               <span className="flex min-w-0 flex-1 flex-col">
-                <span className={cn('font-medium', s.done && 'text-muted-foreground')}>
-                  {s.title}
-                  {s.done && <span className="sr-only"> ({t('done')})</span>}
-                </span>
-                {!s.done && <span className="text-muted-foreground text-sm">{s.text}</span>}
+                <span className="font-medium">{s.title}</span>
+                <span className="text-muted-foreground text-sm">{s.text}</span>
               </span>
-              {!s.done && s.href && isNext && (
+              {s.href && s.key === nextKey && (
                 <ButtonLink size="sm" variant="outline" href={s.href} className="shrink-0">
                   {t('open')}
                 </ButtonLink>
               )}
             </li>
-          );
-        })}
+          ),
+        )}
       </ol>
     </section>
   );
@@ -574,7 +924,8 @@ function HeldSmsBanner() {
   const count = formatCount(held, locale);
   return (
     <div
-      className="border-warning/40 bg-warning-soft flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+      className="border-warning/40 bg-warning-soft flex flex-col gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+      id="held-sms"
       data-testid="held-sms"
     >
       <div className="flex min-w-0 gap-3">
@@ -664,7 +1015,7 @@ function GuardianDashboard({ context }: { context: MeContext }) {
             className="bg-card flex flex-col items-center gap-3 rounded-xl border px-6 py-12 text-center"
             data-testid="children-empty"
           >
-            <span className="bg-primary-soft text-primary flex size-14 items-center justify-center rounded-2xl">
+            <span className="bg-primary-soft text-primary-ink flex size-14 items-center justify-center rounded-2xl">
               <HeartHandshakeIcon aria-hidden className="size-7" />
             </span>
             <p className="font-medium">{t('none')}</p>
@@ -702,7 +1053,10 @@ function ChildCard({ child, showAttendance }: { child: GuardianChild; showAttend
     { term: t('roll'), value: e?.roll != null ? formatIdentifier(e.roll) : '—', id: true },
   ];
   return (
-    <li className="bg-card flex flex-col overflow-hidden rounded-xl border shadow-xs">
+    <li
+      data-slot="card"
+      className="bg-card rounded-card shadow-card flex flex-col overflow-hidden border"
+    >
       <div className="flex items-center gap-4 p-4 sm:p-5">
         <PersonAvatar name={name} photoUrl={child.photoUrl} size="xl" />
         <div className="flex min-w-0 flex-col">

@@ -102,7 +102,7 @@ function TodayReport() {
             })}
           </p>
           {r.totals.percent !== null && (
-            <p className="font-numeric text-primary text-2xl font-semibold">
+            <p className="font-numeric text-primary-ink text-2xl font-semibold">
               {t('percentPresent', { percent: formatCount(Math.round(r.totals.percent), locale) })}
             </p>
           )}

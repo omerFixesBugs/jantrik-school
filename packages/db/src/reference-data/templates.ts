@@ -4,6 +4,7 @@ import type {
   Prisma,
   PrismaClient,
   RoundingMode,
+  ThemePreset,
 } from '../generated/prisma/client.js';
 
 // Global reference data: institute types and the templates copied into each new tenant.
@@ -32,6 +33,8 @@ interface InstituteTypeDef {
   defaultLocale: Locale;
   /** Default attendance_settings.mode for new tenants of this type. */
   attendanceMode: AttendanceMode;
+  /** The theme its institutes get until the owner picks another (packages/shared themes). */
+  defaultTheme: ThemePreset;
   gradingScheme: string;
   labels: Record<string, [bn: string, en: string]>;
   studyGroups: NamePair[];
@@ -158,6 +161,7 @@ export const INSTITUTE_TYPES: InstituteTypeDef[] = [
     en: 'Coaching Centre',
     defaultLocale: 'bn',
     attendanceMode: 'PER_SESSION',
+    defaultTheme: 'COACHING',
     gradingScheme: 'BD_GPA_5',
     labels: {
       class_level: ['কোর্স', 'Course'],
@@ -202,6 +206,7 @@ export const INSTITUTE_TYPES: InstituteTypeDef[] = [
     en: 'NCTB School (Bangla Version)',
     defaultLocale: 'bn',
     attendanceMode: 'DAILY',
+    defaultTheme: 'SCHOOL',
     gradingScheme: 'BD_GPA_5',
     labels: SCHOOL_LABELS,
     studyGroups: NCTB_STUDY_GROUPS,
@@ -213,6 +218,7 @@ export const INSTITUTE_TYPES: InstituteTypeDef[] = [
     en: 'NCTB School (English Version)',
     defaultLocale: 'en',
     attendanceMode: 'DAILY',
+    defaultTheme: 'ENGLISH_MEDIUM',
     gradingScheme: 'BD_GPA_5',
     labels: SCHOOL_LABELS,
     studyGroups: NCTB_STUDY_GROUPS,
@@ -262,6 +268,7 @@ async function upsertTemplates(owner: Prisma.TransactionClient): Promise<void> {
       nameEn: def.en,
       defaultLocale: def.defaultLocale,
       attendanceMode: def.attendanceMode,
+      defaultTheme: def.defaultTheme,
       sortOrder: i,
       defaultGradingSchemeTemplateId: schemeIds.get(def.gradingScheme) ?? null,
     };

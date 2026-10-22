@@ -1,14 +1,14 @@
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 
-/** The mark: a blackboard-green tile with য and a turmeric spark (docs/design.md → Brand). */
+/** The mark: a blackboard tile with a chalk য and a chalk-yellow spark (docs/design.md → Brand). */
 export function LogoMark({ className, inverted }: { className?: string; inverted?: boolean }) {
   return (
     <span
       aria-hidden
       className={cn(
         'font-heading relative inline-flex size-9 shrink-0 items-center justify-center rounded-[11px] text-xl leading-none font-semibold',
-        inverted ? 'bg-white text-[#0e5e50]' : 'bg-primary text-primary-foreground',
+        inverted ? 'bg-hero-foreground text-hero-from' : 'bg-primary text-primary-foreground',
         className,
       )}
     >
@@ -18,23 +18,29 @@ export function LogoMark({ className, inverted }: { className?: string; inverted
   );
 }
 
-/** Mark + wordmark. `compact` hides the wordmark (collapsed sidebar). */
+/**
+ * Mark + wordmark. `compact` hides the wordmark (collapsed sidebar); `onBoard` sets it in chalk on
+ * the blackboard (the sidebar), with the white tile.
+ */
 export function Logo({
   compact,
   inverted,
+  onBoard,
   className,
 }: {
   compact?: boolean;
   inverted?: boolean;
+  onBoard?: boolean;
   className?: string;
 }) {
   const t = useTranslations('app');
   return (
     <span className={cn('inline-flex items-center gap-2.5', className)}>
-      <LogoMark inverted={inverted} />
+      <LogoMark inverted={inverted} className={onBoard ? 'size-8 text-lg' : undefined} />
       <span
         className={cn(
           'font-heading text-lg leading-none font-semibold whitespace-nowrap',
+          onBoard && 'text-board-foreground',
           compact && 'sr-only',
         )}
       >
@@ -57,7 +63,7 @@ export function AlphabetStrip({ className }: { className?: string }) {
       )}
     >
       {LETTERS.slice(0, 16).map((letter, i) => (
-        <span key={letter} className={i === 0 ? 'text-accent-warm' : 'text-white/20'}>
+        <span key={letter} className={i === 0 ? 'text-hero-accent' : 'text-hero-foreground/20'}>
           {letter}
         </span>
       ))}
@@ -83,7 +89,7 @@ export function AlphabetChart({ className }: { className?: string }) {
           key={letter}
           className={cn(
             'flex aspect-square items-center justify-center',
-            i === 0 ? 'text-accent-warm' : 'text-white/[0.13]',
+            i === 0 ? 'text-hero-accent' : 'text-hero-foreground/[0.13]',
           )}
         >
           {letter}

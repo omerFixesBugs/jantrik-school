@@ -6,6 +6,7 @@ import { cn } from 'cn';
 
 import { Button } from '@/components/ui/button';
 import { XIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 function Sheet({ ...props }: SheetPrimitive.Root.Props) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />;
@@ -28,7 +29,7 @@ function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
     <SheetPrimitive.Backdrop
       data-slot="sheet-overlay"
       className={cn(
-        'fixed inset-0 z-50 bg-foreground/30 transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 supports-backdrop-filter:backdrop-blur-xs',
+        'fixed inset-0 z-50 bg-foreground/30 transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0',
         className,
       )}
       {...props}
@@ -46,6 +47,7 @@ function SheetContent({
   side?: 'top' | 'right' | 'bottom' | 'left';
   showCloseButton?: boolean;
 }) {
+  const tCommon = useTranslations('common');
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -65,7 +67,7 @@ function SheetContent({
             render={<Button variant="ghost" className="absolute top-3 right-3" size="icon-sm" />}
           >
             <XIcon />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{tCommon('close')}</span>
           </SheetPrimitive.Close>
         )}
       </SheetPrimitive.Popup>
@@ -97,7 +99,7 @@ function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn('font-heading text-base font-medium text-foreground', className)}
+      className={cn('text-base font-semibold text-foreground', className)}
       {...props}
     />
   );

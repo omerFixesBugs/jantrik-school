@@ -143,7 +143,7 @@ function Totals({ u, locale }: { u: PlatformUsage; locale: Locale }) {
           data-testid={c.id}
         >
           <span className="text-muted-foreground flex items-center gap-2 text-sm">
-            <span className="bg-primary-soft text-primary flex size-8 items-center justify-center rounded-lg">
+            <span className="bg-primary-soft text-primary-ink flex size-8 items-center justify-center rounded-lg">
               <c.icon aria-hidden className="size-4" />
             </span>
             {c.label}
@@ -154,7 +154,10 @@ function Totals({ u, locale }: { u: PlatformUsage; locale: Locale }) {
       ))}
       <li className="text-muted-foreground text-sm sm:col-span-2 xl:col-span-4">
         {t('rateNote')}{' '}
-        <Link href="/platform/settings" className="text-primary underline-offset-2 hover:underline">
+        <Link
+          href="/platform/settings"
+          className="text-primary-ink underline-offset-2 hover:underline"
+        >
           {t('changeRate')}
         </Link>
       </li>

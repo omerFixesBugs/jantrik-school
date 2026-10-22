@@ -89,10 +89,22 @@ export class AuthService {
   private async completeLogin(login: LoginUser, client: AuthClient, meta: SessionMeta) {
     // The login lookup (a SECURITY DEFINER function) returns only what checking credentials
     // needs. Profile fields are read afterwards as the user, under the normal users RLS.
-    const { nameBn } = await withContext(this.prisma.client, { userId: login.id }, (tx) =>
-      tx.user.findUniqueOrThrow({ where: { id: login.id }, select: { nameBn: true } }),
+    const { nameBn, colorScheme } = await withContext(
+      this.prisma.client,
+      { userId: login.id },
+      (tx) =>
+        tx.user.findUniqueOrThrow({
+          where: { id: login.id },
+          select: { nameBn: true, colorScheme: true },
+        }),
     );
-    const user: ResponseUser = { id: login.id, name: login.name, nameBn, locale: login.locale };
+    const user: ResponseUser = {
+      id: login.id,
+      name: login.name,
+      nameBn,
+      locale: login.locale,
+      colorScheme,
+    };
     const selectable = (await listMembershipsFor(this.prisma.client, user.id)).filter(
       (m) => m.selectable,
     );
@@ -124,7 +136,13 @@ export class AuthService {
     }
 
     const response = await this.buildResponse(
-      { id: user.id, name: user.name, nameBn: user.nameBn, locale: user.locale },
+      {
+        id: user.id,
+        name: user.name,
+        nameBn: user.nameBn,
+        locale: user.locale,
+        colorScheme: user.colorScheme,
+      },
       sessionId,
       active,
       refreshToken,
@@ -142,7 +160,15 @@ export class AuthService {
   async me(principal: Principal) {
     const user = await this.db.tx.user.findUniqueOrThrow({
       where: { id: principal.userId },
-      select: { id: true, name: true, nameBn: true, phone: true, email: true, locale: true },
+      select: {
+        id: true,
+        name: true,
+        nameBn: true,
+        phone: true,
+        email: true,
+        locale: true,
+        colorScheme: true,
+      },
     });
     if (!principal.tenantId) return { user };
     const membership = (await listMemberships(this.db.tx)).find(
@@ -194,7 +220,13 @@ export class AuthService {
     const response: AuthResponse = {
       accessToken,
       expiresIn: ACCESS_TOKEN_TTL_SEC,
-      user: { id: user.id, name: user.name, nameBn: user.nameBn, locale: user.locale },
+      user: {
+        id: user.id,
+        name: user.name,
+        nameBn: user.nameBn,
+        locale: user.locale,
+        colorScheme: user.colorScheme,
+      },
       refreshToken,
     };
     if (active) {

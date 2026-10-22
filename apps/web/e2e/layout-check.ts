@@ -6,7 +6,9 @@ import type { Page } from '@playwright/test';
  *
  * Works on text nodes (glyph boxes via Range#getClientRects), not element boxes, so a padded
  * button next to a label is fine but two strings painted over each other are not. Text hidden
- * under an overlay (a dialog, the sticky bar) is skipped: elementFromPoint must hit it.
+ * under an overlay (a dialog, the sticky bar) is skipped: elementFromPoint must hit it, and text in
+ * a sticky or fixed layer is only compared with text in the same layer (scrolled content passing
+ * under the top bar is covered by it, not drawn over it).
  */
 export interface LayoutProblem {
   kind: 'overflow' | 'clipped' | 'offscreen' | 'overlap';
@@ -37,7 +39,39 @@ export function layoutProblemsInPage(): LayoutProblem[] {
     node: Text;
     el: Element;
     rects: DOMRect[];
+    /** The part of each rect that is painted: inside every box that clips it (an ellipsis). */
+    shown: { left: number; right: number; top: number; bottom: number; height: number }[];
+    /** The sticky/fixed box the text rides in (the top bar, a sticky footer), or null. */
+    layer: Element | null;
   }
+  // A sticky or fixed layer covering scrolled content is occlusion by design, not overlap. Sticky
+  // table parts (a register's name column, a table header) are not layers: their text is still
+  // compared with its neighbours.
+  const layerOf = (el: Element): Element | null => {
+    for (let e: Element | null = el; e && e !== document.body; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      if ((cs.position === 'sticky' || cs.position === 'fixed') && !cs.display.startsWith('table'))
+        return e;
+    }
+    return null;
+  };
+  // Glyphs past a clipping box (truncated with "…") are not painted, so they overlap nothing.
+  const shownPart = (r: DOMRect, el: Element) => {
+    let { left, right, top, bottom } = r;
+    for (let e: Element | null = el; e && e !== document.body; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      const box = e.getBoundingClientRect();
+      if (cs.overflowX !== 'visible') {
+        left = Math.max(left, box.left);
+        right = Math.min(right, box.right);
+      }
+      if (cs.overflowY !== 'visible') {
+        top = Math.max(top, box.top);
+        bottom = Math.min(bottom, box.bottom);
+      }
+    }
+    return { left, right, top, bottom, height: bottom - top };
+  };
   const items: Item[] = [];
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -58,12 +92,15 @@ export function layoutProblemsInPage(): LayoutProblem[] {
       Math.min(Math.max(top.top + top.height / 2, 0), window.innerHeight - 1),
     );
     const onTop = !!hit && (hit === el || el.contains(hit) || hit.contains(el));
-    items.push({ node, el, rects: onTop ? rects : [] });
+    const shown = onTop
+      ? rects.map((r) => shownPart(r, el)).filter((r) => r.right - r.left > 0.5 && r.height > 0.5)
+      : [];
+    items.push({ node, el, rects: onTop ? rects : [], shown, layer: layerOf(el) });
   }
 
   // 1. Overflow / clipping, per element (once).
   const seen = new Set<Element>();
-  for (const { el, node, rects } of items) {
+  for (const { el, node, rects, shown } of items) {
     if (rects.length === 0) continue;
     // Inside a horizontal scroller (the month register) text may run past the screen edge.
     let scrolls = false;
@@ -71,7 +108,8 @@ export function layoutProblemsInPage(): LayoutProblem[] {
       const ox = getComputedStyle(e).overflowX;
       if (ox === 'auto' || ox === 'scroll') scrolls = true;
     }
-    for (const r of scrolls ? [] : rects) {
+    // Only the painted part: glyphs past a clipping box (an ellipsis) are not on the screen at all.
+    for (const r of scrolls ? [] : shown) {
       if (r.right > vw + 1 || r.left < -1) {
         problems.push({
           kind: 'offscreen',
@@ -96,17 +134,19 @@ export function layoutProblemsInPage(): LayoutProblem[] {
         break; // scrollable: fine
       const box = e.getBoundingClientRect();
       const truncated = cs.textOverflow === 'ellipsis' || cs.webkitLineClamp !== 'none';
-      const out = rects.some(
+      const out = rects.find(
         (r) =>
           (clipsX && (r.right > box.right + 1 || r.left < box.left - 1)) ||
           (clipsY && (r.bottom > box.bottom + 1 || r.top < box.top - 1)),
       );
       if (out && !truncated && !seen.has(e)) {
         seen.add(e);
+        const at = (r: DOMRect) =>
+          [r.left, r.right, r.top, r.bottom].map((v) => Math.round(v)).join(',');
         problems.push({
           kind: 'clipped',
           text: short(node.textContent!),
-          detail: `cut by <${e.tagName.toLowerCase()} class="${(e.getAttribute('class') ?? '').slice(0, 60)}">`,
+          detail: `cut by <${e.tagName.toLowerCase()} class="${(e.getAttribute('class') ?? '').slice(0, 60)}"> (text ${at(out)}, box ${at(box)})`,
         });
       }
       break;
@@ -130,13 +170,14 @@ export function layoutProblemsInPage(): LayoutProblem[] {
   }
 
   // 2. Glyphs of different text nodes painted on top of each other.
-  const visible = items.filter((i) => i.rects.length > 0);
+  const visible = items.filter((i) => i.shown.length > 0);
   for (let a = 0; a < visible.length; a++) {
     for (let b = a + 1; b < visible.length; b++) {
       const A = visible[a]!;
       const B = visible[b]!;
-      for (const ra of A.rects) {
-        const hit = B.rects.find((rb) => {
+      if (A.layer !== B.layer) continue;
+      for (const ra of A.shown) {
+        const hit = B.shown.find((rb) => {
           const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
           const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
           // Bangla glyph boxes have generous line boxes; require real overlap.
@@ -156,6 +197,83 @@ export function layoutProblemsInPage(): LayoutProblem[] {
   return problems;
 }
 
-export function findLayoutProblems(page: Page): Promise<LayoutProblem[]> {
-  return page.evaluate(layoutProblemsInPage);
+/**
+ * Layout problems on the whole page, not just the first screen: checks, scrolls one screen
+ * down, checks again, to the end, then puts the scroll back where it was (so a test can go on).
+ */
+export async function findLayoutProblems(page: Page): Promise<LayoutProblem[]> {
+  // Measure the real faces, not the fallback shown while they load (font-display: swap).
+  await page.evaluate(() => document.fonts.ready);
+  const start = await page.evaluate(() => window.scrollY);
+  const found = new Map<string, LayoutProblem>();
+  for (let step = 0; step < 30; step++) {
+    for (const p of await page.evaluate(layoutProblemsInPage)) found.set(`${p.kind}|${p.text}`, p);
+    const moved = await page.evaluate(() => {
+      const before = window.scrollY;
+      window.scrollBy(0, Math.max(200, window.innerHeight * 0.8));
+      return window.scrollY !== before;
+    });
+    if (!moved) break;
+    await page.waitForTimeout(50);
+  }
+  await page.evaluate((y) => window.scrollTo(0, y), start);
+  return [...found.values()];
+}
+
+export interface SmallTarget {
+  text: string;
+  size: string;
+}
+
+/** Runs in the page: interactive elements smaller than 44 × 44 px (the phone rule). */
+export function smallTargetsInPage(): SmallTarget[] {
+  const out: SmallTarget[] = [];
+  const sel =
+    'a[href], button, input:not([type=hidden]), select, textarea, summary, [role=button], [role=tab], [role=checkbox], [role=switch], [role=radio], [role=menuitem], [role=option]';
+  for (const el of document.querySelectorAll<HTMLElement>(sel)) {
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+    if (el.closest('[aria-hidden="true"], [inert]')) continue;
+    let r = el.getBoundingClientRect();
+    if (r.width <= 1 || r.height <= 1) continue; // sr-only (a skip link until focused), collapsed
+    // Text links inside a sentence are exempt (WCAG 2.5.8), not links standing on their own.
+    if (el.tagName === 'A' && cs.display === 'inline') {
+      const around = el.parentElement?.textContent?.trim().length ?? 0;
+      if (around > (el.textContent?.trim().length ?? 0)) continue;
+    }
+    // A checkbox or radio takes its label (only a real label) as part of its target.
+    if (el instanceof HTMLInputElement && ['checkbox', 'radio'].includes(el.type)) {
+      const label =
+        el.closest('label') ?? (el.id ? document.querySelector(`label[for="${el.id}"]`) : null);
+      if (label) {
+        const l = label.getBoundingClientRect();
+        r = new DOMRect(
+          Math.min(r.left, l.left),
+          Math.min(r.top, l.top),
+          Math.max(r.right, l.right) - Math.min(r.left, l.left),
+          Math.max(r.bottom, l.bottom) - Math.min(r.top, l.top),
+        );
+      }
+    }
+    if (r.width + 0.5 < 44 || r.height + 0.5 < 44) {
+      const text = (
+        el.getAttribute('aria-label') ??
+        el.textContent ??
+        el.getAttribute('name') ??
+        el.tagName
+      )
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 50);
+      out.push({
+        text: text || el.tagName.toLowerCase(),
+        size: `${Math.round(r.width)}×${Math.round(r.height)}`,
+      });
+    }
+  }
+  return out;
+}
+
+export function findSmallTargets(page: Page): Promise<SmallTarget[]> {
+  return page.evaluate(smallTargetsInPage);
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { ComingSoon, PageGate } from '@/components/page-gate';
-import { useNavLabel } from '@/components/app-shell';
+import { useNavLabel } from '@/lib/nav-label';
 
 export default function Page() {
   const navLabel = useNavLabel();

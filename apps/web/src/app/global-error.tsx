@@ -33,8 +33,8 @@ export default function GlobalError({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#f4f7f6',
-          color: '#15231f',
+          background: '#eef3f9',
+          color: '#0e1a2b',
           font: '16px/1.7 system-ui, sans-serif',
         }}
       >
@@ -48,14 +48,14 @@ export default function GlobalError({
           <p style={{ margin: '0 0 4px' }}>
             পাতাটি আবার লোড করুন। এই ফোনে রাখা হাজিরা মুছে যায়নি।
           </p>
-          <p lang="en" style={{ margin: '0 0 20px', color: '#5a6b66' }}>
+          <p lang="en" style={{ margin: '0 0 20px', color: '#4b5b71' }}>
             Something went wrong. Reload the page; attendance kept on this phone is not lost.
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
               type="button"
               onClick={reset}
-              style={{ ...button, border: 0, background: '#0e5e50', color: '#fff' }}
+              style={{ ...button, border: 0, background: '#2563eb', color: '#fff' }}
             >
               আবার চেষ্টা করুন
             </button>
@@ -64,16 +64,16 @@ export default function GlobalError({
               onClick={() => location.reload()}
               style={{
                 ...button,
-                border: '1px solid #cfdad6',
+                border: '1px solid #7b8aa0',
                 background: '#fff',
-                color: '#15231f',
+                color: '#0e1a2b',
               }}
             >
               পাতা আবার লোড করুন
             </button>
           </div>
           {error.digest && (
-            <p style={{ marginTop: 16, fontSize: 12, color: '#5a6b66' }}>
+            <p style={{ marginTop: 16, fontSize: 12, color: '#4b5b71' }}>
               ত্রুটির কোড: {error.digest}
             </p>
           )}

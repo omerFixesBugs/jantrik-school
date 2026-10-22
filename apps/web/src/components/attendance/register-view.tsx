@@ -53,7 +53,7 @@ const STATUS_STYLE: Record<AttendanceStatus, { icon: LucideIcon; row: string; pi
   ABSENT: {
     icon: XIcon,
     row: 'bg-destructive-soft',
-    pill: 'bg-destructive text-white dark:text-[#2a0c09]',
+    pill: 'bg-destructive text-destructive-foreground',
   },
   LATE: { icon: ClockIcon, row: 'bg-warning-soft/60', pill: 'bg-warning-soft text-warning' },
   LEAVE: { icon: CalendarOffIcon, row: 'bg-muted/60', pill: 'bg-muted text-muted-foreground' },
@@ -125,7 +125,7 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
           {showBack ? (
             <Link
               href="/attendance"
-              className="text-muted-foreground hover:text-foreground flex w-fit min-h-8 items-center gap-1"
+              className="text-muted-foreground hover:text-foreground flex w-fit min-h-(--control-h) items-center gap-1"
             >
               <ChevronLeftIcon aria-hidden className="size-4" />
               {t('back', { section: label('section', 'Section', { inText: true }) })}
@@ -135,7 +135,7 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
           )}
           <Link
             href={`/attendance/register?section=${sectionId}`}
-            className="text-primary flex min-h-8 items-center gap-1 font-medium hover:underline"
+            className="text-primary-ink flex min-h-(--control-h) items-center gap-1 font-medium hover:underline"
             data-testid="open-month-register"
           >
             <TableIcon aria-hidden className="size-4" />
@@ -237,7 +237,7 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
                 data-status={status}
                 className={cn(
                   'flex min-h-16 w-full items-center gap-3 px-3 py-2 text-left transition-colors sm:px-4',
-                  'focus-visible:ring-ring/40 outline-none focus-visible:ring-3 focus-visible:ring-inset',
+                  'focus-visible:ring-ring outline-none focus-visible:ring-3 focus-visible:ring-inset',
                   'active:brightness-95 disabled:cursor-default',
                   style.row,
                 )}

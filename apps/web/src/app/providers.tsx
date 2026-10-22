@@ -30,9 +30,18 @@ export function Providers({ children }: { children: ReactNode }) {
           queries: {
             staleTime: 30_000,
             refetchOnWindowFocus: false,
-            // Retry network hiccups, never 4xx (they won't fix themselves).
-            retry: (count, error) =>
-              !(error instanceof ApiError && error.status < 500) && count < 2,
+            // Retry network hiccups, and a short "too many requests" after the wait it asks for;
+            // never another 4xx (they won't fix themselves).
+            retry: (count, error) => {
+              if (error instanceof ApiError && error.status === 429) {
+                return count < 2 && (error.retryAfter ?? 60) <= 10;
+              }
+              return !(error instanceof ApiError && error.status < 500) && count < 2;
+            },
+            retryDelay: (count, error) =>
+              error instanceof ApiError && error.status === 429
+                ? ((error.retryAfter ?? 1) + 0.25) * 1000
+                : Math.min(1000 * 2 ** count, 30_000),
           },
         },
       }),
@@ -40,7 +49,7 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider inactive={platform}>{children}</AuthProvider>
-      <Toaster richColors position="top-center" />
+      <Toaster position="top-center" />
     </QueryClientProvider>
   );
 }

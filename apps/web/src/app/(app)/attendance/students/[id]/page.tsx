@@ -20,9 +20,9 @@ import { PageGate } from '@/components/page-gate';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage } from '@/lib/hooks';
@@ -155,11 +155,11 @@ function StudentReport() {
           <div className="flex flex-wrap items-end gap-3" key={`${from}:${to}`}>
             <div className="flex min-w-36 flex-1 flex-col gap-1.5">
               <Label htmlFor="range-from">{t('from')}</Label>
-              <Input id="range-from" name="from" type="date" defaultValue={from} max={today} />
+              <DateInput id="range-from" name="from" defaultValue={from} max={today} />
             </div>
             <div className="flex min-w-36 flex-1 flex-col gap-1.5">
               <Label htmlFor="range-to">{t('to')}</Label>
-              <Input id="range-to" name="to" type="date" defaultValue={to} max={today} />
+              <DateInput id="range-to" name="to" defaultValue={to} max={today} />
             </div>
             <Button type="submit" variant="outline">
               {tCommon('apply')}
@@ -180,7 +180,7 @@ function StudentReport() {
             <section className="bg-card flex flex-col gap-3 rounded-xl border p-4 shadow-xs sm:p-5">
               <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
                 <p
-                  className="font-numeric text-primary text-4xl font-semibold"
+                  className="font-numeric text-primary-ink text-4xl font-semibold"
                   data-testid="student-percent"
                 >
                   {r.percent === null ? '—' : `${formatCount(Math.round(r.percent), locale)}%`}

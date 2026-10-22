@@ -8,6 +8,7 @@ import {
   type AttendanceStaffMember,
   type AttendanceStatus,
   type AttendanceTodayReport,
+  type AttendanceTrendReport,
   type ChildAttendanceMonth,
   type SendHeldSmsResult,
   type StudentAttendanceReport,
@@ -20,6 +21,7 @@ import {
   addMember,
   bearer,
   createHarness,
+  createTenant,
   http,
   otpLogin,
   type Harness,
@@ -39,7 +41,7 @@ describe('attendance reports', () => {
     sectionId: string,
     students: { id: string }[],
     statuses: AttendanceStatus[],
-    extra: { date?: string; baseVersion?: number } = {},
+    extra: { date?: string; baseVersion?: number; periodNo?: number } = {},
   ) =>
     http(h)
       .put('/attendance/sessions')
@@ -78,7 +80,7 @@ describe('attendance reports', () => {
       expect(a!.register).toMatchObject({
         periodNo: 0,
         counts: { present: 1, absent: 1, late: 1, leave: 0 },
-        absent: [{ id: s.a[2]!.id, roll: 3 }],
+        absent: [{ id: s.a[2]!.id, roll: 3, streak: 2 }],
       });
       expect(a!.register!.percent).toBeCloseTo((2 / 3) * 100);
       expect(b!.register).toBeNull();
@@ -92,6 +94,198 @@ describe('attendance reports', () => {
       const other = (await http(h).get('/attendance/reports/today').set(bearer(s.otherTeacher)))
         .body as AttendanceTodayReport;
       expect(other.sections).toEqual([]);
+    });
+  });
+
+  describe('trend and absence streaks', () => {
+    const day = (n: number) => addDays(TODAY(), n);
+    const trend = (token: string, query: Record<string, string | number> = {}) =>
+      http(h).get('/attendance/reports/trend').query(query).set(bearer(token));
+
+    /**
+     * Section A over five days (day -1 has no register): student 1 absent today and on day -2,
+     * present on day -3; student 2 absent today, on leave day -2, absent day -3, present day -4.
+     */
+    const streakSchool = async (leaveCountsAsAbsent: boolean) => {
+      const t = await school(h, { settings: { absentSmsEnabled: false, leaveCountsAsAbsent } });
+      const days: [number, AttendanceStatus[]][] = [
+        [-4, ['ABSENT', 'PRESENT', 'PRESENT']],
+        [-3, ['PRESENT', 'ABSENT', 'PRESENT']],
+        [-2, ['ABSENT', 'LEAVE', 'PRESENT']],
+        [0, ['ABSENT', 'ABSENT', 'PRESENT']],
+      ];
+      for (const [n, statuses] of days) {
+        await submit(t.admin, t.sectionA, t.a, statuses, { date: day(n) }).expect(200);
+      }
+      return t;
+    };
+    let t: School;
+
+    beforeAll(async () => {
+      t = await streakSchool(false);
+    });
+
+    const absentToday = async (token: string) => {
+      const r = (await http(h).get('/attendance/reports/today').set(bearer(token)).expect(200))
+        .body as AttendanceTodayReport;
+      return r.sections[0]!.register!.absent.map((x) => [x.roll, x.streak]);
+    };
+
+    it('streak: school days absent in a row; a day without a register does not break it', async () => {
+      expect(await absentToday(t.admin)).toEqual([
+        [1, 2], // today and day -2 (day -1 had no register; present on day -3)
+        [2, 1], // leave on day -2 ends it: this institute does not count leave as absent
+      ]);
+      expect(await absentToday(t.teacher)).toEqual([
+        [1, 2],
+        [2, 1],
+      ]);
+    });
+
+    it('streak: leave counts when the institute counts leave as absent', async () => {
+      const u = await streakSchool(true);
+      expect(await absentToday(u.admin)).toEqual([
+        [1, 2],
+        [2, 3],
+      ]);
+      // Never before the year started (day -3 is then last year's).
+      await withTenant(h.prisma, u.tenantId, (tx) =>
+        tx.academicYear.updateMany({
+          where: { isCurrent: true },
+          data: { startDate: dateToDb(day(-2)) },
+        }),
+      );
+      expect(await absentToday(u.admin)).toEqual([
+        [1, 2],
+        [2, 2],
+      ]);
+    });
+
+    it("per-session institutes: the day's lowest period counts, whatever was sent first", async () => {
+      const c = await school(h, {
+        instituteTypeKey: 'COACHING',
+        settings: { absentSmsEnabled: false },
+      });
+      // Yesterday: student 1 absent in period 1, everyone present in period 2.
+      await submit(c.admin, c.sectionA, c.a, ['ABSENT', 'PRESENT', 'PRESENT'], {
+        date: day(-1),
+        periodNo: 1,
+      }).expect(200);
+      await submit(c.admin, c.sectionA, c.a, ['PRESENT', 'PRESENT', 'PRESENT'], {
+        date: day(-1),
+        periodNo: 2,
+      }).expect(200);
+      // Today: period 2 is sent before period 1.
+      await submit(c.admin, c.sectionA, c.a, ['PRESENT', 'PRESENT', 'PRESENT'], {
+        periodNo: 2,
+      }).expect(200);
+      await submit(c.admin, c.sectionA, c.a, ['ABSENT', 'ABSENT', 'PRESENT'], {
+        periodNo: 1,
+      }).expect(200);
+
+      expect(await absentToday(c.admin)).toEqual([
+        [1, 2],
+        [2, 1],
+      ]);
+      const r = (await trend(c.admin, { days: 7 }).expect(200)).body as AttendanceTrendReport;
+      expect(r.days.at(-2)!.counts).toEqual({ present: 2, absent: 1, late: 0, leave: 0 });
+      expect(r.days.at(-1)!.counts).toEqual({ present: 1, absent: 2, late: 0, leave: 0 });
+    });
+
+    it("trend: each day's first registers together, every date listed, today last", async () => {
+      const r = (await trend(t.admin, { days: 7 }).expect(200)).body as AttendanceTrendReport;
+      expect(r).toMatchObject({ today: TODAY(), from: day(-6), to: TODAY() });
+      expect(r.days.map((d) => d.date)).toEqual([-6, -5, -4, -3, -2, -1, 0].map(day));
+      const at = (n: number) => r.days.find((d) => d.date === day(n))!;
+      expect(at(-4)).toMatchObject({
+        sectionsTaken: 1,
+        counts: { present: 2, absent: 1, late: 0, leave: 0 },
+      });
+      expect(at(-4).percent).toBeCloseTo((2 / 3) * 100);
+      // Leave is left out (this institute): 1 present of 2.
+      expect(at(-2)).toMatchObject({ sectionsTaken: 1, percent: 50 });
+      expect(at(-1)).toMatchObject({ sectionsTaken: 0, counts: null, percent: null });
+      expect(at(0).percent).toBeCloseTo((1 / 3) * 100);
+      // Without bySection there are no section lines.
+      expect(r.sections).toEqual([]);
+    });
+
+    it('trend: one line per section with bySection; holidays are marked', async () => {
+      await http(h)
+        .post('/attendance/holidays')
+        .set(bearer(t.admin))
+        .send({ startDate: day(-1), endDate: day(-1), nameBn: 'ছুটি', nameEn: 'Holiday' })
+        .expect(201);
+      const r = (await trend(t.admin, { days: 7, bySection: 1 }).expect(200))
+        .body as AttendanceTrendReport;
+      expect(r.days.find((d) => d.date === day(-1))!.nonWorkingDay).toMatchObject({
+        reason: 'HOLIDAY',
+        nameEn: 'Holiday',
+      });
+      expect(r.sections.map((x) => x.section.name)).toEqual(['A', 'B']);
+      expect(r.sections[1]!.days.every((d) => d.percent === null)).toBe(true);
+      expect(r.sections[0]!.days.at(-1)!.counts).toEqual({
+        present: 1,
+        absent: 2,
+        late: 0,
+        leave: 0,
+      });
+    });
+
+    it("trend: teachers get their own sections only; never another section's", async () => {
+      const mine = (await trend(t.teacher, { days: 7, bySection: 'true' }).expect(200))
+        .body as AttendanceTrendReport;
+      expect(mine.sections.map((x) => x.section.id)).toEqual([t.sectionA]);
+      expect(mine.days.at(-1)!.sectionsTaken).toBe(1);
+      const one = (await trend(t.teacher, { days: 7, sectionId: t.sectionA }).expect(200))
+        .body as AttendanceTrendReport;
+      expect(one.days.at(-1)!.counts).toMatchObject({ present: 1, absent: 2 });
+
+      await trend(t.teacher, { sectionId: t.sectionB }).expect(403);
+      const none = (await trend(t.otherTeacher, { bySection: 1 }).expect(200))
+        .body as AttendanceTrendReport;
+      expect(none.sections).toEqual([]);
+      expect(none.days.every((d) => d.counts === null && d.sectionsTaken === 0)).toBe(true);
+    });
+
+    it("trend: another institute's registers never count; its section is not found", async () => {
+      // The first school took attendance today too; this one's today is its own register.
+      const r = (await trend(t.admin, { days: 7 }).expect(200)).body as AttendanceTrendReport;
+      expect(r.days.at(-1)!.counts).toEqual({ present: 1, absent: 2, late: 0, leave: 0 });
+      await trend(t.admin, { sectionId: s.sectionA }).expect(404);
+    });
+
+    it('trend: a new institute has every day empty', async () => {
+      const fresh = await school(h, { settings: { absentSmsEnabled: false } });
+      const r = (await trend(fresh.admin, { bySection: 1 }).expect(200))
+        .body as AttendanceTrendReport;
+      expect(r.days).toHaveLength(30);
+      expect(r.days.every((d) => d.counts === null && d.percent === null)).toBe(true);
+      expect(r.sections.map((x) => x.section.name)).toEqual(['A', 'B']);
+    });
+
+    it('trend: never before the year started; 7 to 90 days; attendance staff only', async () => {
+      await withTenant(h.prisma, t.tenantId, (tx) =>
+        tx.academicYear.updateMany({
+          where: { isCurrent: true },
+          data: { startDate: dateToDb(day(-2)) },
+        }),
+      );
+      const r = (await trend(t.admin, { days: 30 }).expect(200)).body as AttendanceTrendReport;
+      expect(r.from).toBe(day(-2));
+      expect(r.days.map((d) => d.date)).toEqual([day(-2), day(-1), TODAY()]);
+
+      await trend(t.admin, { days: 6 }).expect(400);
+      await trend(t.admin, { days: 91 }).expect(400);
+      await trend(t.admin, { sectionId: 'not-a-uuid' }).expect(400);
+
+      // Without the attendance module: refused.
+      const plain = await createTenant(h, { modules: [] });
+      const owner = await otpLogin(h, (await addMember(h, plain.id, { roles: ['OWNER'] })).phone);
+      await trend(owner.accessToken).expect(403);
+      // Guardians: refused.
+      const g = await addMember(h, t.tenantId, { roles: ['GUARDIAN'] });
+      await trend((await otpLogin(h, g.phone)).accessToken).expect(403);
     });
   });
 

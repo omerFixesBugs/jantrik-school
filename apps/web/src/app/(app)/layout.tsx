@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { NetworkError } from '@/lib/api/errors';
 import { useErrorMessage, useMeContext } from '@/lib/hooks';
+import { clearRecents } from '@/lib/recents';
+import { resetLook } from '@/lib/theme';
 
 /**
  * Protected area. UX routing only — the API is the security boundary:
@@ -30,6 +32,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (status === 'signed-out') {
+      // However the session ended (sign-out, expiry, revoked): the palette's recent records and
+      // this person's look go (the next person starts from the default).
+      clearRecents();
+      resetLook();
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
     } else if (status === 'signed-in' && session && !client.getPageTenant()) {
       if (session.tenant) client.setPageTenant(session.tenant.id);

@@ -48,6 +48,15 @@ export function formatDate(
   }).format(new Date(value));
 }
 
+/** Day and short month (Asia/Dhaka), for chart axes: "২১ অক্টো" / "21 Oct". */
+export function formatDayMonth(value: Date | string, locale: UiLocale): string {
+  return new Intl.DateTimeFormat(intlLocale(locale), {
+    timeZone: TIME_ZONE,
+    day: 'numeric',
+    month: 'short',
+  }).format(new Date(value));
+}
+
 /** Hour of the day (0–23) in Asia/Dhaka, e.g. for "Good morning". */
 export function dhakaHour(value: Date | string = new Date()): number {
   const hour = new Intl.DateTimeFormat('en-GB', {
@@ -195,4 +204,9 @@ export function addMonths(month: string, delta: number): string {
   const [y, m] = month.split('-').map(Number) as [number, number];
   const d = new Date(Date.UTC(y, m - 1 + delta, 1));
   return d.toISOString().slice(0, 7);
+}
+
+/** The `n` months up to and including `month` (YYYY-MM), oldest first. */
+export function recentMonths(month: string, n: number): string[] {
+  return Array.from({ length: n }, (_, i) => addMonths(month, i - (n - 1)));
 }

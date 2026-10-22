@@ -20,7 +20,10 @@ import {
   createEnrolmentSchema,
   guardianLookupQuerySchema,
   normalizeBdPhone,
+  recentMonths,
+  STUDENT_STATUSES,
   studentSettingsSchema,
+  todayIn,
   transferSchema,
   updateGuardianLinkSchema,
   updateStudentSchema,
@@ -30,7 +33,10 @@ import {
   studentsQuerySchema,
   type StudentFilters,
   type StudentListItem,
+  type StudentSort,
+  type StudentStatus,
   type StudentsPage,
+  type StudentsSummary,
 } from '@jantrik/shared';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
@@ -51,6 +57,20 @@ class StudentSettingsDto extends zodDto(studentSettingsSchema) {}
 class GuardianLookupDto extends zodDto(guardianLookupQuerySchema) {}
 
 const Id = () => Param('id', ParseUUIDPipe);
+
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/** ORDER BY for the sorts the database does (code, name); ties by code. */
+function databaseOrder(
+  sort: StudentSort,
+  dir: 'asc' | 'desc',
+  locale: 'bn' | 'en',
+): Prisma.StudentOrderByWithRelationInput[] {
+  if (sort !== 'name') return [{ studentCode: dir }, { id: dir }];
+  const bn = { nameBn: { sort: dir, nulls: 'last' } } as const;
+  const en = { nameEn: { sort: dir, nulls: 'last' } } as const;
+  return [...(locale === 'bn' ? [bn, en] : [en, bn]), { studentCode: 'asc' }, { id: 'asc' }];
+}
 
 /** Digits to look for inside guardian phones, or null when the query is not phone-like. */
 function phoneDigits(q: string): string | null {
@@ -79,8 +99,9 @@ export class StudentsService {
       where: { isCurrent: true },
       select: { id: true },
     });
+    const yearId = year?.id ?? NIL_UUID;
     const filtersByEnrolment = Boolean(query.classLevelId || query.sectionId);
-    const empty = { items: [], nextCursor: null, total: query.cursor ? null : 0 };
+    const empty = { items: [], page: query.page, pageSize: query.pageSize, total: 0 };
     if (filtersByEnrolment && !year) return empty;
 
     let ids: string[] | undefined;
@@ -95,6 +116,7 @@ export class StudentsService {
     const where = {
       deletedAt: null,
       ...(ids ? { id: { in: ids } } : {}),
+      ...(query.status ? { status: query.status } : {}),
       ...(filtersByEnrolment && year
         ? {
             enrolments: {
@@ -108,11 +130,26 @@ export class StudentsService {
         : {}),
     } satisfies Prisma.StudentWhereInput;
 
+    // Sequential on purpose: the request transaction is a single connection.
+    const total = await tx.student.count({ where });
+    const skip = (query.page - 1) * query.pageSize;
+    if (skip >= total) return { ...empty, total };
+    // Class and roll order come from this year's enrolment (one per student), which Prisma
+    // cannot order students by: that page's ids come from the enrolments instead.
+    const pageIds =
+      query.sort === 'class' || query.sort === 'roll'
+        ? await this.idsByEnrolment(where, yearId, query.sort, query.dir, skip, query.pageSize)
+        : null;
+
     const rows = await tx.student.findMany({
-      where,
-      orderBy: [{ studentCode: 'asc' }, { id: 'asc' }],
-      take: query.limit + 1,
-      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      where: pageIds ? { id: { in: pageIds } } : where,
+      ...(pageIds
+        ? {}
+        : {
+            orderBy: databaseOrder(query.sort, query.dir, query.locale),
+            skip,
+            take: query.pageSize,
+          }),
       select: {
         id: true,
         studentCode: true,
@@ -121,7 +158,7 @@ export class StudentsService {
         status: true,
         photoUrl: true,
         enrolments: {
-          where: { academicYearId: year?.id ?? '00000000-0000-0000-0000-000000000000' },
+          where: { academicYearId: yearId },
           take: 1,
           select: {
             roll: true,
@@ -136,22 +173,130 @@ export class StudentsService {
         },
       },
     });
-    // Counted once, with the first page (the list is paged by cursor). Sequential on purpose:
-    // the request transaction is a single connection.
-    const total = query.cursor ? null : await tx.student.count({ where });
+    if (pageIds) {
+      const at = new Map(pageIds.map((id, i) => [id, i]));
+      rows.sort((a, b) => at.get(a.id)! - at.get(b.id)!);
+    }
 
-    const page = rows.slice(0, query.limit);
-    const items: StudentListItem[] = page.map(({ enrolments, guardians, ...s }) => ({
+    const items: StudentListItem[] = rows.map(({ enrolments, guardians, ...s }) => ({
       ...s,
       enrolment: enrolments[0] ?? null,
       primaryGuardian: StudentAccess.sees(scope, enrolments[0]?.section?.id)
         ? (guardians[0]?.guardian ?? null)
         : null,
     }));
+    return { items, page: query.page, pageSize: query.pageSize, total };
+  }
+
+  /**
+   * One page of matching ids in class order (class, section, roll) or roll order (roll, class,
+   * section), then by code; students not enrolled this year after them, by code.
+   */
+  private async idsByEnrolment(
+    where: Prisma.StudentWhereInput,
+    yearId: string,
+    sort: 'class' | 'roll',
+    dir: 'asc' | 'desc',
+    skip: number,
+    take: number,
+  ): Promise<string[]> {
+    const tx = this.db.tx;
+    const enrolled = {
+      academicYearId: yearId,
+      student: where,
+    } satisfies Prisma.EnrolmentWhereInput;
+    const place: Prisma.EnrolmentOrderByWithRelationInput[] = [
+      { classLevel: { sortOrder: dir } },
+      { section: { sortOrder: dir } },
+      { section: { name: dir } },
+    ];
+    const roll: Prisma.EnrolmentOrderByWithRelationInput = { roll: { sort: dir, nulls: 'last' } };
+    const ids = (
+      await tx.enrolment.findMany({
+        where: enrolled,
+        orderBy: [
+          ...(sort === 'class' ? [...place, roll] : [roll, ...place]),
+          { student: { studentCode: 'asc' } },
+        ],
+        skip,
+        take,
+        select: { studentId: true },
+      })
+    ).map((e) => e.studentId);
+    if (ids.length === take) return ids;
+    // Past the enrolled students: the page goes on with the rest.
+    const enrolledCount =
+      ids.length > 0 ? skip + ids.length : await tx.enrolment.count({ where: enrolled });
+    const rest = await tx.student.findMany({
+      where: { AND: [where, { enrolments: { none: { academicYearId: yearId } } }] },
+      orderBy: [{ studentCode: 'asc' }, { id: 'asc' }],
+      skip: Math.max(0, skip - enrolledCount),
+      take: take - ids.length,
+      select: { id: true },
+    });
+    return [...ids, ...rest.map((r) => r.id)];
+  }
+
+  /** The dashboard's student figures (OWNER/ADMIN). */
+  async summary(): Promise<StudentsSummary> {
+    const tx = this.db.tx;
+    const { timezone } = await tx.tenant.findFirstOrThrow({ select: { timezone: true } });
+    const today = todayIn(timezone);
+    const year = await tx.academicYear.findFirst({
+      where: { isCurrent: true },
+      select: { id: true },
+    });
+    const activeThisYear = {
+      academicYearId: year?.id ?? NIL_UUID,
+      student: { status: 'ACTIVE', deletedAt: null },
+    } satisfies Prisma.EnrolmentWhereInput;
+
+    const byStatus = Object.fromEntries(STUDENT_STATUSES.map((s) => [s, 0])) as Record<
+      StudentStatus,
+      number
+    >;
+    const statuses = await tx.student.groupBy({
+      by: ['status'],
+      where: { deletedAt: null },
+      _count: { _all: true },
+    });
+    for (const r of statuses) byStatus[r.status] = r._count._all;
+
+    const classLevels = await tx.classLevel.findMany({
+      where: { OR: [{ isActive: true }, { enrolments: { some: activeThisYear } }] },
+      orderBy: { sortOrder: 'asc' },
+      select: {
+        id: true,
+        nameBn: true,
+        nameEn: true,
+        _count: { select: { enrolments: { where: activeThisYear } } },
+      },
+    });
+
+    // Months in the institute's timezone; from a little before the first one's midnight UTC so
+    // no timezone is cut off, then bucketed here.
+    const months = recentMonths(today.slice(0, 7), 12);
+    const added = await tx.student.findMany({
+      where: {
+        deletedAt: null,
+        createdAt: { gte: new Date(Date.parse(`${months[0]}-01T00:00:00Z`) - 86_400_000) },
+      },
+      select: { createdAt: true },
+    });
+    const perMonth = new Map(months.map((m) => [m, 0]));
+    for (const { createdAt } of added) {
+      const m = todayIn(timezone, createdAt).slice(0, 7);
+      if (perMonth.has(m)) perMonth.set(m, perMonth.get(m)! + 1);
+    }
+
     return {
-      items,
-      nextCursor: rows.length > query.limit ? (page.at(-1)?.id ?? null) : null,
-      total,
+      today,
+      byStatus,
+      byClass: classLevels.map(({ _count, ...classLevel }) => ({
+        classLevel,
+        count: _count.enrolments,
+      })),
+      addedByMonth: [...perMonth].map(([month, count]) => ({ month, count })),
     };
   }
 
@@ -168,7 +313,7 @@ export class StudentsService {
         nameBn: true,
         nameEn: true,
         sections: {
-          where: { academicYearId: year?.id ?? '00000000-0000-0000-0000-000000000000' },
+          where: { academicYearId: year?.id ?? NIL_UUID },
           orderBy: { sortOrder: 'asc' },
           select: { id: true, name: true },
         },
@@ -200,6 +345,12 @@ export class StudentsController {
   }
 
   // Declared before ':id' routes.
+  @Get('summary')
+  @Roles('OWNER', 'ADMIN')
+  summary(): Promise<StudentsSummary> {
+    return this.students.summary();
+  }
+
   @Get('settings')
   @Roles('OWNER', 'ADMIN')
   settings(): Promise<StudentSettings> {

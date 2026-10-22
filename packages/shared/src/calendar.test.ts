@@ -7,6 +7,7 @@ import {
   dhakaHour,
   formatBanglaCalendarDate,
   formatDate,
+  formatDayMonth,
   formatTime,
   formatWallClock,
 } from './format.js';
@@ -96,5 +97,12 @@ describe('formatMonth / addMonths', () => {
   it('steps across years', () => {
     expect(addMonths('2026-01', -1)).toBe('2025-12');
     expect(addMonths('2026-12', 1)).toBe('2027-01');
+  });
+});
+
+describe('formatDayMonth', () => {
+  it('day and short month for chart axes, Bangla digits in Bangla', () => {
+    expect(formatDayMonth('2026-10-21', 'en')).toBe('21 Oct');
+    expect(formatDayMonth('2026-10-21', 'bn')).toBe('২১ অক্টো');
   });
 });

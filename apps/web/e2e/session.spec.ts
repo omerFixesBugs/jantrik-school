@@ -26,8 +26,16 @@ test('switching institute in another tab blocks this tab until it reloads', asyn
 });
 
 test('a TENANT_MISMATCH (409) from the API also blocks the page', async ({ page }) => {
+  // The dashboard's own /students requests (the summary, and the setup checklist's once the day's
+  // report is in) finish first: the stale header goes on the students page's.
+  const dashboard = Promise.all(
+    ['/students/summary', '/students/filters', '/students?pageSize=1'].map((path) =>
+      page.waitForResponse((r) => r.url().startsWith(`${API_URL}${path}`)),
+    ),
+  );
   await passwordLogin(page, DEMO.shaplaOwner);
   await expect(page.getByTestId('institute-name')).toHaveText(DEMO.shaplaName);
+  await dashboard;
 
   // Simulate a stale page: its institute header no longer matches the session.
   await page.route(`${API_URL}/students**`, async (route) => {

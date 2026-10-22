@@ -1,5 +1,11 @@
 import { findOrCreateUser, withTenant } from '@jantrik/db';
-import type { StudentFilters, StudentsPage } from '@jantrik/shared';
+import {
+  addMonths,
+  todayIn,
+  type StudentFilters,
+  type StudentsPage,
+  type StudentsSummary,
+} from '@jantrik/shared';
 import {
   addMember,
   bearer,
@@ -20,7 +26,10 @@ interface Fixture {
   sectionB: string;
 }
 
-/** A school with sections, enrolled students, a guardian, a soft-deleted and an unenrolled student. */
+/**
+ * A school with sections, enrolled students, a guardian, a soft-deleted student and an unenrolled
+ * inactive one.
+ */
 async function school(h: Harness, prefix: string): Promise<Fixture> {
   const tenant = await createTenant(h);
   const tenantId = tenant.id;
@@ -56,7 +65,7 @@ async function school(h: Harness, prefix: string): Promise<Fixture> {
       sectionA.id,
       1,
     );
-    await add(`${prefix}-002`, 'Karim Mia', 'করিম মিয়া', class6.id, sectionB.id, 1);
+    await add(`${prefix}-002`, 'Karim Mia', 'করিম মিয়া', class6.id, sectionB.id, 2);
     await add(`${prefix}-003`, 'Fatema Akter', 'ফাতেমা আক্তার', class9.id, section9.id, 1);
     const deleted = await add(
       `${prefix}-004`,
@@ -68,7 +77,7 @@ async function school(h: Harness, prefix: string): Promise<Fixture> {
     );
     await tx.student.update({ where: { id: deleted.id }, data: { deletedAt: new Date() } });
     await tx.student.create({
-      data: { tenantId, studentCode: `${prefix}-005`, nameEn: 'Not Enrolled' },
+      data: { tenantId, studentCode: `${prefix}-005`, nameEn: 'Not Enrolled', status: 'INACTIVE' },
     });
 
     const guardian = await tx.guardian.create({
@@ -114,7 +123,7 @@ describe('GET /students', () => {
     const res = await list(a).expect(200);
     const body = res.body as StudentsPage;
     expect(body.items.map((s) => s.studentCode)).toEqual(['A-001', 'A-002', 'A-003', 'A-005']);
-    expect(body.nextCursor).toBeNull();
+    expect(body).toMatchObject({ page: 1, pageSize: 50, total: 4 });
     const rahim = body.items[0]!;
     expect(rahim).toMatchObject({
       nameEn: 'Rahim Uddin',
@@ -160,19 +169,66 @@ describe('GET /students', () => {
     expect((foreign.body as StudentsPage).items).toEqual([]);
   });
 
-  it('paginates with a cursor', async () => {
-    const first = (await list(a, { limit: 2 }).expect(200)).body as StudentsPage;
-    expect(first.items.map((s) => s.studentCode)).toEqual(['A-001', 'A-002']);
-    expect(first.total).toBe(4); // the whole match, not the page
-    const second = (await list(a, { limit: 2, cursor: first.nextCursor! }).expect(200))
+  it('pages by number, with the whole count on every page', async () => {
+    const codes = async (query: Record<string, string | number>) => {
+      const body = (await list(a, query).expect(200)).body as StudentsPage;
+      return { codes: body.items.map((s) => s.studentCode), total: body.total, page: body.page };
+    };
+    expect(await codes({ pageSize: 2 })).toEqual({ codes: ['A-001', 'A-002'], total: 4, page: 1 });
+    expect(await codes({ pageSize: 2, page: 2 })).toEqual({
+      codes: ['A-003', 'A-005'],
+      total: 4,
+      page: 2,
+    });
+    expect(await codes({ pageSize: 2, page: 3 })).toEqual({ codes: [], total: 4, page: 3 });
+  });
+
+  it.each([
+    ['code, descending', { sort: 'code', dir: 'desc' }, ['A-005', 'A-003', 'A-002', 'A-001']],
+    // Bangla names first; the student with an English name only comes last.
+    ['Bangla name', { sort: 'name' }, ['A-002', 'A-003', 'A-001', 'A-005']],
+    ['English name', { sort: 'name', locale: 'en' }, ['A-003', 'A-002', 'A-005', 'A-001']],
+    // Descending, the missing Bangla name still comes last.
+    [
+      'Bangla name, descending',
+      { sort: 'name', dir: 'desc' },
+      ['A-001', 'A-003', 'A-002', 'A-005'],
+    ],
+    // Class, section, roll; not enrolled last in either direction.
+    ['class', { sort: 'class' }, ['A-001', 'A-002', 'A-003', 'A-005']],
+    ['class, descending', { sort: 'class', dir: 'desc' }, ['A-003', 'A-002', 'A-001', 'A-005']],
+    ['roll', { sort: 'roll' }, ['A-001', 'A-003', 'A-002', 'A-005']],
+  ])('sorts by %s', async (_label, query, codes) => {
+    const res = await list(a, query).expect(200);
+    expect((res.body as StudentsPage).items.map((s) => s.studentCode)).toEqual(codes);
+  });
+
+  it('pages a class-ordered list in that order, across the students not enrolled', async () => {
+    const page = async (query: Record<string, string | number>) => {
+      const body = (await list(a, query).expect(200)).body as StudentsPage;
+      return [body.items.map((s) => s.studentCode), body.total];
+    };
+    expect(await page({ sort: 'class', dir: 'desc', pageSize: 2, page: 2 })).toEqual([
+      ['A-001', 'A-005'],
+      4,
+    ]);
+    expect(await page({ sort: 'roll', pageSize: 3, page: 2 })).toEqual([['A-005'], 4]);
+    expect(await page({ sort: 'class', pageSize: 2, page: 3 })).toEqual([[], 4]);
+  });
+
+  it('filters by status', async () => {
+    const inactive = (await list(a, { status: 'INACTIVE' }).expect(200)).body as StudentsPage;
+    expect(inactive.items.map((s) => s.studentCode)).toEqual(['A-005']);
+    const active = (await list(a, { status: 'ACTIVE', sort: 'roll' }).expect(200))
       .body as StudentsPage;
-    expect(second.items.map((s) => s.studentCode)).toEqual(['A-003', 'A-005']);
-    expect(second.nextCursor).toBeNull();
-    expect(second.total).toBeNull(); // counted on the first page only
+    expect(active.total).toBe(3);
   });
 
   it('validates the query', async () => {
-    await list(a, { limit: 500 }).expect(400);
+    await list(a, { pageSize: 500 }).expect(400);
+    await list(a, { page: 0 }).expect(400);
+    await list(a, { sort: 'phone' }).expect(400);
+    await list(a, { status: 'DELETED' }).expect(400);
     await list(a, { classLevelId: 'not-a-uuid' }).expect(400);
   });
 
@@ -184,6 +240,65 @@ describe('GET /students', () => {
     });
     const guardian = await otpLogin(h, guardianPhone);
     await http(h).get('/students').set(bearer(guardian.accessToken)).expect(403);
+  });
+
+  describe('GET /students/summary', () => {
+    const summary = (token: string) => http(h).get('/students/summary').set(bearer(token));
+
+    it('by status, active students by class this year, records added per month', async () => {
+      const month = todayIn('Asia/Dhaka').slice(0, 7);
+      // One added two months ago, one 13 months ago (outside the 12 months).
+      await withTenant(h.prisma, a.tenantId, async (tx) => {
+        const at = (m: string) => new Date(`${m}-15T06:00:00Z`);
+        await tx.student.updateMany({
+          where: { studentCode: 'A-003' },
+          data: { createdAt: at(addMonths(month, -2)) },
+        });
+        await tx.student.updateMany({
+          where: { studentCode: 'A-005' },
+          data: { createdAt: at(addMonths(month, -13)) },
+        });
+      });
+      const r = (await summary(a.token).expect(200)).body as StudentsSummary;
+      expect(r.today).toBe(todayIn('Asia/Dhaka'));
+      expect(r.byStatus).toEqual({
+        ACTIVE: 3,
+        INACTIVE: 1,
+        GRADUATED: 0,
+        TRANSFERRED: 0,
+        DROPPED_OUT: 0,
+      });
+      const count = (id: string) => r.byClass.find((c) => c.classLevel.id === id)?.count;
+      expect(count(a.class6)).toBe(2);
+      expect(count(a.class9)).toBe(1);
+      // Every class is listed (in class order), empty ones too; never another institute's.
+      expect(r.byClass.length).toBeGreaterThan(2);
+      expect(r.byClass.filter((c) => c.count === 0).length).toBe(r.byClass.length - 2);
+      expect(r.byClass.some((c) => c.classLevel.id === b.class6)).toBe(false);
+      expect(r.addedByMonth.map((m) => m.month)).toEqual(
+        Array.from({ length: 12 }, (_, i) => addMonths(month, i - 11)),
+      );
+      // A-001 and A-002 this month (the removed A-004 is not counted), A-003 two months ago.
+      expect(r.addedByMonth.at(-1)!.count).toBe(2);
+      expect(r.addedByMonth.at(-3)!.count).toBe(1);
+      expect(r.addedByMonth.reduce((n, m) => n + m.count, 0)).toBe(3);
+    });
+
+    it('a new institute: all zero', async () => {
+      const t = await createTenant(h);
+      const owner = await otpLogin(h, (await addMember(h, t.id, { roles: ['OWNER'] })).phone);
+      const r = (await summary(owner.accessToken).expect(200)).body as StudentsSummary;
+      expect(Object.values(r.byStatus).every((n) => n === 0)).toBe(true);
+      expect(r.byClass.every((c) => c.count === 0)).toBe(true);
+      expect(r.addedByMonth.every((m) => m.count === 0)).toBe(true);
+    });
+
+    it('owners and admins only', async () => {
+      const teacher = await addMember(h, a.tenantId, { roles: ['TEACHER'] });
+      await summary((await otpLogin(h, teacher.phone)).accessToken).expect(403);
+      const guardian = await addMember(h, a.tenantId, { roles: ['GUARDIAN'] });
+      await summary((await otpLogin(h, guardian.phone)).accessToken).expect(403);
+    });
   });
 
   it('GET /students/filters: class levels with current-year sections', async () => {

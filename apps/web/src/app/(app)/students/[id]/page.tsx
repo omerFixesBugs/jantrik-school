@@ -77,7 +77,7 @@ function useStudentMutation<I>(
     mutationFn: fn,
     onSuccess: (p) => {
       queryClient.setQueryData(['student', session?.tenant?.id, id], p);
-      for (const key of ['students', 'students-total', 'setup'])
+      for (const key of ['students', 'students-total', 'students-summary', 'setup'])
         void queryClient.invalidateQueries({ queryKey: [key] });
       toast.success(t('saved'));
       done?.();
@@ -309,7 +309,7 @@ function Profile() {
                     </div>
                     <a
                       href={`tel:${g.phone}`}
-                      className="text-primary inline-flex w-fit items-center gap-1 text-sm tabular-nums"
+                      className="text-primary-ink inline-flex w-fit items-center gap-1 text-sm tabular-nums"
                       dir="ltr"
                     >
                       <PhoneIcon aria-hidden className="size-3.5" />

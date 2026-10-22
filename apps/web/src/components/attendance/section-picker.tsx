@@ -147,7 +147,7 @@ export function SectionPicker() {
         </Alert>
       ) : mine.data.sections.length === 0 ? (
         <div className="bg-card flex flex-col items-center gap-3 rounded-xl border px-6 py-12 text-center">
-          <span className="bg-primary-soft text-primary flex size-14 items-center justify-center rounded-2xl">
+          <span className="bg-primary-soft text-primary-ink flex size-14 items-center justify-center rounded-2xl">
             <UsersRoundIcon aria-hidden className="size-7" />
           </span>
           <p className="font-medium">{t('noSections', { section })}</p>
@@ -163,7 +163,7 @@ export function SectionPicker() {
                   href={registerHref(s.id, mine.data.mode === 'PER_SESSION' ? 1 : 0)}
                   className={cn(
                     'bg-card flex min-h-24 items-center gap-4 rounded-xl border p-4 shadow-xs transition-colors',
-                    'hover:border-primary/40 focus-visible:ring-ring/40 outline-none focus-visible:ring-3',
+                    'hover:border-primary/40 focus-visible:ring-ring outline-none focus-visible:ring-3',
                   )}
                 >
                   <span className="flex min-w-0 flex-1 flex-col gap-1">

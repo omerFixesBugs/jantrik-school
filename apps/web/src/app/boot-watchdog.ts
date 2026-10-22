@@ -30,7 +30,7 @@ export const BOOT_WATCHDOG = `(function () {
     var box = document.createElement('div');
     box.setAttribute('role', 'alert');
     box.setAttribute('data-testid', 'boot-failure');
-    box.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;background:#fff;color:#15231f;border:2px solid #b42318;border-radius:14px;padding:16px;font:16px/1.6 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.2)';
+    box.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;background:#fff;color:#0e1a2b;border:2px solid #b42318;border-radius:14px;padding:16px;font:16px/1.6 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.2)';
     var title = document.createElement('p');
     title.style.cssText = 'margin:0 0 4px;font-weight:600';
     title.textContent = en ? 'This page did not start properly.' : 'পাতাটি ঠিকমতো চালু হয়নি।';
@@ -42,14 +42,14 @@ export const BOOT_WATCHDOG = `(function () {
     var button = document.createElement('button');
     button.type = 'button';
     button.textContent = en ? 'Reload' : 'আবার লোড করুন';
-    button.style.cssText = 'min-height:44px;padding:0 18px;border:0;border-radius:10px;background:#0e5e50;color:#fff;font:inherit;font-weight:600';
+    button.style.cssText = 'min-height:44px;padding:0 18px;border:0;border-radius:10px;background:#2563eb;color:#fff;font:inherit;font-weight:600';
     button.onclick = function () { location.reload(); };
     box.appendChild(title);
     box.appendChild(text);
     box.appendChild(button);
     if (errors.length) {
       var details = document.createElement('pre');
-      details.style.cssText = 'margin:12px 0 0;white-space:pre-wrap;font:12px/1.4 monospace;color:#5a6b66;max-height:30vh;overflow:auto';
+      details.style.cssText = 'margin:12px 0 0;white-space:pre-wrap;font:12px/1.4 monospace;color:#4b5b71;max-height:30vh;overflow:auto';
       details.textContent = errors.slice(-3).join('\\n');
       box.appendChild(details);
     }

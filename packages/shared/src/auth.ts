@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { bdPhoneSchema } from './phone.js';
+import type { ColorScheme } from './themes.js';
 
 /**
  * Which client is logging in. `web` gets the refresh token as an httpOnly cookie,
@@ -56,7 +57,14 @@ export interface AuthResponse {
   /** Seconds until the access token expires. */
   expiresIn: number;
   /** `nameBn`: the name in Bangla script, for the Bangla UI (falls back to `name`). */
-  user: { id: string; name: string; nameBn: string | null; locale: 'bn' | 'en' };
+  user: {
+    id: string;
+    name: string;
+    nameBn: string | null;
+    locale: 'bn' | 'en';
+    /** Light, dark or the device's choice (SYSTEM, everyone's default). */
+    colorScheme: ColorScheme;
+  };
   /** Present when the session has a selected tenant. */
   tenant?: AuthTenant;
   /** Roles in `tenant`. A UI hint only — the API re-checks roles on every request. */

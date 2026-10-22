@@ -17,9 +17,19 @@ export const isoDateSchema = z
     return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
   }, 'Not a calendar date');
 
-/** Today's date in a timezone, e.g. `todayIn('Asia/Dhaka')` → '2026-10-18'. */
+const dayFormats = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * Today's date in a timezone, e.g. `todayIn('Asia/Dhaka')` → '2026-10-18'; or any instant's date
+ * there. One formatter per timezone, kept (building one costs far more than formatting).
+ */
 export function todayIn(timeZone: string, now: Date = new Date()): IsoDate {
-  return new Intl.DateTimeFormat('en-CA', { timeZone }).format(now);
+  let format = dayFormats.get(timeZone);
+  if (!format) {
+    format = new Intl.DateTimeFormat('en-CA', { timeZone });
+    dayFormats.set(timeZone, format);
+  }
+  return format.format(now);
 }
 
 /** ISO weekday of a date: 1 = Monday … 7 = Sunday (Friday = 5). */

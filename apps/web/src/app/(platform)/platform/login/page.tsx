@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label';
 import { ApiError } from '@/lib/api/errors';
 import { useErrorMessage } from '@/lib/hooks';
 import { platformApi } from '@/lib/platform/platform-api';
+import { usePlatformLook } from '@/lib/theme';
 
 type Step =
   | { kind: 'password' }
@@ -30,6 +31,7 @@ type Step =
 
 /** /platform/login: password, then the authenticator code (first time: set the app up). */
 export default function PlatformLoginPage() {
+  usePlatformLook();
   const t = useTranslations('platform');
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -43,8 +45,8 @@ export default function PlatformLoginPage() {
   };
 
   return (
-    <main className="bg-canvas flex min-h-svh flex-col">
-      <header className="bg-brand flex items-center justify-between gap-3 px-4 py-3 text-white sm:px-6">
+    <main className="bg-canvas flex min-h-svh flex-col" data-board="slate">
+      <header className="bg-board flex items-center justify-between gap-3 px-4 py-3 text-white sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <Logo inverted />
           <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-sm font-medium">

@@ -12,7 +12,7 @@ function Notice({ icon: Icon, title, text }: { icon: LucideIcon; title: string; 
   const t = useTranslations('comingSoon');
   return (
     <div className="bg-card flex flex-col items-center gap-3 rounded-xl border px-6 py-14 text-center shadow-xs">
-      <span className="bg-primary-soft text-primary flex size-14 items-center justify-center rounded-2xl">
+      <span className="bg-primary-soft text-primary-ink flex size-14 items-center justify-center rounded-2xl">
         <Icon aria-hidden className="size-7" />
       </span>
       <h2 className="text-xl font-semibold">{title}</h2>

@@ -25,6 +25,8 @@ export interface NavItem {
   module: ModuleKey;
   /** Roles that may open it; undefined = any member. */
   roles?: Role[];
+  /** A module whose screens are not built yet: the sidebar says "soon" (never a dead end). */
+  soon?: boolean;
 }
 
 const STAFF: Role[] = ['OWNER', 'ADMIN', 'TEACHER'];
@@ -72,6 +74,7 @@ export const NAV_ITEMS: NavItem[] = [
     group: 'accounts',
     module: 'FEES',
     roles: ['OWNER', 'ADMIN', 'ACCOUNTANT'],
+    soon: true,
   },
   {
     key: 'exams',
@@ -80,6 +83,7 @@ export const NAV_ITEMS: NavItem[] = [
     group: 'academic',
     module: 'EXAMS',
     roles: STAFF,
+    soon: true,
   },
   {
     key: 'setup',

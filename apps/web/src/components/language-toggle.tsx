@@ -15,25 +15,27 @@ export function LanguageToggle({ onBrand }: { onBrand?: boolean }) {
   const setLocale = useSetLocale();
   const [pending, startTransition] = useTransition();
   const next: Locale = locale === 'bn' ? 'en' : 'bn';
+  // The accessible name is the visible text ("English" / "EN"), so a speech-input user can say
+  // what they see (WCAG 2.5.3); "ভাষা / Language" is only the tooltip.
   return (
     <Button
       variant="outline"
       size="sm"
       className={cn(
-        'h-9 rounded-full px-3',
+        'rounded-full px-2.5',
         onBrand &&
-          'border-white/30 bg-white/10 text-white shadow-none hover:bg-white/20 hover:text-white',
+          'border-hero-foreground/30 bg-hero-foreground/10 text-hero-foreground hover:bg-hero-foreground/20 hover:text-hero-foreground',
       )}
       disabled={pending}
-      aria-label={t('language')}
+      title={t('language')}
       data-testid="language-toggle"
       onClick={() => startTransition(() => setLocale(next))}
     >
-      <LanguagesIcon aria-hidden className={onBrand ? undefined : 'text-primary'} />
+      <LanguagesIcon aria-hidden className={onBrand ? undefined : 'text-primary-ink'} />
       <span lang={next} className="hidden sm:inline">
         {next === 'en' ? t('switchToEnglish') : t('switchToBangla')}
       </span>
-      <span lang={next} aria-hidden className="sm:hidden">
+      <span lang={next} className="sm:hidden">
         {next === 'en' ? 'EN' : 'বাং'}
       </span>
     </Button>

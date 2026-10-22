@@ -30,11 +30,11 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ApiError } from '@/lib/api/errors';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { useErrorMessage, useLabel } from '@/lib/hooks';
+import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 
 export type SetupTab =
-  'years' | 'classes' | 'shifts' | 'subjects' | 'groups' | 'labels' | 'studentCode';
+  'years' | 'classes' | 'shifts' | 'subjects' | 'groups' | 'labels' | 'studentCode' | 'appearance';
 
 const TABS: { key: SetupTab; href: string }[] = [
   { key: 'years', href: '/setup' },
@@ -44,12 +44,16 @@ const TABS: { key: SetupTab; href: string }[] = [
   { key: 'groups', href: '/setup/groups' },
   { key: 'labels', href: '/setup/labels' },
   { key: 'studentCode', href: '/setup/student-code' },
+  // The institute's look is the owner's choice (shown to owners only).
+  { key: 'appearance', href: '/setup/appearance' },
 ];
 
 /** The setup area's pages, labelled with the institute's own words. Wraps on narrow phones. */
 export function SetupTabs({ active }: { active: SetupTab }) {
   const t = useTranslations('setup');
   const label = useLabel();
+  const { data: context } = useMeContext();
+  const owner = context?.roles.includes('OWNER') ?? false;
   const text: Record<SetupTab, string> = {
     years: label('academic_year', 'Academic Year'),
     classes: t('tabClasses', {
@@ -61,20 +65,21 @@ export function SetupTabs({ active }: { active: SetupTab }) {
     groups: label('study_group', 'Group'),
     labels: t('tabLabels'),
     studentCode: t('tabStudentCode', { student: label('student', 'Student', { inText: true }) }),
+    appearance: t('tabAppearance'),
   };
   return (
     <nav aria-label={t('title')}>
       <ul className="flex flex-wrap gap-2">
-        {TABS.map((tab) => (
+        {TABS.filter((tab) => tab.key !== 'appearance' || owner).map((tab) => (
           <li key={tab.key} className="min-w-0">
             <Link
               href={tab.href}
               aria-current={tab.key === active ? 'page' : undefined}
               className={cn(
-                'inline-flex min-h-10 max-w-full items-center rounded-lg border px-3.5 text-sm font-medium transition-colors',
-                'focus-visible:ring-ring/40 outline-none focus-visible:ring-3',
+                'inline-flex min-h-(--control-h) max-w-full items-center rounded-full border px-4 text-sm font-medium transition-colors',
+                'focus-visible:ring-ring focus-visible:ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
                 tab.key === active
-                  ? 'bg-primary text-primary-foreground border-primary'
+                  ? 'bg-primary text-primary-foreground border-primary-ink'
                   : 'bg-card hover:border-primary/40',
               )}
             >
@@ -121,8 +126,10 @@ export function useInvalidateSetup() {
       'attendance-my-sections',
       'attendance-report-today',
       'attendance-summary',
+      'attendance-trend',
       'students',
       'students-total',
+      'students-summary',
     ])
       void queryClient.invalidateQueries({ queryKey: [key] });
   };

@@ -22,7 +22,9 @@ import {
   type IsoDate,
   type MeContext,
   type StaffInvitation,
+  type ColorScheme,
 } from '@jantrik/shared';
+import { appearanceOf } from '../appearance/appearance.module.js';
 import { listMemberships } from '../auth/login-lookup.js';
 import { CurrentUser, RequireModule, Roles, UserScoped } from '../common/decorators.js';
 import type { Principal } from '../common/request-context.js';
@@ -75,12 +77,13 @@ export class MeService {
       });
 
     const tx = this.db.tx;
-    const [tenant, labels, year, modules, roles] = await Promise.all([
+    const [tenant, labels, year, modules, roles, appearance] = await Promise.all([
       tx.tenant.findUniqueOrThrow({ where: { id: tenantId }, include: { instituteType: true } }),
       tx.tenantLabel.findMany(),
       tx.academicYear.findFirst({ where: { isCurrent: true } }),
       this.access.getEnabledModules(tenantId),
       this.access.getRoles(tenantId, principal.userId),
+      tx.appearanceSettings.findFirst({ select: { preset: true, accent: true } }),
     ]);
 
     return {
@@ -107,6 +110,7 @@ export class MeService {
           }
         : null,
       today: todayIn(tenant.timezone),
+      appearance: appearanceOf(tenant.instituteType.defaultTheme, appearance),
     };
   }
 
@@ -190,9 +194,18 @@ export class MeService {
     );
   }
 
-  /** RLS lets a user update only their own row. */
-  async setLocale(principal: Principal, locale: 'bn' | 'en'): Promise<void> {
-    await this.db.tx.user.update({ where: { id: principal.userId }, data: { locale } });
+  /** The language and the light/dark choice. RLS lets a user update only their own row. */
+  async setPreferences(
+    principal: Principal,
+    prefs: { locale?: 'bn' | 'en'; colorScheme?: ColorScheme },
+  ): Promise<void> {
+    await this.db.tx.user.update({
+      where: { id: principal.userId },
+      data: {
+        ...(prefs.locale ? { locale: prefs.locale } : {}),
+        ...(prefs.colorScheme ? { colorScheme: prefs.colorScheme } : {}),
+      },
+    });
   }
 }
 
@@ -255,7 +268,7 @@ export class MeController {
     @CurrentUser() principal: Principal,
     @Body() dto: PreferencesDto,
   ): Promise<void> {
-    await this.me.setLocale(principal, dto.locale);
+    await this.me.setPreferences(principal, dto);
   }
 }
 
