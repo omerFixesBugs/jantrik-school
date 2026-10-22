@@ -73,6 +73,11 @@ export default defineConfig({
         SMS_PROVIDER: 'outbox',
         // A developer's .env may enable phone testing (dev only); e2e never runs with it.
         DEV_LAN: 'false',
+        // One machine plays every user at test speed: the general request limits (300 a minute
+        // per person, 600 per IP) turned a fast run's owner requests into 429s. Login and code
+        // limits (auth.spec tests them) stay as they are.
+        RATE_LIMIT_USER_PER_MIN: '3000',
+        RATE_LIMIT_IP_PER_MIN: '6000',
         CORS_ORIGINS: 'http://localhost:3000',
       },
     },
