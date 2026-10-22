@@ -54,43 +54,47 @@ export function Receipt({ receipt, paper = 'a5' }: { receipt: FeeReceipt; paper?
         <p className="font-semibold">{t('title')}</p>
       </header>
 
+      {/* A value that does not fit beside its label moves below it whole: identifiers (the
+          receipt number, the student ID, the roll) never break in the middle. */}
       <dl className={cn('grid gap-x-3 gap-y-1', narrow ? 'grid-cols-1' : 'grid-cols-2')}>
-        <div className="flex gap-1">
-          <dt>{t('number')}:</dt>
-          <dd className="font-mono font-semibold" data-testid="receipt-number">
+        <div className="flex flex-wrap gap-x-1">
+          <dt className="shrink-0">{t('number')}:</dt>
+          <dd className="font-mono font-semibold whitespace-nowrap" data-testid="receipt-number">
             {receipt.receiptNumber}
           </dd>
         </div>
-        <div className="flex gap-1">
-          <dt>{t('date')}:</dt>
+        <div className="flex flex-wrap gap-x-1">
+          <dt className="shrink-0">{t('date')}:</dt>
           <dd>{formatDate(receipt.recordedOn, locale, 'long')}</dd>
         </div>
-        <div className="flex gap-1">
-          <dt>{t('student')}:</dt>
+        <div className="flex flex-wrap gap-x-1">
+          <dt className="shrink-0">{t('student')}:</dt>
           <dd className="font-semibold">{pick(locale, receipt.student)}</dd>
         </div>
-        <div className="flex gap-1">
-          <dt>{t('id')}:</dt>
-          <dd className="font-mono">{receipt.student.studentCode}</dd>
+        <div className="flex flex-wrap gap-x-1">
+          <dt className="shrink-0">{t('id')}:</dt>
+          <dd className="font-mono whitespace-nowrap">{receipt.student.studentCode}</dd>
         </div>
         {receipt.student.classLevel && (
-          <div className="flex gap-1">
-            <dt>{t('class')}:</dt>
+          <div className="flex flex-wrap gap-x-1">
+            <dt className="shrink-0">{t('class')}:</dt>
             <dd>
               {pick(locale, receipt.student.classLevel)}
               {receipt.student.section ? `, ${receipt.student.section}` : ''}
               {receipt.student.roll !== null && (
                 <>
                   {' · '}
-                  {t('roll')} <span className="font-mono">{receipt.student.roll}</span>
+                  <span className="whitespace-nowrap">
+                    {t('roll')} <span className="font-mono">{receipt.student.roll}</span>
+                  </span>
                 </>
               )}
             </dd>
           </div>
         )}
         {receipt.paidOn !== receipt.recordedOn && (
-          <div className="flex gap-1">
-            <dt>{t('paidOn')}:</dt>
+          <div className="flex flex-wrap gap-x-1">
+            <dt className="shrink-0">{t('paidOn')}:</dt>
             <dd>{formatDate(receipt.paidOn, locale, 'long')}</dd>
           </div>
         )}
@@ -147,19 +151,19 @@ export function Receipt({ receipt, paper = 'a5' }: { receipt: FeeReceipt; paper?
       </p>
 
       <dl className="grid gap-y-1">
-        <div className="flex gap-1">
-          <dt>{t('method')}:</dt>
+        <div className="flex flex-wrap gap-x-1">
+          <dt className="shrink-0">{t('method')}:</dt>
           <dd>{tMethod(receipt.method)}</dd>
         </div>
         {receipt.trxId && (
-          <div className="flex gap-1">
-            <dt>{t('trxId')}:</dt>
+          <div className="flex flex-wrap gap-x-1">
+            <dt className="shrink-0">{t('trxId')}:</dt>
             <dd className="font-mono">{receipt.trxId}</dd>
           </div>
         )}
         {receipt.senderPhone && (
-          <div className="flex gap-1">
-            <dt>{t('sender')}:</dt>
+          <div className="flex flex-wrap gap-x-1">
+            <dt className="shrink-0">{t('sender')}:</dt>
             <dd className="font-mono">
               {receipt.senderPhone.startsWith('+')
                 ? formatBdPhone(receipt.senderPhone)
@@ -168,8 +172,8 @@ export function Receipt({ receipt, paper = 'a5' }: { receipt: FeeReceipt; paper?
           </div>
         )}
         {receipt.collectedBy && (
-          <div className="flex gap-1">
-            <dt>{t('collectedBy')}:</dt>
+          <div className="flex flex-wrap gap-x-1">
+            <dt className="shrink-0">{t('collectedBy')}:</dt>
             <dd>
               {pick(locale, {
                 nameBn: receipt.collectedBy.nameBn,
@@ -178,8 +182,8 @@ export function Receipt({ receipt, paper = 'a5' }: { receipt: FeeReceipt; paper?
             </dd>
           </div>
         )}
-        <div className="flex gap-1">
-          <dt>{t('balanceToday')}:</dt>
+        <div className="flex flex-wrap gap-x-1">
+          <dt className="shrink-0">{t('balanceToday')}:</dt>
           <dd className="tabular-nums">{formatTaka(receipt.balanceTodayPaisa, locale)}</dd>
         </div>
       </dl>
