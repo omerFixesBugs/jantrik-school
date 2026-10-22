@@ -358,3 +358,78 @@ export interface FeeStudentHit extends FeeStudentRef {
   /** Primary guardian; the phone is masked for the accountant (decision #19). */
   guardian: { nameBn: string | null; nameEn: string | null; phone: string } | null;
 }
+
+// ─────────────────────────── Dues and the student ledger ───────────────────────────
+
+/** GET /fees/students/:id/ledger. `upTo`: also show (and allow paying) periods up to this date. */
+export const feeLedgerQuerySchema = z.object({ upTo: isoDateSchema.optional() });
+/** POST /fees/dues/:id/cancel (OWNER/ADMIN): only a due with nothing paid. */
+export const cancelFeeDueSchema = z.object({ reason: reasonSchema });
+/** POST /fees/dues/:id/waive-fine (OWNER/ADMIN). `amountPaisa` null: the whole fine, for good. */
+export const waiveFeeFineSchema = z.object({
+  amountPaisa: z.number().int().min(1).max(MAX_FEE_PAISA).nullable(),
+  reason: reasonSchema,
+});
+/** POST /fees/dues/recalculate (OWNER/ADMIN): rewrite unpaid dues from today's setup. */
+export const recalculateFeeDuesSchema = z.object({
+  /** Only these students (e.g. a family just confirmed); default: everyone. */
+  studentIds: z.array(z.uuid()).min(1).max(50).optional(),
+});
+
+export interface FeeDueView {
+  id: string;
+  head: { id: string; nameBn: string; nameEn: string; kind: FeeHeadKind };
+  academicYear: { id: string; name: string };
+  periodKey: string;
+  /** Term dues: the term's names. */
+  term: { nameBn: string; nameEn: string } | null;
+  periodStart: IsoDate;
+  dueDate: IsoDate;
+  amountPaisa: number;
+  concessionPaisa: number;
+  concessionSource: 'NONE' | 'MANUAL' | 'SIBLING';
+  paidPrincipalPaisa: number;
+  paidFinePaisa: number;
+  fineWaivedPaisa: number;
+  fineWaivedAll: boolean;
+  principalClearedOn: IsoDate | null;
+  /** What is still owed today: principal, fine (accrued − paid − waived) and their sum. */
+  balance: { principal: number; fine: number; total: number };
+  status: 'OPEN' | 'CANCELLED';
+  cancelReason: string | null;
+  /** Past its due date with something still owed. */
+  overdue: boolean;
+}
+
+/** A period not generated yet that can be paid ahead (current year only). */
+export interface FeeUpcomingDue {
+  headId: string;
+  head: { nameBn: string; nameEn: string };
+  periodKey: string;
+  term: { nameBn: string; nameEn: string } | null;
+  periodStart: IsoDate;
+  dueDate: IsoDate;
+  amountPaisa: number;
+  concessionPaisa: number;
+}
+
+export interface FeeWaiverView {
+  id: string;
+  dueId: string;
+  amountPaisa: number | null;
+  reason: string;
+  createdAt: string;
+}
+
+export interface FeeLedger {
+  /** Today in the institute's timezone. */
+  today: IsoDate;
+  student: FeeStudentHit;
+  family: { groupId: string; rank: number } | null;
+  /** Every due (earlier years' arrears too), oldest first; cancelled ones stay visible. */
+  dues: FeeDueView[];
+  upcoming: FeeUpcomingDue[];
+  concessions: FeeConcessionView[];
+  waivers: FeeWaiverView[];
+  totals: { charged: number; concession: number; paid: number; balance: number; overdue: number };
+}

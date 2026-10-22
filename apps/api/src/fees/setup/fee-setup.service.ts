@@ -27,6 +27,7 @@ import { AuditService } from '../../audit/audit.module.js';
 import { apiError } from '../../common/api-error.js';
 import { RequestContext } from '../../common/request-context.js';
 import { Db } from '../../tenancy/db.service.js';
+import { FeeDuesService } from '../dues/fee-dues.service.js';
 
 type SettingsInput = z.output<typeof feeSettingsSchema>;
 type HeadCreate = z.output<typeof createFeeHeadSchema>;
@@ -111,6 +112,7 @@ export class FeeSetupService {
     private readonly db: Db,
     private readonly context: RequestContext,
     private readonly audit: AuditService,
+    private readonly dues: FeeDuesService,
   ) {}
 
   private get tenantId(): string {
@@ -166,6 +168,7 @@ export class FeeSetupService {
       select: { id: true },
     });
     const after = await this.settings();
+    await this.dues.markTenant();
     await this.audit.record({
       entity: 'fee_settings',
       entityId: row.id,

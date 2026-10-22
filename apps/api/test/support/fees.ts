@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { withTenant } from '@jantrik/db';
+import { addDays, addMonths, dateToDb, todayIn, type IsoDate } from '@jantrik/shared';
 import { addMember, createTenant, otpLogin, randomPhone, type Harness } from './harness.js';
 
 export interface FeesSchool {
   tenantId: string;
   yearId: string;
+  /** Today in Asia/Dhaka; the current year runs from 3 months before this month for 12 months. */
+  today: IsoDate;
+  /** 'YYYY-MM' of last month and this month (both inside the current year). */
+  months: { previous: string; current: string };
+  yearStart: IsoDate;
+  yearEnd: IsoDate;
   class6: string;
   class9: string;
   science: string;
@@ -34,8 +41,18 @@ export async function feesSchool(
 ): Promise<FeesSchool> {
   const tenantId = (await createTenant(h, { modules: opts.modules ?? ['FEES', 'ATTENDANCE'] })).id;
   const sharedPhone = randomPhone();
+  // Fee tests depend on today: the year always surrounds it, and fixture students were
+  // admitted long before it (a new admission is created by the test that needs one).
+  const today = todayIn('Asia/Dhaka');
+  const current = today.slice(0, 7);
+  const yearStart = `${addMonths(current, -3)}-01`;
+  const yearEnd = addDays(`${addMonths(current, 9)}-01`, -1);
+  const admittedLongAgo = dateToDb(addDays(yearStart, -400));
   const ids = await withTenant(h.prisma, tenantId, async (tx) => {
-    const year = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
+    const year = await tx.academicYear.update({
+      where: { tenantId_name: { tenantId, name: '2026' } },
+      data: { startDate: dateToDb(yearStart), endDate: dateToDb(yearEnd) },
+    });
     const class6 = await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_6' } });
     const class9 = await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_9' } });
     const science = await tx.studyGroup.findFirstOrThrow({ where: { code: 'SCIENCE' } });
@@ -54,7 +71,13 @@ export async function feesSchool(
     ) => {
       const code = `F-${randomUUID().slice(0, 8)}`;
       const s = await tx.student.create({
-        data: { tenantId, studentCode: code, nameBn: `ছাত্র ${n}`, nameEn: `Student ${n}` },
+        data: {
+          tenantId,
+          studentCode: code,
+          nameBn: `ছাত্র ${n}`,
+          nameEn: `Student ${n}`,
+          createdAt: admittedLongAgo,
+        },
       });
       await tx.enrolment.create({
         data: {
@@ -116,6 +139,10 @@ export async function feesSchool(
   const teacher = await staff(['TEACHER']);
   return {
     tenantId,
+    today,
+    months: { previous: addMonths(current, -1), current },
+    yearStart,
+    yearEnd,
     ...ids,
     tokens: {
       owner: owner.token,

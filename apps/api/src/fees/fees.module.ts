@@ -1,3 +1,4 @@
+import { BullModule } from '@nestjs/bullmq';
 import {
   Body,
   Controller,
@@ -13,6 +14,7 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  cancelFeeDueSchema,
   confirmSiblingsSchema,
   copyFeeAmountsSchema,
   createFeeConcessionSchema,
@@ -21,16 +23,20 @@ import {
   endFeeConcessionSchema,
   feeAmountsQuerySchema,
   feeConcessionsQuerySchema,
+  feeLedgerQuerySchema,
   feeSettingsSchema,
   feeStudentSearchSchema,
   feeTermsQuerySchema,
+  recalculateFeeDuesSchema,
   removeSiblingSchema,
   setFeeAmountsSchema,
   updateFeeHeadSchema,
   updateFeeTermSchema,
+  waiveFeeFineSchema,
   type FeeAmountsMatrix,
   type FeeConcessionView,
   type FeeHeadView,
+  type FeeLedger,
   type FeeSettingsView,
   type FeeSiblingsView,
   type FeeStudentHit,
@@ -38,6 +44,9 @@ import {
 } from '@jantrik/shared';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
+import { FEES_QUEUE, FeeDuesService } from './dues/fee-dues.service.js';
+import { FeeDuesProcessor } from './dues/fee-dues.processor.js';
+import { FeeLedgerService } from './dues/fee-ledger.service.js';
 import { FeeStudentsService } from './fee-students.service.js';
 import { FeeSetupService } from './setup/fee-setup.service.js';
 import { FeeSiblingsService } from './setup/fee-siblings.service.js';
@@ -57,6 +66,10 @@ class FeeConcessionsQueryDto extends zodDto(feeConcessionsQuerySchema) {}
 class ConfirmSiblingsDto extends zodDto(confirmSiblingsSchema) {}
 class RemoveSiblingDto extends zodDto(removeSiblingSchema) {}
 class FeeStudentSearchDto extends zodDto(feeStudentSearchSchema) {}
+class FeeLedgerQueryDto extends zodDto(feeLedgerQuerySchema) {}
+class CancelFeeDueDto extends zodDto(cancelFeeDueSchema) {}
+class WaiveFeeFineDto extends zodDto(waiveFeeFineSchema) {}
+class RecalculateFeeDuesDto extends zodDto(recalculateFeeDuesSchema) {}
 
 const Id = (name = 'id') => Param(name, ParseUUIDPipe);
 
@@ -175,16 +188,66 @@ export class FeeSetupController {
 @RequireModule('FEES')
 @Roles('OWNER', 'ADMIN', 'ACCOUNTANT')
 export class FeeStudentsController {
-  constructor(private readonly students: FeeStudentsService) {}
+  constructor(
+    private readonly students: FeeStudentsService,
+    private readonly ledgers: FeeLedgerService,
+  ) {}
 
   @Get('students')
   search(@Query() query: FeeStudentSearchDto): Promise<FeeStudentHit[]> {
     return this.students.search(query.q);
   }
+
+  @Get('students/:id/ledger')
+  ledger(@Id() id: string, @Query() query: FeeLedgerQueryDto): Promise<FeeLedger> {
+    return this.ledgers.ledger(id, query);
+  }
+}
+
+/** Corrections to dues: OWNER/ADMIN (cancel, waive a fine, recalculate, generate now). */
+@Controller('fees/dues')
+@RequireModule('FEES')
+@Roles('OWNER', 'ADMIN')
+export class FeeDuesController {
+  constructor(private readonly dues: FeeDuesService) {}
+
+  @Post('generate')
+  @HttpCode(200)
+  async generate(): Promise<{ created: number }> {
+    return { created: await this.dues.ensureForTenant('admin') };
+  }
+
+  @Post('recalculate')
+  @HttpCode(200)
+  recalculate(@Body() dto: RecalculateFeeDuesDto): Promise<{ updated: number }> {
+    return this.dues.recalculateUnpaid(dto.studentIds);
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(200)
+  async cancel(@Id() id: string, @Body() dto: CancelFeeDueDto): Promise<{ ok: true }> {
+    await this.dues.cancelDue(id, dto.reason);
+    return { ok: true };
+  }
+
+  @Post(':id/waive-fine')
+  @HttpCode(200)
+  async waive(@Id() id: string, @Body() dto: WaiveFeeFineDto): Promise<{ ok: true }> {
+    await this.dues.waiveFine(id, dto);
+    return { ok: true };
+  }
 }
 
 @Module({
-  controllers: [FeeSetupController, FeeStudentsController],
-  providers: [FeeSetupService, FeeSiblingsService, FeeStudentsService],
+  imports: [BullModule.registerQueue({ name: FEES_QUEUE })],
+  controllers: [FeeSetupController, FeeStudentsController, FeeDuesController],
+  providers: [
+    FeeSetupService,
+    FeeSiblingsService,
+    FeeStudentsService,
+    FeeDuesService,
+    FeeDuesProcessor,
+    FeeLedgerService,
+  ],
 })
 export class FeesModule {}

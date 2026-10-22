@@ -34,6 +34,17 @@ export class FeeStudentsService {
     const phone = full || normalizeBdPhone(q) ? phoneDigits(q) : null;
     const ids = await searchStudentIds(tx, { term: q, phone, limit: 20 });
     if (ids.length === 0) return [];
+    return this.load(ids, full);
+  }
+
+  /** One student as the counter shows them, or null (deleted, or another institute's). */
+  async hit(studentId: string): Promise<FeeStudentHit | null> {
+    const [student] = await this.load([studentId], await this.seesPhones());
+    return student ?? null;
+  }
+
+  private async load(ids: string[], full: boolean): Promise<FeeStudentHit[]> {
+    const tx = this.db.tx;
     const year = await tx.academicYear.findFirst({
       where: { isCurrent: true },
       select: { id: true },
