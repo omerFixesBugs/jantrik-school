@@ -46,23 +46,17 @@ import { isDialable, LoadError, PhoneText, SubmissionStatusPill, TrxId, useDueNa
 
 /** The submissions list and the dashboard figure: refreshed after every decision. */
 export const submissionKeys = {
-  all: (tenantId: string | undefined) => ['fee-submissions', tenantId] as const,
+  all: (tenantId: string | undefined) => ['fees', 'submissions', tenantId] as const,
   list: (tenantId: string | undefined, status: string) =>
-    ['fee-submissions', tenantId, status] as const,
-  summary: (tenantId: string | undefined) => ['fee-summary', tenantId] as const,
+    ['fees', 'submissions', tenantId, status] as const,
+  summary: (tenantId: string | undefined) => ['fees', 'summary', tenantId] as const,
 };
 
 function useRefreshAfterReview() {
   const queryClient = useQueryClient();
-  const { session } = useAuth();
-  const tenantId = session?.tenant?.id;
-  return (studentId?: string) => {
-    void queryClient.invalidateQueries({ queryKey: submissionKeys.all(tenantId) });
-    void queryClient.invalidateQueries({ queryKey: submissionKeys.summary(tenantId) });
-    if (studentId) {
-      void queryClient.invalidateQueries({ queryKey: ['fee-ledger', tenantId, studentId] });
-    }
-  };
+  // A decision changes the list, the student's ledger, the day's closing, the reports and the
+  // dashboard card: every staff fee query (they all start with 'fees').
+  return (_studentId?: string) => void queryClient.invalidateQueries({ queryKey: ['fees'] });
 }
 
 export function SubmissionCard({
@@ -237,7 +231,7 @@ export function VerifyDialog({
   const [picked, setPicked] = useState<Set<string> | null>(null);
   const [ahead, setAhead] = useState<Set<string>>(() => new Set());
   const queryClient = useQueryClient();
-  const ledgerKey = ['fee-ledger', tenantId, s.student.id];
+  const ledgerKey = ['fees', 'ledger', tenantId, s.student.id];
 
   const ledger = useQuery({
     queryKey: ledgerKey,
@@ -284,8 +278,8 @@ export function VerifyDialog({
         refresh(s.student.id);
         onClose();
       } else if (e.code === 'AMOUNT_EXCEEDS_DUE' || e.code === 'NOTHING_DUE') {
-        // A ledger loaded earlier is out of date now: fetched afresh when the list opens.
-        void queryClient.invalidateQueries({ queryKey: ledgerKey, refetchType: 'none' });
+        // The ledger on screen is out of date: fetch it again for the re-pick.
+        void queryClient.invalidateQueries({ queryKey: ledgerKey });
         setRepick(true);
       }
     },
@@ -607,7 +601,7 @@ export function ReceiptDialog({
   const t = useTranslations('fees.reports.submissions');
   const { client, session } = useAuth();
   const query = useQuery({
-    queryKey: ['fee-receipt', session?.tenant?.id, receipt.id],
+    queryKey: ['fees', 'receipt', session?.tenant?.id, receipt.id],
     queryFn: () => client.api<FeeReceipt>(`/fees/payments/${receipt.id}`),
   });
   return (

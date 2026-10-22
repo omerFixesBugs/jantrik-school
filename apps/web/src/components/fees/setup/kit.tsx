@@ -33,7 +33,7 @@ import { cn } from '@/lib/utils';
 export function useFeeQuery<T>(path: string | null) {
   const { client, session } = useAuth();
   return useQuery({
-    queryKey: ['fees-setup', session?.tenant?.id, path],
+    queryKey: ['fees', 'setup', session?.tenant?.id, path],
     queryFn: () => client.api<T>(path!),
     enabled: path !== null,
   });
@@ -42,10 +42,7 @@ export function useFeeQuery<T>(path: string | null) {
 /** After a fee write: every fee query (setup, ledgers, reports) is stale. */
 export function useInvalidateFees() {
   const queryClient = useQueryClient();
-  return () =>
-    queryClient.invalidateQueries({
-      predicate: (q) => typeof q.queryKey[0] === 'string' && q.queryKey[0].startsWith('fees'),
-    });
+  return () => queryClient.invalidateQueries({ queryKey: ['fees'] });
 }
 
 /** The fee setup API's errors in the institute's words. */

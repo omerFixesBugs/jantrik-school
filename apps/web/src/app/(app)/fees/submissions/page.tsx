@@ -98,8 +98,7 @@ function Submissions() {
             setRecording(false);
             // The new transfer waits to be checked: show that list.
             set({ status: null });
-            void queryClient.invalidateQueries({ queryKey: submissionKeys.all(tenantId) });
-            void queryClient.invalidateQueries({ queryKey: submissionKeys.summary(tenantId) });
+            void queryClient.invalidateQueries({ queryKey: ['fees'] });
           }}
         />
       )}

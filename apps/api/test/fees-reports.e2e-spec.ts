@@ -11,6 +11,7 @@ import type {
   FeeReminderStatus,
   FeeSummary,
 } from '@jantrik/shared';
+import { FeeDuesService } from '../src/fees/dues/fee-dues.service.js';
 import { feesSchool, type FeesSchool } from './support/fees.js';
 import { bearer, createHarness, http, type Harness } from './support/harness.js';
 
@@ -310,5 +311,48 @@ describe('fee reports and reminders', () => {
     expect(summary.pendingSubmissions).toBe(0);
     await api(s.tokens.teacher).get('/fees/summary').expect(403);
     await api(s.tokens.guardian).get('/fees/summary').expect(403);
+  });
+
+  it('a whole-institute reminder preview never generates dues inside the request', async () => {
+    const fresh = await feesSchool(h);
+    const admin = api(fresh.tokens.admin);
+    const head = (
+      await admin
+        .post('/fees/heads', {
+          nameBn: 'বেতন',
+          nameEn: 'Tuition',
+          kind: 'TUITION',
+          frequency: 'MONTHLY',
+          dueDay: 1,
+        })
+        .expect(201)
+    ).body as FeeHeadView;
+    await admin
+      .put('/fees/amounts', {
+        academicYearId: fresh.yearId,
+        amounts: [{ feeHeadId: head.id, classLevelId: fresh.class6, amountPaisa: 100000 }],
+      })
+      .expect(200);
+    await admin
+      .put('/fees/settings', {
+        duesFrom: `${fresh.months.previous}-01`,
+        receiptSmsEnabled: false,
+        sibling: null,
+        receiptNote: null,
+      })
+      .expect(200);
+    // Inline generation by the reminders is marked with the trigger 'reminders' (the queued
+    // background run uses another), so the spy tells them apart.
+    const ensure = vi.spyOn(h.app.get(FeeDuesService), 'ensureForStudents');
+    const inline = () =>
+      ensure.mock.calls.filter(([, opts]) => opts?.trigger === 'reminders').length;
+    await admin.post('/fees/reminders/preview', { minDays: 1 }).expect(200);
+    expect(inline()).toBe(0);
+    // A class preview generates its own (bounded) students' dues first.
+    await admin
+      .post('/fees/reminders/preview', { classLevelId: fresh.class6, minDays: 1 })
+      .expect(200);
+    expect(inline()).toBeGreaterThan(0);
+    ensure.mockRestore();
   });
 });

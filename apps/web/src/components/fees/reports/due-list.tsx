@@ -99,7 +99,7 @@ export function DueListReport({ mode }: { mode: 'dues' | 'defaulters' }) {
     if (minAmountPaisa > 0) apiQuery.set('minAmountPaisa', String(minAmountPaisa));
   }
   const report = useQuery({
-    queryKey: ['fee-due-list', tenantId, apiQuery.toString()],
+    queryKey: ['fees', 'due-list', tenantId, apiQuery.toString()],
     queryFn: () => client.api<FeeDueList>(`/fees/reports/dues?${apiQuery}`),
     placeholderData: keepPreviousData,
   });

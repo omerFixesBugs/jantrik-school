@@ -76,12 +76,12 @@ export function RecordTransfer({
   const [tried, setTried] = useState(false);
 
   const ledger = useQuery({
-    queryKey: ['fee-ledger', tenantId, student?.id],
+    queryKey: ['fees', 'ledger', tenantId, student?.id],
     queryFn: () => client.api<FeeLedger>(`/fees/students/${student!.id}/ledger`),
     enabled: Boolean(student),
   });
   const accounts = useQuery({
-    queryKey: ['fee-mobile-accounts', tenantId],
+    queryKey: ['fees', 'mobile-accounts', tenantId],
     queryFn: () => client.api<FeeMobileAccountView[]>('/fees/mobile-accounts'),
   });
   const forMethod = (accounts.data ?? []).filter((a) => a.isActive && a.method === method);
@@ -461,7 +461,7 @@ function StudentSearch({
   const [text, setText] = useState('');
   const q = useDebounced(toAsciiDigits(text).trim(), 300);
   const hits = useQuery({
-    queryKey: ['fee-student-search', session?.tenant?.id, q],
+    queryKey: ['fees', 'student-search', session?.tenant?.id, q],
     queryFn: () => client.api<FeeStudentHit[]>(`/fees/students?${new URLSearchParams({ q })}`),
     enabled: q.length > 0,
   });

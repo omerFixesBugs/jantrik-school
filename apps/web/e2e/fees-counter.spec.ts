@@ -83,8 +83,10 @@ for (const c of CASES) {
     await page.emulateMedia({ media: 'print' });
     await expect(receipt).toBeVisible();
     await expect(page.getByTestId('fees-tabs')).toBeHidden();
-    const pdf = await page.pdf({ preferCSSPageSize: true });
-    expect(pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g)?.length).toBe(1);
+    const pdf = (await page.pdf({ preferCSSPageSize: true })).toString('latin1');
+    expect(pdf.match(/\/Type\s*\/Page[^s]/g)?.length).toBe(1);
+    // A5 portrait (148 × 210 mm ≈ 420 × 595 pt), not the register's A4 landscape (842 × 595).
+    expect(pdf).toMatch(/\/MediaBox\s*\[\s*0\s+0\s+(419|420)(\.\d+)?\s+(594|595)(\.\d+)?\s*\]/);
     await page.emulateMedia({ media: 'screen' });
 
     // The accountant cannot void; an admin can, with a reason.

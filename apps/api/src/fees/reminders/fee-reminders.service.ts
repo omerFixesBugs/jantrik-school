@@ -119,11 +119,15 @@ export class FeeRemindersService implements OnModuleInit {
         },
       },
     });
-    // Their dues up to today first, so the preview and the send count the same students
-    // (cheap once the nightly run has generated them: existing dues are skipped).
     const ids = students.map((s) => s.id);
-    for (let i = 0; i < ids.length; i += 500) {
-      await this.dues.ensureForStudents(ids.slice(i, i + 500), { ctx, trigger: 'reminders' });
+    // A class or section (bounded), or one job chunk: their dues up to today first, so the
+    // preview and the send count the same students. The whole institute is never generated
+    // inside a request: its day's run is queued (ensureTenantToday) and the job's chunks
+    // generate their own students before sending.
+    if (onlyIds || filter.classLevelId || filter.sectionId) {
+      for (let i = 0; i < ids.length; i += 500) {
+        await this.dues.ensureForStudents(ids.slice(i, i + 500), { ctx, trigger: 'reminders' });
+      }
     }
     const overdue = await this.overdueOf(ids, ctx.today, filter.minDays);
     return students

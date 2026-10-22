@@ -492,6 +492,9 @@ export class FeeCollectionService implements OnModuleInit {
         })),
         byMethod,
         net: { amountPaisa: sum(mine) - sum(voids) },
+        cashInHandPaisa:
+          sum(mine.filter((r) => r.method === 'CASH')) -
+          sum(voids.filter((r) => r.method === 'CASH')),
         receipts:
           mine.length > 0
             ? {
@@ -506,7 +509,12 @@ export class FeeCollectionService implements OnModuleInit {
     return {
       date,
       collectors,
-      total: { collectedPaisa: collected, voidedPaisa: collected - net, netPaisa: net },
+      total: {
+        collectedPaisa: collected,
+        voidedPaisa: collected - net,
+        netPaisa: net,
+        cashInHandPaisa: collectors.reduce((s, c) => s + c.cashInHandPaisa, 0),
+      },
     };
   }
 }

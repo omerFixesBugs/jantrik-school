@@ -95,8 +95,14 @@ export function ClosingCollectorCard({ entry }: { entry: FeeClosingCollector }) 
           term={t('net')}
           value={taka(entry.net.amountPaisa)}
           note={t('netHint')}
-          strong
           testId="fees-closing-net"
+        />
+        <Figure
+          term={t('cashInHand')}
+          value={taka(entry.cashInHandPaisa)}
+          note={t('cashInHandHint')}
+          strong
+          testId="fees-closing-cash"
         />
       </dl>
 
@@ -192,7 +198,13 @@ export function ClosingTotals({ total }: { total: FeeClosing['total'] }) {
           term={t('voided')}
           value={total.voidedPaisa > 0 ? `− ${taka(total.voidedPaisa)}` : '—'}
         />
-        <Figure term={t('net')} value={taka(total.netPaisa)} note={t('netHint')} strong />
+        <Figure term={t('net')} value={taka(total.netPaisa)} note={t('netHint')} />
+        <Figure
+          term={t('cashInHand')}
+          value={taka(total.cashInHandPaisa)}
+          note={t('cashInHandHint')}
+          strong
+        />
       </dl>
     </section>
   );

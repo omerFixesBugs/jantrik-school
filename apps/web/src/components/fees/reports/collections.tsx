@@ -95,7 +95,7 @@ export function CollectionsReport() {
 
   const apiQuery = new URLSearchParams({ from, to, groupBy: group, locale });
   const report = useQuery({
-    queryKey: ['fee-collections', tenantId, apiQuery.toString()],
+    queryKey: ['fees', 'collections', tenantId, apiQuery.toString()],
     queryFn: () => client.api<FeeCollections>(`/fees/reports/collections?${apiQuery}`),
     enabled: ready,
     placeholderData: keepPreviousData,

@@ -539,8 +539,13 @@ export interface FeeClosingCollector {
   }[];
   /** Per method: receipts recorded that day, and collected − voided that day. */
   byMethod: { method: FeePaymentMethod; count: number; amountPaisa: number }[];
-  /** What should be in hand for the day: collected − voided. */
+  /** Everything kept for the day, all methods: collected − voided. */
   net: { amountPaisa: number };
+  /**
+   * The cash that should be in the drawer: cash collected − cash voided that day (verified
+   * bKash/Nagad money went to the institute's account, not the drawer).
+   */
+  cashInHandPaisa: number;
   /** First and last receipt numbers recorded that day. */
   receipts: { first: string; last: string } | null;
 }
@@ -552,7 +557,7 @@ export interface FeeClosingCollector {
 export interface FeeClosing {
   date: IsoDate;
   collectors: FeeClosingCollector[];
-  total: { collectedPaisa: number; voidedPaisa: number; netPaisa: number };
+  total: { collectedPaisa: number; voidedPaisa: number; netPaisa: number; cashInHandPaisa: number };
 }
 
 // ─────────────────────────── Manual bKash/Nagad ───────────────────────────

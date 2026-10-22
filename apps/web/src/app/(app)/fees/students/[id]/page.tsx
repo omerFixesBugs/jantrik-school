@@ -155,11 +155,11 @@ function Ledger() {
     })),
   ];
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: key });
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['fees'] });
   const onCollected = (receipt: FeeReceipt) => {
     queryClient.setQueryData(feeKeys.receipt(tenantId, receipt.id), receipt);
-    void queryClient.invalidateQueries({ queryKey: key });
-    void queryClient.invalidateQueries({ queryKey: feeKeys.closing(tenantId) });
+    // Every staff fee screen shows it (ledger, closing, reports, dashboard card).
+    void queryClient.invalidateQueries({ queryKey: ['fees'] });
     toast.success(t('collect.done', { number: receipt.receiptNumber }));
     setCollecting(false);
     router.push(`/fees/receipts/${receipt.id}`);

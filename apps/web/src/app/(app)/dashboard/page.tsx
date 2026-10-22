@@ -733,7 +733,7 @@ function ModulesSoon({ context }: { context: MeContext }) {
 function useFeeSummary() {
   const { client, session } = useAuth();
   return useQuery({
-    queryKey: ['fee-summary', session?.tenant?.id],
+    queryKey: ['fees', 'summary', session?.tenant?.id],
     queryFn: () => client.api<FeeSummary>('/fees/summary'),
   });
 }

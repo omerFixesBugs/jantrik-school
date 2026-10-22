@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { withTenant } from '@jantrik/db';
 import type {
+  FeeClosing,
   FeeGuardianView,
   FeeHeadView,
   FeeMobileAccountView,
@@ -304,5 +305,15 @@ describe('manual bKash/Nagad payments', () => {
     for (let i = 0; i < 3; i++) await submit(s.students[1]!.id, { amount: 100 });
     const tooMany = await submit(s.students[1]!.id, { amount: 100, expect: 422 });
     expect(tooMany.body.code).toBe('TOO_MANY_PENDING');
+  });
+
+  it("the closing's cash in hand leaves out verified bKash/Nagad money", async () => {
+    const closing = (await api(s.tokens.accountant).get('/fees/closing').expect(200))
+      .body as FeeClosing;
+    const mine = closing.collectors.find((c) => c.collector.id === s.userIds.accountant)!;
+    // This accountant only verified transfers today: money arrived, none of it as cash.
+    expect(mine.net.amountPaisa).toBeGreaterThan(0);
+    expect(mine.cashInHandPaisa).toBe(0);
+    expect(closing.total.cashInHandPaisa).toBe(0);
   });
 });

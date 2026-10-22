@@ -198,11 +198,7 @@ function ReceiptScreen() {
               setVoiding(false);
             } finally {
               // Its dues owe again, and the day's closing changes: whatever the answer was.
-              void queryClient.invalidateQueries({ queryKey: key });
-              void queryClient.invalidateQueries({
-                queryKey: feeKeys.ledger(tenantId, r.student.id),
-              });
-              void queryClient.invalidateQueries({ queryKey: feeKeys.closing(tenantId) });
+              void queryClient.invalidateQueries({ queryKey: ['fees'] });
             }
           }}
         />
