@@ -527,18 +527,32 @@ export interface FeePaymentSummary {
 
 export interface FeeClosingCollector {
   collector: { id: string; name: string; nameBn: string | null };
+  /** Payments recorded that day, void ones included (a void counts on the day it is made). */
+  collected: { count: number; amountPaisa: number };
+  /** Voids made that day of this collector's payments (of any day): deducted from that day. */
+  voided: {
+    id: string;
+    receiptNumber: string;
+    amountPaisa: number;
+    reason: string;
+    recordedOn: IsoDate;
+  }[];
+  /** Per method: receipts recorded that day, and collected − voided that day. */
   byMethod: { method: FeePaymentMethod; count: number; amountPaisa: number }[];
-  total: { count: number; amountPaisa: number };
-  /** First and last receipt numbers recorded that day (void ones included). */
+  /** What should be in hand for the day: collected − voided. */
+  net: { amountPaisa: number };
+  /** First and last receipt numbers recorded that day. */
   receipts: { first: string; last: string } | null;
-  voided: { id: string; receiptNumber: string; amountPaisa: number; reason: string }[];
 }
 
-/** GET /fees/closing: money recorded on one day, per collector and method (void excluded). */
+/**
+ * GET /fees/closing: one day per collector and method. A payment counts on the day it was
+ * recorded; a later void is deducted on the day it is made, so a closed day never changes.
+ */
 export interface FeeClosing {
   date: IsoDate;
   collectors: FeeClosingCollector[];
-  total: { count: number; amountPaisa: number };
+  total: { collectedPaisa: number; voidedPaisa: number; netPaisa: number };
 }
 
 // ─────────────────────────── Manual bKash/Nagad ───────────────────────────

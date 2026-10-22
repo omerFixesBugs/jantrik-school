@@ -9,6 +9,7 @@ import {
   maskPhone,
   receiptNumber,
   receiptSmsText,
+  todayIn,
   type FeeClosing,
   type FeeClosingCollector,
   type FeePaymentMethod,
@@ -434,8 +435,9 @@ export class FeeCollectionService implements OnModuleInit {
   }
 
   /**
-   * Money recorded on one day per collector and method; void payments are listed apart and not
-   * counted. An accountant sees only their own; OWNER/ADMIN anyone (or everyone).
+   * One day per collector and method (docs/fees.md → Daily closing). A payment counts on the day
+   * it was recorded; a void is deducted on the day it is made (never on the payment's own day),
+   * so a closed day never changes afterwards. An accountant sees only their own closing.
    */
   async closing(query: { date?: IsoDate; collectorId?: string }): Promise<FeeClosing> {
     const tx = this.db.tx;
@@ -446,49 +448,65 @@ export class FeeCollectionService implements OnModuleInit {
       throw apiError(403, 'OWN_CLOSING_ONLY', 'You can see your own closing only');
     }
     const collectorId = admin ? query.collectorId : me.userId;
-    const date = query.date ?? (await this.dues.planContext()).today;
-    const rows = await tx.feePayment.findMany({
-      where: { recordedOn: dateToDb(date), ...(collectorId ? { collectedById: collectorId } : {}) },
-      orderBy: [{ receiptNo: 'asc' }],
-    });
-    const names = await staffNames(tx, [...new Set(rows.map((r) => r.collectedById!))]);
-    const byCollector = new Map<string, typeof rows>();
-    for (const r of rows)
-      byCollector.set(r.collectedById!, [...(byCollector.get(r.collectedById!) ?? []), r]);
-    const collectors: FeeClosingCollector[] = [...byCollector.entries()].map(([id, list]) => {
-      const live = list.filter((r) => r.status === 'ACTIVE');
-      const byMethod = METHOD_ORDER.map((method) => {
-        const m = live.filter((r) => r.method === method);
-        return { method, count: m.length, amountPaisa: m.reduce((s, r) => s + r.amountPaisa, 0) };
-      }).filter((m) => m.count > 0);
+    const ctx = await this.dues.planContext();
+    const date = query.date ?? ctx.today;
+    const who = collectorId ? { collectedById: collectorId } : {};
+    // Voided that day in the institute's timezone: look a day either side, then keep that day.
+    const day = dateToDb(date).getTime();
+    const [recorded, voidedNear] = await Promise.all([
+      tx.feePayment.findMany({
+        where: { recordedOn: dateToDb(date), ...who },
+        orderBy: [{ receiptNo: 'asc' }],
+      }),
+      tx.feePayment.findMany({
+        where: {
+          status: 'VOID',
+          voidedAt: { gte: new Date(day - 86_400_000), lt: new Date(day + 2 * 86_400_000) },
+          ...who,
+        },
+      }),
+    ]);
+    const voided = voidedNear.filter((p) => todayIn(ctx.timezone, p.voidedAt!) === date);
+    const ids = [...new Set([...recorded, ...voided].map((r) => r.collectedById))];
+    const names = await staffNames(tx, ids);
+    const sum = (rows: { amountPaisa: number }[]) => rows.reduce((s, r) => s + r.amountPaisa, 0);
+    const collectors: FeeClosingCollector[] = ids.map((id) => {
+      const mine = recorded.filter((r) => r.collectedById === id);
+      const voids = voided.filter((r) => r.collectedById === id);
+      const byMethod = METHOD_ORDER.map((method) => ({
+        method,
+        count: mine.filter((r) => r.method === method).length,
+        amountPaisa:
+          sum(mine.filter((r) => r.method === method)) -
+          sum(voids.filter((r) => r.method === method)),
+      })).filter((m) => m.count > 0 || m.amountPaisa !== 0);
       return {
         collector: staffRef(names, id),
+        collected: { count: mine.length, amountPaisa: sum(mine) },
+        voided: voids.map((r) => ({
+          id: r.id,
+          receiptNumber: receiptNumber(r.receiptYear, r.receiptNo),
+          amountPaisa: r.amountPaisa,
+          reason: r.voidReason!,
+          recordedOn: dateFromDb(r.recordedOn),
+        })),
         byMethod,
-        total: { count: live.length, amountPaisa: live.reduce((s, r) => s + r.amountPaisa, 0) },
+        net: { amountPaisa: sum(mine) - sum(voids) },
         receipts:
-          list.length > 0
+          mine.length > 0
             ? {
-                first: receiptNumber(list[0]!.receiptYear, list[0]!.receiptNo),
-                last: receiptNumber(list.at(-1)!.receiptYear, list.at(-1)!.receiptNo),
+                first: receiptNumber(mine[0]!.receiptYear, mine[0]!.receiptNo),
+                last: receiptNumber(mine.at(-1)!.receiptYear, mine.at(-1)!.receiptNo),
               }
             : null,
-        voided: list
-          .filter((r) => r.status === 'VOID')
-          .map((r) => ({
-            id: r.id,
-            receiptNumber: receiptNumber(r.receiptYear, r.receiptNo),
-            amountPaisa: r.amountPaisa,
-            reason: r.voidReason!,
-          })),
       };
     });
+    const collected = collectors.reduce((s, c) => s + c.collected.amountPaisa, 0);
+    const net = collectors.reduce((s, c) => s + c.net.amountPaisa, 0);
     return {
       date,
       collectors,
-      total: {
-        count: collectors.reduce((s, c) => s + c.total.count, 0),
-        amountPaisa: collectors.reduce((s, c) => s + c.total.amountPaisa, 0),
-      },
+      total: { collectedPaisa: collected, voidedPaisa: collected - net, netPaisa: net },
     };
   }
 }

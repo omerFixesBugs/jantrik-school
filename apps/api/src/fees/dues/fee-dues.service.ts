@@ -26,6 +26,15 @@ import { lockStudentFees, lockTenantFees } from '../fee-locks.js';
 
 export const FEES_QUEUE = 'fees';
 export const GENERATE_DUES_JOB = 'generate-dues';
+/** One institute's dues (admin "generate now", or before reports), chunk by chunk. */
+export const GENERATE_TENANT_JOB = 'generate-tenant';
+/** One institute's untouched dues rewritten from today's setup, chunk by chunk. */
+export const RECALCULATE_TENANT_JOB = 'recalculate-tenant';
+export interface TenantJobData {
+  tenantId: string;
+  /** The admin who asked (re-checked); none for the run before reports. */
+  actorUserId?: string;
+}
 /** Institutes that use fees (ZSET, score = last seen): the nightly run visits only these. */
 export const FEES_TENANTS_KEY = 'fees:tenants';
 const ensuredKey = (tenantId: string, today: IsoDate) => `fees:ensured:${tenantId}:${today}`;
@@ -189,6 +198,8 @@ export class FeeDuesService implements OnModuleInit {
           status: 'ACTIVE',
           enrolments: { some: { academicYearId: year.id } },
         },
+        // One order everywhere, so two runs over the same students insert in the same order.
+        orderBy: { id: 'asc' },
         select: {
           id: true,
           createdAt: true,
@@ -316,29 +327,61 @@ export class FeeDuesService implements OnModuleInit {
     return tenant?.status === 'ACTIVE' || tenant?.status === 'TRIAL';
   }
 
-  /** All of the institute's dues up to today (one transaction; for "generate now"). */
-  async ensureForTenant(trigger = 'admin'): Promise<number> {
-    const ctx = await this.planContext();
-    const ids = await this.activeStudentIds();
-    let created = 0;
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      created += await this.ensureForStudents(ids.slice(i, i + CHUNK), { ctx, trigger });
-    }
-    await this.markTenant();
-    return created;
-  }
-
   /**
-   * Before reports, reminders and the dashboard: the institute's dues once a day. A lost Redis
-   * key only means one more (idempotent) run.
+   * Before reports, reminders and the dashboard: make sure the institute's dues are generated
+   * today, in the background (chunked jobs; a request never generates a whole institute).
+   * A lost Redis key only means one more (idempotent) run.
    */
   async ensureTenantToday(): Promise<void> {
     const tenantId = this.context.requireTenantId();
     const ctx = await this.planContext();
     const key = ensuredKey(tenantId, ctx.today);
     if (await this.redis.exists(key)) return;
-    await this.ensureForTenant('daily');
-    await this.context.afterCommit(() => this.redis.set(key, '1', 'EX', 2 * 86_400));
+    await this.context.afterCommit(async () => {
+      await this.queue.add(GENERATE_TENANT_JOB, { tenantId } satisfies TenantJobData, {
+        jobId: `generate:${tenantId}:${ctx.today}`,
+        removeOnComplete: true,
+        removeOnFail: 50,
+      });
+      await this.redis.set(key, '1', 'EX', 2 * 86_400);
+    });
+  }
+
+  /** "Generate now" / "recalculate" for the whole institute: a background job (202). */
+  async enqueueTenantJob(
+    name: typeof GENERATE_TENANT_JOB | typeof RECALCULATE_TENANT_JOB,
+  ): Promise<void> {
+    const data: TenantJobData = {
+      tenantId: this.context.requireTenantId(),
+      actorUserId: this.context.requirePrincipal().userId,
+    };
+    await this.context.afterCommit(() =>
+      this.queue.add(name, data, { removeOnComplete: true, removeOnFail: 50 }),
+    );
+  }
+
+  /** Students with untouched dues this year (the background recalculation works through them). */
+  async studentsWithUntouchedDues(): Promise<string[]> {
+    const tx = this.db.tx;
+    const year = await tx.academicYear.findFirst({
+      where: { isCurrent: true },
+      select: { id: true },
+    });
+    if (!year) return [];
+    const rows = await tx.feeDue.findMany({
+      where: {
+        academicYearId: year.id,
+        status: 'OPEN',
+        paidPrincipalPaisa: 0,
+        paidFinePaisa: 0,
+        fineWaivedPaisa: 0,
+        fineWaivedAll: false,
+      },
+      distinct: ['studentId'],
+      select: { studentId: true },
+      orderBy: { studentId: 'asc' },
+    });
+    return rows.map((r) => r.studentId);
   }
 
   // ─────────────────────────── Admin corrections ───────────────────────────
@@ -383,8 +426,16 @@ export class FeeDuesService implements OnModuleInit {
         p.fine.amountPaisa === due.fineAmountPaisa &&
         p.fine.capPaisa === due.fineCapPaisa;
       if (same) continue;
-      await tx.feeDue.update({
-        where: { id: due.id },
+      // Only if it is still untouched (a waiver or cancel may have committed meanwhile).
+      const res = await tx.feeDue.updateMany({
+        where: {
+          id: due.id,
+          status: 'OPEN',
+          paidPrincipalPaisa: 0,
+          paidFinePaisa: 0,
+          fineWaivedPaisa: 0,
+          fineWaivedAll: false,
+        },
         data: {
           amountPaisa: p.amountPaisa,
           concessionPaisa: p.concessionPaisa,
@@ -395,6 +446,7 @@ export class FeeDuesService implements OnModuleInit {
           fineCapPaisa: p.fine.capPaisa,
         },
       });
+      if (res.count === 0) continue;
       updated++;
     }
     await this.audit.record({
@@ -409,6 +461,7 @@ export class FeeDuesService implements OnModuleInit {
   private async openDue(id: string) {
     const due = await this.db.tx.feeDue.findUnique({ where: { id } });
     if (!due) throw new NotFoundException('Due not found');
+    await lockTenantFees(this.db.tx, 'shared');
     await lockStudentFees(this.db.tx, due.studentId);
     // Re-read under the student's lock: a payment may have just changed it.
     return this.db.tx.feeDue.findUniqueOrThrow({ where: { id } });
@@ -546,6 +599,9 @@ export class FeeDuesService implements OnModuleInit {
       },
       select: { id: true },
     });
+    if (found.length !== wanted.size) {
+      throw apiError(422, 'INVALID_ADVANCE', 'This period cannot be paid for this student');
+    }
     return found.map((f) => f.id);
   }
 }

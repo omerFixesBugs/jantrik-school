@@ -12,7 +12,9 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   createMobileAccountSchema,
   feeSubmissionsQuerySchema,
@@ -61,7 +63,12 @@ import { AttendanceModule } from '../attendance/attendance.module.js';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import { FeeCollectionService } from './collection/fee-collection.service.js';
-import { FEES_QUEUE, FeeDuesService } from './dues/fee-dues.service.js';
+import {
+  FEES_QUEUE,
+  FeeDuesService,
+  GENERATE_TENANT_JOB,
+  RECALCULATE_TENANT_JOB,
+} from './dues/fee-dues.service.js';
 import { FeeDuesProcessor } from './dues/fee-dues.processor.js';
 import { FeeLedgerService } from './dues/fee-ledger.service.js';
 import { FeeMobileService } from './mobile/fee-mobile.service.js';
@@ -347,16 +354,27 @@ export class GuardianFeesController {
 export class FeeDuesController {
   constructor(private readonly dues: FeeDuesService) {}
 
+  /** The whole institute's dues, in the background (202). */
   @Post('generate')
-  @HttpCode(200)
-  async generate(): Promise<{ created: number }> {
-    return { created: await this.dues.ensureForTenant('admin') };
+  @HttpCode(202)
+  async generate(): Promise<{ queued: true }> {
+    await this.dues.enqueueTenantJob(GENERATE_TENANT_JOB);
+    return { queued: true };
   }
 
+  /** A few students (e.g. a family just confirmed): now. The whole institute: in the background. */
   @Post('recalculate')
-  @HttpCode(200)
-  recalculate(@Body() dto: RecalculateFeeDuesDto): Promise<{ updated: number }> {
-    return this.dues.recalculateUnpaid(dto.studentIds);
+  async recalculate(
+    @Body() dto: RecalculateFeeDuesDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ updated: number } | { queued: true }> {
+    if (dto.studentIds) {
+      res.status(200);
+      return this.dues.recalculateUnpaid(dto.studentIds);
+    }
+    await this.dues.enqueueTenantJob(RECALCULATE_TENANT_JOB);
+    res.status(202);
+    return { queued: true };
   }
 
   @Post(':id/cancel')

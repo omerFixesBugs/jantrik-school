@@ -156,7 +156,6 @@ describe('fee collection', () => {
     const id = s.students[0]!.id;
     const requestId = randomUUID();
     const first = (await collect(id, { amount: 1000, requestId })).body as FeeReceipt;
-    const view = await ledger(id);
     const retry = await api(s.tokens.accountant)
       .post('/fees/payments', {
         studentId: id,
@@ -167,7 +166,7 @@ describe('fee collection', () => {
       })
       .expect(201);
     expect(retry.body).toMatchObject({ id: first.id, replayed: true });
-    expect(view.payments).toHaveLength(1);
+    expect((await ledger(id)).payments).toHaveLength(1); // the retry made no second payment
     const mismatch = await api(s.tokens.accountant)
       .post('/fees/payments', {
         studentId: id,
@@ -233,7 +232,8 @@ describe('fee collection', () => {
   it('receipt numbers stay gap-free with payments at once and some rolled back', async () => {
     const students = await withTenant(h.prisma, s.tenantId, async (tx) => {
       const out: string[] = [];
-      for (let i = 0; i < 30; i++) {
+      // 30 that pay and 5 more (each their own student) that pay and then fail.
+      for (let i = 0; i < 35; i++) {
         const st = await tx.student.create({
           data: {
             tenantId: s.tenantId,
@@ -267,17 +267,17 @@ describe('fee collection', () => {
       }),
     );
     const results = await Promise.all([
-      ...bodies.map((b) =>
-        api(s.tokens.accountant).post('/fees/payments', { ...b, clientRequestId: randomUUID() }),
-      ),
       ...bodies
-        .slice(0, 5)
+        .slice(0, 30)
         .map((b) =>
-          api(s.tokens.accountant).post('/test/fees-collect-then-fail', {
-            ...b,
-            clientRequestId: randomUUID(),
-          }),
+          api(s.tokens.accountant).post('/fees/payments', { ...b, clientRequestId: randomUUID() }),
         ),
+      ...bodies.slice(30).map((b) =>
+        api(s.tokens.accountant).post('/test/fees-collect-then-fail', {
+          ...b,
+          clientRequestId: randomUUID(),
+        }),
+      ),
     ]);
     expect(results.slice(0, 30).every((r) => r.status === 201)).toBe(true);
     expect(results.slice(30).every((r) => r.status === 400)).toBe(true);
@@ -367,29 +367,126 @@ describe('fee collection', () => {
     );
   });
 
-  it('daily closing: per collector and method, voids listed apart; accountants see their own', async () => {
+  it('daily closing: a payment counts on its day; a void is deducted on the day it is made', async () => {
+    // A payment of an earlier day (2020), voided today: today's closing deducts it, its own day
+    // still shows it collected (that cash was handed over then).
+    const old = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.feePayment.create({
+        data: {
+          tenantId: s.tenantId,
+          studentId: s.students[1]!.id,
+          receiptYear: 2020,
+          receiptNo: 1,
+          method: 'CASH',
+          channel: 'COUNTER',
+          amountPaisa: 7700,
+          paidOn: new Date('2020-06-01'),
+          recordedOn: new Date('2020-06-01'),
+          collectedById: s.userIds.accountant,
+          clientRequestId: randomUUID(),
+        },
+      }),
+    );
+    await api(s.tokens.admin)
+      .post(`/fees/payments/${old.id}/void`, { reason: 'ফেরত দেওয়া হয়েছে' })
+      .expect(200);
+
     const mine = (await api(s.tokens.accountant).get('/fees/closing').expect(200))
       .body as FeeClosing;
     expect(mine.date).toBe(s.today);
     expect(mine.collectors).toHaveLength(1);
     const c = mine.collectors[0]!;
     expect(c.collector.id).toBe(s.userIds.accountant);
-    const active = await withTenant(h.prisma, s.tenantId, (tx) =>
-      tx.feePayment.aggregate({
-        where: { collectedById: s.userIds.accountant, status: 'ACTIVE' },
-        _sum: { amountPaisa: true },
-        _count: true,
+    const today = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.feePayment.findMany({
+        where: { collectedById: s.userIds.accountant, recordedOn: new Date(s.today) },
       }),
     );
-    expect(c.total).toEqual({ count: active._count, amountPaisa: active._sum.amountPaisa });
+    const collected = today.reduce((sum, p) => sum + p.amountPaisa, 0);
+    const voidedToday = [...today.filter((p) => p.status === 'VOID'), old];
+    const voided = voidedToday.reduce((sum, p) => sum + p.amountPaisa, 0);
+    expect(c.collected).toEqual({ count: today.length, amountPaisa: collected });
+    expect(c.voided.map((v) => v.id).sort()).toEqual(voidedToday.map((p) => p.id).sort());
+    expect(c.voided.find((v) => v.id === old.id)?.recordedOn).toBe('2020-06-01');
+    expect(c.net.amountPaisa).toBe(collected - voided);
     expect(c.byMethod).toEqual([
-      { method: 'CASH', count: active._count, amountPaisa: active._sum.amountPaisa },
+      { method: 'CASH', count: today.length, amountPaisa: collected - voided },
     ]);
-    expect(c.voided).toHaveLength(2);
     expect(c.receipts?.first).toBe(`${s.today.slice(0, 4)}-000001`);
+
+    const thatDay = (
+      await api(s.tokens.accountant).get('/fees/closing?date=2020-06-01').expect(200)
+    ).body as FeeClosing;
+    expect(thatDay.collectors[0]).toMatchObject({
+      collected: { count: 1, amountPaisa: 7700 },
+      voided: [],
+      net: { amountPaisa: 7700 },
+    });
 
     await api(s.tokens.accountant).get(`/fees/closing?collectorId=${s.userIds.admin}`).expect(403);
     const all = (await api(s.tokens.admin).get('/fees/closing').expect(200)).body as FeeClosing;
     expect(all.total).toEqual(mine.total);
+    expect(all.total.netPaisa).toBe(collected - voided);
+  });
+
+  it('a due paid in parts keeps its totals right when the middle payment is voided', async () => {
+    const id = s.students[3]!.id;
+    const due = (await ledger(id)).dues[1]!; // this month's, untouched so far
+    const pay = async (amount: number) =>
+      (await collect(id, { dueIds: [due.id], amount })).body as FeeReceipt;
+    const principal = due.balance.principal;
+    await pay(30000);
+    const middle = await pay(30000);
+    await pay(principal - 60000);
+    let after = (await ledger(id)).dues.find((d) => d.id === due.id)!;
+    expect(after).toMatchObject({ paidPrincipalPaisa: principal, principalClearedOn: s.today });
+    await api(s.tokens.admin)
+      .post(`/fees/payments/${middle.id}/void`, { reason: 'দুবার লেখা হয়েছিল' })
+      .expect(200);
+    after = (await ledger(id)).dues.find((d) => d.id === due.id)!;
+    expect(after).toMatchObject({
+      paidPrincipalPaisa: principal - 30000,
+      principalClearedOn: null,
+    });
+    expect(after.balance.principal).toBe(30000);
+  });
+
+  it('an uncapped per-day fine is days late × the rate, to the day', async () => {
+    const fresh = await feesSchool(h);
+    const admin = api(fresh.tokens.admin);
+    const head = (
+      await admin
+        .post('/fees/heads', {
+          nameBn: 'বেতন',
+          nameEn: 'Tuition',
+          kind: 'TUITION',
+          frequency: 'MONTHLY',
+          dueDay: 10,
+          fine: { type: 'PER_DAY', amountPaisa: 100, capPaisa: 100000000 },
+        })
+        .expect(201)
+    ).body as FeeHeadView;
+    await admin
+      .put('/fees/amounts', {
+        academicYearId: fresh.yearId,
+        amounts: [{ feeHeadId: head.id, classLevelId: fresh.class6, amountPaisa: 100000 }],
+      })
+      .expect(200);
+    await admin
+      .put('/fees/settings', {
+        duesFrom: `${fresh.months.previous}-01`,
+        receiptSmsEnabled: false,
+        sibling: null,
+        receiptNote: null,
+      })
+      .expect(200);
+    const view = (
+      await api(fresh.tokens.accountant)
+        .get(`/fees/students/${fresh.students[2]!.id}/ledger`)
+        .expect(200)
+    ).body as FeeLedger;
+    const due = view.dues[0]!;
+    const days = Math.round((Date.parse(fresh.today) - Date.parse(due.dueDate)) / 86_400_000);
+    expect(due.balance.fine).toBe(days * 100);
   });
 });

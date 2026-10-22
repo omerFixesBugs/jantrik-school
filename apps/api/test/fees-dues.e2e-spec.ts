@@ -226,8 +226,48 @@ describe('fee dues', () => {
       .expect(200);
     expect((await ledger(id)).dues.map((d) => d.amountPaisa)).toEqual([100000, 100000]);
     await api(s.tokens.accountant).post('/fees/dues/recalculate', {}).expect(403);
-    await api(s.tokens.admin).post('/fees/dues/recalculate', {}).expect(200);
-    expect((await ledger(id)).dues.map((d) => d.amountPaisa)).toEqual([100000, 120000]);
+    // The whole institute is recalculated in the background, chunk by chunk.
+    await api(s.tokens.admin).post('/fees/dues/recalculate', {}).expect(202);
+    await vi.waitFor(
+      async () =>
+        expect((await ledger(id)).dues.map((d) => d.amountPaisa)).toEqual([100000, 120000]),
+      { timeout: 10_000, interval: 200 },
+    );
+    const run = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.auditLog.findFirst({
+        where: { entity: 'fee_dues_recalculation' },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
+    expect(run?.actorUserId).toBe(s.userIds.admin);
+  });
+
+  it('"generate now" runs in the background for the whole institute', async () => {
+    const newcomer = await withTenant(h.prisma, s.tenantId, async (tx) => {
+      const st = await tx.student.create({
+        data: {
+          tenantId: s.tenantId,
+          studentCode: `G-${randomUUID().slice(0, 8)}`,
+          nameEn: 'Gen',
+          createdAt: new Date('2020-01-01'),
+        },
+      });
+      await tx.enrolment.create({
+        data: {
+          tenantId: s.tenantId,
+          studentId: st.id,
+          academicYearId: s.yearId,
+          classLevelId: s.class6,
+        },
+      });
+      return st;
+    });
+    await api(s.tokens.accountant).post('/fees/dues/generate', {}).expect(403);
+    await api(s.tokens.admin).post('/fees/dues/generate', {}).expect(202);
+    await vi.waitFor(async () => expect(await dueCount(newcomer.id)).toBe(2), {
+      timeout: 10_000,
+      interval: 200,
+    });
   });
 
   it('the nightly job generates every student’s dues, even after its Redis list was lost', async () => {

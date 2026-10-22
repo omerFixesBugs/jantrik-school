@@ -167,6 +167,7 @@ export class FeeMobileService {
 
   async guardianView(studentId: string): Promise<FeeGuardianView> {
     await this.assertChild(studentId);
+    const me = this.context.requirePrincipal().userId;
     const ledger = await this.ledgers.ledger(studentId);
     const [submissions, accounts] = await Promise.all([
       this.db.tx.feeMobileSubmission.findMany({
@@ -183,8 +184,9 @@ export class FeeMobileService {
     return {
       today: ledger.today,
       ledger,
-      // The guardian's own (or a relative's) number: shown in full to them.
-      submissions: submissions.map((r) => this.toView(r, true)),
+      // The sender's number in full only on the guardian's own submissions (another guardian
+      // of the child, or staff, may have sent others).
+      submissions: submissions.map((r) => this.toView(r, r.submittedById === me)),
       accounts: accounts.map((a) => {
         const v = toAccountView(a);
         return { id: v.id, method: v.method, phone: v.phone, kind: v.kind, label: v.label };
@@ -266,7 +268,11 @@ export class FeeMobileService {
           'This request id was used for another submission',
         );
       }
-      return this.toView(previous, submitter === 'GUARDIAN' || (await this.students.seesPhones()));
+      const me = this.context.requirePrincipal().userId;
+      return this.toView(
+        previous,
+        previous.submittedById === me || (await this.students.seesPhones()),
+      );
     }
     const account = await tx.feeMobileAccount.findUnique({ where: { id: input.accountId } });
     if (!account || account.method !== input.method)
