@@ -119,13 +119,18 @@ describe('manual bKash/Nagad payments', () => {
     await api(s.tokens.owner)
       .patch(`/fees/mobile-accounts/${old.id}`, { isActive: false })
       .expect(200);
+    // A change that does not name the label keeps it.
+    const reordered = (
+      await api(s.tokens.owner).patch(`/fees/mobile-accounts/${bkash.id}`, { sortOrder: 1 }).expect(200)
+    ).body as FeeMobileAccountView;
+    expect(reordered).toMatchObject({ label: 'অফিস', sortOrder: 1 });
     const list = (await api(s.tokens.accountant).get('/fees/mobile-accounts').expect(200))
       .body as FeeMobileAccountView[];
     expect(list).toHaveLength(3);
     const audits = await withTenant(h.prisma, s.tenantId, (tx) =>
       tx.auditLog.count({ where: { entity: 'fee_mobile_account' } }),
     );
-    expect(audits).toBe(4);
+    expect(audits).toBe(5); // 3 added, 1 deactivated, 1 reordered
     // Guardians see only active numbers.
     const view = await childView(s.students[0]!.id);
     expect(view.accounts.map((a) => a.id).sort()).toEqual([bkash.id, nagad.id].sort());

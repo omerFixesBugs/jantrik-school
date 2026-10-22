@@ -576,12 +576,13 @@ export const createMobileAccountSchema = z.object({
 });
 /** PATCH /fees/mobile-accounts/:id (OWNER): a number is never edited, only (de)activated. */
 export const updateMobileAccountSchema = z.object({
+  /** Absent: unchanged; empty or null: no label. */
   label: z
     .string()
     .trim()
     .max(60)
     .nullish()
-    .transform((v) => v || null),
+    .transform((v) => (v === undefined ? undefined : v || null)),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(9999).optional(),
 });
