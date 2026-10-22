@@ -443,7 +443,7 @@ function PayFlow({
           <div className="bg-muted flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl px-4 py-3">
             <p className="min-w-0 text-sm">
               {t('reference')}:{' '}
-              <span className="font-mono font-semibold" dir="ltr">
+              <span className="font-mono font-semibold whitespace-nowrap" dir="ltr">
                 {view.ledger.student.studentCode}
               </span>
             </p>

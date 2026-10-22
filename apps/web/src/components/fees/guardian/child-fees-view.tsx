@@ -124,18 +124,23 @@ function Loaded({ childId, view }: { childId: string; view: FeeGuardianView }) {
           <h1 className="truncate text-2xl font-semibold">{name}</h1>
           <p className="text-muted-foreground text-sm">
             {facts && <>{facts} · </>}
+            {/* A label and its identifier stay together, and an identifier never breaks. */}
             {e?.roll != null && (
               <>
-                {t('roll')}{' '}
-                <span className="text-foreground tabular-nums" dir="ltr">
-                  {formatIdentifier(e.roll)}
+                <span className="whitespace-nowrap">
+                  {t('roll')}{' '}
+                  <span className="text-foreground tabular-nums" dir="ltr">
+                    {formatIdentifier(e.roll)}
+                  </span>
                 </span>
                 {' · '}
               </>
             )}
-            {t('studentId')}{' '}
-            <span className="text-foreground tabular-nums" dir="ltr">
-              {formatIdentifier(student.studentCode)}
+            <span className="whitespace-nowrap">
+              {t('studentId')}{' '}
+              <span className="text-foreground tabular-nums" dir="ltr">
+                {formatIdentifier(student.studentCode)}
+              </span>
             </span>
           </p>
         </div>

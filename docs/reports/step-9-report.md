@@ -41,7 +41,9 @@ gateway (phase F) is not built; its plan is in [docs/backlog.md](../backlog.md).
 | Merge | `d49ac23` | A guardian's retried bKash/Nagad submission returns the saved one                         |
 | Merge | `9682908` | E2E on a fixed day: no test depends on the real date or weekday                           |
 | Merge | `2940c0d` | Receipt: the receipt number, student ID and roll never break in the middle                |
-| -     | (this)    | This report, updated before merge                                                         |
+| Merge | `584623a` | E2E: higher general request limits for the test API                                       |
+| Merge | `836257d` | This report, updated before merge                                                         |
+| Merge | (this)    | The guardian's fee page keeps the student ID whole; the report's commit list              |
 
 Every part ran its own tests (shared unit, database RLS, and that part's API file) before its
 commit. A separate review agent checked every migration and the money parts (C1, C3/C4, D1/D2),
@@ -106,7 +108,7 @@ What the tests you asked for cover:
      - the sheet keeps its request id, and the API returns the saved submission;
      - the same id with other details, or from another person, is 422;
      - tested in the API and in Playwright, where the first send is saved but answered with a 500.
-4. **Found in the walkthrough and fixed:** on a phone the receipt number and student ID broke across lines ("2026-/000001"). They no longer break; checked at 360 and 390 px, and in A5 and 80 mm print.
+4. **Found in the walkthrough and fixed:** on a phone the receipt number and student ID broke across lines ("2026-/000001"). They no longer break; checked at 360 and 390 px, and in A5 and 80 mm print. The guardian's fee page had the same break in its header ("আইডি SHS-/2026-0002"), now fixed the same way.
 5. **Walkthrough** (a scratch database, `jantrik_walkthrough`, seeded and then dropped; your `jantrik` database was not touched). Every step passed:
    1. the owner confirms the suggested family;
    2. the teacher-accountant finds Tasnim by phone (shown `018•••••101`), takes ৳500 for two months and gets receipt `2026-000001`;
