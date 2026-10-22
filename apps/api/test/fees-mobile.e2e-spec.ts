@@ -121,7 +121,9 @@ describe('manual bKash/Nagad payments', () => {
       .expect(200);
     // A change that does not name the label keeps it.
     const reordered = (
-      await api(s.tokens.owner).patch(`/fees/mobile-accounts/${bkash.id}`, { sortOrder: 1 }).expect(200)
+      await api(s.tokens.owner)
+        .patch(`/fees/mobile-accounts/${bkash.id}`, { sortOrder: 1 })
+        .expect(200)
     ).body as FeeMobileAccountView;
     expect(reordered).toMatchObject({ label: 'অফিস', sortOrder: 1 });
     const list = (await api(s.tokens.accountant).get('/fees/mobile-accounts').expect(200))
