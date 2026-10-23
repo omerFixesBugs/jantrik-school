@@ -590,7 +590,7 @@ export class SetupService {
     const rows = await this.db.tx.subject.findMany({
       where: { classLevelId },
       orderBy: [{ sortOrder: 'asc' }, { nameEn: 'asc' }],
-      include: { _count: { select: { attendanceSessions: true } } },
+      include: subjectCounts,
     });
     return rows.map(toSubject);
   }
@@ -647,6 +647,9 @@ export class SetupService {
   }
 
   async deleteSubject(id: string): Promise<void> {
+    // Lock the row first (as for sections): an assignment or choice made between the usage check
+    // and the delete waits for this lock, then fails its foreign key.
+    await this.db.tx.$queryRaw`SELECT id FROM subjects WHERE id = ${id}::uuid FOR UPDATE`;
     const before = await this.subject(id);
     if (used(before.usage)) throw inUse(before.usage);
     await this.db.tx.subject.delete({ where: { id } });
@@ -661,7 +664,7 @@ export class SetupService {
   private async subject(id: string): Promise<SetupSubject> {
     const row = await this.db.tx.subject.findUnique({
       where: { id },
-      include: { _count: { select: { attendanceSessions: true } } },
+      include: subjectCounts,
     });
     if (!row) throw new NotFoundException('Subject not found');
     return toSubject(row);
@@ -731,7 +734,13 @@ export class SetupService {
 }
 
 const sectionCounts = {
-  _count: { select: { enrolments: true, attendanceSessions: true, teachers: true } },
+  _count: {
+    select: { enrolments: true, attendanceSessions: true, teachers: true, subjectTeachers: true },
+  },
+} as const;
+
+const subjectCounts = {
+  _count: { select: { attendanceSessions: true, subjectTeachers: true, choices: true } },
 } as const;
 
 type Counted<T, C> = T & { _count: C };
@@ -840,7 +849,7 @@ function toSection(
       sortOrder: number;
       isActive: boolean;
     },
-    { enrolments: number; attendanceSessions: number; teachers: number }
+    { enrolments: number; attendanceSessions: number; teachers: number; subjectTeachers: number }
   >,
 ): SetupSection {
   return {
@@ -856,6 +865,7 @@ function toSection(
       enrolments: s._count.enrolments,
       attendance: s._count.attendanceSessions,
       teachers: s._count.teachers,
+      subjectTeachers: s._count.subjectTeachers,
     },
   };
 }
@@ -873,7 +883,7 @@ function toSubject(
       sortOrder: number;
       isActive: boolean;
     },
-    { attendanceSessions: number }
+    { attendanceSessions: number; subjectTeachers: number; choices: number }
   >,
 ): SetupSubject {
   return {
@@ -886,7 +896,11 @@ function toSubject(
     isOptional: s.isOptional,
     sortOrder: s.sortOrder,
     isActive: s.isActive,
-    usage: { attendance: s._count.attendanceSessions },
+    usage: {
+      attendance: s._count.attendanceSessions,
+      subjectTeachers: s._count.subjectTeachers,
+      choices: s._count.choices,
+    },
   };
 }
 

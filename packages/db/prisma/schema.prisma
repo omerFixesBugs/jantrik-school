@@ -1282,13 +1282,15 @@ model SectionSubjectTeacher {
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  section Section @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Cascade, onUpdate: Restrict)
-  subject Subject @relation(fields: [tenantId, subjectId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Cascade, onUpdate: Restrict)
+  // RESTRICT: a section or subject with subject teachers is "in use" (setup refuses to delete it).
+  section Section @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+  subject Subject @relation(fields: [tenantId, subjectId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, id])
   @@unique([tenantId, sectionId, subjectId, userId])
   @@index([tenantId, userId])
+  @@index([tenantId, subjectId])
   @@map("section_subject_teachers")
 }
 
@@ -1306,7 +1308,8 @@ model StudentSubjectChoice {
 
   tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   enrolment Enrolment @relation(fields: [tenantId, academicYearId, studentId], references: [tenantId, academicYearId, studentId], onDelete: Cascade, onUpdate: Restrict)
-  subject   Subject   @relation(fields: [tenantId, subjectId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  // RESTRICT: students' choices are records; a chosen subject is "in use".
+  subject   Subject   @relation(fields: [tenantId, subjectId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, academicYearId, studentId, subjectId])

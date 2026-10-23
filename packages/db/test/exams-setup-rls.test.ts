@@ -21,6 +21,17 @@ async function school(app: PrismaClient, instituteTypeKey = 'NCTB_SCHOOL_BN') {
       where: { classLevelId: class9.id },
       orderBy: { sortOrder: 'asc' },
     });
+    // An elective (pool) subject of class 9, chosen as the 4th subject below.
+    const elective = await tx.subject.create({
+      data: {
+        tenantId,
+        classLevelId: class9.id,
+        code: 'ELECTIVE',
+        nameBn: 'ঐচ্ছিক',
+        nameEn: 'Elective',
+        isOptional: true,
+      },
+    });
     const otherClassSubject = await tx.subject.create({
       data: { tenantId, classLevelId: otherClass.id, code: 'X', nameBn: 'x', nameEn: 'x' },
     });
@@ -71,7 +82,7 @@ async function school(app: PrismaClient, instituteTypeKey = 'NCTB_SCHOOL_BN') {
         tenantId,
         academicYearId: year.id,
         studentId: student.id,
-        subjectId: subject.id,
+        subjectId: elective.id,
         kind: 'OPTIONAL',
       },
     });
@@ -84,6 +95,7 @@ async function school(app: PrismaClient, instituteTypeKey = 'NCTB_SCHOOL_BN') {
       class9Id: class9.id,
       sectionId: section.id,
       subjectId: subject.id,
+      electiveId: elective.id,
       otherClassSubjectId: otherClassSubject.id,
       teacherId,
       studentId: student.id,
@@ -96,6 +108,14 @@ async function school(app: PrismaClient, instituteTypeKey = 'NCTB_SCHOOL_BN') {
     };
   });
 }
+
+const TABLE_NAMES = [
+  'subject_components',
+  'subject_pass_groups',
+  'section_subject_teachers',
+  'student_subject_choices',
+  'exam_rooms',
+];
 
 const TABLES = [
   'subjectComponent',
@@ -211,6 +231,57 @@ describe('exam setup tables: tenant isolation', () => {
     ).rejects.toThrow(/foreign key/i);
   });
 
+  it("tenant_id cannot be changed to another tenant's", async () => {
+    for (const table of TABLE_NAMES) {
+      await expect(
+        withTenant(app, a.tenantId, (tx) =>
+          tx.$executeRawUnsafe(`UPDATE ${table} SET tenant_id = '${b.tenantId}'`),
+        ),
+      ).rejects.toThrow(/row-level security|foreign key/i);
+    }
+  });
+
+  it("B's section cannot get A's subject (and the reverse)", async () => {
+    await expect(
+      withTenant(app, b.tenantId, (tx) =>
+        tx.sectionSubjectTeacher.create({
+          data: {
+            tenantId: b.tenantId,
+            sectionId: b.sectionId,
+            subjectId: a.subjectId,
+            classLevelId: b.class9Id,
+            userId: b.teacherId,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/foreign key/i);
+    await expect(
+      withTenant(app, b.tenantId, (tx) =>
+        tx.studentSubjectChoice.create({
+          data: {
+            tenantId: b.tenantId,
+            academicYearId: b.yearId,
+            studentId: b.studentId,
+            subjectId: a.subjectId,
+            kind: 'COMPULSORY',
+          },
+        }),
+      ),
+    ).rejects.toThrow(/foreign key/i);
+  });
+
+  it('a subject or section with subject teachers or choices cannot be deleted (no cascade)', async () => {
+    await expect(
+      withTenant(app, a.tenantId, (tx) => tx.subject.delete({ where: { id: a.electiveId } })),
+    ).rejects.toThrow(/foreign key/i);
+    await expect(
+      withTenant(app, a.tenantId, (tx) => tx.subject.delete({ where: { id: a.subjectId } })),
+    ).rejects.toThrow(/foreign key/i);
+    await expect(
+      withTenant(app, a.tenantId, (tx) => tx.section.delete({ where: { id: a.sectionId } })),
+    ).rejects.toThrow(/foreign key/i);
+  });
+
   it("a subject teacher's subject must belong to the section's class", async () => {
     await expect(
       withTenant(app, a.tenantId, (tx) =>
@@ -243,7 +314,7 @@ describe('exam setup tables: tenant isolation', () => {
     ).rejects.toThrow(/foreign key/i);
     const other = await withTenant(app, a.tenantId, (tx) =>
       tx.subject.findFirstOrThrow({
-        where: { classLevelId: a.class9Id, id: { not: a.subjectId } },
+        where: { classLevelId: a.class9Id, id: { notIn: [a.subjectId, a.electiveId] } },
       }),
     );
     await expect(
@@ -311,6 +382,7 @@ describe('exam setup tables: tenant isolation', () => {
       [0, 5],
       [5, 0],
       [25, 21],
+      [100_000, 100_000],
     ] as const) {
       await expect(
         withTenant(app, a.tenantId, (tx) =>
@@ -325,5 +397,31 @@ describe('exam setup tables: tenant isolation', () => {
         tx.examRoom.create({ data: { tenantId: a.tenantId, name: ' ', rows: 1, cols: 1 } }),
       ),
     ).rejects.toThrow(/exam_rooms_name/);
+    await expect(component({ key: 'NAMES' }).then(() => null)).resolves.toBeNull();
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.subjectComponent.create({
+          data: {
+            tenantId: a.tenantId,
+            subjectId: a.subjectId,
+            key: 'LONG',
+            kind: 'OTHER',
+            nameBn: 'x'.repeat(61),
+            nameEn: 'x',
+            fullMarks: 10,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/subject_components_names/);
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.gradingScheme.updateMany({ data: { optionalBonusAbove: 6 } }),
+      ),
+    ).rejects.toThrow(/grading_schemes_gpa_rules/);
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.gradingScheme.updateMany({ data: { gpaDecimals: 3 } }),
+      ),
+    ).rejects.toThrow(/grading_schemes_gpa_rules/);
   });
 });
