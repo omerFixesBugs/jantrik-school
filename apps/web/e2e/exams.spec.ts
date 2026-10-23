@@ -36,9 +36,10 @@ const CASES = [
     classCode: 'CLASS_6',
     subjectCode: 'BAN',
     otherSubjectCode: 'ENG',
-    // Tasnim's mother: Tasnim is in 6 ক; her brother Tahmid is not her child in the records.
-    guardian: DEMO.shaplaGuardian2,
-    child: 'SHS-2026-0001',
+    // Arif (6 ক). The guardians the other specs log in (Tasnim's parents) are left alone, so their
+    // OTP limits are not used up here.
+    guardian: DEMO.arifGuardian,
+    child: 'SHS-2026-0102',
   },
   {
     lang: 'en',
@@ -47,9 +48,9 @@ const CASES = [
     classCode: 'CLASS_9',
     subjectCode: 'ENG',
     otherSubjectCode: null,
-    // Tahmid (9 ক, Higher Maths as his 4th subject): his father's account.
-    guardian: DEMO.shaplaGuardian,
-    child: 'SHS-2026-0002',
+    // Rafi (9 ক); Tahmid's 4th subject is checked on the office's report cards.
+    guardian: DEMO.rafiGuardian,
+    child: 'SHS-2026-0004',
   },
 ] as const;
 
@@ -110,11 +111,9 @@ for (const c of CASES) {
     test.setTimeout(240_000);
     const ids = await annualFor(c.classCode, c.subjectCode, c.otherSubjectCode);
 
-    // Before publishing, the annual exam is nowhere in a 6 ক guardian's results (checked once;
-    // another family's guardian, so Tasnim's parents keep their OTP codes for the specs that log
-    // them in).
+    // Before publishing, the annual exam is nowhere in a 6 ক guardian's results (checked once).
     if (c.lang === 'bn') {
-      const other = await apiOtpLogin(DEMO.shaplaGuardian3);
+      const other = await apiOtpLogin(DEMO.sumaiyaGuardian);
       for (const child of await api<GuardianChild[]>(other, '/me/children')) {
         const results = await api<{ exam: { kind: string } }[]>(
           other,
@@ -253,6 +252,10 @@ for (const c of CASES) {
     await admin.getByTestId(`report-cards-${c.classCode}-ক`).click();
     const cards = admin.getByTestId('report-card');
     await expect(cards.first()).toBeVisible();
+    // Tahmid takes Higher Maths as his 4th subject; his card marks it.
+    if (c.lang === 'en') {
+      await expect(cards.filter({ hasText: 'Tahmid Rahman' })).toContainText('(4th subject)');
+    }
     const cardCount = await cards.count();
     await admin.emulateMedia({ media: 'print' });
     await expect(admin.getByTestId('print')).toBeHidden();
@@ -279,7 +282,6 @@ for (const c of CASES) {
     const reportCard = guardian.getByTestId('report-card');
     await expect(reportCard).toBeVisible();
     await expect(reportCard.getByTestId('report-card-summary')).toBeVisible();
-    if (c.lang === 'en') await expect(reportCard).toContainText('(4th subject)');
     expect(await findLayoutProblems(guardian)).toEqual([]);
     await guardian.emulateMedia({ media: 'print' });
     const pdf = (await guardian.pdf({ preferCSSPageSize: true })).toString('latin1');
@@ -294,7 +296,7 @@ for (const c of CASES) {
       await guardian.goto(`/children/${ids.tahmidId}/results/${ids.halfClass9}`);
       await expect(guardian.getByTestId('child-results-not-found')).toBeVisible();
     } else {
-      const other = await apiOtpLogin(DEMO.shaplaGuardian3);
+      const other = await apiOtpLogin(DEMO.sumaiyaGuardian);
       const res = await fetch(`${API_URL}/me/children/${childId}/results/${examClassId}`, {
         headers: { Authorization: `Bearer ${other}` },
       });
