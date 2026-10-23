@@ -63,6 +63,28 @@ lastTest}`; the audit stores field names only. A "test connection" job. A code-s
   sentinel credentials never appear in any response, log, `audit_logs`, `sms_logs`, Redis (incl.
   failed BullMQ jobs) or validation error.
 
+## Exams: later work (from step 10)
+
+Agreed in the step 10 plan, not built yet. Rules today: [exams.md](exams.md).
+
+- **Combined results:** class tests and model tests weighted into the half-yearly or annual
+  result (a weight per exam, the annual's merit from the weighted total).
+- **Server-side bulk PDFs:** report cards and admit cards for a whole class as one PDF file
+  (browser print covers one section at a time today).
+- **Grade band editor:** bands are read-only; the GPA rules and rounding are editable.
+- **"Exempt" marker** for a part or subject (a medical exemption), distinct from absent.
+- **Hold admit cards back for unpaid fees** (an opt-in rule reading the fee ledger).
+- **Next year's rolls from merit:** promote with rolls by the annual's class places.
+- **Editable result SMS template** (the text is fixed Bangla today, like the fee SMS).
+- **Manual seat moves** in the seat plan (it is generated today).
+- **A teacher results view:** a section's teachers can print its tabulation and report cards and
+  the class teacher can write remarks (the API allows it), but the web shows those screens to
+  OWNER/ADMIN only.
+- **Unsent marks banner** on the dashboard (attendance has one; the marks page shows its own
+  drafts state).
+- **Term timeline with real exams:** the dashboard timeline still shows the usual exam months; the
+  exams tile shows the real ones.
+
 ## Performance: reach the 3-second budget (from step 9)
 
 Recorded at the owner's request on 2026-10-23, when step 9 was ready to merge. The budget and the
@@ -94,8 +116,9 @@ method are in [design.md](design.md) → Performance budget: ≤ 3 s to interact
 ### 2. Load translation namespaces per route
 
 - **Today:** `NextIntlClientProvider` in `apps/web/src/app/layout.tsx` sends every message to the
-  browser on every page, including the fee areas merged in `apps/web/src/i18n/request.ts`. Step
-  9 made each page's HTML about 15 KB larger (53 KB against 38 KB for the dashboard).
+  browser on every page, including the fee and exam areas merged in `apps/web/src/i18n/request.ts`.
+  Step 9 made each page's HTML about 15 KB larger (53 KB against 38 KB for the dashboard); step
+  10's exam messages add more (measured in the step 10 report).
 - **Instead:** the root layout passes only the shell's namespaces. Each area's layout passes its
   own, for example `fees` under `/fees` and on the guardian's fee pages, through a nested
   `NextIntlClientProvider` with only those messages. Server components keep reading the full set.

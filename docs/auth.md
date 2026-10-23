@@ -48,6 +48,10 @@ request transaction:
    meantime → `CANCELLED`), sends it outside any transaction, then marks it `SENT` or, after the
    last retry, `FAILED`.
 
+`queue()` takes `overCap: 'HOLD' | 'SKIP'` (default `HOLD`, step 3's behaviour). With `SKIP` an
+SMS over the daily cap writes no row and returns `OVER_CAP`: result SMS use it, because a held
+message's dedupe key could never be sent again ([exams.md](exams.md)).
+
 ## Rate limits (Redis, all configurable via env)
 
 Per-IP limits are deliberately generous because many users share one IP (carrier CGNAT, school
@@ -219,6 +223,18 @@ ourselves, never from user input.
   request or job it still refuses.
 - With `{ actorUserId }` the job acts as that person (audit names them); re-check that they still
   hold the role (fee jobs: OWNER/ADMIN for "generate now", recalculation and reminders).
+
+## Access inside a role
+
+`@Roles` decides who may call a route; services narrow it to the rows that person may touch, in
+the same request transaction:
+
+- **Teachers, attendance:** only the sections in `section_teachers`.
+- **Teachers, marks** (step 10): only the subject and section pairs in `section_subject_teachers`
+  (403 `NOT_ASSIGNED`; being the class teacher is not enough). A section's teachers may print its
+  tabulation and report cards; only its class teacher writes remarks. OWNER/ADMIN: any.
+- **Guardians:** `/me/children/:id/…` (fees, results) answer only for the caller's own children,
+  and results only once published; anything else is 404, never 403, so an id reveals nothing.
 
 ## Tenant-switch safety: `X-Jantrik-Tenant`
 

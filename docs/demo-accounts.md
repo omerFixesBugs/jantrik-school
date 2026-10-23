@@ -43,3 +43,16 @@ Siblings); a half free studentship for Arpita; bKash `01711000901` and Nagad `01
 institute's numbers. Dues appear when a student's fees are first opened (or after the nightly
 run). Demo students count as admitted on 1 January 2026 (the start of the demo year), so
 they owe from the start month and no admission fee; a student admitted now pays it. Alo has FEES switched on but nothing set up (the empty states).
+
+## Exams (step 10)
+
+- **Shapla:** Nasrin (`01711000002`) enters Bangla and Maths in ষষ্ঠ শ্রেণি ক; Sharmin
+  (`01911000999`) every subject of নবম শ্রেণি ক. Tahmid takes Biology as compulsory and Higher Maths
+  as his 4th subject. Two rooms, কক্ষ ১০১ and কক্ষ ১০২.
+  - **Half-yearly exam 2026** (June, classes 6 and 9): published, with a part failed, an absent
+    paper, a 5.00 reached with the 4th-subject bonus, a Bangla pass that holds only under the
+    combined rule, a merit tie broken by total marks, and Tasnim's remark. Guardians see it.
+  - **Annual exam 2026** (November): open, every sheet locked except **6 ক Bangla** (Nasrin) and
+    **9 ক English** (Sharmin), left empty to try marks entry; seated in both rooms.
+- **Alo:** Maths and Physics have parts (MCQ 25 + written 25); **Model test 1** is published in
+  marks mode, with Sakib and Nusrat tied on marks (the lower roll takes the higher place).
