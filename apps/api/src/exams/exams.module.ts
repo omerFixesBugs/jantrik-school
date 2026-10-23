@@ -1,3 +1,4 @@
+import { BullModule } from '@nestjs/bullmq';
 import {
   Body,
   Controller,
@@ -18,6 +19,12 @@ import {
   admitCardsQuerySchema,
   allocateSeatsSchema,
   correctMarksSchema,
+  sendResultSmsSchema,
+  type ChildResultItem,
+  type ExamsSummary,
+  type ResultSmsPreview,
+  type ResultSmsRun,
+  type ResultSmsStatus,
   publishResultsSchema,
   remarksQuerySchema,
   reportCardsQuerySchema,
@@ -75,7 +82,11 @@ import { zodDto } from '../common/zod.js';
 import { ExamAccessService } from './exam-access.service.js';
 import { ExamRosterService } from './marks/exam-roster.service.js';
 import { MarkSheetService } from './marks/mark-sheet.service.js';
+import { ChildResultsService } from './guardian/child-results.service.js';
 import { ExamResultsService } from './results/exam-results.service.js';
+import { ExamSummaryService } from './results/exam-summary.service.js';
+import { ResultSmsProcessor } from './results/result-sms.processor.js';
+import { EXAMS_QUEUE, ResultSmsService } from './results/result-sms.service.js';
 import { SeatPlanService } from './seats/seat-plan.service.js';
 import { ExamSetupService } from './setup/exam-setup.service.js';
 import { ExamStaffService } from './setup/exam-staff.service.js';
@@ -108,6 +119,7 @@ class TabulationQueryDto extends zodDto(tabulationQuerySchema) {}
 class ReportCardsQueryDto extends zodDto(reportCardsQuerySchema) {}
 class RemarksQueryDto extends zodDto(remarksQuerySchema) {}
 class SaveRemarksDto extends zodDto(saveRemarksSchema) {}
+class SendResultSmsDto extends zodDto(sendResultSmsSchema) {}
 
 /** A CSV download (attendance's pattern): UTF-8 with BOM, an ASCII filename, never cached. */
 function sendCsv(res: Response, file: { filename: string; csv: string }): string {
@@ -327,12 +339,49 @@ export class ExamResultsController {
   }
 }
 
-/** Publishing results (OWNER/ADMIN). */
+/** The dashboard's exam card (staff). */
+@Controller('exams')
+@RequireModule('EXAMS')
+@Roles('OWNER', 'ADMIN', 'TEACHER')
+export class ExamSummaryController {
+  constructor(private readonly summary: ExamSummaryService) {}
+
+  @Get('summary')
+  get(): Promise<ExamsSummary> {
+    return this.summary.summary();
+  }
+}
+
+/** Publishing results and the result SMS (OWNER/ADMIN). */
 @Controller('exams')
 @RequireModule('EXAMS')
 @Roles('OWNER', 'ADMIN')
 export class ExamPublishController {
-  constructor(private readonly results: ExamResultsService) {}
+  constructor(
+    private readonly results: ExamResultsService,
+    private readonly sms: ResultSmsService,
+  ) {}
+
+  @Post(':id/classes/:examClassId/sms/preview')
+  @HttpCode(200)
+  smsPreview(@Id() id: string, @Id('examClassId') examClassId: string): Promise<ResultSmsPreview> {
+    return this.sms.preview(id, examClassId);
+  }
+
+  @Post(':id/classes/:examClassId/sms')
+  @HttpCode(202)
+  sendSms(
+    @Id() id: string,
+    @Id('examClassId') examClassId: string,
+    @Body() dto: SendResultSmsDto,
+  ): Promise<ResultSmsRun> {
+    return this.sms.send(id, examClassId, dto.expectedRecipients);
+  }
+
+  @Get('result-sms/:runId')
+  smsStatus(@Id('runId') runId: string): Promise<ResultSmsStatus> {
+    return this.sms.status(runId);
+  }
 
   @Get(':id/classes/:examClassId/publish-check')
   publishCheck(@Id() id: string, @Id('examClassId') examClassId: string): Promise<PublishCheck> {
@@ -482,19 +531,39 @@ export class ExamsAdminController {
   }
 }
 
+/** A guardian's own child's published results (decision #19 allows their parents' names). */
+@Controller('me/children')
+@RequireModule('EXAMS')
+@Roles('GUARDIAN')
+export class ChildResultsController {
+  constructor(private readonly children: ChildResultsService) {}
+
+  @Get(':id/results')
+  list(@Id() id: string): Promise<ChildResultItem[]> {
+    return this.children.list(id);
+  }
+
+  @Get(':id/results/:examClassId')
+  card(@Id() id: string, @Id('examClassId') examClassId: string): Promise<ReportCards> {
+    return this.children.card(id, examClassId);
+  }
+}
+
 @Module({
   // AttendanceModule: present % for report cards. StudentsModule: StudentAccess (decision #19).
-  imports: [AttendanceModule, StudentsModule],
+  imports: [BullModule.registerQueue({ name: EXAMS_QUEUE }), AttendanceModule, StudentsModule],
   // Static routes (exams/setup/…, rooms, grading, staff, my-sheets, sheets) are declared before
   // exams/:id so they are never taken for an exam id.
   controllers: [
     ExamSetupController,
     MarkSheetController,
     MarkSheetAdminController,
+    ExamSummaryController,
     ExamResultsController,
     ExamPublishController,
     ExamsReadController,
     ExamsAdminController,
+    ChildResultsController,
   ],
   providers: [
     ExamSetupService,
@@ -505,6 +574,10 @@ export class ExamsAdminController {
     ExamRosterService,
     MarkSheetService,
     ExamResultsService,
+    ResultSmsService,
+    ResultSmsProcessor,
+    ExamSummaryService,
+    ChildResultsService,
   ],
   // MarkSheetService: test-only routes (rollback checks) inject it.
   exports: [MarkSheetService],

@@ -879,3 +879,85 @@ export interface RemarksView {
     remarks: string | null;
   }[];
 }
+
+// ─────────────────────────── Guardians, result SMS, dashboard ───────────────────────────
+
+/** GET /me/children/:id/results: the child's published results, newest exam first. */
+export interface ChildResultItem {
+  examClassId: string;
+  exam: {
+    id: string;
+    nameBn: string;
+    nameEn: string;
+    kind: ExamKind;
+    resultMode: ExamResultMode;
+    startsOn: IsoDate;
+    endsOn: IsoDate;
+  };
+  publishedAt: string;
+  gpaH: number | null;
+  gpaDecimals: number;
+  letter: string | null;
+  totalH: number;
+  fullMarks: number;
+  percentH: number;
+  passed: boolean;
+  classPosition: number | null;
+  classSize: number;
+}
+
+/** POST …/sms: the count the admin confirmed in the preview. */
+export const sendResultSmsSchema = z.object({ expectedRecipients: z.number().int().min(0) });
+
+export interface ResultSmsPreview {
+  publishedVersion: number;
+  students: number;
+  withoutPhone: number;
+  /** Already got an SMS for this published version (each student once per version). */
+  alreadySent: number;
+  toSend: number;
+  segments: number;
+  costPaisa: number;
+  capLeftToday: number;
+  /** Over today's cap: not sent now (and not held); they can be sent another day. */
+  wouldBeSkipped: number;
+  sampleText: string | null;
+}
+
+export interface ResultSmsRun {
+  runId: string;
+  queued: number;
+}
+
+export interface ResultSmsStatus {
+  runId: string;
+  toSend: number;
+  counts: { QUEUED: number; SENT: number; FAILED: number; CANCELLED: number };
+  /** Not queued: over the daily cap when the job ran. */
+  skipped: number;
+}
+
+/** GET /exams/summary: the dashboard's exam card (staff). */
+export interface ExamsSummary {
+  /** The exam whose marks are being entered (the open one ending soonest), with sheet counts. */
+  current: {
+    id: string;
+    nameBn: string;
+    nameEn: string;
+    endsOn: IsoDate;
+    sheets: { total: number; draft: number; submitted: number; locked: number };
+    publishedClasses: number;
+    classes: number;
+  } | null;
+  /** This year's exams that have not ended yet (for the term timeline). */
+  upcoming: {
+    id: string;
+    kind: ExamKind;
+    nameBn: string;
+    nameEn: string;
+    startsOn: IsoDate;
+    endsOn: IsoDate;
+  }[];
+  /** The caller's own sheets in open exams that are not submitted yet (teachers). */
+  myPendingSheets: number;
+}
