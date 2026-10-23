@@ -299,6 +299,8 @@ enum SmsPurpose {
   FEE_RECEIPT
   /// A due reminder to the primary guardian (fees).
   FEE_REMINDER
+  /// A published exam result to the primary guardian (exams).
+  EXAM_RESULT
 
   @@map("sms_purpose")
 }
@@ -651,6 +653,7 @@ model Tenant {
   examCandidates         ExamCandidate[]
   examMarkSheets         ExamMarkSheet[]
   examMarks              ExamMark[]
+  examResults            ExamResult[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -928,6 +931,7 @@ model Section {
   subjectTeachers    SectionSubjectTeacher[]
   examCandidates     ExamCandidate[]
   examMarkSheets     ExamMarkSheet[]
+  examResults        ExamResult[]
 
   @@unique([tenantId, id])
   /// So rows can carry the class level and be checked against a subject's class.
@@ -1478,6 +1482,7 @@ model ExamClass {
 
   subjects   ExamSubject[]
   candidates ExamCandidate[]
+  results    ExamResult[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, examId, classLevelId])
@@ -1602,7 +1607,8 @@ model ExamCandidate {
   room       ExamRoom?   @relation(fields: [tenantId, roomId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   remarksBy  User?       @relation("ExamCandidateRemarksBy", fields: [remarksById], references: [id], onDelete: SetNull)
 
-  marks ExamMark[]
+  marks   ExamMark[]
+  results ExamResult[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, examId, studentId])
@@ -2689,4 +2695,51 @@ model FeeMobileSubmissionDue {
   @@unique([tenantId, submissionId, dueId])
   @@index([tenantId, dueId])
   @@map("fee_mobile_submission_dues")
+}
+
+/// A student's published result in one exam class: a snapshot taken at publish (and rebuilt on a
+/// republish), so guardians, report cards and SMS read exactly what was published.
+model ExamResult {
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  tenantId            String   @map("tenant_id") @db.Uuid
+  examId              String   @map("exam_id") @db.Uuid
+  examClassId         String   @map("exam_class_id") @db.Uuid
+  classLevelId        String   @map("class_level_id") @db.Uuid
+  studentId           String   @map("student_id") @db.Uuid
+  sectionId           String   @map("section_id") @db.Uuid
+  roll                Int?
+  /// Marks as hundredths; percent as hundredths of a percent.
+  totalH              Int      @map("total_h")
+  fullMarks           Int      @map("full_marks")
+  percentH            Int      @map("percent_h")
+  /// GPA as hundredths (GPA mode only).
+  gpaH                Int?     @map("gpa_h")
+  gpaWithoutOptionalH Int?     @map("gpa_wo_optional_h")
+  letter              String?
+  passed              Boolean
+  failedSubjects      Int      @map("failed_subjects")
+  /// NULL: unranked (a failed student when the exam leaves them out of the merit list).
+  classPosition       Int?     @map("class_position")
+  sectionPosition     Int?     @map("section_position")
+  attendancePresent   Int?     @map("attendance_present")
+  attendanceTotal     Int?     @map("attendance_total")
+  attendancePercentH  Int?     @map("attendance_percent_h")
+  remarks             String?
+  /// Per subject: parts, marks, grade, pass (the report card's table).
+  subjects            Json
+  publishedVersion    Int      @map("published_version")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  examClass ExamClass     @relation(fields: [tenantId, examClassId, examId, classLevelId], references: [tenantId, id, examId, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+  candidate ExamCandidate @relation(fields: [tenantId, examId, studentId], references: [tenantId, examId, studentId], onDelete: Restrict, onUpdate: Restrict)
+  section   Section       @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, examClassId, studentId])
+  @@index([tenantId, studentId])
+  @@index([tenantId, examId])
+  @@index([tenantId, sectionId])
+  @@map("exam_results")
 }

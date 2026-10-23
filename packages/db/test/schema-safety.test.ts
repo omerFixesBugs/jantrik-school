@@ -61,6 +61,7 @@ describe('schema safety net', () => {
         'exam_candidates',
         'exam_mark_sheets',
         'exam_marks',
+        'exam_results',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
