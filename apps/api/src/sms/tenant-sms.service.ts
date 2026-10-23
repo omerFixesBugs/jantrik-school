@@ -28,9 +28,14 @@ export interface QueueTenantSmsInput {
   delayMs: number;
   /** Most SMS this tenant may send on `localDate`. */
   dailyCap: number;
+  /**
+   * Over the cap: HOLD (default) stores the SMS as HELD_OVER_LIMIT, to be released today or
+   * expire; SKIP stores nothing, so the same dedupe key can be sent on another day.
+   */
+  overCap?: 'HOLD' | 'SKIP';
 }
 
-export type QueueTenantSmsResult = 'QUEUED' | 'DUPLICATE' | 'HELD_OVER_LIMIT';
+export type QueueTenantSmsResult = 'QUEUED' | 'DUPLICATE' | 'HELD_OVER_LIMIT' | 'OVER_CAP';
 
 /** Decides, just before sending, whether an SMS is still wanted (e.g. the absence still stands). */
 export type SmsRelevanceCheck = (log: {
@@ -98,6 +103,7 @@ export class TenantSmsService implements OnModuleInit {
     const localDate = dateToDb(input.localDate);
     const used = await tx.smsLog.count({ where: { localDate, status: { in: COUNTED } } });
     const overLimit = used >= input.dailyCap;
+    if (overLimit && input.overCap === 'SKIP') return 'OVER_CAP';
 
     const tenantId = this.context.requirePrincipal().tenantId!;
     const log = await tx.smsLog.create({
