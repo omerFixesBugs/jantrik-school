@@ -24,6 +24,53 @@ export type GpaRounding = (typeof GPA_ROUNDINGS)[number];
 export const SUBJECT_CHOICE_KINDS = ['COMPULSORY', 'OPTIONAL'] as const;
 export type SubjectChoiceKind = (typeof SUBJECT_CHOICE_KINDS)[number];
 
+export const EXAM_KINDS = [
+  'HALF_YEARLY',
+  'ANNUAL',
+  'PRE_TEST',
+  'TEST',
+  'CLASS_TEST',
+  'MODEL_TEST',
+  'OTHER',
+] as const;
+export type ExamKind = (typeof EXAM_KINDS)[number];
+
+export const EXAM_RESULT_MODES = ['GPA', 'MARKS'] as const;
+
+export const EXAM_STATUSES = ['SETUP', 'OPEN', 'ARCHIVED'] as const;
+export type ExamStatus = (typeof EXAM_STATUSES)[number];
+
+export const MERIT_FAILED_RANKINGS = ['AFTER_PASSED', 'UNRANKED'] as const;
+export type MeritFailedRanking = (typeof MERIT_FAILED_RANKINGS)[number];
+
+/** Merit tie-breakers; `SUBJECT:<subjectId>` ranks by the marks in one subject. */
+export const MERIT_KEYS = [
+  'GPA',
+  'GPA_WITHOUT_OPTIONAL',
+  'TOTAL_MARKS',
+  'PERCENT',
+  'FEWER_FAILED_SUBJECTS',
+  'ROLL',
+] as const;
+export type MeritKey = (typeof MERIT_KEYS)[number] | `SUBJECT:${string}`;
+
+/** A new exam's merit order until the institute picks its own (prefilled from its last exam). */
+export const DEFAULT_MERIT_ORDER: Record<ExamResultMode, MeritKey[]> = {
+  GPA: ['GPA', 'TOTAL_MARKS', 'ROLL'],
+  MARKS: ['TOTAL_MARKS', 'ROLL'],
+};
+
+/** What an exam kind usually is (a form default only; the exam stores its own mode). */
+export const USUAL_RESULT_MODE: Record<ExamKind, ExamResultMode> = {
+  HALF_YEARLY: 'GPA',
+  ANNUAL: 'GPA',
+  PRE_TEST: 'GPA',
+  TEST: 'GPA',
+  CLASS_TEST: 'MARKS',
+  MODEL_TEST: 'MARKS',
+  OTHER: 'GPA',
+};
+
 /** A grading scheme's GPA rules (grading_schemes columns). */
 export interface GpaRules {
   gpaMax: number;
@@ -278,7 +325,7 @@ export function subjectResult(input: SubjectResultInput): SubjectResult {
 
 // ── One student ──
 
-export type ExamResultMode = 'GPA' | 'MARKS';
+export type ExamResultMode = (typeof EXAM_RESULT_MODES)[number];
 
 export interface StudentSubject {
   /** The 4th subject (only its points above the threshold count). */

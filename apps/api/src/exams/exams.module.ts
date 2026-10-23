@@ -13,6 +13,23 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  admitCardsQuerySchema,
+  allocateSeatsSchema,
+  createExamSchema,
+  examCandidatesQuerySchema,
+  examClassSubjectsSchema,
+  examClassesSchema,
+  examSubjectSetupSchema,
+  examsQuerySchema,
+  syncCandidatesSchema,
+  updateExamSchema,
+  type AdmitCards,
+  type CandidateSyncResult,
+  type ExamCandidateView,
+  type ExamDetail,
+  type ExamListItem,
+  type ExamSubjectView,
+  type SeatPlan,
   examRoomSchema,
   examSetupSubjectsQuerySchema,
   gradingRulesSchema,
@@ -30,8 +47,11 @@ import {
 } from '@jantrik/shared';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
+import { ExamAccessService } from './exam-access.service.js';
+import { SeatPlanService } from './seats/seat-plan.service.js';
 import { ExamSetupService } from './setup/exam-setup.service.js';
 import { ExamStaffService } from './setup/exam-staff.service.js';
+import { ExamService } from './structure/exam.service.js';
 
 class ExamSetupSubjectsQueryDto extends zodDto(examSetupSubjectsQuerySchema) {}
 class SubjectMarksDto extends zodDto(subjectMarksSchema) {}
@@ -39,6 +59,16 @@ class GradingRulesDto extends zodDto(gradingRulesSchema) {}
 class SectionSubjectTeachersDto extends zodDto(sectionSubjectTeachersSchema) {}
 class SubjectChoicesDto extends zodDto(subjectChoicesSchema) {}
 class ExamRoomDto extends zodDto(examRoomSchema) {}
+class ExamsQueryDto extends zodDto(examsQuerySchema) {}
+class CreateExamDto extends zodDto(createExamSchema) {}
+class UpdateExamDto extends zodDto(updateExamSchema) {}
+class ExamClassesDto extends zodDto(examClassesSchema) {}
+class ExamClassSubjectsDto extends zodDto(examClassSubjectsSchema) {}
+class ExamSubjectSetupDto extends zodDto(examSubjectSetupSchema) {}
+class SyncCandidatesDto extends zodDto(syncCandidatesSchema) {}
+class AllocateSeatsDto extends zodDto(allocateSeatsSchema) {}
+class AdmitCardsQueryDto extends zodDto(admitCardsQuerySchema) {}
+class ExamCandidatesQueryDto extends zodDto(examCandidatesQuerySchema) {}
 
 const Id = (name = 'id') => Param(name, ParseUUIDPipe);
 
@@ -129,8 +159,132 @@ export class ExamSetupController {
   }
 }
 
+/** Exams, read: staff (teachers see open and archived exams; the service decides). */
+@Controller('exams')
+@RequireModule('EXAMS')
+@Roles('OWNER', 'ADMIN', 'TEACHER')
+export class ExamsReadController {
+  constructor(private readonly exams: ExamService) {}
+
+  @Get()
+  list(@Query() query: ExamsQueryDto): Promise<ExamListItem[]> {
+    return this.exams.list(query.academicYearId);
+  }
+
+  @Get(':id')
+  detail(@Id() id: string): Promise<ExamDetail> {
+    return this.exams.detail(id);
+  }
+}
+
+/** Exams, write (OWNER/ADMIN): setup, opening, rosters, seats and admit cards. */
+@Controller('exams')
+@RequireModule('EXAMS')
+@Roles('OWNER', 'ADMIN')
+export class ExamsAdminController {
+  constructor(
+    private readonly exams: ExamService,
+    private readonly seats: SeatPlanService,
+  ) {}
+
+  @Post()
+  create(@Body() dto: CreateExamDto): Promise<ExamDetail> {
+    return this.exams.create(dto);
+  }
+
+  @Patch(':id')
+  update(@Id() id: string, @Body() dto: UpdateExamDto): Promise<ExamDetail> {
+    return this.exams.update(id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(204)
+  async remove(@Id() id: string): Promise<void> {
+    await this.exams.remove(id);
+  }
+
+  @Put(':id/classes')
+  setClasses(@Id() id: string, @Body() dto: ExamClassesDto): Promise<ExamDetail> {
+    return this.exams.setClasses(id, dto.classLevelIds);
+  }
+
+  @Put(':id/classes/:examClassId/subjects')
+  setClassSubjects(
+    @Id() id: string,
+    @Id('examClassId') examClassId: string,
+    @Body() dto: ExamClassSubjectsDto,
+  ): Promise<ExamDetail> {
+    return this.exams.setClassSubjects(id, examClassId, dto.subjectIds);
+  }
+
+  @Put(':id/subjects/:examSubjectId')
+  setSubject(
+    @Id() id: string,
+    @Id('examSubjectId') examSubjectId: string,
+    @Body() dto: ExamSubjectSetupDto,
+  ): Promise<ExamSubjectView> {
+    return this.exams.setSubject(id, examSubjectId, dto);
+  }
+
+  @Post(':id/open')
+  @HttpCode(200)
+  open(@Id() id: string): Promise<ExamDetail> {
+    return this.exams.open(id);
+  }
+
+  @Post(':id/archive')
+  @HttpCode(200)
+  archive(@Id() id: string): Promise<ExamDetail> {
+    return this.exams.setArchived(id, true);
+  }
+
+  @Post(':id/reopen')
+  @HttpCode(200)
+  reopen(@Id() id: string): Promise<ExamDetail> {
+    return this.exams.setArchived(id, false);
+  }
+
+  @Get(':id/candidates')
+  candidates(
+    @Id() id: string,
+    @Query() query: ExamCandidatesQueryDto,
+  ): Promise<ExamCandidateView[]> {
+    return this.exams.candidates(id, query.sectionId);
+  }
+
+  @Post(':id/candidates/sync')
+  @HttpCode(200)
+  sync(@Id() id: string, @Body() dto: SyncCandidatesDto): Promise<CandidateSyncResult> {
+    return this.exams.syncCandidates(id, dto.dryRun);
+  }
+
+  @Get(':id/seats')
+  seatPlan(@Id() id: string): Promise<SeatPlan> {
+    return this.seats.plan(id);
+  }
+
+  @Post(':id/seats')
+  @HttpCode(200)
+  allocate(@Id() id: string, @Body() dto: AllocateSeatsDto): Promise<SeatPlan> {
+    return this.seats.allocate(id, dto.roomIds);
+  }
+
+  @Delete(':id/seats')
+  @HttpCode(204)
+  async clearSeats(@Id() id: string): Promise<void> {
+    await this.seats.clear(id);
+  }
+
+  @Get(':id/admit-cards')
+  admitCards(@Id() id: string, @Query() query: AdmitCardsQueryDto): Promise<AdmitCards> {
+    return this.seats.admitCards(id, query);
+  }
+}
+
 @Module({
-  controllers: [ExamSetupController],
-  providers: [ExamSetupService, ExamStaffService],
+  // Static setup routes (exams/setup/…, exams/rooms, exams/grading, exams/staff) are declared
+  // before exams/:id so they are never taken for an exam id.
+  controllers: [ExamSetupController, ExamsReadController, ExamsAdminController],
+  providers: [ExamSetupService, ExamStaffService, ExamAccessService, ExamService, SeatPlanService],
 })
 export class ExamsModule {}

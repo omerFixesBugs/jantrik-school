@@ -4,13 +4,23 @@
  */
 import { z } from 'zod';
 import type { PersonRef } from './attendance.js';
+import { isoDateSchema, type IsoDate } from './dates.js';
 import {
   COMPONENT_KINDS,
+  EXAM_KINDS,
+  EXAM_RESULT_MODES,
   GPA_ROUNDINGS,
+  MERIT_FAILED_RANKINGS,
+  MERIT_KEYS,
   PASS_RULES,
   SUBJECT_CHOICE_KINDS,
   type ComponentKind,
+  type ExamKind,
+  type ExamResultMode,
+  type ExamStatus,
   type GpaRounding,
+  type MeritFailedRanking,
+  type MeritKey,
   type PassRule,
   type SubjectChoiceKind,
 } from './exams.js';
@@ -305,4 +315,210 @@ export interface ExamRoomView {
   cols: number;
   capacity: number;
   isActive: boolean;
+}
+
+// ─────────────────────────── Exams ───────────────────────────
+
+const examNameSchema = z.string().trim().min(1).max(120);
+
+export const meritKeySchema = z.union([
+  z.enum(MERIT_KEYS),
+  z.string().regex(/^SUBJECT:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+]) as z.ZodType<MeritKey, MeritKey>;
+
+const meritOrderSchema = z
+  .array(meritKeySchema)
+  .min(1)
+  .max(8)
+  .refine((keys) => new Set(keys).size === keys.length, 'Each tie-breaker once');
+
+/** The days whose attendance the report card shows; null: no attendance on the report card. */
+const attendanceWindowSchema = z
+  .object({ from: isoDateSchema, to: isoDateSchema })
+  .refine((w) => w.from <= w.to, { message: 'The window ends before it starts', path: ['to'] });
+
+/**
+ * POST /exams. Left out: the merit order and failed ranking come from the institute's last exam
+ * with the same result mode, and the attendance window from the day after the previous GPA exam
+ * (or the year's start) to this exam's last day.
+ */
+export const createExamSchema = z
+  .object({
+    academicYearId: z.uuid(),
+    kind: z.enum(EXAM_KINDS),
+    nameBn: examNameSchema,
+    nameEn: examNameSchema,
+    startsOn: isoDateSchema,
+    endsOn: isoDateSchema,
+    resultMode: z.enum(EXAM_RESULT_MODES),
+    meritOrder: meritOrderSchema.optional(),
+    failedRanking: z.enum(MERIT_FAILED_RANKINGS).optional(),
+    attendance: attendanceWindowSchema.nullable().optional(),
+  })
+  .refine((e) => e.startsOn <= e.endsOn, { message: 'Ends before it starts', path: ['endsOn'] });
+export type CreateExamInput = z.input<typeof createExamSchema>;
+
+/** PATCH /exams/:id: the result mode changes only while the exam is in setup. */
+export const updateExamSchema = z
+  .object({
+    kind: z.enum(EXAM_KINDS),
+    nameBn: examNameSchema,
+    nameEn: examNameSchema,
+    startsOn: isoDateSchema,
+    endsOn: isoDateSchema,
+    resultMode: z.enum(EXAM_RESULT_MODES),
+    meritOrder: meritOrderSchema,
+    failedRanking: z.enum(MERIT_FAILED_RANKINGS),
+    attendance: attendanceWindowSchema.nullable(),
+  })
+  .partial()
+  .refine((e) => !e.startsOn || !e.endsOn || e.startsOn <= e.endsOn, {
+    message: 'Ends before it starts',
+    path: ['endsOn'],
+  });
+export type UpdateExamInput = z.input<typeof updateExamSchema>;
+
+export const examsQuerySchema = z.object({ academicYearId: z.uuid().optional() });
+
+/** PUT /exams/:id/classes: the classes the exam covers (new ones get every active subject). */
+export const examClassesSchema = z.object({
+  classLevelIds: z
+    .array(z.uuid())
+    .max(30)
+    .refine((ids) => new Set(ids).size === ids.length, 'Each class once'),
+});
+
+/** PUT /exams/:id/classes/:examClassId/subjects: which subjects (kept ones keep their setup). */
+export const examClassSubjectsSchema = z.object({
+  subjectIds: z
+    .array(z.uuid())
+    .min(1)
+    .max(40)
+    .refine((ids) => new Set(ids).size === ids.length, 'Each subject once'),
+});
+
+const timeSchema = z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, 'HH:MM');
+
+/** PUT /exams/:id/subjects/:examSubjectId: one subject's routine, parts and pass rule. */
+export const examSubjectSetupSchema = z.intersection(
+  z.object({ examDate: isoDateSchema.nullable(), startTime: timeSchema.nullable() }),
+  subjectMarksSchema,
+);
+export type ExamSubjectSetupInput = z.input<typeof examSubjectSetupSchema>;
+
+export const examCandidatesQuerySchema = z.object({ sectionId: z.uuid().optional() });
+
+export const syncCandidatesSchema = z.object({ dryRun: z.boolean() });
+
+export const allocateSeatsSchema = z.object({
+  roomIds: z
+    .array(z.uuid())
+    .min(1)
+    .max(50)
+    .refine((ids) => new Set(ids).size === ids.length, 'Each room once'),
+});
+
+export const admitCardsQuerySchema = z
+  .object({ sectionId: z.uuid().optional(), classLevelId: z.uuid().optional() })
+  .refine((q) => q.sectionId || q.classLevelId, 'A section or a class');
+
+export interface ExamClassSummary {
+  id: string;
+  classLevel: CodedRef;
+  isPublished: boolean;
+  publishedVersion: number;
+  publishedAt: string | null;
+}
+
+export interface ExamListItem {
+  id: string;
+  academicYearId: string;
+  kind: ExamKind;
+  nameBn: string;
+  nameEn: string;
+  startsOn: IsoDate;
+  endsOn: IsoDate;
+  resultMode: ExamResultMode;
+  status: ExamStatus;
+  classes: ExamClassSummary[];
+  candidates: number;
+}
+
+export interface ExamSubjectView {
+  id: string;
+  subject: CodedRef;
+  studyGroupId: string | null;
+  isElective: boolean;
+  passRule: PassRule;
+  examDate: IsoDate | null;
+  startTime: string | null;
+  fullMarks: number;
+  components: ExamComponentView[];
+  passGroups: PassGroupView[];
+}
+
+export interface ExamDetail extends Omit<ExamListItem, 'classes'> {
+  meritOrder: MeritKey[];
+  failedRanking: MeritFailedRanking;
+  attendance: { from: IsoDate; to: IsoDate } | null;
+  classes: (ExamClassSummary & { subjects: ExamSubjectView[] })[];
+}
+
+export interface ExamCandidateView {
+  id: string;
+  student: { id: string; studentCode: string; nameBn: string | null; nameEn: string | null };
+  classLevelId: string;
+  section: { id: string; name: string };
+  studyGroupId: string | null;
+  roll: number | null;
+  status: 'ENROLLED' | 'WITHDRAWN';
+  seat: { roomId: string; roomName: string; seatNo: number } | null;
+}
+
+/** POST /exams/:id/candidates/sync: what changed (or would, with dryRun) since the exam opened. */
+export interface CandidateSyncResult {
+  dryRun: boolean;
+  added: { studentId: string; name: string; sectionName: string }[];
+  withdrawn: { studentId: string; name: string }[];
+  moved: { studentId: string; name: string; from: string; to: string }[];
+}
+
+export interface SeatPlanRoom {
+  room: ExamRoomView;
+  /** Seat number → who sits there (row by row: seat 1 is the front row's first seat). */
+  seats: {
+    seatNo: number;
+    candidateId: string;
+    roll: number | null;
+    studentCode: string;
+    name: string;
+    classLevel: CodedRef;
+    sectionName: string;
+  }[];
+}
+
+export interface SeatPlan {
+  rooms: SeatPlanRoom[];
+  unseated: number;
+}
+
+/** GET /exams/:id/admit-cards: one card per enrolled candidate (no guardian details). */
+export interface AdmitCards {
+  institute: { name: string };
+  exam: { id: string; nameBn: string; nameEn: string; startsOn: IsoDate; endsOn: IsoDate };
+  cards: {
+    candidateId: string;
+    student: {
+      studentCode: string;
+      nameBn: string | null;
+      nameEn: string | null;
+      photoUrl: string | null;
+    };
+    classLevel: CodedRef;
+    section: { id: string; name: string };
+    studyGroup: CodedRef | null;
+    roll: number | null;
+    seat: { roomName: string; seatNo: number } | null;
+    routine: { subject: CodedRef; examDate: IsoDate | null; startTime: string | null }[];
+  }[];
 }
