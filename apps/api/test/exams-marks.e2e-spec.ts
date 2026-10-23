@@ -330,6 +330,22 @@ describe('marks entry: subject teachers, drafts, submit, lock and corrections', 
     expect(r.body.students.map((x: { studentId: string }) => x.studentId)).toContain(newcomer);
   });
 
+  it('a deleted student leaves every sheet (marks stay in the database)', async () => {
+    const gone = s.students.sixB[0]!.id;
+    const before = (await sheet(math, s.sections.sixB, s.tokens.admin).expect(200))
+      .body as MarkSheetView;
+    expect(before.students.map((x) => x.studentId)).toContain(gone);
+    await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.student.update({ where: { id: gone }, data: { deletedAt: new Date() } }),
+    );
+    const after = (await sheet(math, s.sections.sixB, s.tokens.admin).expect(200))
+      .body as MarkSheetView;
+    expect(after.students.map((x) => x.studentId)).not.toContain(gone);
+    await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.student.update({ where: { id: gone }, data: { deletedAt: null } }),
+    );
+  });
+
   it('the admin grid shows every sheet; lock-all locks the submitted ones', async () => {
     const grid = (
       await http(h).get(`/exams/${exam.id}/sheets`).set(bearer(s.tokens.admin)).expect(200)

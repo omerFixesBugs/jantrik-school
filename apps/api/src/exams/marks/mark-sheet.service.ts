@@ -170,9 +170,10 @@ export class MarkSheetService {
 
   async save(input: SaveMarkSheetInput): Promise<SaveMarkSheetResult> {
     const caller = await this.access.caller();
-    const ctx = await this.load(input.examSubjectId, input.sectionId, caller);
+    const loaded = await this.load(input.examSubjectId, input.sectionId, caller);
     const tx = this.db.tx;
-    await this.lockForMarks(ctx);
+    await this.lockForMarks(loaded);
+    const ctx = await this.withRoster(loaded);
     await tx.examMarkSheet.createMany({
       data: [
         {
@@ -269,23 +270,15 @@ export class MarkSheetService {
 
   /** Back to SUBMITTED (the teacher may fix it again), only before the class is published. */
   async unlock(id: string, reason: string): Promise<MarkSheetView> {
-    const sheet = await this.db.tx.examMarkSheet.findUnique({
-      where: { id },
-      select: { examSubject: { select: { examClass: { select: { isPublished: true } } } } },
+    return this.transition(id, 'UNLOCK', ['LOCKED'], 'SUBMITTED', {}, reason, {
+      refuseWhenPublished: true,
     });
-    if (sheet?.examSubject.examClass.isPublished) {
-      throw apiError(
-        409,
-        'PUBLISHED',
-        'Results are published: correct marks with a reason, or unpublish first',
-      );
-    }
-    return this.transition(id, 'UNLOCK', ['LOCKED'], 'SUBMITTED', {}, reason);
   }
 
   async lockAll(examId: string, examClassId: string): Promise<LockAllResult> {
     const tx = this.db.tx;
     const caller = await this.access.caller();
+    if (!caller.isAdmin) throw new ForbiddenException();
     const examClass = await tx.examClass.findFirst({ where: { id: examClassId, examId } });
     if (!examClass) throw new NotFoundException('Exam class not found');
     await this.lockExamShared(examId);
@@ -326,9 +319,11 @@ export class MarkSheetService {
 
   async correct(id: string, input: CorrectMarksInput): Promise<MarkSheetView> {
     const caller = await this.access.caller();
-    const ctx = await this.loadById(id, caller);
+    if (!caller.isAdmin) throw new ForbiddenException();
+    const loaded = await this.loadById(id, caller);
     const tx = this.db.tx;
-    await this.lockForMarks(ctx);
+    await this.lockForMarks(loaded);
+    const ctx = await this.withRoster(loaded);
     const sheet = await this.lockSheet(ctx.examSubject.id, ctx.section.id);
     if (sheet.status !== 'LOCKED') {
       throw apiError(409, 'NOT_LOCKED', 'Only a locked sheet is corrected; edit the sheet instead');
@@ -367,6 +362,7 @@ export class MarkSheetService {
   }
 
   async history(id: string): Promise<MarkSheetHistoryEntry[]> {
+    if (!(await this.access.caller()).isAdmin) throw new ForbiddenException();
     const tx = this.db.tx;
     const exists = await tx.examMarkSheet.findUnique({ where: { id }, select: { id: true } });
     if (!exists) throw new NotFoundException('Sheet not found');
@@ -391,6 +387,7 @@ export class MarkSheetService {
   }
 
   /** Every sheet of an exam (admin overview): status and progress per class × section × subject. */
+  /** Every sheet of an exam (OWNER/ADMIN; also the dashboard's counts). */
   async grid(examId: string): Promise<ExamSheetsGrid> {
     const tx = this.db.tx;
     await this.exams.detail(examId);
@@ -575,6 +572,14 @@ export class MarkSheetService {
     }
   }
 
+  /** The context with the sheet's students read again (after the locks are held). */
+  private async withRoster(ctx: Awaited<ReturnType<MarkSheetService['load']>>) {
+    return {
+      ...ctx,
+      students: await this.roster.forSheet(ctx.exam.id, ctx.examSubject, ctx.section.id),
+    };
+  }
+
   private async lockSheet(examSubjectId: string, sectionId: string) {
     const tx = this.db.tx;
     await tx.$queryRaw`SELECT id FROM exam_mark_sheets
@@ -709,12 +714,27 @@ export class MarkSheetService {
     to: 'DRAFT' | 'SUBMITTED' | 'LOCKED',
     extra: { returnNote?: string },
     reason: string | null,
+    opts: { refuseWhenPublished?: boolean } = {},
   ): Promise<MarkSheetView> {
     const caller = await this.access.caller();
     if (!caller.isAdmin) throw new ForbiddenException();
     const ctx = await this.loadById(id, caller);
     const tx = this.db.tx;
     await this.lockForMarks(ctx);
+    if (opts.refuseWhenPublished) {
+      // Read under the exam class lock: a publish can't commit between this check and the change.
+      const examClass = await tx.examClass.findUniqueOrThrow({
+        where: { id: ctx.examSubject.examClassId },
+        select: { isPublished: true },
+      });
+      if (examClass.isPublished) {
+        throw apiError(
+          409,
+          'PUBLISHED',
+          'Results are published: correct marks with a reason, or unpublish first',
+        );
+      }
+    }
     const sheet = await this.lockSheet(ctx.examSubject.id, ctx.section.id);
     if (!from.includes(sheet.status)) {
       throw apiError(409, 'WRONG_STATUS', `The sheet is ${sheet.status.toLowerCase()}`, {

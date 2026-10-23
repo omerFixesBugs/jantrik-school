@@ -28,7 +28,12 @@ export class ExamRosterService {
       select: { academicYearId: true },
     });
     const rows = await tx.examCandidate.findMany({
-      where: { examId, status: 'ENROLLED', ...(classLevelId ? { classLevelId } : {}) },
+      where: {
+        examId,
+        status: 'ENROLLED',
+        student: { deletedAt: null },
+        ...(classLevelId ? { classLevelId } : {}),
+      },
       orderBy: [{ roll: 'asc' }, { createdAt: 'asc' }],
       select: {
         studentId: true,

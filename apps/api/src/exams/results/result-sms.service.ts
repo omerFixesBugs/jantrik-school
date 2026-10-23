@@ -231,7 +231,11 @@ export class ResultSmsService implements OnModuleInit {
     gradingSnapshot: unknown;
   }): Promise<Recipient[]> {
     const rows = await this.db.tx.examResult.findMany({
-      where: { examClassId: examClass.id, publishedVersion: examClass.publishedVersion },
+      where: {
+        examClassId: examClass.id,
+        publishedVersion: examClass.publishedVersion,
+        candidate: { student: { deletedAt: null } },
+      },
       orderBy: { roll: 'asc' },
       include: {
         candidate: {

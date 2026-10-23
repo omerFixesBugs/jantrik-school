@@ -328,6 +328,34 @@ describe('results: publish, tabulation, report cards, remarks', () => {
       .expect(404);
   });
 
+  it('published results freeze the sheets: no unlock; an archived exam takes no remarks', async () => {
+    await publish(3).expect(200);
+    const view = (
+      await http(h)
+        .get('/exams/sheets')
+        .query({ examSubjectId: exam.classes[0]!.subjects[0]!.id, sectionId: s.sections.six })
+        .set(bearer(s.tokens.admin))
+        .expect(200)
+    ).body as MarkSheetView;
+    const unlock = await http(h)
+      .post(`/exams/sheets/${view.sheet.id}/unlock`)
+      .set(bearer(s.tokens.admin))
+      .send({ reason: 'Recheck please' })
+      .expect(409);
+    expect(unlock.body.code).toBe('PUBLISHED');
+    await http(h).post(`/exams/${exam.id}/archive`).set(bearer(s.tokens.admin)).expect(200);
+    const remark = await http(h)
+      .put(`/exams/${exam.id}/remarks`)
+      .set(bearer(s.tokens.admin))
+      .send({
+        sectionId: s.sections.six,
+        remarks: [{ studentId: s.students.six[0]!.id, text: 'Late' }],
+      })
+      .expect(409);
+    expect(remark.body.code).toBe('NOT_OPEN');
+    await http(h).post(`/exams/${exam.id}/reopen`).set(bearer(s.tokens.admin)).expect(200);
+  });
+
   it('without the attendance module the report card has no attendance', async () => {
     const t = await examsSchool(h, { modules: ['EXAMS'] });
     let e = (

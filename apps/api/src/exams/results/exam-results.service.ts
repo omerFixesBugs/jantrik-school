@@ -197,6 +197,7 @@ export class ExamResultsService {
     const caller = await this.access.caller();
     if (!caller.isAdmin) throw new ForbiddenException();
     const tx = this.db.tx;
+    await tx.$queryRaw`SELECT id FROM exams WHERE id = ${examId}::uuid FOR SHARE`;
     await tx.$queryRaw`SELECT id FROM exam_classes WHERE id = ${examClassId}::uuid FOR UPDATE`;
     const ctx = await this.classContext(examId, examClassId);
     if (!ctx.examClass.isPublished)
@@ -580,15 +581,24 @@ export class ExamResultsService {
     const caller = await this.access.caller();
     await this.assertClassTeacher(caller, input.sectionId);
     const tx = this.db.tx;
-    await tx.$queryRaw`SELECT id FROM exams WHERE id = ${examId}::uuid FOR SHARE`;
+    const [exam] = await tx.$queryRaw<{ status: string }[]>`
+      SELECT status::text AS status FROM exams WHERE id = ${examId}::uuid FOR SHARE`;
+    if (exam?.status !== 'OPEN') {
+      throw apiError(409, 'NOT_OPEN', 'Remarks change only while the exam is open');
+    }
+    // Publish holds the exam class FOR UPDATE: a remark can't slip in beside its snapshot.
+    await tx.$queryRaw`SELECT ec.id FROM exam_classes ec
+      JOIN sections s ON s.tenant_id = ec.tenant_id AND s.class_level_id = ec.class_level_id
+      WHERE ec.exam_id = ${examId}::uuid AND s.id = ${input.sectionId}::uuid FOR SHARE OF ec`;
     const before = await this.remarksView(examId, input.sectionId);
     if (before.isPublished && !caller.isAdmin) {
       throw apiError(403, 'PUBLISHED', 'Results are published: ask the office to change remarks');
     }
     const known = new Map(before.students.map((s) => [s.studentId, s.remarks]));
-    const changed = input.remarks.filter(
-      (r) => known.has(r.studentId) && (known.get(r.studentId) ?? '') !== r.text,
-    );
+    const changed = input.remarks
+      .filter((r) => known.has(r.studentId) && (known.get(r.studentId) ?? '') !== r.text)
+      // Rows in one order, so two saves never wait on each other's rows (no deadlock).
+      .sort((a, b) => a.studentId.localeCompare(b.studentId));
     if (input.remarks.some((r) => !known.has(r.studentId))) {
       throw apiError(422, 'UNKNOWN_STUDENT', 'A student is not in this section for this exam');
     }
