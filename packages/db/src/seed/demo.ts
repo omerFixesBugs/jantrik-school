@@ -10,6 +10,7 @@ import { hash } from '@node-rs/argon2';
 import { withContext, withTenant, type TenantTx } from '../tenancy/context.js';
 import { provisionTenant } from '../tenancy/provision.js';
 import { findOrCreateUser } from '../tenancy/users.js';
+import { seedAloExams, seedShaplaExams, type ExamSeedContext } from './demo-exams.js';
 import { seedDemoFees } from './demo-fees.js';
 import { seedPastAttendance } from './past-attendance.js';
 
@@ -74,6 +75,8 @@ interface DemoTenant {
   students: DemoStudent[];
   /** A fee setup (heads, amounts, terms, numbers): docs/fees.md. */
   fees?: boolean;
+  /** Exams, marks and published results: docs/exams.md. */
+  exams?: (tx: TenantTx, ctx: ExamSeedContext) => Promise<void>;
 }
 
 /** National holidays (same for every demo tenant). */
@@ -168,6 +171,7 @@ const DEMO_TENANTS: DemoTenant[] = [
       { phone: '01911000999', name: 'Sharmin Sultana', nameBn: 'শারমিন সুলতানা', role: 'TEACHER' },
     ],
     fees: true,
+    exams: seedShaplaExams,
     sectionTeachers: [
       { phone: '01711000002', section: 'CLASS_6/ক', classTeacher: true },
       { phone: '01911000999', section: 'CLASS_9/ক', classTeacher: true },
@@ -256,6 +260,7 @@ const DEMO_TENANTS: DemoTenant[] = [
     slug: 'alo-coaching',
     name: 'আলো কোচিং সেন্টার',
     instituteTypeKey: 'COACHING',
+    exams: seedAloExams,
     studentCode: { prefix: 'ALO', pattern: '{PREFIX}-{YY}-{NNN}' },
     shifts: [],
     sections: [
@@ -497,6 +502,7 @@ async function seedTenantData(
     const owner = def.staff.findIndex((m) => m.role === 'OWNER');
     await seedDemoFees(tx, tenantId, staffUserIds[owner]!);
   }
+  if (def.exams) await def.exams(tx, { tenantId, userIdByPhone });
   return { staffUserIds, namesBn, sessions };
 }
 
