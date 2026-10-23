@@ -55,7 +55,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
-import { ChildResultsSummary } from '@/components/exams/guardian';
+import { ChildResultsSummary } from '@/components/exams/child-results-summary';
 import { ChildFeesSummary } from '@/components/fees/guardian/child-fees-summary';
 import { BillingNoticeBanner } from '@/components/billing-notice';
 import {
