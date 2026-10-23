@@ -123,6 +123,51 @@ enum SubjectChoiceKind {
   @@map("subject_choice_kind")
 }
 
+enum ExamKind {
+  HALF_YEARLY
+  ANNUAL
+  PRE_TEST
+  TEST
+  CLASS_TEST
+  MODEL_TEST
+  OTHER
+
+  @@map("exam_kind")
+}
+
+/// GPA (NCTB: grades, GPA and the 4th subject) or MARKS (total and percentage only).
+enum ExamResultMode {
+  GPA
+  MARKS
+
+  @@map("exam_result_mode")
+}
+
+/// SETUP: only admins see it. OPEN: marks are entered. ARCHIVED: read-only.
+enum ExamStatus {
+  SETUP
+  OPEN
+  ARCHIVED
+
+  @@map("exam_status")
+}
+
+/// Merit list: failed students after all passed ones, or with no position.
+enum MeritFailedRanking {
+  AFTER_PASSED
+  UNRANKED
+
+  @@map("merit_failed_ranking")
+}
+
+enum ExamCandidateStatus {
+  ENROLLED
+  /// Left the class (or the institute) after the exam opened: marks kept, left out of results.
+  WITHDRAWN
+
+  @@map("exam_candidate_status")
+}
+
 enum Gender {
   MALE
   FEMALE
@@ -485,6 +530,8 @@ model User {
 
   sectionTeachers           SectionTeacher[]
   sectionSubjectTeachers    SectionSubjectTeacher[]
+  examClassesPublished      ExamClass[]             @relation("ExamClassPublishedBy")
+  examRemarksWritten        ExamCandidate[]         @relation("ExamCandidateRemarksBy")
   attendanceSessionsTaken   AttendanceSession[]     @relation("AttendanceTakenBy")
   attendanceSessionsUpdated AttendanceSession[]     @relation("AttendanceUpdatedBy")
   holidaysCreated           Holiday[]
@@ -581,6 +628,12 @@ model Tenant {
   sectionSubjectTeachers SectionSubjectTeacher[]
   studentSubjectChoices  StudentSubjectChoice[]
   examRooms              ExamRoom[]
+  exams                  Exam[]
+  examClasses            ExamClass[]
+  examSubjects           ExamSubject[]
+  examSubjectComponents  ExamSubjectComponent[]
+  examSubjectPassGroups  ExamSubjectPassGroup[]
+  examCandidates         ExamCandidate[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -655,6 +708,7 @@ model AcademicYear {
   feeAmounts     FeeAmount[]
   feeConcessions FeeConcession[]
   feeDues        FeeDue[]
+  exams          Exam[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, name])
@@ -758,6 +812,7 @@ model ClassLevel {
   sections       Section[]
   enrolments     Enrolment[]
   feeAmounts     FeeAmount[]
+  examClasses    ExamClass[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -782,6 +837,8 @@ model StudyGroup {
   subjects       Subject[]
   enrolments     Enrolment[]
   feeAmounts     FeeAmount[]
+  examSubjects   ExamSubject[]
+  examCandidates ExamCandidate[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -817,6 +874,7 @@ model Subject {
   passGroups         SubjectPassGroup[]
   subjectTeachers    SectionSubjectTeacher[]
   choices            StudentSubjectChoice[]
+  examSubjects       ExamSubject[]
 
   @@unique([tenantId, id])
   /// So rows can carry the class level and be checked against a section's class.
@@ -851,6 +909,7 @@ model Section {
   teachers           SectionTeacher[]
   attendanceSessions AttendanceSession[]
   subjectTeachers    SectionSubjectTeacher[]
+  examCandidates     ExamCandidate[]
 
   @@unique([tenantId, id])
   /// So rows can carry the class level and be checked against a subject's class.
@@ -923,6 +982,7 @@ model Student {
   feePaymentAllocations   FeePaymentAllocation[]
   feeMobileSubmissions    FeeMobileSubmission[]
   feeMobileSubmissionDues FeeMobileSubmissionDue[]
+  examCandidates          ExamCandidate[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
@@ -1333,9 +1393,196 @@ model ExamRoom {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
+  seats ExamCandidate[]
+
   @@unique([tenantId, id])
   @@unique([tenantId, name])
   @@map("exam_rooms")
+}
+
+// ───────────────────────────── Exams: structure (step 10) ─────────────────────────────
+
+/// An exam of an academic year (half-yearly, annual, class test, model test, …).
+model Exam {
+  id             String             @id @default(uuid(7)) @db.Uuid
+  tenantId       String             @map("tenant_id") @db.Uuid
+  academicYearId String             @map("academic_year_id") @db.Uuid
+  kind           ExamKind
+  nameBn         String             @map("name_bn")
+  nameEn         String             @map("name_en")
+  startsOn       DateTime           @map("starts_on") @db.Date
+  endsOn         DateTime           @map("ends_on") @db.Date
+  resultMode     ExamResultMode     @map("result_mode")
+  /// Merit tie-breakers in order (GPA, TOTAL_MARKS, …, SUBJECT:<subjectId>, ROLL).
+  meritOrder     String[]           @map("merit_order")
+  failedRanking  MeritFailedRanking @map("failed_ranking")
+  /// The days whose attendance the report card shows (both or neither).
+  attendanceFrom DateTime?          @map("attendance_from") @db.Date
+  attendanceTo   DateTime?          @map("attendance_to") @db.Date
+  status         ExamStatus         @default(SETUP)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  academicYear AcademicYear @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  classes    ExamClass[]
+  candidates ExamCandidate[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, academicYearId, startsOn])
+  @@map("exams")
+}
+
+/// A class an exam covers; its results are published (and versioned) per class.
+model ExamClass {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  examId            String    @map("exam_id") @db.Uuid
+  classLevelId      String    @map("class_level_id") @db.Uuid
+  isPublished       Boolean   @default(false) @map("is_published")
+  /// Bumped on every publish; result SMS and guardians see this version.
+  publishedVersion  Int       @default(0) @map("published_version")
+  publishedAt       DateTime? @map("published_at") @db.Timestamptz(3)
+  publishedById     String?   @map("published_by_id") @db.Uuid
+  unpublishedReason String?   @map("unpublished_reason")
+  /// The scheme, bands and GPA rules the published results used.
+  gradingSnapshot   Json?     @map("grading_snapshot")
+  /// Highest and average marks per subject at publish.
+  subjectStats      Json?     @map("subject_stats")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  exam        Exam       @relation(fields: [tenantId, examId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  classLevel  ClassLevel @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  publishedBy User?      @relation("ExamClassPublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+
+  subjects   ExamSubject[]
+  candidates ExamCandidate[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, examId, classLevelId])
+  /// So exam subjects can be checked against their exam and class.
+  @@unique([tenantId, id, examId, classLevelId])
+  @@map("exam_classes")
+}
+
+/// A subject sat in an exam class, with the setup copied from the subject (parts, pass rule).
+model ExamSubject {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  examId       String    @map("exam_id") @db.Uuid
+  examClassId  String    @map("exam_class_id") @db.Uuid
+  classLevelId String    @map("class_level_id") @db.Uuid
+  subjectId    String    @map("subject_id") @db.Uuid
+  /// Copied from the subject: NULL is every group.
+  studyGroupId String?   @map("study_group_id") @db.Uuid
+  /// Copied from the subject: in the elective pool (taken only when chosen).
+  isElective   Boolean   @map("is_elective")
+  passRule     PassRule  @map("pass_rule")
+  /// The routine (admit cards): the paper's date and start time ("10:00").
+  examDate     DateTime? @map("exam_date") @db.Date
+  startTime    String?   @map("start_time")
+  sortOrder    Int       @default(0) @map("sort_order")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  examClass  ExamClass   @relation(fields: [tenantId, examClassId, examId, classLevelId], references: [tenantId, id, examId, classLevelId], onDelete: Cascade, onUpdate: Restrict)
+  subject    Subject     @relation(fields: [tenantId, subjectId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+  studyGroup StudyGroup? @relation(fields: [tenantId, studyGroupId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  components ExamSubjectComponent[]
+  passGroups ExamSubjectPassGroup[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, examClassId, subjectId])
+  /// So marks can be checked against their exam.
+  @@unique([tenantId, id, examId])
+  @@index([tenantId, examId])
+  @@map("exam_subjects")
+}
+
+/// A part of an exam subject (copied from subject_components when the exam is set up).
+model ExamSubjectComponent {
+  id            String        @id @default(uuid(7)) @db.Uuid
+  tenantId      String        @map("tenant_id") @db.Uuid
+  examSubjectId String        @map("exam_subject_id") @db.Uuid
+  key           String
+  kind          ComponentKind
+  nameBn        String        @map("name_bn")
+  nameEn        String        @map("name_en")
+  fullMarks     Int           @map("full_marks")
+  passMarks     Int?          @map("pass_marks")
+  sortOrder     Int           @default(0) @map("sort_order")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  examSubject ExamSubject @relation(fields: [tenantId, examSubjectId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, examSubjectId, key])
+  /// So marks can be checked against their exam subject.
+  @@unique([tenantId, id, examSubjectId])
+  @@map("exam_subject_components")
+}
+
+/// Combined pass mark per kind of an exam subject (pass rule COMBINED).
+model ExamSubjectPassGroup {
+  id            String        @id @default(uuid(7)) @db.Uuid
+  tenantId      String        @map("tenant_id") @db.Uuid
+  examSubjectId String        @map("exam_subject_id") @db.Uuid
+  kind          ComponentKind
+  passMarks     Int           @map("pass_marks")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  examSubject ExamSubject @relation(fields: [tenantId, examSubjectId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, examSubjectId, kind])
+  @@map("exam_subject_pass_groups")
+}
+
+/// A student sitting an exam: the roster taken when the exam opened (class, section, group and
+/// roll as they were), the seat, and the class teacher's remarks for the report card.
+model ExamCandidate {
+  id           String              @id @default(uuid(7)) @db.Uuid
+  tenantId     String              @map("tenant_id") @db.Uuid
+  examId       String              @map("exam_id") @db.Uuid
+  studentId    String              @map("student_id") @db.Uuid
+  classLevelId String              @map("class_level_id") @db.Uuid
+  sectionId    String              @map("section_id") @db.Uuid
+  studyGroupId String?             @map("study_group_id") @db.Uuid
+  roll         Int?
+  status       ExamCandidateStatus @default(ENROLLED)
+  roomId       String?             @map("room_id") @db.Uuid
+  seatNo       Int?                @map("seat_no")
+  remarks      String?
+  remarksById  String?             @map("remarks_by_id") @db.Uuid
+  remarksAt    DateTime?           @map("remarks_at") @db.Timestamptz(3)
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  exam       Exam        @relation(fields: [tenantId, examId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  examClass  ExamClass   @relation(fields: [tenantId, examId, classLevelId], references: [tenantId, examId, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+  student    Student     @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  section    Section     @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+  studyGroup StudyGroup? @relation(fields: [tenantId, studyGroupId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  room       ExamRoom?   @relation(fields: [tenantId, roomId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  remarksBy  User?       @relation("ExamCandidateRemarksBy", fields: [remarksById], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, examId, studentId])
+  /// One student per seat (rows without a seat have NULLs, which never clash).
+  @@unique([tenantId, examId, roomId, seatNo])
+  @@index([tenantId, examId, sectionId])
+  @@index([tenantId, studentId])
+  @@map("exam_candidates")
 }
 
 /// One register: a section on a date, for the whole day (period_no 0) or one period.

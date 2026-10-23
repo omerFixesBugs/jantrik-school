@@ -53,6 +53,12 @@ describe('schema safety net', () => {
         'section_subject_teachers',
         'student_subject_choices',
         'exam_rooms',
+        'exams',
+        'exam_classes',
+        'exam_subjects',
+        'exam_subject_components',
+        'exam_subject_pass_groups',
+        'exam_candidates',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
