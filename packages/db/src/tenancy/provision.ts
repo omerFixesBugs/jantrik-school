@@ -46,7 +46,7 @@ export async function provisionTenant(
     include: {
       labels: true,
       studyGroups: true,
-      classLevels: { include: { subjects: true } },
+      classLevels: { include: { subjects: { include: { components: true, passGroups: true } } } },
       defaultGradingSchemeTemplate: { include: { bands: true } },
     },
   });
@@ -154,9 +154,12 @@ export async function provisionTenant(
         })),
       });
 
+      const templateSubjects = type.classLevels.flatMap((c) => c.subjects);
+      const subjectIds = new Map(templateSubjects.map((s) => [s.id, uuidv7()]));
       await tx.subject.createMany({
         data: type.classLevels.flatMap((c) =>
           c.subjects.map((s) => ({
+            id: subjectIds.get(s.id)!,
             tenantId,
             classLevelId: classLevelIds.get(c.id)!,
             studyGroupId: s.templateStudyGroupId
@@ -166,8 +169,36 @@ export async function provisionTenant(
             nameBn: s.nameBn,
             nameEn: s.nameEn,
             isOptional: s.isOptional,
+            passRule: s.passRule,
             sortOrder: s.sortOrder,
             sourceTemplateId: s.id,
+          })),
+        ),
+      });
+      // Default exam parts and combined pass marks (exams module).
+      await tx.subjectComponent.createMany({
+        data: templateSubjects.flatMap((s) =>
+          s.components.map((c) => ({
+            tenantId,
+            subjectId: subjectIds.get(s.id)!,
+            key: c.key,
+            kind: c.kind,
+            nameBn: c.nameBn,
+            nameEn: c.nameEn,
+            fullMarks: c.fullMarks,
+            passMarks: c.passMarks,
+            sortOrder: c.sortOrder,
+            sourceTemplateId: c.id,
+          })),
+        ),
+      });
+      await tx.subjectPassGroup.createMany({
+        data: templateSubjects.flatMap((s) =>
+          s.passGroups.map((g) => ({
+            tenantId,
+            subjectId: subjectIds.get(s.id)!,
+            kind: g.kind,
+            passMarks: g.passMarks,
           })),
         ),
       });

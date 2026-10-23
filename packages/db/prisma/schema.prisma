@@ -114,6 +114,15 @@ enum ComponentKind {
   @@map("component_kind")
 }
 
+/// A student's choice of a subject from the class's elective pool.
+enum SubjectChoiceKind {
+  COMPULSORY
+  /// The 4th subject: only its points above the scheme's threshold count towards the GPA.
+  OPTIONAL
+
+  @@map("subject_choice_kind")
+}
+
 enum Gender {
   MALE
   FEMALE
@@ -413,7 +422,8 @@ model TemplateSubjectComponent {
   createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  templateSubject TemplateSubject @relation(fields: [templateSubjectId], references: [id], onDelete: Cascade)
+  templateSubject TemplateSubject    @relation(fields: [templateSubjectId], references: [id], onDelete: Cascade)
+  copies          SubjectComponent[]
 
   @@unique([templateSubjectId, key])
   @@map("template_subject_components")
@@ -474,8 +484,9 @@ model User {
   sessions    Session[]
 
   sectionTeachers           SectionTeacher[]
-  attendanceSessionsTaken   AttendanceSession[] @relation("AttendanceTakenBy")
-  attendanceSessionsUpdated AttendanceSession[] @relation("AttendanceUpdatedBy")
+  sectionSubjectTeachers    SectionSubjectTeacher[]
+  attendanceSessionsTaken   AttendanceSession[]     @relation("AttendanceTakenBy")
+  attendanceSessionsUpdated AttendanceSession[]     @relation("AttendanceUpdatedBy")
   holidaysCreated           Holiday[]
   studentImports            StudentImport[]
   staffProfiles             StaffProfile[]
@@ -564,6 +575,12 @@ model Tenant {
   feeMobileAccounts       FeeMobileAccount[]
   feeMobileSubmissions    FeeMobileSubmission[]
   feeMobileSubmissionDues FeeMobileSubmissionDue[]
+
+  subjectComponents      SubjectComponent[]
+  subjectPassGroups      SubjectPassGroup[]
+  sectionSubjectTeachers SectionSubjectTeacher[]
+  studentSubjectChoices  StudentSubjectChoice[]
+  examRooms              ExamRoom[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -779,7 +796,10 @@ model Subject {
   code             String
   nameBn           String   @map("name_bn")
   nameEn           String   @map("name_en")
+  /// In the class's elective pool: taken only when chosen per student (compulsory or as the
+  /// 4th subject, student_subject_choices).
   isOptional       Boolean  @default(false) @map("is_optional")
+  passRule         PassRule @default(PER_COMPONENT) @map("pass_rule")
   sortOrder        Int      @default(0) @map("sort_order")
   sourceTemplateId String?  @map("source_template_id") @db.Uuid
   /// Deactivated instead of deleted once in use; hidden from pickers for new records.
@@ -793,8 +813,14 @@ model Subject {
   sourceTemplate TemplateSubject? @relation(fields: [sourceTemplateId], references: [id], onDelete: SetNull)
 
   attendanceSessions AttendanceSession[]
+  components         SubjectComponent[]
+  passGroups         SubjectPassGroup[]
+  subjectTeachers    SectionSubjectTeacher[]
+  choices            StudentSubjectChoice[]
 
   @@unique([tenantId, id])
+  /// So rows can carry the class level and be checked against a section's class.
+  @@unique([tenantId, id, classLevelId])
   @@unique([tenantId, classLevelId, code])
   @@map("subjects")
 }
@@ -824,8 +850,11 @@ model Section {
 
   teachers           SectionTeacher[]
   attendanceSessions AttendanceSession[]
+  subjectTeachers    SectionSubjectTeacher[]
 
   @@unique([tenantId, id])
+  /// So rows can carry the class level and be checked against a subject's class.
+  @@unique([tenantId, id, classLevelId])
   @@unique([tenantId, academicYearId, classLevelId, name])
   @@index([tenantId, classLevelId])
   @@map("sections")
@@ -970,6 +999,8 @@ model Enrolment {
   classLevel   ClassLevel   @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict)
   section      Section?     @relation(fields: [tenantId, sectionId], references: [tenantId, id], onDelete: Restrict)
   studyGroup   StudyGroup?  @relation(fields: [tenantId, studyGroupId], references: [tenantId, id], onDelete: Restrict)
+
+  subjectChoices StudentSubjectChoice[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, academicYearId, studentId])
@@ -1188,6 +1219,120 @@ model SectionTeacher {
   @@unique([tenantId, sectionId], map: "section_teachers_one_class_teacher", where: raw("is_class_teacher"))
   @@index([tenantId, userId])
   @@map("section_teachers")
+}
+
+// ───────────────────────────── Exams: setup (step 10) ─────────────────────────────
+
+/// A subject's default exam part (CQ 70, MCQ 30, …), copied into each exam that covers it.
+model SubjectComponent {
+  id               String        @id @default(uuid(7)) @db.Uuid
+  tenantId         String        @map("tenant_id") @db.Uuid
+  subjectId        String        @map("subject_id") @db.Uuid
+  key              String
+  kind             ComponentKind
+  nameBn           String        @map("name_bn")
+  nameEn           String        @map("name_en")
+  fullMarks        Int           @map("full_marks")
+  /// Used when the subject's pass rule is PER_COMPONENT; NULL: this part has no pass mark.
+  passMarks        Int?          @map("pass_marks")
+  sortOrder        Int           @default(0) @map("sort_order")
+  sourceTemplateId String?       @map("source_template_id") @db.Uuid
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant         Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  subject        Subject                   @relation(fields: [tenantId, subjectId], references: [tenantId, id], onDelete: Cascade)
+  sourceTemplate TemplateSubjectComponent? @relation(fields: [sourceTemplateId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, subjectId, key])
+  @@map("subject_components")
+}
+
+/// Combined pass mark for one component kind of a subject (pass rule COMBINED): e.g. Bangla
+/// 1st + 2nd paper CQ together need 46 of 140.
+model SubjectPassGroup {
+  id        String        @id @default(uuid(7)) @db.Uuid
+  tenantId  String        @map("tenant_id") @db.Uuid
+  subjectId String        @map("subject_id") @db.Uuid
+  kind      ComponentKind
+  passMarks Int           @map("pass_marks")
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  subject Subject @relation(fields: [tenantId, subjectId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, subjectId, kind])
+  @@map("subject_pass_groups")
+}
+
+/// A teacher who enters marks for one subject in one section. Both keys carry the class level,
+/// so the subject must belong to the section's class.
+model SectionSubjectTeacher {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  sectionId    String   @map("section_id") @db.Uuid
+  subjectId    String   @map("subject_id") @db.Uuid
+  classLevelId String   @map("class_level_id") @db.Uuid
+  /// Global users table: the service checks for an ACTIVE staff membership in this tenant.
+  userId       String   @map("user_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  section Section @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Cascade, onUpdate: Restrict)
+  subject Subject @relation(fields: [tenantId, subjectId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Cascade, onUpdate: Restrict)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sectionId, subjectId, userId])
+  @@index([tenantId, userId])
+  @@map("section_subject_teachers")
+}
+
+/// A student's elective subject for one year (from subjects with is_optional): taken as
+/// compulsory or as the 4th subject. Pool subjects without a choice are not taken.
+model StudentSubjectChoice {
+  id             String            @id @default(uuid(7)) @db.Uuid
+  tenantId       String            @map("tenant_id") @db.Uuid
+  academicYearId String            @map("academic_year_id") @db.Uuid
+  studentId      String            @map("student_id") @db.Uuid
+  subjectId      String            @map("subject_id") @db.Uuid
+  kind           SubjectChoiceKind
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  enrolment Enrolment @relation(fields: [tenantId, academicYearId, studentId], references: [tenantId, academicYearId, studentId], onDelete: Cascade, onUpdate: Restrict)
+  subject   Subject   @relation(fields: [tenantId, subjectId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, academicYearId, studentId, subjectId])
+  @@unique([tenantId, academicYearId, studentId], map: "student_subject_choices_one_optional", where: raw("kind = 'OPTIONAL'::subject_choice_kind"))
+  @@index([tenantId, subjectId])
+  @@map("student_subject_choices")
+}
+
+/// An exam room (the institute's own list, reused by every exam's seat plan).
+model ExamRoom {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  /// Benches front to back × seats across; at most 500 seats.
+  rows      Int
+  cols      Int
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, name])
+  @@map("exam_rooms")
 }
 
 /// One register: a section on a date, for the whole day (period_no 0) or one period.

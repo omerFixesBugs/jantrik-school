@@ -48,6 +48,11 @@ describe('schema safety net', () => {
         'fee_mobile_accounts',
         'fee_mobile_submissions',
         'fee_mobile_submission_dues',
+        'subject_components',
+        'subject_pass_groups',
+        'section_subject_teachers',
+        'student_subject_choices',
+        'exam_rooms',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

@@ -145,6 +145,40 @@ describe('provisionTenant copies the institute type template', () => {
     expect((await subject('PHY', 'CLASS_9')).isOptional).toBe(false);
   });
 
+  it("copies the template's exam parts, combined pass marks and pass rule into subjects", async () => {
+    const tenant = await createTenant(app);
+    const db = tenantClient(app, tenant.id);
+    const ban9 = await db.subject.findFirstOrThrow({
+      where: { code: 'BAN', classLevel: { code: 'CLASS_9' } },
+      include: {
+        components: { orderBy: { sortOrder: 'asc' } },
+        passGroups: { orderBy: { kind: 'asc' } },
+      },
+    });
+    expect(ban9.passRule).toBe('COMBINED');
+    expect(ban9.components.map((c) => [c.key, c.kind, c.fullMarks, c.passMarks])).toEqual([
+      ['P1_CQ', 'CQ', 70, null],
+      ['P1_MCQ', 'MCQ', 30, null],
+      ['P2_CQ', 'CQ', 70, null],
+      ['P2_MCQ', 'MCQ', 30, null],
+    ]);
+    expect(ban9.components.every((c) => c.tenantId === tenant.id)).toBe(true);
+    expect(ban9.passGroups.map((g) => [g.kind, g.passMarks])).toEqual([
+      ['CQ', 46],
+      ['MCQ', 20],
+    ]);
+    const math6 = await db.subject.findFirstOrThrow({
+      where: { code: 'MATH', classLevel: { code: 'CLASS_6' } },
+      include: { components: { orderBy: { sortOrder: 'asc' } }, passGroups: true },
+    });
+    expect(math6.passRule).toBe('PER_COMPONENT');
+    expect(math6.components.map((c) => [c.key, c.fullMarks, c.passMarks])).toEqual([
+      ['CQ', 70, 23],
+      ['MCQ', 30, 10],
+    ]);
+    expect(math6.passGroups).toEqual([]);
+  });
+
   it('uses labels and locale from the type data', async () => {
     const coaching = await createTenant(app, { instituteTypeKey: 'COACHING' });
     const englishVersion = await createTenant(app, { instituteTypeKey: 'NCTB_SCHOOL_EN' });
