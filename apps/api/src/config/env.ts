@@ -1,3 +1,4 @@
+import { isoDateSchema } from '@jantrik/shared';
 import { z } from 'zod';
 
 const positiveInt = (fallback: number) => z.coerce.number().int().positive().default(fallback);
@@ -54,6 +55,12 @@ export const envSchema = z
      * `outbox` pushes them to a Redis list that Playwright reads (e2e). Never in production.
      */
     SMS_PROVIDER: z.enum(['console', 'memory', 'outbox']).default('console'),
+    /**
+     * Tests only: a fixed "today" (YYYY-MM-DD) for every calendar date the API works out (the
+     * end-to-end suite sets it; `todayIn` in @jantrik/shared reads it). Timestamps stay real.
+     * Refused in any other NODE_ENV.
+     */
+    JANTRIK_TEST_TODAY: isoDateSchema.optional(),
 
     // Rate limits. Per-phone / per-identifier limits are the real protection; per-IP limits are
     // generous because many Bangladeshi users share one IP (carrier CGNAT, school Wi-Fi).
@@ -75,6 +82,13 @@ export const envSchema = z
         code: 'custom',
         path: ['DEV_LAN'],
         message: 'DEV_LAN is for NODE_ENV=development only',
+      });
+    }
+    if (env.JANTRIK_TEST_TODAY && env.NODE_ENV !== 'test') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['JANTRIK_TEST_TODAY'],
+        message: 'JANTRIK_TEST_TODAY is for NODE_ENV=test only',
       });
     }
     if (!env.PLATFORM_TOTP_KEY && env.NODE_ENV === 'production') {

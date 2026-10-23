@@ -15,6 +15,15 @@ const required = (name: string): string => {
 export const E2E_REDIS_URL = process.env['REDIS_URL_E2E'] ?? 'redis://localhost:6379/2';
 
 /**
+ * The day the whole suite lives on, so no test depends on the real date or weekday: a Wednesday,
+ * a working day in the demo calendar (Fridays and 21 Feb, 26 Mar, 16 Dec are holidays), inside
+ * the demo year 2026, with the demo's dues owed from August. The seed, the API (NODE_ENV=test)
+ * and these specs read it through `todayIn`; timestamps (sessions, codes) stay real.
+ */
+export const E2E_TODAY = '2026-10-21';
+process.env['JANTRIK_TEST_TODAY'] = E2E_TODAY;
+
+/**
  * The platform login (user and password of DATABASE_PLATFORM_URL) on the e2e database: server,
  * port and database always come from DATABASE_URL_E2E.
  */
@@ -64,6 +73,11 @@ export default defineConfig({
         SMS_PROVIDER: 'outbox',
         // A developer's .env may enable phone testing (dev only); e2e never runs with it.
         DEV_LAN: 'false',
+        // One machine plays every user at test speed: the general request limits (300 a minute
+        // per person, 600 per IP) turned a fast run's owner requests into 429s. Login and code
+        // limits (auth.spec tests them) stay as they are.
+        RATE_LIMIT_USER_PER_MIN: '3000',
+        RATE_LIMIT_IP_PER_MIN: '6000',
         CORS_ORIGINS: 'http://localhost:3000',
       },
     },

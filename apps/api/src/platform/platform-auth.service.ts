@@ -19,6 +19,7 @@ import {
 import {
   normalizeBdPhone,
   toAsciiDigits,
+  todayIn,
   type PlatformAdminInfo,
   type PlatformAuditEntry,
   type PlatformLoginResponse,
@@ -263,6 +264,8 @@ export class PlatformAuthService {
       totpEnabledAt: row.totp_enabled_at?.toISOString() ?? null,
       backupCodesLeft: row.backup_codes_left,
       sessionExpiresAt: row.session_expires_at?.toISOString() ?? null,
+      // The platform works in Bangladesh time (as institutes are created and billed).
+      today: todayIn('Asia/Dhaka'),
     };
   }
 

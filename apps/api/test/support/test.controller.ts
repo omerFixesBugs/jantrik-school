@@ -9,6 +9,8 @@ import {
 } from '@nestjs/common';
 import { RequireModule, Roles } from '../../src/common/decorators.js';
 import { AttendanceService, type SubmitInput } from '../../src/attendance/attendance.service.js';
+import { FeeCollectionService } from '../../src/fees/collection/fee-collection.service.js';
+import { CollectFeeDto } from '../../src/fees/fees.module.js';
 import { SmsService } from '../../src/sms/sms.service.js';
 import { Db } from '../../src/tenancy/db.service.js';
 
@@ -19,6 +21,7 @@ export class TestController {
     private readonly db: Db,
     private readonly sms: SmsService,
     private readonly attendanceService: AttendanceService,
+    private readonly fees: FeeCollectionService,
   ) {}
 
   @Get('students')
@@ -57,6 +60,13 @@ export class TestController {
   async attendanceThenFail(@Body() body: SubmitInput) {
     await this.attendanceService.submit(body);
     throw new BadRequestException('handler failed after submitting attendance');
+  }
+
+  /** Collects a fee (receipt number, SMS) and then fails: nothing may be saved, sent or used up. */
+  @Post('fees-collect-then-fail')
+  async feesCollectThenFail(@Body() body: CollectFeeDto) {
+    await this.fees.collect(body);
+    throw new BadRequestException('handler failed after collecting a fee');
   }
 
   @Post('sms-ok')

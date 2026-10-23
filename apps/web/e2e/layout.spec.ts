@@ -68,6 +68,28 @@ test('staff screens: dashboard, drawer, students, attendance picker', async ({ p
   await expect(page.getByTestId('settings-teachers')).toBeVisible();
   await expectClean(page, 'settings bn');
 
+  // Fees (step 9).
+  await page.goto('/fees');
+  await expect(page.getByTestId('fees-search')).toBeVisible();
+  await expectClean(page, 'fee counter bn');
+  await page.goto('/fees/closing');
+  await expect(page.getByTestId('fees-closing')).toBeVisible();
+  await expectClean(page, 'fee closing bn');
+  await page.goto('/fees/submissions');
+  await expect(page.getByTestId('fees-submissions')).toBeVisible();
+  await expectClean(page, 'fee transfers bn');
+  await page.goto('/fees/reports');
+  await expect(page.getByTestId('fees-reports')).toBeVisible();
+  await expectClean(page, 'fee reports bn');
+  await page.goto('/fees/reminders');
+  await expect(page.getByTestId('fees-reminders')).toBeVisible();
+  await expectClean(page, 'fee reminders bn');
+  for (const tab of ['general', 'heads', 'amounts', 'siblings', 'numbers']) {
+    await page.goto(tab === 'general' ? '/fees/setup' : `/fees/setup/${tab}`);
+    await expect(page.getByTestId('fees-setup')).toBeVisible();
+    await expectClean(page, `fee setup ${tab} bn`);
+  }
+
   await page.goto('/dashboard');
   await english(page);
   await expect(page.getByTestId('module-card-attendance')).toBeVisible();

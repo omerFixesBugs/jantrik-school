@@ -1,5 +1,10 @@
 import { totpCode, totpStep, type PrismaClient } from '@jantrik/db';
-import type { PlatformAdminInfo, PlatformAuditEntry, PlatformLoginResponse } from '@jantrik/shared';
+import {
+  todayIn,
+  type PlatformAdminInfo,
+  type PlatformAuditEntry,
+  type PlatformLoginResponse,
+} from '@jantrik/shared';
 import {
   addMember,
   bearer,
@@ -68,6 +73,8 @@ describe('platform auth', () => {
       .body as PlatformAdminInfo;
     expect(me).toMatchObject({ phone: admin.phone, backupCodesLeft: 10 });
     expect(me.totpEnabledAt).not.toBeNull();
+    // The platform's "today" comes from the server (Asia/Dhaka), never the admin's device.
+    expect(me.today).toBe(todayIn('Asia/Dhaka'));
     // The challenge is single use.
     await platform(h)
       .post('/platform/auth/verify')

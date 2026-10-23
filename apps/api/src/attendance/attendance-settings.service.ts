@@ -135,6 +135,11 @@ export class AttendanceSettingsService {
     return ceiling === null ? own : Math.min(own, ceiling);
   }
 
+  /** The daily SMS cap in force, for other modules sending SMS (it is shared by every purpose). */
+  async smsDailyCap(): Promise<number> {
+    return this.effectiveDailySmsCap((await this.load()).settings);
+  }
+
   /** 2 × active students. */
   private async automaticSmsCap(): Promise<number> {
     return (await this.db.tx.student.count({ where: { status: 'ACTIVE', deletedAt: null } })) * 2;

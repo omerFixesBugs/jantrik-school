@@ -20,16 +20,36 @@ export const isoDateSchema = z
 const dayFormats = new Map<string, Intl.DateTimeFormat>();
 
 /**
+ * Tests only: `JANTRIK_TEST_TODAY=YYYY-MM-DD` fixes "today" in a Node process (the end-to-end
+ * suite runs on one known working day, so no test depends on the real date). Never in production
+ * or a browser; the API also refuses to start with it unless NODE_ENV=test.
+ */
+function fixedToday(): IsoDate | null {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+    ?.env;
+  const value = env?.['JANTRIK_TEST_TODAY'];
+  if (!value || env['NODE_ENV'] === 'production') return null;
+  if (!isoDateSchema.safeParse(value).success) {
+    throw new Error(`JANTRIK_TEST_TODAY must be a calendar date (YYYY-MM-DD), not "${value}"`);
+  }
+  return value;
+}
+
+/**
  * Today's date in a timezone, e.g. `todayIn('Asia/Dhaka')` → '2026-10-18'; or any instant's date
  * there. One formatter per timezone, kept (building one costs far more than formatting).
  */
-export function todayIn(timeZone: string, now: Date = new Date()): IsoDate {
+export function todayIn(timeZone: string, now?: Date): IsoDate {
+  if (!now) {
+    const fixed = fixedToday();
+    if (fixed) return fixed;
+  }
   let format = dayFormats.get(timeZone);
   if (!format) {
     format = new Intl.DateTimeFormat('en-CA', { timeZone });
     dayFormats.set(timeZone, format);
   }
-  return format.format(now);
+  return format.format(now ?? new Date());
 }
 
 /** ISO weekday of a date: 1 = Monday … 7 = Sunday (Friday = 5). */

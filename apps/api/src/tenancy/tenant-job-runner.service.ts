@@ -31,6 +31,7 @@ export class TenantJobRunner {
    */
   run<T>(tenantId: string, fn: () => Promise<T>, opts: { actorUserId?: string } = {}): Promise<T> {
     return this.cls.run(async () => {
+      this.cls.set('jobTenantId', tenantId);
       if (opts.actorUserId) {
         this.context.setPrincipal({ userId: opts.actorUserId, sessionId: 'job', tenantId });
       }

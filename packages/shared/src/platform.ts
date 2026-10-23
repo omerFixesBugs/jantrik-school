@@ -42,6 +42,8 @@ export interface PlatformAdminInfo {
   backupCodesLeft: number;
   /** The session's hard end (8 h after login). */
   sessionExpiresAt: string | null;
+  /** Today in Asia/Dhaka, from the server: the platform pages never use the device's date. */
+  today: IsoDate;
 }
 
 export interface PlatformVerifyResponse {

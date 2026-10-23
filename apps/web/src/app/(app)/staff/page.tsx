@@ -11,7 +11,9 @@ import {
 } from '@jantrik/shared';
 import {
   BookOpenIcon,
+  CircleMinusIcon,
   EllipsisVerticalIcon,
+  HandCoinsIcon,
   PhoneIcon,
   PlusIcon,
   PowerIcon,
@@ -30,6 +32,15 @@ import { AddStaffDialog, RoleChoices, useStaffMutation } from '@/components/staf
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  // Not `Dialog`: that name is this page's open-dialog state type.
+  Dialog as UiDialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +62,7 @@ type Dialog =
   | { kind: 'sections'; member: StaffMember }
   | { kind: 'status'; member: StaffMember }
   | { kind: 'cancel'; member: StaffMember }
+  | { kind: 'feeCollection'; member: StaffMember; give: boolean }
   | null;
 
 /** Staff: who works here, with which roles; add by phone, change roles, deactivate. */
@@ -60,6 +72,8 @@ export default function StaffPage() {
   const { client, session } = useAuth();
   const { data: context } = useMeContext();
   const callerIsOwner = context?.roles.includes('OWNER') ?? false;
+  // Fee collection is a role (ACCOUNTANT); offered in one step only when fees are switched on.
+  const feesOn = context?.modules.includes('FEES') ?? false;
   const staff = useQuery({
     queryKey: ['staff', session?.tenant?.id],
     queryFn: () => client.api<StaffMember[]>('/staff'),
@@ -97,6 +111,11 @@ export default function StaffPage() {
                 onSections={() => setDialog({ kind: 'sections', member: m })}
                 onStatus={() => setDialog({ kind: 'status', member: m })}
                 onCancel={() => setDialog({ kind: 'cancel', member: m })}
+                onFeeCollection={
+                  feesOn
+                    ? (give) => setDialog({ kind: 'feeCollection', member: m, give })
+                    : undefined
+                }
               />
             ))}
           </ul>
@@ -109,6 +128,9 @@ export default function StaffPage() {
       {dialog?.kind === 'sections' && <SectionsDialog member={dialog.member} onClose={close} />}
       {dialog?.kind === 'status' && <StatusDialog member={dialog.member} onClose={close} />}
       {dialog?.kind === 'cancel' && <CancelDialog member={dialog.member} onClose={close} />}
+      {dialog?.kind === 'feeCollection' && (
+        <FeeCollectionDialog member={dialog.member} give={dialog.give} onClose={close} />
+      )}
     </PageGate>
   );
 }
@@ -120,6 +142,7 @@ function StaffCard({
   onSections,
   onStatus,
   onCancel,
+  onFeeCollection,
 }: {
   member: StaffMember;
   callerIsOwner: boolean;
@@ -127,6 +150,8 @@ function StaffCard({
   onSections: () => void;
   onStatus: () => void;
   onCancel: () => void;
+  /** Give (true) or take away (false) fee collection; absent when fees are off. */
+  onFeeCollection?: (give: boolean) => void;
 }) {
   const t = useTranslations('staff');
   const tRoles = useTranslations('roles');
@@ -145,10 +170,21 @@ function StaffCard({
   // Owners are managed by owners only (the API enforces it too).
   const canManage = !m.isSelf && (callerIsOwner || !m.roles.includes('OWNER'));
   const teaches = m.roles.some((r) => TEACHING.includes(r));
+  // OWNER and ADMIN collect fees already. Taking it away must leave another role.
+  const collects = m.roles.includes('ACCOUNTANT');
+  const feeCollection =
+    onFeeCollection &&
+    (member || pending) &&
+    !m.roles.includes('OWNER') &&
+    !m.roles.includes('ADMIN') &&
+    (!collects || m.roles.length > 1)
+      ? { give: !collects }
+      : null;
   return (
     <li
       className={cn('flex min-w-0 gap-3 rounded-lg border p-3', !active && 'bg-muted/40')}
       data-testid="staff-card"
+      data-user-id={m.userId}
     >
       <PersonAvatar name={name} />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -181,6 +217,19 @@ function StaffCard({
                   <ShieldIcon aria-hidden />
                   {t('changeRoles')}
                 </DropdownMenuItem>
+                {feeCollection && (
+                  <DropdownMenuItem
+                    onClick={() => onFeeCollection?.(feeCollection.give)}
+                    data-testid="staff-fee-collection"
+                  >
+                    {feeCollection.give ? (
+                      <HandCoinsIcon aria-hidden />
+                    ) : (
+                      <CircleMinusIcon aria-hidden />
+                    )}
+                    {feeCollection.give ? t('feeCollectionGive') : t('feeCollectionRemove')}
+                  </DropdownMenuItem>
+                )}
                 {!member && !pending && (
                   <DropdownMenuItem onClick={() => reinvite.mutate(undefined)}>
                     <SendIcon aria-hidden />
@@ -284,6 +333,60 @@ function RolesDialog({
         </p>
       )}
     </FormDialog>
+  );
+}
+
+/**
+ * "Give fee collection" (adds ACCOUNTANT, keeps every other role) or "remove fee collection",
+ * confirmed in one step. The full set of roles goes to PUT /staff/:userId/roles.
+ */
+function FeeCollectionDialog({
+  member,
+  give,
+  onClose,
+}: {
+  member: StaffMember;
+  give: boolean;
+  onClose: () => void;
+}) {
+  const t = useTranslations('staff');
+  const locale = useLocale() as Locale;
+  const { client } = useAuth();
+  const name = displayUserName(member, locale);
+  const roles: StaffRole[] = give
+    ? [...member.roles.filter((r) => r !== 'ACCOUNTANT'), 'ACCOUNTANT']
+    : member.roles.filter((r) => r !== 'ACCOUNTANT');
+  const save = useStaffMutation(
+    () => client.api(`/staff/${member.userId}/roles`, { method: 'PUT', json: { roles } }),
+    onClose,
+    give ? t('feeCollectionGiven', { name }) : t('feeCollectionRemoved', { name }),
+  );
+  return (
+    <UiDialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md" data-testid="staff-fee-collection-dialog">
+        <DialogHeader>
+          <DialogTitle>
+            {give ? t('feeCollectionGiveTitle', { name }) : t('feeCollectionRemoveTitle', { name })}
+          </DialogTitle>
+          <DialogDescription>
+            {give ? t('feeCollectionGiveBody') : t('feeCollectionRemoveBody')}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            {t('feeCollectionCancel')}
+          </Button>
+          <Button
+            variant={give ? 'default' : 'destructive'}
+            onClick={() => save.mutate(undefined)}
+            disabled={save.isPending}
+            data-testid="staff-fee-collection-confirm"
+          >
+            {give ? t('feeCollectionGive') : t('feeCollectionRemove')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </UiDialog>
   );
 }
 

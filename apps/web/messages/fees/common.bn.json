@@ -1,0 +1,87 @@
+{
+  "common": {
+    "tabs": {
+      "counter": "আদায়",
+      "submissions": "বিকাশ/নগদ যাচাই",
+      "closing": "দিনের হিসাব",
+      "reports": "রিপোর্ট",
+      "reminders": "রিমাইন্ডার",
+      "setup": "সেটআপ"
+    },
+    "method": {
+      "CASH": "নগদ",
+      "BKASH": "বিকাশ",
+      "NAGAD": "নগদ (মোবাইল)"
+    },
+    "channel": {
+      "COUNTER": "কাউন্টার",
+      "MOBILE_MANUAL": "মোবাইল ব্যাংকিং"
+    },
+    "status": {
+      "ACTIVE": "সক্রিয়",
+      "VOID": "বাতিল",
+      "OPEN": "বকেয়া",
+      "CANCELLED": "বাতিল",
+      "PENDING": "যাচাইয়ের অপেক্ষায়",
+      "VERIFIED": "যাচাই হয়েছে",
+      "REJECTED": "ফেরত",
+      "VOIDED": "বাতিল"
+    },
+    "kind": {
+      "ADMISSION": "ভর্তি",
+      "TUITION": "বেতন",
+      "EXAM": "পরীক্ষা",
+      "SESSION": "সেশন",
+      "OTHER": "অন্যান্য"
+    },
+    "frequency": {
+      "ONE_TIME": "এককালীন",
+      "MONTHLY": "মাসিক",
+      "PER_TERM": "প্রতি সাময়িক",
+      "YEARLY": "বার্ষিক"
+    },
+    "fineType": {
+      "NONE": "জরিমানা নেই",
+      "FLAT": "নির্দিষ্ট জরিমানা",
+      "PER_DAY": "প্রতিদিন জরিমানা"
+    },
+    "period": {
+      "ONCE": "এককালীন",
+      "Y": "বার্ষিক"
+    },
+    "money": {
+      "taka": "৳",
+      "invalid": "সঠিক টাকার অঙ্ক লিখুন (যেমন ১২৫০ বা ১২৫০.৫০)"
+    },
+    "receipt": {
+      "title": "টাকা প্রাপ্তির রসিদ",
+      "number": "রসিদ নং",
+      "date": "তারিখ",
+      "paidOn": "পরিশোধের তারিখ",
+      "student": "শিক্ষার্থী",
+      "id": "আইডি",
+      "class": "শ্রেণি",
+      "section": "শাখা",
+      "roll": "রোল",
+      "head": "খাত",
+      "period": "সময়",
+      "amount": "টাকা",
+      "fine": "জরিমানা",
+      "total": "মোট",
+      "inWords": "কথায়",
+      "method": "মাধ্যম",
+      "trxId": "TrxID",
+      "sender": "প্রেরকের নম্বর",
+      "collectedBy": "গ্রহণকারী",
+      "balanceToday": "আজ পর্যন্ত বাকি",
+      "void": "বাতিল",
+      "voidReason": "বাতিলের কারণ",
+      "voidedBy": "বাতিল করেছেন",
+      "signature": "গ্রহণকারীর স্বাক্ষর",
+      "print": "রসিদ প্রিন্ট",
+      "paper": "কাগজ",
+      "paperA5": "A5",
+      "paper80": "থার্মাল ৮০ মিমি"
+    }
+  }
+}

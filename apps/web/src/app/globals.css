@@ -543,4 +543,49 @@
   .register-off {
     background-image: repeating-linear-gradient(45deg, #ccc 0 1px, transparent 1px 4px);
   }
+  /* Fee receipts (components/fees/receipt.tsx) print on their own page size: named pages leave
+     the A4 landscape register above as it is. Thermal printers may ignore the height; the
+     receipt fits 80 mm by width alone. */
+  @page receipt-a5 {
+    size: A5 portrait;
+    margin: 8mm;
+  }
+  @page receipt-80 {
+    size: 80mm 297mm;
+    margin: 3mm;
+  }
+  /* Only in-flow boxes take a named page, and the first in-flow box decides the first page: on a
+     page with a receipt, everything else leaves the flow, the receipt's ancestors lose their
+     layout, and the receipt itself is in flow (not the absolute .print-area). */
+  body:has(.receipt.print-area) :not(:has(.receipt)):not(.receipt):not(.receipt *) {
+    display: none !important;
+  }
+  body:has(.receipt.print-area) :has(.receipt) {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    transform: none !important;
+  }
+  body:has(.receipt.print-area) .receipt.print-area {
+    position: static;
+  }
+  .receipt[data-paper='a5'] {
+    page: receipt-a5;
+    max-width: none;
+    border: 0;
+  }
+  .receipt[data-paper='80'] {
+    page: receipt-80;
+    width: 74mm;
+    max-width: none;
+    border: 0;
+    padding: 0;
+  }
 }

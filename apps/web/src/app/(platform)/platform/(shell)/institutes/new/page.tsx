@@ -5,7 +5,6 @@ import {
   formatCount,
   instituteSlugSchema,
   normalizeBdPhone,
-  todayIn,
   type IsoDate,
   type PlatformCreateInstituteInput,
   type PlatformInstituteOptions,
@@ -30,6 +29,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
+import { usePlatformToday } from '@/lib/platform/hooks';
 import { platformApi } from '@/lib/platform/platform-api';
 
 interface Form {
@@ -51,13 +51,14 @@ interface Form {
 
 /** Add an institute: it starts in TRIAL, and the owner gets an invitation (no SMS is sent). */
 export default function NewInstitutePage() {
+  const today = usePlatformToday();
   const t = useTranslations('platformInstitutes');
   const tModules = useTranslations('platformInstitutes.modules');
   const locale = useLocale() as Locale;
   const router = useRouter();
   const queryClient = useQueryClient();
   const explain = usePlatformError();
-  const year = todayIn('Asia/Dhaka').slice(0, 4);
+  const year = today.slice(0, 4);
   const [form, setForm] = useState<Form>({
     name: '',
     slug: '',

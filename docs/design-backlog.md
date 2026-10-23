@@ -119,3 +119,15 @@ starting its own. The plan must settle:
   `apps/web/src/components/story-charts.tsx` ("Props must be serializable for components in the
   'use client' entry file"). Harmless today, since only client components pass them; it clears if
   the props are renamed or the charts stop being a client entry file.
+
+## 6. Fees (step 9)
+
+- **The SMS cap is still set on the attendance settings page.** Fee receipts and reminders share
+  the institute's one daily budget with absent SMS, but an institute with FEES and without
+  ATTENDANCE can neither change the cap nor release held SMS. Move the cap (and "send held SMS")
+  to institute-level SMS settings.
+- **Editable fee SMS templates** (receipt, reminder), like the absent SMS template, with a live
+  preview and the SMS count.
+- **Family receipts:** one receipt for several siblings paid together.
+- **Thermal printers:** check the 80 mm receipt on real printers (drivers may ignore the page
+  height; the receipt is designed to fit by width).

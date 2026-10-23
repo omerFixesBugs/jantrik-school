@@ -255,6 +255,42 @@ students.student_code and guardians.phone.
 - they are unusable under tenant RLS
 - results never cross tenants
 
+### Fees (step 9)
+
+Rules: [fees.md](fees.md). Fifteen tenant tables, all with forced RLS and composite keys:
+
+- **Setup:** `fee_settings` (at most 1 per tenant), `fee_heads`, `fee_terms`, `fee_amounts`,
+  `fee_concessions`, `fee_sibling_groups`, `fee_sibling_members`, `fee_mobile_accounts`.
+  Amounts and unused terms may be deleted; heads, concessions, families, members, settings and
+  numbers are kept (no DELETE). Concessions can only be ended and members only removed
+  (column-level UPDATE); a number is never edited, only (de)activated.
+- **Money:** `fee_dues`, `fee_fine_waivers`, `fee_receipt_counters`, `fee_payments`,
+  `fee_payment_allocations`, `fee_mobile_submissions`, `fee_mobile_submission_dues`. No DELETE
+  for any of them.
+  - `fee_dues`: column-level UPDATE (who, head, year, period and due date never change); CHECKs
+    keep the cached totals honest (never more principal paid than the due is worth; cleared only
+    when fully paid). A trigger: dues are created OPEN, a cancelled due never changes, and a due
+    with a live payment on it cannot be cancelled.
+  - `fee_payments`: UPDATE only on the void columns, and a trigger allows only ACTIVE to VOID,
+    once; payments are created ACTIVE. A TrxID is unique per tenant and method among live
+    payments (partial unique index).
+  - `fee_payment_allocations`: a deferred constraint trigger checks at commit that an allocation
+    goes to a live payment and an open due, and that a payment's allocations never exceed it. It
+    locks the payment (FOR UPDATE) and the due (FOR SHARE).
+  - Payment, due, waiver, allocation and submission rows carry `student_id` in their composite
+    keys, so money for one student can never land on another's due; a due's concession must be
+    its own student's, head's and year's, and its term its year's.
+- **Every fee foreign key is `ON UPDATE RESTRICT`:** with CASCADE, changing a parent's key (a
+  term's year) would rewrite fee rows behind their column-level grants.
+- The trigger functions are plain (SECURITY INVOKER) with a pinned `search_path`;
+  `schema-safety.test.ts` checks only definer functions.
+- A CHECK whose expression is NULL passes: every fee CHECK tests nullable columns with
+  `IS [NOT] NULL` first (migration `20261027000100_fees_setup_null_safe_checks` fixed the first
+  ones).
+- A partial index predicate must be declared as Postgres stores it (`= ANY (ARRAY[...])` for an
+  IN list), or `migrate dev` keeps finding drift.
+- Tests: `packages/db/test/fees-*-rls.test.ts`.
+
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
 > **In the API, services never call these.** Every authenticated request already runs inside one

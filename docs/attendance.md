@@ -8,7 +8,9 @@ Module `ATTENDANCE`. API: [`apps/api/src/attendance`](../apps/api/src/attendance
 ## Rules
 
 - **Today** is the server's date in the tenant's timezone (`tenants.timezone`), returned by every
-  attendance endpoint and by `GET /me/context`. Clients never use the device date.
+  attendance endpoint and by `GET /me/context` (the platform pages: `GET /platform/auth/me`).
+  Clients never use the device date. End-to-end tests fix it with `JANTRIK_TEST_TODAY` (see
+  `todayIn` in `packages/shared/src/dates.ts`); timestamps stay real.
 - **Who:** teachers mark only the sections assigned to them (`section_teachers`); OWNER/ADMIN any.
 - **When:** never a future date. Teachers: from `today − edit_window_days` to today. OWNER/ADMIN:
   any past date; outside the window it is audited as `lateEdit: true`.

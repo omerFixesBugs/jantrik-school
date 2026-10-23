@@ -1,5 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
-import { addMonths, todayIn, toBanglaDigits } from '@jantrik/shared';
+import { addDays, addMonths, todayIn, toBanglaDigits } from '@jantrik/shared';
 import { DEMO, otpLoginWithBanglaDigits, totpNow } from './helpers';
 import { findLayoutProblems } from './layout-check';
 
@@ -211,7 +211,7 @@ test.describe.serial('platform sign-in', () => {
     // Part 3: the trial ends (activate), a flat plan billed from two months ago, that month's
     // invoice issued 30 days ago: overdue. A part payment; the owner sees a gentle notice.
     const billedMonth = addMonths(todayIn('Asia/Dhaka').slice(0, 7), -2);
-    const issued = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+    const issued = addDays(todayIn('Asia/Dhaka'), -30);
     await page.getByTestId('activate-institute').click();
     await dialog.getByTestId('status-reason').fill('Trial over');
     await dialog.getByRole('button', { name: 'Activate' }).click();

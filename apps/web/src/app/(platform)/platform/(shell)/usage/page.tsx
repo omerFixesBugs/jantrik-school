@@ -6,7 +6,6 @@ import {
   formatDate,
   formatMonth,
   formatTaka,
-  todayIn,
   type PlatformSmsTotals,
   type PlatformUsage,
   type PlatformUsageInstitute,
@@ -30,6 +29,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
+import { usePlatformToday } from '@/lib/platform/hooks';
 import { platformApi } from '@/lib/platform/platform-api';
 import { cn } from '@/lib/utils';
 
@@ -37,10 +37,11 @@ const PAGE_SIZE = 25;
 
 /** Usage and cost for a month: totals, then institutes by what their SMS cost. Counts only. */
 export default function PlatformUsagePage() {
+  const today = usePlatformToday();
   const t = useTranslations('platformUsage');
   const locale = useLocale() as Locale;
   const explain = usePlatformError();
-  const thisMonth = todayIn('Asia/Dhaka').slice(0, 7);
+  const thisMonth = today.slice(0, 7);
   const [month, setMonth] = useState(thisMonth);
   const [paging, setPaging] = useState({ month, page: 1 });
   const page = paging.month === month ? paging.page : 1;
