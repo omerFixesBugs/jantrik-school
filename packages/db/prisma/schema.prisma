@@ -1483,6 +1483,7 @@ model ExamClass {
   @@unique([tenantId, examId, classLevelId])
   /// So exam subjects can be checked against their exam and class.
   @@unique([tenantId, id, examId, classLevelId])
+  @@index([tenantId, classLevelId])
   @@map("exam_classes")
 }
 
@@ -1523,6 +1524,7 @@ model ExamSubject {
   /// So mark sheets can be checked against their exam and class.
   @@unique([tenantId, id, examId, classLevelId])
   @@index([tenantId, examId])
+  @@index([tenantId, subjectId])
   @@map("exam_subjects")
 }
 
@@ -1607,6 +1609,9 @@ model ExamCandidate {
   /// One student per seat (rows without a seat have NULLs, which never clash).
   @@unique([tenantId, examId, roomId, seatNo])
   @@index([tenantId, examId, sectionId])
+  @@index([tenantId, examId, classLevelId])
+  @@index([tenantId, sectionId])
+  @@index([tenantId, roomId])
   @@index([tenantId, studentId])
   @@map("exam_candidates")
 }

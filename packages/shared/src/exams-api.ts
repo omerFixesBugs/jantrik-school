@@ -522,3 +522,163 @@ export interface AdmitCards {
     routine: { subject: CodedRef; examDate: IsoDate | null; startTime: string | null }[];
   }[];
 }
+
+// ─────────────────────────── Mark sheets ───────────────────────────
+
+export const MARK_SHEET_STATUSES = ['DRAFT', 'SUBMITTED', 'LOCKED'] as const;
+export type MarkSheetStatus = (typeof MARK_SHEET_STATUSES)[number];
+
+/**
+ * One cell as typed: marks (Bangla or ASCII digits, up to 2 decimals), `a`/`অ` for absent, or ''
+ * for not entered. The server parses it with `parseMarks`, as the screen does.
+ */
+const markEntrySchema = z.object({
+  studentId: z.uuid(),
+  key: z.string().trim().min(1).max(20),
+  value: z.string().max(12),
+});
+
+const entriesSchema = z
+  .array(markEntrySchema)
+  .max(6000)
+  .refine(
+    (es) => new Set(es.map((e) => `${e.studentId}:${e.key}`)).size === es.length,
+    'Each cell once',
+  );
+
+export const markSheetQuerySchema = z.object({
+  examSubjectId: z.uuid(),
+  sectionId: z.uuid(),
+});
+
+/**
+ * PUT /exams/sheets: the whole sheet as the teacher has it (every student, every part). SAVE keeps
+ * it a draft; SUBMIT needs every cell filled (marks or absent). `submissionId` is new for every
+ * change: a retry of the same one is answered with the saved state; `baseVersion` is the version
+ * the client started from (0: no sheet yet).
+ */
+export const saveMarkSheetSchema = z.object({
+  examSubjectId: z.uuid(),
+  sectionId: z.uuid(),
+  submissionId: z.uuid(),
+  baseVersion: z.number().int().min(0),
+  action: z.enum(['SAVE', 'SUBMIT']),
+  entries: entriesSchema,
+});
+export type SaveMarkSheetInput = z.input<typeof saveMarkSheetSchema>;
+
+const reasonSchema = z.string().trim().min(3).max(500);
+
+/** POST /exams/sheets/:id/return: back to the teacher, with a note they see. */
+export const returnMarkSheetSchema = z.object({ note: reasonSchema });
+
+/** POST /exams/sheets/:id/unlock: before results are published only. */
+export const unlockMarkSheetSchema = z.object({ reason: reasonSchema });
+
+/** PUT /exams/sheets/:id/corrections (OWNER/ADMIN, locked sheets): only the changed cells. */
+export const correctMarksSchema = z.object({
+  baseVersion: z.number().int().min(0),
+  reason: reasonSchema,
+  entries: entriesSchema.refine((es) => es.length > 0, 'At least one change'),
+});
+export type CorrectMarksInput = z.input<typeof correctMarksSchema>;
+
+export interface MarkCell {
+  scoreH: number | null;
+  absent: boolean;
+}
+
+export interface MarkSheetMeta {
+  id: string | null;
+  status: MarkSheetStatus;
+  version: number;
+  returnNote: string | null;
+  updatedAt: string | null;
+  updatedBy: PersonRef | null;
+  submittedAt: string | null;
+  submittedBy: PersonRef | null;
+  lockedAt: string | null;
+  lockedBy: PersonRef | null;
+}
+
+export interface MarkSheetView {
+  exam: {
+    id: string;
+    nameBn: string;
+    nameEn: string;
+    status: ExamStatus;
+    resultMode: ExamResultMode;
+  };
+  examSubject: ExamSubjectView;
+  section: ExamSectionRef;
+  sheet: MarkSheetMeta;
+  /** The class's grading (for the live grade preview); null in MARKS mode. */
+  grading: { bands: GradeBandView[]; roundingMode: RoundingMode } | null;
+  /**
+   * TEACHER: may save and submit. ADMIN: the same, any sheet. CORRECTION: locked, admins correct
+   * with a reason. READ_ONLY: locked (teachers) or the exam is archived.
+   */
+  mode: 'TEACHER' | 'ADMIN' | 'CORRECTION' | 'READ_ONLY';
+  /** Students who sit this subject in this section, by roll (no guardian details). */
+  students: {
+    studentId: string;
+    studentCode: string;
+    nameBn: string | null;
+    nameEn: string | null;
+    roll: number | null;
+    /** By component key; a missing key is not entered. */
+    marks: Record<string, MarkCell>;
+  }[];
+}
+
+export interface SaveMarkSheetResult extends MarkSheetView {
+  /** This exact submissionId was already saved: nothing changed. */
+  replayed: boolean;
+}
+
+/** GET /exams/my-sheets: the sheets assigned to the caller in open exams. */
+export interface MySheet {
+  exam: { id: string; nameBn: string; nameEn: string; kind: ExamKind; endsOn: IsoDate };
+  examSubjectId: string;
+  subject: CodedRef;
+  section: ExamSectionRef;
+  status: MarkSheetStatus;
+  /** Students with every part entered, of `total`. */
+  entered: number;
+  total: number;
+  returnNote: string | null;
+}
+
+/** GET /exams/:id/sheets (OWNER/ADMIN): every sheet of the exam, class by class. */
+export interface ExamSheetsGrid {
+  classes: {
+    examClassId: string;
+    classLevel: CodedRef;
+    isPublished: boolean;
+    sections: { id: string; name: string }[];
+    subjects: { examSubjectId: string; subject: CodedRef }[];
+    cells: {
+      examSubjectId: string;
+      sectionId: string;
+      sheetId: string | null;
+      status: MarkSheetStatus;
+      entered: number;
+      total: number;
+      teachers: PersonRef[];
+    }[];
+  }[];
+}
+
+export interface LockAllResult {
+  locked: number;
+  /** Sheets still being entered (not submitted), left as they are. */
+  notSubmitted: number;
+}
+
+export interface MarkSheetHistoryEntry {
+  at: string;
+  by: PersonRef | null;
+  action: 'SAVE' | 'SUBMIT' | 'RETURN' | 'LOCK' | 'UNLOCK' | 'CORRECTION';
+  reason: string | null;
+  changes: { studentId: string; key: string; from: MarkCell | null; to: MarkCell }[];
+}

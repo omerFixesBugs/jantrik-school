@@ -268,6 +268,28 @@ describe('mark sheets and marks: tenant isolation, history and integrity', () =>
     );
   });
 
+  it("a part's full marks never drop below a score already given; candidates keep their keys", async () => {
+    await inA((tx) => tx.examMark.update({ where: { id: a.markId }, data: { scoreH: 6000 } }));
+    await expect(
+      inA((tx) =>
+        tx.examSubjectComponent.update({ where: { id: a.esA.cq }, data: { fullMarks: 50 } }),
+      ),
+    ).rejects.toThrow(/exam_components_full_covers_marks/);
+    // Raising it, or lowering it while every score still fits, is fine.
+    await inA((tx) =>
+      tx.examSubjectComponent.update({ where: { id: a.esA.cq }, data: { fullMarks: 60 } }),
+    );
+    for (const sql of [
+      `UPDATE exam_candidates SET student_id = '${a.outsiderId}'`,
+      `UPDATE exam_candidates SET exam_id = '${a.examId}'`,
+    ]) {
+      await expect(inA((tx) => tx.$executeRawUnsafe(sql))).rejects.toThrow(/permission denied/i);
+    }
+    await expect(
+      inA((tx) => tx.$executeRawUnsafe(`UPDATE exams SET merit_order = NULL`)),
+    ).rejects.toThrow(/exams_merit_order|null value/i);
+  });
+
   it('a submitted or locked sheet records who and when', async () => {
     await expect(
       inA((tx) =>

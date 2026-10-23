@@ -15,6 +15,17 @@ import {
 import {
   admitCardsQuerySchema,
   allocateSeatsSchema,
+  correctMarksSchema,
+  markSheetQuerySchema,
+  returnMarkSheetSchema,
+  saveMarkSheetSchema,
+  unlockMarkSheetSchema,
+  type ExamSheetsGrid,
+  type LockAllResult,
+  type MarkSheetHistoryEntry,
+  type MarkSheetView,
+  type MySheet,
+  type SaveMarkSheetResult,
   createExamSchema,
   examCandidatesQuerySchema,
   examClassSubjectsSchema,
@@ -48,6 +59,8 @@ import {
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import { ExamAccessService } from './exam-access.service.js';
+import { ExamRosterService } from './marks/exam-roster.service.js';
+import { MarkSheetService } from './marks/mark-sheet.service.js';
 import { SeatPlanService } from './seats/seat-plan.service.js';
 import { ExamSetupService } from './setup/exam-setup.service.js';
 import { ExamStaffService } from './setup/exam-staff.service.js';
@@ -69,6 +82,11 @@ class SyncCandidatesDto extends zodDto(syncCandidatesSchema) {}
 class AllocateSeatsDto extends zodDto(allocateSeatsSchema) {}
 class AdmitCardsQueryDto extends zodDto(admitCardsQuerySchema) {}
 class ExamCandidatesQueryDto extends zodDto(examCandidatesQuerySchema) {}
+class MarkSheetQueryDto extends zodDto(markSheetQuerySchema) {}
+export class SaveMarkSheetDto extends zodDto(saveMarkSheetSchema) {}
+class ReturnMarkSheetDto extends zodDto(returnMarkSheetSchema) {}
+class UnlockMarkSheetDto extends zodDto(unlockMarkSheetSchema) {}
+class CorrectMarksDto extends zodDto(correctMarksSchema) {}
 
 const Id = (name = 'id') => Param(name, ParseUUIDPipe);
 
@@ -156,6 +174,79 @@ export class ExamSetupController {
   @Put('grading/:id')
   saveGradingRules(@Id() id: string, @Body() dto: GradingRulesDto): Promise<GradingSchemeView> {
     return this.setup.saveGradingRules(id, dto);
+  }
+}
+
+/**
+ * Marks entry: subject teachers for their own subject and section, OWNER/ADMIN for any (the
+ * service checks the assignment).
+ */
+@Controller('exams')
+@RequireModule('EXAMS')
+@Roles('OWNER', 'ADMIN', 'TEACHER')
+export class MarkSheetController {
+  constructor(private readonly sheets: MarkSheetService) {}
+
+  @Get('my-sheets')
+  mySheets(): Promise<MySheet[]> {
+    return this.sheets.mySheets();
+  }
+
+  @Get('sheets')
+  sheet(@Query() query: MarkSheetQueryDto): Promise<MarkSheetView> {
+    return this.sheets.sheet(query.examSubjectId, query.sectionId);
+  }
+
+  @Put('sheets')
+  save(@Body() dto: SaveMarkSheetDto): Promise<SaveMarkSheetResult> {
+    return this.sheets.save(dto);
+  }
+}
+
+/** Marks, the office's side (OWNER/ADMIN): return, lock, unlock, corrections, history, overview. */
+@Controller('exams')
+@RequireModule('EXAMS')
+@Roles('OWNER', 'ADMIN')
+export class MarkSheetAdminController {
+  constructor(private readonly sheets: MarkSheetService) {}
+
+  @Post('sheets/:id/return')
+  @HttpCode(200)
+  returnSheet(@Id() id: string, @Body() dto: ReturnMarkSheetDto): Promise<MarkSheetView> {
+    return this.sheets.returnSheet(id, dto.note);
+  }
+
+  @Post('sheets/:id/lock')
+  @HttpCode(200)
+  lock(@Id() id: string): Promise<MarkSheetView> {
+    return this.sheets.lock(id);
+  }
+
+  @Post('sheets/:id/unlock')
+  @HttpCode(200)
+  unlock(@Id() id: string, @Body() dto: UnlockMarkSheetDto): Promise<MarkSheetView> {
+    return this.sheets.unlock(id, dto.reason);
+  }
+
+  @Put('sheets/:id/corrections')
+  correct(@Id() id: string, @Body() dto: CorrectMarksDto): Promise<MarkSheetView> {
+    return this.sheets.correct(id, dto);
+  }
+
+  @Get('sheets/:id/history')
+  history(@Id() id: string): Promise<MarkSheetHistoryEntry[]> {
+    return this.sheets.history(id);
+  }
+
+  @Get(':id/sheets')
+  grid(@Id() id: string): Promise<ExamSheetsGrid> {
+    return this.sheets.grid(id);
+  }
+
+  @Post(':id/classes/:examClassId/lock-all')
+  @HttpCode(200)
+  lockAll(@Id() id: string, @Id('examClassId') examClassId: string): Promise<LockAllResult> {
+    return this.sheets.lockAll(id, examClassId);
   }
 }
 
@@ -282,9 +373,25 @@ export class ExamsAdminController {
 }
 
 @Module({
-  // Static setup routes (exams/setup/…, exams/rooms, exams/grading, exams/staff) are declared
-  // before exams/:id so they are never taken for an exam id.
-  controllers: [ExamSetupController, ExamsReadController, ExamsAdminController],
-  providers: [ExamSetupService, ExamStaffService, ExamAccessService, ExamService, SeatPlanService],
+  // Static routes (exams/setup/…, rooms, grading, staff, my-sheets, sheets) are declared before
+  // exams/:id so they are never taken for an exam id.
+  controllers: [
+    ExamSetupController,
+    MarkSheetController,
+    MarkSheetAdminController,
+    ExamsReadController,
+    ExamsAdminController,
+  ],
+  providers: [
+    ExamSetupService,
+    ExamStaffService,
+    ExamAccessService,
+    ExamService,
+    SeatPlanService,
+    ExamRosterService,
+    MarkSheetService,
+  ],
+  // MarkSheetService: test-only routes (rollback checks) inject it.
+  exports: [MarkSheetService],
 })
 export class ExamsModule {}

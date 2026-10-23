@@ -269,8 +269,14 @@ export class ExamService {
       select: { id: true, subjectId: true },
     });
     const dropped = current.filter((c) => !subjectIds.includes(c.subjectId)).map((c) => c.id);
-    // Marks reference exam subjects with RESTRICT: a subject with marks stays (409 below).
-    if (dropped.length > 0) await tx.examSubject.deleteMany({ where: { id: { in: dropped } } });
+    if (dropped.length > 0) {
+      const marked = await tx.examMark.count({ where: { examSubjectId: { in: dropped } } });
+      const sheets = await tx.examMarkSheet.count({ where: { examSubjectId: { in: dropped } } });
+      if (marked + sheets > 0) {
+        throw apiError(409, 'MARKS_EXIST', 'A subject with marks cannot be dropped from the exam');
+      }
+      await tx.examSubject.deleteMany({ where: { id: { in: dropped } } });
+    }
     const added = subjectIds.filter((sid) => !current.some((c) => c.subjectId === sid));
     await this.copySubjects(examClass, added, current.length);
     for (const [i, subjectId] of subjectIds.entries()) {
@@ -299,6 +305,10 @@ export class ExamService {
     const exam = await this.lockExam(id);
     if (exam.status === 'ARCHIVED') throw apiError(409, 'ARCHIVED', 'The exam is archived');
     const before = await this.subjectRow(id, examSubjectId);
+    // Sheet writes hold the exam row FOR SHARE, so no mark lands between this check and the edit.
+    if ((await tx.examMark.count({ where: { examSubjectId } })) > 0) {
+      throw apiError(409, 'MARKS_EXIST', 'Marks are already entered for this subject');
+    }
     const tenantId = this.tenantId;
     await tx.examSubjectComponent.deleteMany({ where: { examSubjectId } });
     await tx.examSubjectPassGroup.deleteMany({ where: { examSubjectId } });
