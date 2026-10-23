@@ -46,6 +46,7 @@ import { zodDto } from '../common/zod.js';
 import { AttendanceAdminService } from './attendance-admin.service.js';
 import { AttendanceReportsService } from './attendance-reports.service.js';
 import { AttendanceSettingsService } from './attendance-settings.service.js';
+import { AttendanceStatsService } from './attendance-stats.service.js';
 import { AttendanceService } from './attendance.service.js';
 import { StudentsModule } from '../students/students.module.js';
 
@@ -239,8 +240,10 @@ export class ChildAttendanceController {
     AttendanceSettingsService,
     AttendanceAdminService,
     AttendanceReportsService,
+    AttendanceStatsService,
   ],
   // AttendanceSettingsService: the shared daily SMS cap (smsDailyCap) for the fees module.
-  exports: [AttendanceService, AttendanceSettingsService],
+  // AttendanceStatsService: present % per student for exam report cards.
+  exports: [AttendanceService, AttendanceSettingsService, AttendanceStatsService],
 })
 export class AttendanceModule {}
