@@ -299,15 +299,6 @@ export function MarkEntry({
                           error && 'border-destructive',
                         )}
                       />
-                      {error && (
-                        <span
-                          id={`mark-${k}-error`}
-                          className="text-destructive text-xs"
-                          role="alert"
-                        >
-                          {error}
-                        </span>
-                      )}
                     </div>
                   );
                 })}
@@ -326,6 +317,22 @@ export function MarkEntry({
                   </Button>
                 )}
               </div>
+              {/* Errors on a line of their own: the 6-rem field column is too narrow to read them. */}
+              {shown.map((c) => {
+                const parsed = controller.parsed(st.id, c.key);
+                if (parsed.kind !== 'invalid') return null;
+                return (
+                  <p
+                    key={c.key}
+                    id={`mark-${cellKey(st.id, c.key)}-error`}
+                    className="text-destructive basis-full text-sm"
+                    role="alert"
+                  >
+                    {shown.length > 1 && `${displayName(c.nameBn, c.nameEn, locale)}: `}
+                    {t(`invalid${parsed.reason}`, { full: formatCount(c.fullMarks, locale) })}
+                  </p>
+                );
+              })}
             </li>
           );
         })}

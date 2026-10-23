@@ -11,6 +11,16 @@ import type { TenantTx } from '../tenancy/context.js';
 const date = (iso: string) => new Date(`${iso}T00:00:00Z`);
 const phone = (raw: string) => normalizeBdPhone(raw)!;
 
+/** The routine's nth day from the exam's first, never a Friday (the demo's weekly holiday). */
+function routineDay(startsOn: string, nth: number): Date {
+  const d = date(startsOn);
+  for (let left = nth; ; d.setUTCDate(d.getUTCDate() + 1)) {
+    if (d.getUTCDay() === 5) continue;
+    if (left === 0) return d;
+    left -= 1;
+  }
+}
+
 export interface ExamSeedContext {
   tenantId: string;
   userIdByPhone: Map<string, string>;
@@ -342,8 +352,8 @@ async function createExam(
           isElective: s.isOptional,
           passRule: s.passRule,
           sortOrder: order,
-          examDate: date(def.startsOn),
-          startTime: '10:00',
+          examDate: routineDay(def.startsOn, Math.floor(order / 2)),
+          startTime: order % 2 === 0 ? '10:00' : '14:00',
         },
       });
       const components: { id: string; key: string; fullMarks: number }[] = [];
