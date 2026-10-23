@@ -408,7 +408,12 @@ export class ExamResultsService {
     if (!first) throw new NotFoundException('No published results');
     await this.assertSectionReader(caller, first.sectionId);
     if (filter.sectionId && filter.sectionId !== first.sectionId) throw new NotFoundException();
-    return this.buildCards(first.examClassId, where, { asGuardian: false });
+    // Only the section just checked (the filters already imply it; this keeps it so if they change).
+    return this.buildCards(
+      first.examClassId,
+      { ...where, examClassId: first.examClassId, sectionId: first.sectionId },
+      { asGuardian: false },
+    );
   }
 
   /** A guardian's own child's published report card (the caller is checked by the caller). */
