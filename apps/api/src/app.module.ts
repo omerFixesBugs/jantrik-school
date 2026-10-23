@@ -7,6 +7,7 @@ import { AppearanceModule } from './appearance/appearance.module.js';
 import { AttendanceModule } from './attendance/attendance.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { AuthModule } from './auth/auth.module.js';
+import { ExamsModule } from './exams/exams.module.js';
 import { FeesModule } from './fees/fees.module.js';
 import {
   JwtAuthGuard,
@@ -65,6 +66,7 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     ImportsModule,
     AttendanceModule,
     FeesModule,
+    ExamsModule,
     PlatformModule,
   ],
   providers: [
