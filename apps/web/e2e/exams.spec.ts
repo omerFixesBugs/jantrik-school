@@ -5,6 +5,7 @@ import {
   type ExamListItem,
   type GuardianChild,
   type SetupSection,
+  type StudentsPage,
 } from '@jantrik/shared';
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { findLayoutProblems } from './layout-check';
@@ -96,6 +97,7 @@ async function annualFor(classCode: string, subjectCode: string, otherCode: stri
     subjectId: subjectId(subjectCode),
     otherSubjectId: otherCode ? subjectId(otherCode) : null,
     halfClass9: halfDetail.classes.find((c) => c.classLevel.code === 'CLASS_9')!.id,
+    tahmidId: (await api<StudentsPage>(owner, '/students?q=SHS-2026-0002')).items[0]!.id,
   };
 }
 
@@ -108,14 +110,14 @@ for (const c of CASES) {
     test.setTimeout(240_000);
     const ids = await annualFor(c.classCode, c.subjectCode, c.otherSubjectCode);
 
-    // Before publishing, the annual exam is nowhere in a guardian's results (checked once).
-    let children: GuardianChild[] = [];
+    // Before publishing, the annual exam is nowhere in a 6 ক guardian's results (checked once;
+    // another family's guardian, so Tasnim's parents keep their OTP codes for the specs that log
+    // them in).
     if (c.lang === 'bn') {
-      const father = await apiOtpLogin(DEMO.shaplaGuardian);
-      children = await api<GuardianChild[]>(father, '/me/children');
-      for (const child of children) {
+      const other = await apiOtpLogin(DEMO.shaplaGuardian3);
+      for (const child of await api<GuardianChild[]>(other, '/me/children')) {
         const results = await api<{ exam: { kind: string } }[]>(
-          father,
+          other,
           `/me/children/${child.id}/results`,
         );
         expect(results.map((r) => r.exam.kind)).not.toContain('ANNUAL');
@@ -289,13 +291,12 @@ for (const c of CASES) {
 
     // Someone else's child: not found, never the card.
     if (c.lang === 'bn') {
-      const tahmid = children.find((x) => x.studentCode === 'SHS-2026-0002')!;
-      await guardian.goto(`/children/${tahmid.id}/results/${ids.halfClass9}`);
+      await guardian.goto(`/children/${ids.tahmidId}/results/${ids.halfClass9}`);
       await expect(guardian.getByTestId('child-results-not-found')).toBeVisible();
     } else {
-      const mother = await apiOtpLogin(DEMO.shaplaGuardian2);
+      const other = await apiOtpLogin(DEMO.shaplaGuardian3);
       const res = await fetch(`${API_URL}/me/children/${childId}/results/${examClassId}`, {
-        headers: { Authorization: `Bearer ${mother}` },
+        headers: { Authorization: `Bearer ${other}` },
       });
       expect(res.status).toBe(404);
     }

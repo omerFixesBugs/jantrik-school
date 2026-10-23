@@ -17,6 +17,9 @@ export const DEMO = {
   shaplaGuardian: '01811000101',
   // Tasnim's mother (OTP only): a second guardian, so specs don't share one OTP cooldown.
   shaplaGuardian2: '01811000102',
+  // Arif's guardian (6 ক, roll 2), for checks that need "a guardian of another family": keeps the
+  // specs inside the OTP limit of each phone (5 codes per 15 minutes).
+  shaplaGuardian3: '01811000702',
   // Platform admin (Jantrik staff, /platform): password + authenticator app; enrols on first login.
   platformAdmin: '01700000001',
 };

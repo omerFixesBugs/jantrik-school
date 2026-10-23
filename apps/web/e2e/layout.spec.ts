@@ -197,7 +197,7 @@ test('exam screens: list, an exam, a locked sheet, setup, results, guardian resu
 });
 
 test('guardian results: the list and a report card', async ({ page }) => {
-  await otpLoginWithBanglaDigits(page, DEMO.shaplaGuardian2);
+  await otpLoginWithBanglaDigits(page, DEMO.shaplaGuardian3);
   await page.getByTestId('child-results-open').first().click();
   await page.getByTestId('child-result').first().click();
   await expect(page.getByTestId('report-card')).toBeVisible();
