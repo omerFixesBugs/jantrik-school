@@ -41,6 +41,9 @@ test('login: both tabs and the code step, bn and en', async ({ page }) => {
 });
 
 test('staff screens: dashboard, drawer, students, attendance picker', async ({ page }) => {
+  // About twenty screens, each scrolled through and checked: past the default 30 s since the
+  // fee pages and the exams card (it ran at 31–32 s).
+  test.setTimeout(60_000);
   await passwordLogin(page, DEMO.shaplaOwner);
   await expect(page.getByTestId('module-card-attendance')).toBeVisible();
   await expectClean(page, 'dashboard bn');
