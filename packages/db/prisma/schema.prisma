@@ -168,6 +168,16 @@ enum ExamCandidateStatus {
   @@map("exam_candidate_status")
 }
 
+/// DRAFT (being entered; teachers may edit) → SUBMITTED (complete; still editable until locked)
+/// → LOCKED (by an admin; only OWNER/ADMIN corrections, with a reason).
+enum MarkSheetStatus {
+  DRAFT
+  SUBMITTED
+  LOCKED
+
+  @@map("mark_sheet_status")
+}
+
 enum Gender {
   MALE
   FEMALE
@@ -528,12 +538,17 @@ model User {
   auditLogs   AuditLog[]
   sessions    Session[]
 
-  sectionTeachers           SectionTeacher[]
-  sectionSubjectTeachers    SectionSubjectTeacher[]
-  examClassesPublished      ExamClass[]             @relation("ExamClassPublishedBy")
-  examRemarksWritten        ExamCandidate[]         @relation("ExamCandidateRemarksBy")
-  attendanceSessionsTaken   AttendanceSession[]     @relation("AttendanceTakenBy")
-  attendanceSessionsUpdated AttendanceSession[]     @relation("AttendanceUpdatedBy")
+  sectionTeachers        SectionTeacher[]
+  sectionSubjectTeachers SectionSubjectTeacher[]
+  examClassesPublished   ExamClass[]             @relation("ExamClassPublishedBy")
+  examRemarksWritten     ExamCandidate[]         @relation("ExamCandidateRemarksBy")
+  examSheetsUpdated      ExamMarkSheet[]         @relation("ExamSheetUpdatedBy")
+  examSheetsSubmitted    ExamMarkSheet[]         @relation("ExamSheetSubmittedBy")
+  examSheetsLocked       ExamMarkSheet[]         @relation("ExamSheetLockedBy")
+  examMarksUpdated       ExamMark[]              @relation("ExamMarkUpdatedBy")
+
+  attendanceSessionsTaken   AttendanceSession[] @relation("AttendanceTakenBy")
+  attendanceSessionsUpdated AttendanceSession[] @relation("AttendanceUpdatedBy")
   holidaysCreated           Holiday[]
   studentImports            StudentImport[]
   staffProfiles             StaffProfile[]
@@ -634,6 +649,8 @@ model Tenant {
   examSubjectComponents  ExamSubjectComponent[]
   examSubjectPassGroups  ExamSubjectPassGroup[]
   examCandidates         ExamCandidate[]
+  examMarkSheets         ExamMarkSheet[]
+  examMarks              ExamMark[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -910,6 +927,7 @@ model Section {
   attendanceSessions AttendanceSession[]
   subjectTeachers    SectionSubjectTeacher[]
   examCandidates     ExamCandidate[]
+  examMarkSheets     ExamMarkSheet[]
 
   @@unique([tenantId, id])
   /// So rows can carry the class level and be checked against a subject's class.
@@ -1495,11 +1513,15 @@ model ExamSubject {
 
   components ExamSubjectComponent[]
   passGroups ExamSubjectPassGroup[]
+  sheets     ExamMarkSheet[]
+  marks      ExamMark[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, examClassId, subjectId])
   /// So marks can be checked against their exam.
   @@unique([tenantId, id, examId])
+  /// So mark sheets can be checked against their exam and class.
+  @@unique([tenantId, id, examId, classLevelId])
   @@index([tenantId, examId])
   @@map("exam_subjects")
 }
@@ -1521,6 +1543,8 @@ model ExamSubjectComponent {
 
   tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   examSubject ExamSubject @relation(fields: [tenantId, examSubjectId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  marks ExamMark[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, examSubjectId, key])
@@ -1576,6 +1600,8 @@ model ExamCandidate {
   room       ExamRoom?   @relation(fields: [tenantId, roomId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   remarksBy  User?       @relation("ExamCandidateRemarksBy", fields: [remarksById], references: [id], onDelete: SetNull)
 
+  marks ExamMark[]
+
   @@unique([tenantId, id])
   @@unique([tenantId, examId, studentId])
   /// One student per seat (rows without a seat have NULLs, which never clash).
@@ -1583,6 +1609,75 @@ model ExamCandidate {
   @@index([tenantId, examId, sectionId])
   @@index([tenantId, studentId])
   @@map("exam_candidates")
+}
+
+// ───────────────────────────── Exams: marks (step 10) ─────────────────────────────
+
+/// One subject's marks for one section: its state, and the version used for safe saving (like an
+/// attendance register). Marks themselves belong to the student (exam_marks), so they follow a
+/// transfer; the sheet of the student's current section governs them.
+model ExamMarkSheet {
+  id               String          @id @default(uuid(7)) @db.Uuid
+  tenantId         String          @map("tenant_id") @db.Uuid
+  examId           String          @map("exam_id") @db.Uuid
+  examSubjectId    String          @map("exam_subject_id") @db.Uuid
+  classLevelId     String          @map("class_level_id") @db.Uuid
+  sectionId        String          @map("section_id") @db.Uuid
+  status           MarkSheetStatus @default(DRAFT)
+  /// Bumped on every change; a save from an older version gets 409 VERSION_CONFLICT.
+  version          Int             @default(0)
+  /// The client's id for its last save (a retry of it is answered with the saved state).
+  lastSubmissionId String?         @map("last_submission_id") @db.Uuid
+  /// Why an admin returned the sheet to its teacher (shown to them).
+  returnNote       String?         @map("return_note")
+  updatedById      String?         @map("updated_by_id") @db.Uuid
+  submittedById    String?         @map("submitted_by_id") @db.Uuid
+  submittedAt      DateTime?       @map("submitted_at") @db.Timestamptz(3)
+  lockedById       String?         @map("locked_by_id") @db.Uuid
+  lockedAt         DateTime?       @map("locked_at") @db.Timestamptz(3)
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  examSubject ExamSubject @relation(fields: [tenantId, examSubjectId, examId, classLevelId], references: [tenantId, id, examId, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+  section     Section     @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+  updatedBy   User?       @relation("ExamSheetUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  submittedBy User?       @relation("ExamSheetSubmittedBy", fields: [submittedById], references: [id], onDelete: SetNull)
+  lockedBy    User?       @relation("ExamSheetLockedBy", fields: [lockedById], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, examSubjectId, sectionId])
+  @@index([tenantId, examId])
+  @@index([tenantId, sectionId])
+  @@map("exam_mark_sheets")
+}
+
+/// A student's marks in one part (integer hundredths: 56.5 → 5650), or absent. No row, or neither
+/// marks nor absent, means not entered. History: never deleted; only the score changes.
+model ExamMark {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  examId        String   @map("exam_id") @db.Uuid
+  examSubjectId String   @map("exam_subject_id") @db.Uuid
+  componentId   String   @map("component_id") @db.Uuid
+  studentId     String   @map("student_id") @db.Uuid
+  scoreH        Int?     @map("score_h")
+  absent        Boolean  @default(false)
+  updatedById   String?  @map("updated_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  examSubject ExamSubject          @relation(fields: [tenantId, examSubjectId, examId], references: [tenantId, id, examId], onDelete: Restrict, onUpdate: Restrict)
+  component   ExamSubjectComponent @relation(fields: [tenantId, componentId, examSubjectId], references: [tenantId, id, examSubjectId], onDelete: Restrict, onUpdate: Restrict)
+  candidate   ExamCandidate        @relation(fields: [tenantId, examId, studentId], references: [tenantId, examId, studentId], onDelete: Restrict, onUpdate: Restrict)
+  updatedBy   User?                @relation("ExamMarkUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, componentId, studentId])
+  @@index([tenantId, examSubjectId, studentId])
+  @@index([tenantId, examId, studentId])
+  @@map("exam_marks")
 }
 
 /// One register: a section on a date, for the whole day (period_no 0) or one period.

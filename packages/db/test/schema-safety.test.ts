@@ -59,6 +59,8 @@ describe('schema safety net', () => {
         'exam_subject_components',
         'exam_subject_pass_groups',
         'exam_candidates',
+        'exam_mark_sheets',
+        'exam_marks',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
