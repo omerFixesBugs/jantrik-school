@@ -85,6 +85,35 @@ enum RoundingMode {
   @@map("rounding_mode")
 }
 
+/// How a GPA is cut to the decimals it is shown with.
+enum GpaRounding {
+  TRUNCATE
+  ROUND_HALF_UP
+
+  @@map("gpa_rounding")
+}
+
+/// How a subject is passed: each component on its own mark, or components of the same kind summed
+/// across papers (Bangla 1st + 2nd paper CQ) against one combined mark.
+enum PassRule {
+  PER_COMPONENT
+  COMBINED
+
+  @@map("pass_rule")
+}
+
+/// The kind of an exam part (papers of one subject share kinds: P1_CQ and P2_CQ are both CQ).
+enum ComponentKind {
+  CQ
+  MCQ
+  PRACTICAL
+  WRITTEN
+  ORAL
+  OTHER
+
+  @@map("component_kind")
+}
+
 enum Gender {
   MALE
   FEMALE
@@ -267,13 +296,20 @@ model InstituteType {
 }
 
 model GradingSchemeTemplate {
-  id           String       @id @default(uuid(7)) @db.Uuid
-  key          String       @unique
-  nameBn       String       @map("name_bn")
-  nameEn       String       @map("name_en")
-  roundingMode RoundingMode @default(NONE) @map("rounding_mode")
-  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                 String       @id @default(uuid(7)) @db.Uuid
+  key                String       @unique
+  nameBn             String       @map("name_bn")
+  nameEn             String       @map("name_en")
+  roundingMode       RoundingMode @default(NONE) @map("rounding_mode")
+  /// GPA rules (data, not code): the cap, the 4th subject's bonus threshold (NULL: no bonus),
+  /// how the GPA is cut, and whether one failed compulsory subject makes the GPA 0.
+  gpaMax             Decimal      @default(5.00) @map("gpa_max") @db.Decimal(3, 2)
+  optionalBonusAbove Decimal?     @default(2.00) @map("optional_bonus_above") @db.Decimal(3, 2)
+  gpaDecimals        Int          @default(2) @map("gpa_decimals") @db.SmallInt
+  gpaRounding        GpaRounding  @default(TRUNCATE) @map("gpa_rounding")
+  compulsoryFailZero Boolean      @default(true) @map("compulsory_fail_zero")
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   bands          GradeBandTemplate[]
   instituteTypes InstituteType[]
@@ -345,17 +381,57 @@ model TemplateSubject {
   code                 String
   nameBn               String   @map("name_bn")
   nameEn               String   @map("name_en")
+  /// In the class's elective pool: taken only when chosen, as compulsory or as the 4th subject.
   isOptional           Boolean  @default(false) @map("is_optional")
+  passRule             PassRule @default(PER_COMPONENT) @map("pass_rule")
   sortOrder            Int      @default(0) @map("sort_order")
   createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  templateClassLevel TemplateClassLevel  @relation(fields: [templateClassLevelId], references: [id], onDelete: Cascade)
-  templateStudyGroup TemplateStudyGroup? @relation(fields: [templateStudyGroupId], references: [id], onDelete: SetNull)
+  templateClassLevel TemplateClassLevel         @relation(fields: [templateClassLevelId], references: [id], onDelete: Cascade)
+  templateStudyGroup TemplateStudyGroup?        @relation(fields: [templateStudyGroupId], references: [id], onDelete: SetNull)
   copies             Subject[]
+  components         TemplateSubjectComponent[]
+  passGroups         TemplateSubjectPassGroup[]
 
   @@unique([templateClassLevelId, code])
   @@map("template_subjects")
+}
+
+/// Default exam parts of a template subject (e.g. CQ 70 + MCQ 30), copied into subject_components.
+model TemplateSubjectComponent {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  templateSubjectId String        @map("template_subject_id") @db.Uuid
+  key               String
+  kind              ComponentKind
+  nameBn            String        @map("name_bn")
+  nameEn            String        @map("name_en")
+  fullMarks         Int           @map("full_marks")
+  /// Used when the subject's pass rule is PER_COMPONENT.
+  passMarks         Int?          @map("pass_marks")
+  sortOrder         Int           @default(0) @map("sort_order")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  templateSubject TemplateSubject @relation(fields: [templateSubjectId], references: [id], onDelete: Cascade)
+
+  @@unique([templateSubjectId, key])
+  @@map("template_subject_components")
+}
+
+/// Combined pass mark per component kind of a template subject (pass rule COMBINED).
+model TemplateSubjectPassGroup {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  templateSubjectId String        @map("template_subject_id") @db.Uuid
+  kind              ComponentKind
+  passMarks         Int           @map("pass_marks")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  templateSubject TemplateSubject @relation(fields: [templateSubjectId], references: [id], onDelete: Cascade)
+
+  @@unique([templateSubjectId, kind])
+  @@map("template_subject_pass_groups")
 }
 
 /// UI labels that differ by institute type, e.g. key `section` → "Batch" (coaching) / "Section" (school).
@@ -594,15 +670,22 @@ model Shift {
 // ───────────────────────────── Academic structure ─────────────────────────────
 
 model GradingScheme {
-  id               String       @id @default(uuid(7)) @db.Uuid
-  tenantId         String       @map("tenant_id") @db.Uuid
-  nameBn           String       @map("name_bn")
-  nameEn           String       @map("name_en")
-  roundingMode     RoundingMode @default(NONE) @map("rounding_mode")
-  isDefault        Boolean      @default(false) @map("is_default")
-  sourceTemplateId String?      @map("source_template_id") @db.Uuid
-  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                 String       @id @default(uuid(7)) @db.Uuid
+  tenantId           String       @map("tenant_id") @db.Uuid
+  nameBn             String       @map("name_bn")
+  nameEn             String       @map("name_en")
+  roundingMode       RoundingMode @default(NONE) @map("rounding_mode")
+  /// GPA rules (data, not code): the cap, the 4th subject's bonus threshold (NULL: no bonus),
+  /// how the GPA is cut, and whether one failed compulsory subject makes the GPA 0.
+  gpaMax             Decimal      @default(5.00) @map("gpa_max") @db.Decimal(3, 2)
+  optionalBonusAbove Decimal?     @default(2.00) @map("optional_bonus_above") @db.Decimal(3, 2)
+  gpaDecimals        Int          @default(2) @map("gpa_decimals") @db.SmallInt
+  gpaRounding        GpaRounding  @default(TRUNCATE) @map("gpa_rounding")
+  compulsoryFailZero Boolean      @default(true) @map("compulsory_fail_zero")
+  isDefault          Boolean      @default(false) @map("is_default")
+  sourceTemplateId   String?      @map("source_template_id") @db.Uuid
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   sourceTemplate GradingSchemeTemplate? @relation(fields: [sourceTemplateId], references: [id], onDelete: SetNull)

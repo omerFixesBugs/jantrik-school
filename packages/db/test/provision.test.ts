@@ -62,6 +62,89 @@ describe('provisionTenant copies the institute type template', () => {
     expect(physics.studyGroup).toMatchObject({ code: 'SCIENCE', tenantId: tenant.id });
   });
 
+  it('copies the GPA rules of the grading scheme (Bangladesh defaults)', async () => {
+    const tenant = await createTenant(app);
+    const scheme = await tenantClient(app, tenant.id).gradingScheme.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    expect({
+      gpaMax: scheme.gpaMax.toNumber(),
+      optionalBonusAbove: scheme.optionalBonusAbove?.toNumber(),
+      gpaDecimals: scheme.gpaDecimals,
+      gpaRounding: scheme.gpaRounding,
+      compulsoryFailZero: scheme.compulsoryFailZero,
+    }).toEqual({
+      gpaMax: 5,
+      optionalBonusAbove: 2,
+      gpaDecimals: 2,
+      gpaRounding: 'TRUNCATE',
+      compulsoryFailZero: true,
+    });
+  });
+
+  it('ships NCTB marks templates: components, combined two-paper subjects, the 4th-subject pool', async () => {
+    const subject = (code: string, classCode: string) =>
+      app.templateSubject.findFirstOrThrow({
+        where: {
+          code,
+          templateClassLevel: { code: classCode, instituteType: { key: 'NCTB_SCHOOL_BN' } },
+        },
+        include: {
+          components: { orderBy: { sortOrder: 'asc' } },
+          passGroups: { orderBy: { kind: 'asc' } },
+        },
+      });
+    const parts = (s: Awaited<ReturnType<typeof subject>>) =>
+      s.components.map((c) => [c.key, c.kind, c.fullMarks, c.passMarks]);
+
+    const ban9 = await subject('BAN', 'CLASS_9');
+    expect(ban9.passRule).toBe('COMBINED');
+    expect(parts(ban9)).toEqual([
+      ['P1_CQ', 'CQ', 70, null],
+      ['P1_MCQ', 'MCQ', 30, null],
+      ['P2_CQ', 'CQ', 70, null],
+      ['P2_MCQ', 'MCQ', 30, null],
+    ]);
+    expect(ban9.passGroups.map((g) => [g.kind, g.passMarks])).toEqual([
+      ['CQ', 46],
+      ['MCQ', 20],
+    ]);
+    const eng10 = await subject('ENG', 'CLASS_10');
+    expect(eng10.passRule).toBe('COMBINED');
+    expect(parts(eng10)).toEqual([
+      ['P1', 'WRITTEN', 100, null],
+      ['P2', 'WRITTEN', 100, null],
+    ]);
+    expect(eng10.passGroups.map((g) => [g.kind, g.passMarks])).toEqual([['WRITTEN', 66]]);
+
+    const phy9 = await subject('PHY', 'CLASS_9');
+    expect(phy9.passRule).toBe('PER_COMPONENT');
+    expect(parts(phy9)).toEqual([
+      ['CQ', 'CQ', 50, 17],
+      ['MCQ', 'MCQ', 25, 8],
+      ['PRACTICAL', 'PRACTICAL', 25, 8],
+    ]);
+    expect(parts(await subject('ICT', 'CLASS_9'))).toEqual([
+      ['MCQ', 'MCQ', 25, 8],
+      ['PRACTICAL', 'PRACTICAL', 25, 8],
+    ]);
+    expect(parts(await subject('MATH', 'CLASS_10'))).toEqual([
+      ['CQ', 'CQ', 70, 23],
+      ['MCQ', 'MCQ', 30, 10],
+    ]);
+    expect(parts(await subject('ENG', 'CLASS_6'))).toEqual([['WRITTEN', 'WRITTEN', 100, 33]]);
+    expect(parts(await subject('BAN', 'CLASS_8'))).toEqual([
+      ['CQ', 'CQ', 70, 23],
+      ['MCQ', 'MCQ', 30, 10],
+    ]);
+    expect((await subject('BAN', 'CLASS_5')).components).toEqual([]);
+
+    // Science: Biology and Higher Maths are both in the pool (one compulsory, one 4th).
+    expect((await subject('BIO', 'CLASS_9')).isOptional).toBe(true);
+    expect((await subject('HMATH', 'CLASS_9')).isOptional).toBe(true);
+    expect((await subject('PHY', 'CLASS_9')).isOptional).toBe(false);
+  });
+
   it('uses labels and locale from the type data', async () => {
     const coaching = await createTenant(app, { instituteTypeKey: 'COACHING' });
     const englishVersion = await createTenant(app, { instituteTypeKey: 'NCTB_SCHOOL_EN' });

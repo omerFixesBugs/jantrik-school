@@ -1,6 +1,9 @@
 import type {
   AttendanceMode,
+  ComponentKind,
+  GpaRounding,
   Locale,
+  PassRule,
   Prisma,
   PrismaClient,
   RoundingMode,
@@ -17,9 +20,24 @@ interface NamePair {
   en: string;
 }
 
+/** A default exam part, e.g. CQ 70 (pass 23). `pass` is used under PER_COMPONENT only. */
+interface ComponentDef {
+  key: string;
+  kind: ComponentKind;
+  bn: string;
+  en: string;
+  full: number;
+  pass: number | null;
+}
+
 interface SubjectDef extends NamePair {
   group?: string;
+  /** In the class's elective pool (chosen per student: compulsory or 4th subject). */
   optional?: boolean;
+  passRule?: PassRule;
+  components?: ComponentDef[];
+  /** Combined pass mark per kind (pass rule COMBINED). */
+  passGroups?: { kind: ComponentKind; pass: number }[];
 }
 
 interface ClassLevelDef extends NamePair {
@@ -46,6 +64,11 @@ interface GradingSchemeDef {
   bn: string;
   en: string;
   roundingMode: RoundingMode;
+  gpaMax: number;
+  optionalBonusAbove: number | null;
+  gpaDecimals: number;
+  gpaRounding: GpaRounding;
+  compulsoryFailZero: boolean;
   bands: { min: number; max: number; letter: string; point: number }[];
 }
 
@@ -55,6 +78,14 @@ export const GRADING_SCHEMES: GradingSchemeDef[] = [
     bn: 'জিপিএ ৫.০ (বাংলাদেশ)',
     en: 'Bangladesh GPA 5.0',
     roundingMode: 'NONE',
+    // NCTB: capped at 5.00; the 4th subject adds only its points above 2.00; any failed
+    // compulsory subject makes the GPA 0. Truncation to 2 decimals is to be verified against a
+    // real board marksheet (docs/decisions-pending.md).
+    gpaMax: 5,
+    optionalBonusAbove: 2,
+    gpaDecimals: 2,
+    gpaRounding: 'TRUNCATE',
+    compulsoryFailZero: true,
     bands: [
       { min: 80, max: 100, letter: 'A+', point: 5 },
       { min: 70, max: 79, letter: 'A', point: 4 },
@@ -86,6 +117,72 @@ const CHEM = s('CHEM', 'রসায়ন', 'Chemistry');
 const BIO = s('BIO', 'জীববিজ্ঞান', 'Biology');
 const HMATH = s('HMATH', 'উচ্চতর গণিত', 'Higher Mathematics');
 
+// Default exam parts (NCTB practice; to be verified against a real school marksheet). Pass
+// marks are round-half-up(33% × full): 70 → 23, 30 → 10, 50 → 17, 25 → 8, 100 → 33.
+const pass33 = (full: number) => Math.floor(full * 0.33 + 0.5);
+const part = (key: string, kind: ComponentKind, bn: string, en: string, full: number) => ({
+  key,
+  kind,
+  bn,
+  en,
+  full,
+  pass: pass33(full),
+});
+const CQ = (full: number) => part('CQ', 'CQ', 'সৃজনশীল', 'Creative (CQ)', full);
+const MCQ = (full: number) => part('MCQ', 'MCQ', 'বহুনির্বাচনি', 'MCQ', full);
+const PRACTICAL = (full: number) => part('PRACTICAL', 'PRACTICAL', 'ব্যবহারিক', 'Practical', full);
+const WRITTEN = (full: number) => part('WRITTEN', 'WRITTEN', 'লিখিত', 'Written', full);
+const CQ_MCQ = [CQ(70), MCQ(30)];
+const WITH_PRACTICAL = [CQ(50), MCQ(25), PRACTICAL(25)];
+
+/** Two papers graded together: same-kind parts are summed and checked against one mark. */
+function twoPapers(kinds: { kind: ComponentKind; bn: string; en: string; full: number }[]) {
+  const papers = [
+    { key: 'P1', bn: '১ম পত্র', en: '1st paper' },
+    { key: 'P2', bn: '২য় পত্র', en: '2nd paper' },
+  ];
+  const single = kinds.length === 1;
+  const components = papers.flatMap((p) =>
+    kinds.map((k) => ({
+      key: single ? p.key : `${p.key}_${k.kind}`,
+      kind: k.kind,
+      bn: single ? p.bn : `${p.bn} ${k.bn}`,
+      en: single ? p.en : `${p.en} ${k.en}`,
+      full: k.full,
+      pass: null,
+    })),
+  );
+  return {
+    passRule: 'COMBINED' as const,
+    components,
+    passGroups: kinds.map((k) => ({ kind: k.kind, pass: pass33(k.full * papers.length) })),
+  };
+}
+
+/** Exam parts for an NCTB subject (classes 6–10; none below class 6). */
+function nctbMarks(code: string, n: number): Partial<SubjectDef> {
+  if (n < 6) return {};
+  if (n <= 8) return { components: code === 'ENG' ? [WRITTEN(100)] : CQ_MCQ };
+  switch (code) {
+    case 'BAN':
+      return twoPapers([
+        { kind: 'CQ', bn: 'সৃজনশীল', en: 'CQ', full: 70 },
+        { kind: 'MCQ', bn: 'বহুনির্বাচনি', en: 'MCQ', full: 30 },
+      ]);
+    case 'ENG':
+      return twoPapers([{ kind: 'WRITTEN', bn: 'লিখিত', en: 'Written', full: 100 }]);
+    case 'ICT':
+      return { components: [MCQ(25), PRACTICAL(25)] };
+    case 'PHY':
+    case 'CHEM':
+    case 'BIO':
+    case 'HMATH':
+      return { components: WITH_PRACTICAL };
+    default:
+      return { components: CQ_MCQ };
+  }
+}
+
 const BN_ORDINALS = [
   'প্রথম',
   'দ্বিতীয়',
@@ -100,6 +197,10 @@ const BN_ORDINALS = [
 ];
 
 function nctbSubjects(n: number): SubjectDef[] {
+  return nctbSubjectList(n).map((sub) => ({ ...sub, ...nctbMarks(sub.code, n) }));
+}
+
+function nctbSubjectList(n: number): SubjectDef[] {
   if (n <= 2) return [BAN, ENG, MATH];
   if (n <= 5) return [BAN, ENG, MATH, BGS, SCI, REL];
   if (n <= 8) return [BAN, ENG, MATH, SCI, BGS, ICT, REL];
@@ -112,7 +213,9 @@ function nctbSubjects(n: number): SubjectDef[] {
     // Science group
     { ...PHY, group: 'SCIENCE' },
     { ...CHEM, group: 'SCIENCE' },
-    { ...BIO, group: 'SCIENCE' },
+    // Biology and Higher Maths are the Science pool: each student takes one as compulsory and
+    // the other as the 4th subject (student_subject_choices).
+    { ...BIO, group: 'SCIENCE', optional: true },
     { ...HMATH, group: 'SCIENCE', optional: true },
     { ...BGS, code: 'BGS_SCI', group: 'SCIENCE' },
     // Business Studies group
@@ -244,10 +347,20 @@ export async function seedTemplates(client: PrismaClient): Promise<void> {
 async function upsertTemplates(owner: Prisma.TransactionClient): Promise<void> {
   const schemeIds = new Map<string, string>();
   for (const def of GRADING_SCHEMES) {
+    const schemeData = {
+      nameBn: def.bn,
+      nameEn: def.en,
+      roundingMode: def.roundingMode,
+      gpaMax: def.gpaMax,
+      optionalBonusAbove: def.optionalBonusAbove,
+      gpaDecimals: def.gpaDecimals,
+      gpaRounding: def.gpaRounding,
+      compulsoryFailZero: def.compulsoryFailZero,
+    };
     const scheme = await owner.gradingSchemeTemplate.upsert({
       where: { key: def.key },
-      create: { key: def.key, nameBn: def.bn, nameEn: def.en, roundingMode: def.roundingMode },
-      update: { nameBn: def.bn, nameEn: def.en, roundingMode: def.roundingMode },
+      create: { key: def.key, ...schemeData },
+      update: schemeData,
     });
     schemeIds.set(def.key, scheme.id);
     for (const b of def.bands) {
@@ -310,17 +423,57 @@ async function upsertTemplates(owner: Prisma.TransactionClient): Promise<void> {
           nameBn: sub.bn,
           nameEn: sub.en,
           isOptional: sub.optional ?? false,
+          passRule: sub.passRule ?? 'PER_COMPONENT',
           sortOrder: subjectOrder,
           templateStudyGroupId: sub.group ? (groupIds.get(sub.group) ?? null) : null,
         };
-        await owner.templateSubject.upsert({
+        const subject = await owner.templateSubject.upsert({
           where: {
             templateClassLevelId_code: { templateClassLevelId: level.id, code: sub.code },
           },
           create: { templateClassLevelId: level.id, code: sub.code, ...subjectData },
           update: subjectData,
         });
+        await upsertMarks(owner, subject.id, sub);
       }
     }
+  }
+}
+
+/** A template subject's exam parts and combined pass marks, exactly as defined (stale ones go). */
+async function upsertMarks(
+  owner: Prisma.TransactionClient,
+  templateSubjectId: string,
+  sub: SubjectDef,
+): Promise<void> {
+  const components = sub.components ?? [];
+  await owner.templateSubjectComponent.deleteMany({
+    where: { templateSubjectId, key: { notIn: components.map((c) => c.key) } },
+  });
+  for (const [order, c] of components.entries()) {
+    const data = {
+      kind: c.kind,
+      nameBn: c.bn,
+      nameEn: c.en,
+      fullMarks: c.full,
+      passMarks: c.pass,
+      sortOrder: order,
+    };
+    await owner.templateSubjectComponent.upsert({
+      where: { templateSubjectId_key: { templateSubjectId, key: c.key } },
+      create: { templateSubjectId, key: c.key, ...data },
+      update: data,
+    });
+  }
+  const groups = sub.passGroups ?? [];
+  await owner.templateSubjectPassGroup.deleteMany({
+    where: { templateSubjectId, kind: { notIn: groups.map((g) => g.kind) } },
+  });
+  for (const g of groups) {
+    await owner.templateSubjectPassGroup.upsert({
+      where: { templateSubjectId_kind: { templateSubjectId, kind: g.kind } },
+      create: { templateSubjectId, kind: g.kind, passMarks: g.pass },
+      update: { passMarks: g.pass },
+    });
   }
 }
