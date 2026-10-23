@@ -342,7 +342,9 @@ export function MarkEntry({
         <Button
           size="lg"
           className="ms-auto min-w-0 flex-[0_1_14rem]"
-          disabled={!editable || invalid > 0 || sync.kind === 'sending'}
+          // Not disabled while sending: a tap right after typing starts a save (the field's blur)
+          // and would be lost; a submit during a save follows it.
+          disabled={!editable || invalid > 0}
           onClick={() => setConfirmOpen(true)}
           data-testid="sheet-submit"
         >

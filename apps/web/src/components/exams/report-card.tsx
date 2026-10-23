@@ -16,6 +16,9 @@ import { useLabel } from '@/lib/hooks';
 import { displayName } from '@/lib/names';
 import { cn } from '@/lib/utils';
 
+/** Columns a phone has no room for (parts, the class highest); always printed. */
+const WIDE = 'hidden sm:table-cell print:table-cell';
+
 /**
  * Printed report cards (A4 portrait, one per page: the `exam-print` named page in globals.css),
  * Bangla first. What a card may show is decided by the API (parents' names only under decision
@@ -104,13 +107,13 @@ function ReportCardPage({ data, card }: { data: ReportCards; card: ReportCard })
             <th scope="col" className="py-1.5 pe-2 text-start">
               {t('subject')}
             </th>
-            <th scope="col" className="px-2 py-1.5 text-start">
+            <th scope="col" className={cn(WIDE, 'px-2 py-1.5 text-start')}>
               {t('parts')}
             </th>
             <th scope="col" className="px-2 py-1.5 text-end">
               {t('obtained')}
             </th>
-            <th scope="col" className="px-2 py-1.5 text-end">
+            <th scope="col" className={cn(WIDE, 'px-2 py-1.5 text-end')}>
               {t('highest')}
             </th>
             {gpa && (
@@ -131,66 +134,78 @@ function ReportCardPage({ data, card }: { data: ReportCards; card: ReportCard })
           </tr>
         </thead>
         <tbody>
-          {card.subjects.map((s) => (
-            <tr key={s.subject.id} className="border-b">
-              <th scope="row" className="py-1.5 pe-2 text-start font-medium">
-                {name(s.subject)}
-                {s.optional && (
-                  <span className="text-muted-foreground ms-1 text-xs print:text-black">
-                    ({t('fourth')})
-                  </span>
-                )}
-              </th>
-              <td className="px-2 py-1.5 text-xs">
-                {s.components
-                  .map(
-                    (c) =>
-                      `${name(c)} ${c.mark ? (c.mark.absent ? t('absent') : formatMarks(c.mark.scoreH ?? 0, locale)) : '—'}`,
-                  )
-                  .join(' · ')}
-              </td>
-              <td className="font-numeric px-2 py-1.5 text-end">
-                {s.status === 'ABSENT' ? t('absent') : formatMarks(s.obtainedH, locale)}/
-                {formatCount(s.fullMarks, locale)}
-              </td>
-              <td className="font-numeric px-2 py-1.5 text-end">
-                {s.highestH != null ? formatMarks(s.highestH, locale) : '—'}
-              </td>
-              {gpa && (
-                <td
-                  className={cn(
-                    'px-2 py-1.5 text-center font-semibold',
-                    !s.passed && 'text-destructive print:text-black',
+          {card.subjects.map((s) => {
+            const parts = s.components
+              .map(
+                (c) =>
+                  `${name(c)} ${c.mark ? (c.mark.absent ? t('absent') : formatMarks(c.mark.scoreH ?? 0, locale)) : '—'}`,
+              )
+              .join(' · ');
+            return (
+              <tr key={s.subject.id} className="border-b">
+                <th scope="row" className="py-1.5 pe-2 text-start font-medium">
+                  {name(s.subject)}
+                  {s.optional && (
+                    <span className="text-muted-foreground ms-1 text-xs print:text-black">
+                      ({t('fourth')})
+                    </span>
                   )}
-                >
-                  {s.letter ?? '—'}
+                  {/* A phone has no room for the parts column: they go under the name. */}
+                  <span className="text-muted-foreground block text-xs font-normal sm:hidden print:hidden">
+                    {parts}
+                  </span>
+                </th>
+                <td className={cn(WIDE, 'px-2 py-1.5 text-xs')}>{parts}</td>
+                <td className="font-numeric px-2 py-1.5 text-end whitespace-nowrap">
+                  {s.status === 'ABSENT' ? t('absent') : formatMarks(s.obtainedH, locale)}/
+                  {formatCount(s.fullMarks, locale)}
                 </td>
-              )}
-              {gpa && (
-                <td className="font-numeric ps-2 py-1.5 text-end">
-                  {s.gradePoint != null
-                    ? formatGpa(Math.round(s.gradePoint * 100), 2, locale)
-                    : '—'}
+                <td className={cn(WIDE, 'font-numeric px-2 py-1.5 text-end whitespace-nowrap')}>
+                  {s.highestH != null ? formatMarks(s.highestH, locale) : '—'}
                 </td>
-              )}
-              {!gpa && (
-                <td className="ps-2 py-1.5 text-center">{s.passed ? t('pass') : t('fail')}</td>
-              )}
-            </tr>
-          ))}
+                {gpa && (
+                  <td
+                    className={cn(
+                      'px-2 py-1.5 text-center font-semibold',
+                      !s.passed && 'text-destructive print:text-black',
+                    )}
+                  >
+                    {s.letter ?? '—'}
+                  </td>
+                )}
+                {gpa && (
+                  <td className="font-numeric ps-2 py-1.5 text-end whitespace-nowrap">
+                    {s.gradePoint != null
+                      ? formatGpa(Math.round(s.gradePoint * 100), 2, locale)
+                      : '—'}
+                  </td>
+                )}
+                {!gpa && (
+                  <td className="ps-2 py-1.5 text-center">{s.passed ? t('pass') : t('fail')}</td>
+                )}
+              </tr>
+            );
+          })}
         </tbody>
         <tfoot>
           <tr className="border-b font-semibold">
-            <th scope="row" colSpan={2} className="py-1.5 pe-2 text-start">
+            <th scope="row" className="py-1.5 pe-2 text-start">
               {t('total')}
             </th>
-            <td className="font-numeric px-2 py-1.5 text-end">
+            <td className={WIDE} />
+            <td className="font-numeric px-2 py-1.5 text-end whitespace-nowrap">
               {formatMarks(card.totalH, locale)}/{formatCount(card.fullMarks, locale)}
             </td>
-            <td className="font-numeric px-2 py-1.5 text-end">
+            <td className={cn(WIDE, 'font-numeric px-2 py-1.5 text-end whitespace-nowrap')}>
               {formatPercentH(card.percentH, locale)}%
             </td>
-            <td colSpan={gpa ? 2 : 1} />
+            <td
+              colSpan={gpa ? 2 : 1}
+              className="font-numeric ps-2 py-1.5 text-end whitespace-nowrap sm:hidden print:hidden"
+            >
+              {formatPercentH(card.percentH, locale)}%
+            </td>
+            <td colSpan={gpa ? 2 : 1} className={WIDE} />
           </tr>
         </tfoot>
       </table>

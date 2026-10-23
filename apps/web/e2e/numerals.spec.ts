@@ -74,6 +74,14 @@ test('Bangla digits are drawn by the body face on the number-heavy screens', asy
   await page.goto('/students/new');
   await expect(page.locator('#st-birth-reg')).toBeVisible();
   await expectBodyFaceDigits(page, 'admission form');
+
+  // The published half-yearly's tabulation sheet: marks, percentages, GPAs and places.
+  await page.goto('/exams');
+  await page.getByTestId('exam-card').filter({ hasText: 'অর্ধবার্ষিক' }).click();
+  await page.getByTestId('exam-tabs').getByRole('radio').last().click();
+  await page.getByTestId('tabulation-CLASS_9').click();
+  await expect(page.getByTestId('tabulation-row').first()).toBeVisible();
+  await expectBodyFaceDigits(page, 'tabulation');
 });
 
 test('every text style has one width per digit, and ১ is drawn whole', async ({ page }) => {

@@ -40,14 +40,16 @@ export default function ExamPage() {
           <>
             <ExamHeader exam={exam} />
             {isAdmin && (
-              <SegmentedControl
-                label={t('sections')}
-                value={tab}
-                onChange={setTab}
-                options={TABS.map((k) => ({ value: k, label: t(`tab.${k}`) }))}
-                testId="exam-tabs"
-                className="print:hidden"
-              />
+              // Scrolls sideways on the narrowest phones rather than pushing a tab off screen.
+              <div className="-mx-1 overflow-x-auto px-1 print:hidden">
+                <SegmentedControl
+                  label={t('sections')}
+                  value={tab}
+                  onChange={setTab}
+                  options={TABS.map((k) => ({ value: k, label: t(`tab.${k}`) }))}
+                  testId="exam-tabs"
+                />
+              </div>
             )}
             {!isAdmin || tab === 'sheets' ? (
               <SheetsGrid exam={exam} />

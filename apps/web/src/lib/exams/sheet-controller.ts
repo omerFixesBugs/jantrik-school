@@ -104,6 +104,8 @@ export class MarkSheetController {
   private readonly listeners = new Set<() => void>();
   private attempt = 0;
   private inflight = false;
+  /** Submit was asked for while a save was on its way: it goes once that save is answered. */
+  private submitAfter = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private autosave: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
@@ -299,7 +301,25 @@ export class MarkSheetController {
     clearTimeout(this.autosave);
     this.attempt = 0;
     if (this.invalidCount() > 0) return;
+    // Tapping Submit right after typing: the field's blur has just started a save. Never drop
+    // the submit; it follows that save.
+    if (this.inflight) {
+      this.submitAfter = true;
+      return;
+    }
+    if (!this.markSubmit()) return;
     return this.send('SUBMIT');
+  }
+
+  /**
+   * A submit is a new request: it gets its own submissionId. Reusing the last save's id would make
+   * the server answer it as a replay of that save, and the sheet would stay a draft.
+   */
+  private markSubmit(): boolean {
+    const d = this.state.draft;
+    if (!d) return false;
+    this.persist({ ...d, submissionId: randomId(), action: 'SUBMIT' });
+    return true;
   }
 
   // ── sending ──
@@ -359,6 +379,22 @@ export class MarkSheetController {
       await this.handleSendError(error, d, action);
     } finally {
       this.inflight = false;
+      this.afterSend();
+    }
+  }
+
+  /** A submit queued behind a save: sent now, or by the retry; dropped if the save needs a person. */
+  private afterSend() {
+    if (!this.submitAfter || this.disposed) return;
+    const { sync, draft } = this.state;
+    this.submitAfter = false;
+    // The retry sends the draft's action: it becomes this submit.
+    if (sync.kind === 'retrying' && draft) {
+      this.markSubmit();
+      return;
+    }
+    if ((sync.kind === 'saved' || sync.kind === 'local') && this.markSubmit()) {
+      void this.send('SUBMIT');
     }
   }
 

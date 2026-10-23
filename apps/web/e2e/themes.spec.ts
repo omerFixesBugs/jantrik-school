@@ -300,6 +300,8 @@ test('every screen holds up in dark', async ({ browser }) => {
       '/setup/classes',
       '/setup/student-code',
       '/fees',
+      '/exams',
+      '/exams/setup',
     ]) {
       await openScreen(page, screen);
       await expect(html(page)).toHaveAttribute('data-theme', theme);

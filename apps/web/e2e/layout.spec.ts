@@ -160,6 +160,47 @@ test('guardian dashboard', async ({ page }) => {
   await expectClean(page, 'guardian dashboard');
 });
 
+test('exam screens: list, an exam, a locked sheet, setup, results, guardian results', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.goto('/exams');
+  await page.getByTestId('exam-card').first().click();
+  await expect(page.getByTestId('sheets-grid')).toBeVisible();
+  const exam = page.url().replace(/\?.*$/, '');
+  await expectClean(page, 'exam sheets bn');
+  for (const tab of ['setup', 'students', 'results']) {
+    await page.goto(`${exam}?tab=${tab}`);
+    await expect(page.getByTestId('exam-tabs')).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    await expectClean(page, `exam ${tab} bn`);
+  }
+  // A locked sheet, as the office sees it (read-only rows, correction actions).
+  await page.goto(exam);
+  await page.getByTestId('grid-cell').first().click();
+  await expect(page.getByTestId('sheet-row').first()).toBeVisible();
+  await expectClean(page, 'locked sheet bn');
+  for (const tab of ['marks', 'teachers', 'choices', 'rooms', 'grading']) {
+    await page.goto(`/exams/setup?tab=${tab}`);
+    await expect(page.getByTestId('exams-setup-tabs')).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    await expectClean(page, `exams setup ${tab} bn`);
+  }
+  await page.goto('/exams');
+  await english(page);
+  await expectClean(page, 'exams en');
+});
+
+test('guardian results: the list and a report card', async ({ page }) => {
+  await otpLoginWithBanglaDigits(page, DEMO.shaplaGuardian2);
+  await page.getByTestId('child-results-open').first().click();
+  await page.getByTestId('child-result').first().click();
+  await expect(page.getByTestId('report-card')).toBeVisible();
+  await expectClean(page, 'guardian report card bn');
+});
+
 test.describe('desktop', () => {
   test.use({ viewport: { width: 1366, height: 900 }, isMobile: false, hasTouch: false });
 

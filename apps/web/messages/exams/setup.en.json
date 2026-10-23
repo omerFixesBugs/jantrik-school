@@ -84,7 +84,8 @@
     "bands": "Grade bands",
     "marksRange": "Marks (%)",
     "letter": "Grade",
-    "point": "Point"
+    "point": "Point",
+    "deleteRoomLabel": "Delete {name}"
   },
   "setupPanel": {
     "classes": "Classes in this exam",

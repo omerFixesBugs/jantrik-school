@@ -377,6 +377,8 @@ function TeachersForm({
           <Button
             type="button"
             variant="outline"
+            // A long name: the label wraps instead of running off a phone.
+            className="h-auto min-h-(--control-h) py-2 text-start whitespace-normal"
             onClick={() =>
               setIds((x) =>
                 Object.fromEntries(
@@ -415,11 +417,12 @@ function TeachersForm({
                   const p = byId.get(uid);
                   return (
                     <li key={uid}>
-                      <span className="bg-primary-soft inline-flex min-h-(--control-h-xs) items-center gap-1 rounded-full ps-3 pe-1 text-sm">
+                      {/* The remove button takes the density's touch size (44 px on a phone). */}
+                      <span className="bg-primary-soft inline-flex min-h-(--control-h-xs) items-center rounded-full ps-3 text-sm">
                         {p ? person(p) : '—'}
                         <button
                           type="button"
-                          className="hover:bg-muted inline-flex size-7 items-center justify-center rounded-full"
+                          className="hover:bg-muted focus-visible:ring-ring inline-flex size-(--control-h-xs) items-center justify-center rounded-full outline-none focus-visible:ring-3"
                           aria-label={t('removeTeacher', { name: p ? person(p) : '' })}
                           onClick={() =>
                             setIds((x) => ({ ...x, [s.subject.id]: mine.filter((m) => m !== uid) }))
@@ -725,9 +728,9 @@ export function RoomsTab() {
               </Button>
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 onClick={() => setDeleting(r)}
-                aria-label={t('deleteRoom', { name: r.name })}
+                aria-label={t('deleteRoomLabel', { name: r.name })}
               >
                 <Trash2Icon aria-hidden />
               </Button>
@@ -946,7 +949,9 @@ function GradingCard({ scheme }: { scheme: GradingSchemeView }) {
           hint={t('failZeroHint')}
         />
         <details className="rounded-xl border p-3">
-          <summary className="cursor-pointer font-medium">{t('bands')}</summary>
+          <summary className="min-h-(--control-h) cursor-pointer content-center font-medium">
+            {t('bands')}
+          </summary>
           <table className="mt-2 w-full max-w-md text-sm">
             <thead>
               <tr className="border-b">
