@@ -38,6 +38,11 @@ export interface MarkDraft {
   state: 'draft' | 'pending';
   /** What the pending send does. */
   action: 'SAVE' | 'SUBMIT';
+  /**
+   * What recent sends carried when their answer never came (at most 5): if the server later holds
+   * exactly one of them, that save was ours and the draft can go on from there.
+   */
+  sent?: Record<string, string>[];
   updatedAt: number;
 }
 

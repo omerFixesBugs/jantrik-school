@@ -121,7 +121,16 @@
     "add": "অংশ যোগ করুন",
     "remove": "অংশ সরান",
     "combined": "মিলিত পাস নম্বর",
-    "combinedFor": "{kind} (মোট {full})"
+    "combinedFor": "{kind} (মোট {full})",
+    "problem": {
+      "keyFormat": "অংশ {part}: কোড ইংরেজি অক্ষর দিয়ে শুরু; অক্ষর, অঙ্ক বা _ (২০টি পর্যন্ত)",
+      "keyDuplicate": "অংশ {part}: এই কোড আরেকটি অংশেও আছে",
+      "nameMissing": "অংশ {part}: বাংলা ও ইংরেজি নাম দিন",
+      "fullMissing": "অংশ {part}: পূর্ণ নম্বর ১ থেকে ১০০০",
+      "passOverFull": "অংশ {part}: পাস নম্বর পূর্ণ নম্বরের বেশি",
+      "groupMissing": "{kind}: মিলিত পাস নম্বর দিন",
+      "groupOverFull": "{kind}: মিলিত পাস নম্বর মোট পূর্ণ নম্বরের বেশি"
+    }
   },
   "students": {
     "title": "শিক্ষার্থী",

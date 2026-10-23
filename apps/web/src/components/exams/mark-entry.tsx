@@ -153,7 +153,7 @@ export function MarkEntry({
             full: formatCount(view.examSubject.fullMarks, locale),
           })}
         </p>
-        <SyncPill sync={sync} onRetry={() => controller.flush()} />
+        <SyncPill sync={sync} onRetry={() => controller.retryNow()} />
       </header>
 
       {view.sheet.returnNote && status === 'DRAFT' && (

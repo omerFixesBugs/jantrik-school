@@ -2,12 +2,12 @@
 
 import {
   COMPONENT_KINDS,
+  formatCount,
   suggestedPassMarks,
   toAsciiDigits,
   type ComponentKind,
   type ExamComponentView,
   type GradeBandView,
-  type PassGroupView,
   type PassRule,
 } from '@jantrik/shared';
 import { PlusIcon, Trash2Icon } from 'lucide-react';
@@ -15,12 +15,10 @@ import { useLocale, useTranslations } from 'next-intl';
 import { NativeSelect, localDigits, parseWhole } from '@/components/fees/setup/kit';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import type { Locale } from '@/i18n/config';
+import { partsProblems, withPassGroups, type PartsValue } from '@/lib/exams/parts';
 
-export interface PartsValue {
-  passRule: PassRule;
-  components: ExamComponentView[];
-  passGroups: PassGroupView[];
-}
+export type { PartsValue };
 
 /**
  * A subject's parts (CQ, MCQ, practical, papers), their full and pass marks, and how it is passed:
@@ -40,8 +38,10 @@ export function PartsEditor({
 }) {
   const t = useTranslations('exams.parts');
   const tKind = useTranslations('exams.common.componentKind');
-  const locale = useLocale();
-  const set = (patch: Partial<PartsValue>) => onChange({ ...value, ...patch });
+  const locale = useLocale() as Locale;
+  // Combined pass marks follow the parts' kinds (a removed kind loses its mark).
+  const set = (patch: Partial<PartsValue>) =>
+    onChange(withPassGroups({ ...value, ...patch }, bands));
   const setPart = (i: number, patch: Partial<ExamComponentView>) =>
     set({ components: value.components.map((c, j) => (j === i ? { ...c, ...patch } : c)) });
   const kinds = [...new Set(value.components.map((c) => c.kind))];
@@ -60,18 +60,8 @@ export function PartsEditor({
         <NativeSelect
           id={`${idPrefix}-rule`}
           value={value.passRule}
-          onChange={(v) => {
-            const passRule = v as PassRule;
-            // Switching to COMBINED prefills a combined mark per kind from the summed full marks.
-            const passGroups =
-              passRule === 'COMBINED'
-                ? kinds.map(
-                    (k) =>
-                      groupOf(k) ?? { kind: k, passMarks: suggestedPassMarks(fullOf(k), bands) },
-                  )
-                : [];
-            set({ passRule, passGroups });
-          }}
+          // Switching to COMBINED prefills a combined mark per kind from the summed full marks.
+          onChange={(v) => set({ passRule: v as PassRule })}
           options={(['PER_COMPONENT', 'COMBINED'] as const).map((r) => ({
             value: r,
             label: t(`rule.${r}`),
@@ -183,6 +173,8 @@ export function PartsEditor({
         </Button>
       </div>
 
+      <PartsProblems value={value} />
+
       {value.passRule === 'COMBINED' && (
         <fieldset className="flex flex-col gap-2 rounded-xl border p-3">
           <legend className="px-1 font-medium">{t('combined')}</legend>
@@ -203,6 +195,26 @@ export function PartsEditor({
         </fieldset>
       )}
     </div>
+  );
+}
+
+/** What would stop the save, part by part (the dialog's Save waits until there is none). */
+function PartsProblems({ value }: { value: PartsValue }) {
+  const t = useTranslations('exams.parts.problem');
+  const tKind = useTranslations('exams.common.componentKind');
+  const locale = useLocale() as Locale;
+  const problems = partsProblems(value);
+  if (problems.length === 0) return null;
+  return (
+    <ul className="text-destructive flex flex-col gap-1 text-sm" role="status">
+      {problems.map((p, i) => (
+        <li key={i}>
+          {'part' in p
+            ? t(p.problem, { part: formatCount(p.part, locale) })
+            : t(p.problem, { kind: tKind(p.kind) })}
+        </li>
+      ))}
+    </ul>
   );
 }
 

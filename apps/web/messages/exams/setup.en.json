@@ -121,7 +121,16 @@
     "add": "Add a part",
     "remove": "Remove the part",
     "combined": "Combined pass marks",
-    "combinedFor": "{kind} (of {full})"
+    "combinedFor": "{kind} (of {full})",
+    "problem": {
+      "keyFormat": "Part {part}: the code starts with a letter; letters, digits and _ (up to 20)",
+      "keyDuplicate": "Part {part}: another part has this code",
+      "nameMissing": "Part {part}: give its Bangla and English names",
+      "fullMissing": "Part {part}: full marks from 1 to 1000",
+      "passOverFull": "Part {part}: the pass mark is above the full marks",
+      "groupMissing": "{kind}: give a combined pass mark",
+      "groupOverFull": "{kind}: the combined pass mark is above its full marks"
+    }
   },
   "students": {
     "title": "Students",

@@ -101,10 +101,19 @@ preview shows each student's total and grade. Drafts follow the attendance regis
   `submissionId`, and saved to the server 3 s after typing stops, on blur and when the tab is
   hidden;
 - a failed save retries with backoff; the pill shows "kept on this phone" or the retry countdown;
-- a conflict with someone else's save offers keep mine or keep theirs; one with our own earlier
-  save is resolved silently;
+- a conflict offers keep mine or keep theirs. It is resolved silently only when the server holds
+  exactly what one of this phone's unanswered saves carried (the draft remembers the last five);
+  marks saved meanwhile by someone else, or by the same teacher on another device, are never
+  overwritten unasked;
+- a draft left on the phone is used only while the sheet can be entered (not when locked or
+  archived). If the sheet moved on since, it is dropped when it holds nothing new, resumed when the
+  server holds one of its own unanswered saves, and otherwise shown as a conflict;
+- marks typed while a save is on its way are kept whatever its answer; when the roster changed the
+  sheet is reloaded, so a student who moved in keeps the marks already entered for them;
+- "Send now" retries at once;
 - Submit is never disabled by a save in flight: a submit tapped during a save is sent right after
-  it (kept across a retry);
+  it, kept across a retry and on the phone (leaving the page before the save answers still
+  submits next time); each submit has its own `submissionId`;
 - the connection screen counts marks drafts next to attendance drafts.
 
 ## Results

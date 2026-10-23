@@ -19,6 +19,7 @@ import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { useExamMutation, useExamQuery } from '@/lib/exams/api';
 import { ExamDialog, LoadError, useName } from './kit';
+import { partsProblems } from '@/lib/exams/parts';
 import { PartsEditor, partsLine, type PartsValue } from './parts-editor';
 
 /** The classes an exam covers and, per class, its subjects: routine date and time, parts, pass rule. */
@@ -211,7 +212,7 @@ function SubjectDialog({
       title={name(subject.subject)}
       description={t('subjectDialogHint')}
       submitLabel={t('save')}
-      pending={save.isPending}
+      pending={save.isPending || partsProblems(parts).length > 0}
       onSubmit={() => save.mutate(undefined)}
       wide
       testId="exam-subject-dialog"

@@ -293,7 +293,7 @@ Rules: [fees.md](fees.md). Fifteen tenant tables, all with forced RLS and compos
 
 ### Exams (step 10)
 
-Rules: [exams.md](exams.md). Sixteen tenant tables (forced RLS, composite keys, every foreign key
+Rules: [exams.md](exams.md). Fourteen tenant tables (forced RLS, composite keys, every foreign key
 `ON UPDATE RESTRICT`) and two global template tables:
 
 - **Grading rules as data:** `grading_schemes` and `grading_scheme_templates` gained `gpa_max`,

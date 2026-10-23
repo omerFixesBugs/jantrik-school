@@ -48,6 +48,7 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { useMeContext } from '@/lib/hooks';
 import { useExamMutation, useExamQuery } from '@/lib/exams/api';
 import { ExamDialog, LoadError, useName } from './kit';
+import { partsProblems } from '@/lib/exams/parts';
 import { PartsEditor, partsLine, type PartsValue } from './parts-editor';
 
 // ─────────────────────────── Pickers ───────────────────────────
@@ -278,7 +279,7 @@ function SubjectMarksDialog({
       title={name(subject)}
       description={t('partsHint')}
       submitLabel={t('save')}
-      pending={save.isPending}
+      pending={save.isPending || partsProblems(parts).length > 0}
       onSubmit={() => save.mutate(undefined)}
       wide
       testId="marks-dialog"
