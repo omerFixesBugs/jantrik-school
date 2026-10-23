@@ -62,3 +62,43 @@ lastTest}`; the audit stores field names only. A "test connection" job. A code-s
   amount mismatch, excess from a race, another guardian gets 404, the token is reused, and
   sentinel credentials never appear in any response, log, `audit_logs`, `sms_logs`, Redis (incl.
   failed BullMQ jobs) or validation error.
+
+## Performance: reach the 3-second budget (from step 9)
+
+Recorded at the owner's request on 2026-10-23, when step 9 was ready to merge. The budget and the
+method are in [design.md](design.md) → Performance budget: ≤ 3 s to interactive on a 390 px phone
+(4× CPU, slow 4G, cold cache, signed in), builds compared only interleaved. Where things stand:
+
+- By that definition (main content on screen, then 2 s without a long task), design v2.1 measured
+  the dashboard at 6.8 s and the students list at 6.2 s.
+- Step 9's check used a looser mark, the page's main control on screen and hydrated, so it is the
+  earliest usable moment, not the documented "interactive": `/fees` 3.66 s (3.50–3.79), the
+  dashboard 3.93 s against 3.78 s on main (the ranges overlap). Even that is over 3 s.
+- A cold load of `/fees` downloads about 600 KB: 337 KB of scripts, 187 KB of fonts and a 53 KB
+  page, about 3 s of transfer on slow 4G before any work. The shell is shared, so every page pays
+  it.
+
+### 1. Slim the shared app shell
+
+- **Scripts (about 340 KB on every page):** measure what each route ships (e.g.
+  `@next/bundle-analyzer`). Move what the first screen does not need behind dynamic imports: the
+  command palette, dialogs and sheets, date pickers, charts, the theme and density settings. Look
+  for duplicate or oversized libraries.
+- **Fonts (about 190–210 KB):** subset Noto Sans Bengali (and the Latin face) to the glyphs the
+  UI uses, keep fewer weights, and preload only the body weight.
+- **After the first screen:** on the dashboard the time from content to interactive grew to
+  1.5 s (design.md). Find the long tasks (hydration, the follow-up requests).
+- Measure every change with the interleaved A/B and record it in design.md's table. The target is
+  ≤ 3 s by the documented definition.
+
+### 2. Load translation namespaces per route
+
+- **Today:** `NextIntlClientProvider` in `apps/web/src/app/layout.tsx` sends every message to the
+  browser on every page, including the fee areas merged in `apps/web/src/i18n/request.ts`. Step
+  9 made each page's HTML about 15 KB larger (53 KB against 38 KB for the dashboard).
+- **Instead:** the root layout passes only the shell's namespaces. Each area's layout passes its
+  own, for example `fees` under `/fees` and on the guardian's fee pages, through a nested
+  `NextIntlClientProvider` with only those messages. Server components keep reading the full set.
+- **Checks:** a page's HTML carries only its namespaces (the dashboard has no `fees.setup` keys),
+  and e2e fails on a missing-message error, so a client component can never ask for a namespace
+  its route does not provide.

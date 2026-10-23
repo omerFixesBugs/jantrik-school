@@ -122,12 +122,12 @@ What the tests you asked for cover:
 
 6. **The 3-second check:** a 390 px phone, 4× slower CPU, slow 4G, cold cache, signed in; 7 interleaved rounds against a main build.
 
-   | Page                  | Interactive, median (range) |
-   | --------------------- | --------------------------- |
-   | `/fees` (counter)     | 3.66 s (3.50–3.79)          |
-   | `/dashboard` (branch) | 3.93 s (3.91–4.30)          |
-   | `/dashboard` (main)   | 3.78 s (3.75–4.01)          |
-   - **The counter is over the budget by about 0.7 s.** It is faster than the dashboard on either build.
+   | Page                  | Main control usable, median (range) |
+   | --------------------- | ----------------------------------- |
+   | `/fees` (counter)     | 3.66 s (3.50–3.79)                  |
+   | `/dashboard` (branch) | 3.93 s (3.91–4.30)                  |
+   | `/dashboard` (main)   | 3.78 s (3.75–4.01)                  |
+   - **Over the budget even by this looser mark:** the page's main control on screen and hydrated. design.md's "interactive" also waits for 2 s without a long task, which put the dashboard at 6.8 s at design v2.1, so the real gap is larger. The counter is faster than the dashboard on either build.
    - **Where the time goes:** a cold load is about 600 KB (337 KB scripts, 187 KB fonts, 53 KB page), about 3 s of transfer on slow 4G, and the same app shell as main. Getting under 3 s needs app-wide work on fonts and JS splitting.
    - **The dashboard ranges overlap,** so the fees card is not a clear regression.
 
@@ -305,7 +305,7 @@ None of these changes money or access:
   (bKash publishes none) and no live keys.
 - **Playwright on this machine:** not run here; CI runs it on every push. `pnpm e2e` resets
   `jantrik_e2e`, and Prisma refuses that reset from an AI agent without your consent.
-- **The 3-second budget on the counter:** not met (3.66 s); see above. This is app-wide work.
+- **The 3-second budget:** not met (see above). The plan is in [backlog.md](../backlog.md): slim the shared app shell, and load translation namespaces per route.
 - **Design backlog** (`docs/design-backlog.md` §6):
   - Move the SMS cap and "send held SMS" out of the attendance settings, so an institute with
     fees and without attendance can change them.
