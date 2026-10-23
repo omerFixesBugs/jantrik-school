@@ -1,0 +1,135 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "retry": "Try again",
+    "tabs": {
+      "label": "Exam sections",
+      "exams": "Exams",
+      "setup": "Setup"
+    },
+    "sheetStatus": {
+      "DRAFT": "Draft",
+      "SUBMITTED": "Submitted",
+      "LOCKED": "Locked"
+    },
+    "examStatus": {
+      "SETUP": "Being set up",
+      "OPEN": "Open",
+      "ARCHIVED": "Archived"
+    },
+    "kind": {
+      "HALF_YEARLY": "Half-yearly",
+      "ANNUAL": "Annual",
+      "PRE_TEST": "Pre-test",
+      "TEST": "Test",
+      "CLASS_TEST": "Class test",
+      "MODEL_TEST": "Model test",
+      "OTHER": "Other"
+    },
+    "mode": {
+      "GPA": "GPA (grades)",
+      "MARKS": "Marks and percentage"
+    },
+    "componentKind": {
+      "CQ": "Creative (CQ)",
+      "MCQ": "MCQ",
+      "PRACTICAL": "Practical",
+      "WRITTEN": "Written",
+      "ORAL": "Oral",
+      "OTHER": "Other"
+    },
+    "errors": {
+      "notAssigned": "You are not assigned to enter marks for this subject and section.",
+      "sheetLocked": "This mark sheet is locked. Ask the office to change it.",
+      "versionConflict": "Someone else changed this mark sheet in the meantime. Check the latest and try again.",
+      "rosterChanged": "The student list changed. Check the new list and submit again.",
+      "incomplete": "Some cells are empty. Enter marks or mark absent for everyone.",
+      "invalidMarks": "Some marks are not valid (above the full marks, or more than two decimals).",
+      "marksExist": "Marks have been entered for this subject, so its parts and full marks can no longer change.",
+      "notReady": "Results can be published once every mark sheet is locked.",
+      "publishChanged": "The results changed in the meantime. Check the latest and publish again.",
+      "previewChanged": "The SMS figures changed. Check them again and confirm.",
+      "notPublished": "The results are not published yet.",
+      "published": "The results are published. Unpublish them first.",
+      "outsideYear": "The dates must be inside the academic year.",
+      "notInSetup": "The exam is already open, so this can no longer be done.",
+      "notOpen": "The exam is not open.",
+      "classInUse": "This class has marks or results, so it cannot be removed.",
+      "capacityShort": "The rooms do not have a seat for everyone. Choose more rooms.",
+      "notStaff": "This person is not an active teacher or admin of the institute.",
+      "subjectNotInClass": "This subject is not part of this class.",
+      "notElective": "This subject is not in the elective pool.",
+      "notInSection": "The student is not in this section.",
+      "notClassTeacher": "Only the class teacher or the office can write remarks.",
+      "wrongStatus": "This cannot be done while the mark sheet is in its current state.",
+      "duplicate": "One with this name already exists.",
+      "inUse": "It is in use, so it cannot be deleted.",
+      "noChange": "Nothing changed.",
+      "notFound": "Not found. It may have been deleted.",
+      "forbidden": "You do not have permission to see or do this.",
+      "checkForm": "Check the fields marked in red."
+    }
+  },
+  "list": {
+    "title": "Exams {year}",
+    "new": "New exam",
+    "newTitle": "New exam",
+    "newHint": "You add classes, subjects and the routine next. Everything can change until the exam is opened.",
+    "create": "Create",
+    "created": "Exam created",
+    "year": "Academic year",
+    "kind": "Type of exam",
+    "nameBn": "Name (Bangla)",
+    "nameEn": "Name (English)",
+    "startsOn": "Starts",
+    "endsOn": "Ends",
+    "mode": "Results",
+    "modeHint": "GPA for school exams; coaching model tests usually use marks and percentage.",
+    "classes": "{n, plural, one {{count} class} other {{count} classes}} · {published} published",
+    "emptyTitle": "No exams this year yet",
+    "emptyAdmin": "Start by creating the half-yearly or the annual exam.",
+    "emptyTeacher": "Exams appear here once the office creates them.",
+    "mySheets": "My mark sheets",
+    "mySheetsHint": "The subjects and sections you enter marks for.",
+    "entered": "{done} of {total} entered",
+    "returnedNote": "Returned: {note}"
+  },
+  "detail": {
+    "sections": "Exam sections",
+    "tab": {
+      "sheets": "Mark sheets",
+      "setup": "Setup",
+      "students": "Students and seats",
+      "results": "Results"
+    },
+    "open": "Open the exam",
+    "archive": "Archive",
+    "reopen": "Reopen",
+    "delete": "Delete",
+    "done": "Done",
+    "confirm": {
+      "openTitle": "Open the exam?",
+      "openBody": "Each class's student list is taken now, and teachers can start entering marks.",
+      "openYes": "Open",
+      "archiveTitle": "Archive the exam?",
+      "archiveBody": "Marks and remarks can no longer change. Guardians still see the published results.",
+      "archiveYes": "Archive",
+      "reopenTitle": "Reopen the exam?",
+      "reopenBody": "Marks and remarks can change again.",
+      "reopenYes": "Reopen",
+      "deleteTitle": "Delete the exam?",
+      "deleteBody": "The exam and its setup are deleted. This cannot be undone.",
+      "deleteYes": "Delete"
+    },
+    "setupNoticeTitle": "The exam is not open yet",
+    "setupNoticeText": "Choose the classes and subjects, then open the exam; the mark sheets appear here.",
+    "mySheets": "My mark sheets",
+    "noSheets": "You have no subjects in this exam.",
+    "subject": "Subject",
+    "gridHint": "{total} mark sheets · {submitted} submitted · {locked} locked",
+    "cellLabel": "{subject}, {section}: {done} of {total}",
+    "entered": "{done} of {total}",
+    "lockAll": "Lock {count} submitted",
+    "lockedAll": "{count} locked; {left} not submitted yet"
+  }
+}

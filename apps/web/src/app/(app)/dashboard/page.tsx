@@ -21,6 +21,7 @@ import {
   type AttendanceTodayReport,
   type AttendanceTodaySummary,
   type AttendanceTrendReport,
+  type ExamsSummary,
   type FeeSummary,
   type SendHeldSmsResult,
   type SmsDailyStatus,
@@ -31,6 +32,7 @@ import {
   type StudentsSummary,
 } from '@jantrik/shared';
 import {
+  BookOpenCheckIcon,
   CalendarCheckIcon,
   CalendarDaysIcon,
   CheckIcon,
@@ -53,6 +55,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useCallback, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ChildCalendar } from '@/components/attendance/child-calendar';
+import { ChildResultsSummary } from '@/components/exams/guardian';
 import { ChildFeesSummary } from '@/components/fees/guardian/child-fees-summary';
 import { BillingNoticeBanner } from '@/components/billing-notice';
 import {
@@ -61,7 +64,7 @@ import {
   TodayBoard,
   type BoardPeriod,
 } from '@/components/dashboard/attendance-overview';
-import { KpiPlaceholder, KpiTile } from '@/components/dashboard/kpi';
+import { KpiTile } from '@/components/dashboard/kpi';
 import {
   AttentionCard,
   DashboardHero,
@@ -338,7 +341,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
           {canSeeFees && <FeesTile className="col-span-2" />}
         </ul>
         {isAdmin && <GettingStarted context={context} />}
-        <ModulesSoon context={context} />
+        <ExamsCard context={context} />
       </>
     );
   }
@@ -696,7 +699,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
       </Deferred>
 
       <GettingStarted context={context} after={Boolean(report.data)} />
-      <ModulesSoon context={context} />
+      <ExamsCard context={context} />
     </>
   );
 }
@@ -722,19 +725,63 @@ function UnsentBanner({ count }: { count: number }) {
   );
 }
 
-/** Modules not running yet: what will appear here, never a made-up number. */
-function ModulesSoon({ context }: { context: MeContext }) {
+/** The exams card: the exam whose marks are being entered, its sheets locked of all (and the caller's own). */
+function ExamsCard({ context }: { context: MeContext }) {
   const t = useTranslations('dashboard');
-  const exams = canSee(navItem('exams'), context);
-  if (!exams) return null;
+  if (!canSee(navItem('exams'), context)) return null;
   return (
-    <ul className="grid gap-(--gap) sm:grid-cols-2" aria-label={t('modulesSoon')}>
-      <KpiPlaceholder
-        testId="module-card-exams"
-        label={t('upcomingExam')}
-        hint={t('upcomingExamHint')}
-      />
+    <ul className="grid gap-(--gap) sm:grid-cols-2" aria-label={t('examsFigures')}>
+      <ExamsTile />
     </ul>
+  );
+}
+
+function ExamsTile() {
+  const t = useTranslations('dashboard');
+  const locale = useLocale() as Locale;
+  const { client, session } = useAuth();
+  const summary = useQuery({
+    queryKey: ['exams', session?.tenant?.id, '/exams/summary'],
+    queryFn: () => client.api<ExamsSummary>('/exams/summary'),
+  });
+  const s = summary.data;
+  const f = (n: number) => formatCount(n, locale);
+  const examName = (e: { nameBn: string; nameEn: string }) =>
+    locale === 'bn' ? e.nameBn : e.nameEn;
+  const current = s?.current;
+  const next = s?.upcoming[0];
+  return (
+    <KpiTile
+      testId="module-card-exams"
+      label={current ? t('examsMarks') : t('upcomingExam')}
+      icon={BookOpenCheckIcon}
+      href={current ? `/exams/${current.id}` : '/exams'}
+      loading={summary.isPending}
+      failed={summary.isError && !summary.data}
+      value={
+        current ? (
+          f(current.sheets.locked)
+        ) : next ? (
+          <span className="text-2xl">{examName(next)}</span>
+        ) : null
+      }
+      suffix={current && current.sheets.total > 0 ? `/ ${f(current.sheets.total)}` : undefined}
+      hint={
+        s &&
+        (current
+          ? [
+              t('examsLocked', { exam: examName(current) }),
+              current.sheets.submitted > 0 &&
+                t('examsWaiting', { count: f(current.sheets.submitted) }),
+              s.myPendingSheets > 0 && t('examsMine', { count: f(s.myPendingSheets) }),
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : next
+            ? t('examsStarts', { date: formatDate(next.startsOn, locale) })
+            : t('upcomingExamHint'))
+      }
+    />
   );
 }
 
@@ -1151,6 +1198,7 @@ function GuardianDashboard({ context }: { context: MeContext }) {
                 child={c}
                 showAttendance={context.modules.includes('ATTENDANCE')}
                 showFees={context.modules.includes('FEES')}
+                showExams={context.modules.includes('EXAMS')}
               />
             ))}
           </ul>
@@ -1164,10 +1212,12 @@ function ChildCard({
   child,
   showAttendance,
   showFees,
+  showExams,
 }: {
   child: GuardianChild;
   showAttendance: boolean;
   showFees: boolean;
+  showExams: boolean;
 }) {
   const t = useTranslations('guardian');
   const tStudents = useTranslations('students');
@@ -1212,11 +1262,14 @@ function ChildCard({
         ))}
       </dl>
       {showFees && <ChildFeesSummary childId={child.id} />}
+      {showExams && <ChildResultsSummary childId={child.id} />}
       {showAttendance && <ChildCalendar studentId={child.id} />}
-      <p className="bg-canvas text-muted-foreground flex items-center gap-2 border-t px-4 py-3 text-sm sm:px-5">
-        <ClockIcon aria-hidden className="size-4 shrink-0" />
-        {showFees ? t('examsSoon') : t('comingSoon')}
-      </p>
+      {!showExams && (
+        <p className="bg-canvas text-muted-foreground flex items-center gap-2 border-t px-4 py-3 text-sm sm:px-5">
+          <ClockIcon aria-hidden className="size-4 shrink-0" />
+          {showFees ? t('examsSoon') : t('comingSoon')}
+        </p>
+      )}
     </li>
   );
 }

@@ -243,7 +243,13 @@
     "examUsually": "সাধারণত {month}",
     "todayChangeLabel": "{change} পয়েন্ট {more, select, true {বেশি} other {কম}}, আগের ৭ দিনের গড়ের তুলনায়",
     "smsOff": "অনুপস্থিতির SMS চালু করুন",
-    "smsOffValue": "বন্ধ"
+    "smsOffValue": "বন্ধ",
+    "examsFigures": "পরীক্ষার হিসাব",
+    "examsMarks": "নম্বর জমা ও লক",
+    "examsLocked": "{exam}: লক করা নম্বরপত্র",
+    "examsWaiting": "{count}টি জমা হয়েছে, লকের অপেক্ষায়",
+    "examsMine": "আপনার {count}টি বাকি",
+    "examsStarts": "শুরু {date}"
   },
   "students": {
     "title": "{student} তালিকা",
@@ -390,7 +396,8 @@
     "body": "ইন্টারনেট দুর্বল মনে হচ্ছে। আপনাকে কিছু করতে হবে না, আমরা নিজে থেকেই আবার চেষ্টা করছি।",
     "drafts": "এই ফোনে {count}টি হাজিরা জমা বাকি আছে। সংযোগ ফিরলে নিজে থেকেই পাঠানো হবে।",
     "retry": "এখনই চেষ্টা করুন",
-    "login": "লগইন পাতায় যান"
+    "login": "লগইন পাতায় যান",
+    "markDrafts": "এই ফোনে {count}টি নম্বরপত্র পাঠানোর অপেক্ষায় আছে। সংযোগ ফিরলেই চলে যাবে।"
   },
   "errorPage": {
     "title": "কিছু একটা সমস্যা হয়েছে",
@@ -1420,6 +1427,7 @@
     "keyAttendance": "হাজিরা নিতে যান",
     "keyToday": "আজকের হিসাবে যান",
     "keyRegister": "মাসিক রেজিস্টারে যান",
+    "keyExams": "পরীক্ষায় যান",
     "keyHelp": "এই তালিকা",
     "language": "ভাষা: {language}",
     "languageKeywords": "ভাষা language English বাংলা",

@@ -82,7 +82,6 @@ export const NAV_ITEMS: NavItem[] = [
     group: 'academic',
     module: 'EXAMS',
     roles: STAFF,
-    soon: true,
   },
   {
     key: 'setup',
