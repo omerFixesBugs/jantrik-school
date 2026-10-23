@@ -11,11 +11,23 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   admitCardsQuerySchema,
   allocateSeatsSchema,
   correctMarksSchema,
+  publishResultsSchema,
+  remarksQuerySchema,
+  reportCardsQuerySchema,
+  saveRemarksSchema,
+  tabulationQuerySchema,
+  unpublishResultsSchema,
+  type PublishCheck,
+  type RemarksView,
+  type ReportCards,
+  type Tabulation,
   markSheetQuerySchema,
   returnMarkSheetSchema,
   saveMarkSheetSchema,
@@ -56,11 +68,14 @@ import {
   type SubjectChoicesView,
   type SubjectMarksView,
 } from '@jantrik/shared';
+import { AttendanceModule } from '../attendance/attendance.module.js';
 import { RequireModule, Roles } from '../common/decorators.js';
+import { StudentsModule } from '../students/students.module.js';
 import { zodDto } from '../common/zod.js';
 import { ExamAccessService } from './exam-access.service.js';
 import { ExamRosterService } from './marks/exam-roster.service.js';
 import { MarkSheetService } from './marks/mark-sheet.service.js';
+import { ExamResultsService } from './results/exam-results.service.js';
 import { SeatPlanService } from './seats/seat-plan.service.js';
 import { ExamSetupService } from './setup/exam-setup.service.js';
 import { ExamStaffService } from './setup/exam-staff.service.js';
@@ -87,6 +102,20 @@ export class SaveMarkSheetDto extends zodDto(saveMarkSheetSchema) {}
 class ReturnMarkSheetDto extends zodDto(returnMarkSheetSchema) {}
 class UnlockMarkSheetDto extends zodDto(unlockMarkSheetSchema) {}
 class CorrectMarksDto extends zodDto(correctMarksSchema) {}
+class PublishResultsDto extends zodDto(publishResultsSchema) {}
+class UnpublishResultsDto extends zodDto(unpublishResultsSchema) {}
+class TabulationQueryDto extends zodDto(tabulationQuerySchema) {}
+class ReportCardsQueryDto extends zodDto(reportCardsQuerySchema) {}
+class RemarksQueryDto extends zodDto(remarksQuerySchema) {}
+class SaveRemarksDto extends zodDto(saveRemarksSchema) {}
+
+/** A CSV download (attendance's pattern): UTF-8 with BOM, an ASCII filename, never cached. */
+function sendCsv(res: Response, file: { filename: string; csv: string }): string {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  return file.csv;
+}
 
 const Id = (name = 'id') => Param(name, ParseUUIDPipe);
 
@@ -250,6 +279,87 @@ export class MarkSheetAdminController {
   }
 }
 
+/**
+ * Results for staff: tabulation and report cards (OWNER/ADMIN, or the section's teachers),
+ * remarks (the class teacher or an admin). The service checks the section.
+ */
+@Controller('exams')
+@RequireModule('EXAMS')
+@Roles('OWNER', 'ADMIN', 'TEACHER')
+export class ExamResultsController {
+  constructor(private readonly results: ExamResultsService) {}
+
+  @Get(':id/classes/:examClassId/tabulation')
+  tabulation(
+    @Id() id: string,
+    @Id('examClassId') examClassId: string,
+    @Query() query: TabulationQueryDto,
+  ): Promise<Tabulation> {
+    return this.results.tabulation(id, examClassId, query.sectionId);
+  }
+
+  @Get(':id/classes/:examClassId/tabulation/csv')
+  async tabulationCsv(
+    @Id() id: string,
+    @Id('examClassId') examClassId: string,
+    @Query() query: TabulationQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    return sendCsv(
+      res,
+      await this.results.tabulationCsv(id, examClassId, query.sectionId, query.locale),
+    );
+  }
+
+  @Get(':id/report-cards')
+  reportCards(@Id() id: string, @Query() query: ReportCardsQueryDto): Promise<ReportCards> {
+    return this.results.reportCards(id, query);
+  }
+
+  @Get(':id/remarks')
+  remarks(@Id() id: string, @Query() query: RemarksQueryDto): Promise<RemarksView> {
+    return this.results.remarks(id, query.sectionId);
+  }
+
+  @Put(':id/remarks')
+  saveRemarks(@Id() id: string, @Body() dto: SaveRemarksDto): Promise<RemarksView> {
+    return this.results.saveRemarks(id, dto);
+  }
+}
+
+/** Publishing results (OWNER/ADMIN). */
+@Controller('exams')
+@RequireModule('EXAMS')
+@Roles('OWNER', 'ADMIN')
+export class ExamPublishController {
+  constructor(private readonly results: ExamResultsService) {}
+
+  @Get(':id/classes/:examClassId/publish-check')
+  publishCheck(@Id() id: string, @Id('examClassId') examClassId: string): Promise<PublishCheck> {
+    return this.results.publishCheck(id, examClassId);
+  }
+
+  @Post(':id/classes/:examClassId/publish')
+  @HttpCode(200)
+  publish(
+    @Id() id: string,
+    @Id('examClassId') examClassId: string,
+    @Body() dto: PublishResultsDto,
+  ): Promise<PublishCheck> {
+    return this.results.publish(id, examClassId, dto.baseVersion);
+  }
+
+  @Post(':id/classes/:examClassId/unpublish')
+  @HttpCode(200)
+  unpublish(
+    @Id() id: string,
+    @Id('examClassId') examClassId: string,
+    @Body() dto: UnpublishResultsDto,
+  ): Promise<PublishCheck> {
+    return this.results.unpublish(id, examClassId, dto.reason);
+  }
+}
+
 /** Exams, read: staff (teachers see open and archived exams; the service decides). */
 @Controller('exams')
 @RequireModule('EXAMS')
@@ -373,12 +483,16 @@ export class ExamsAdminController {
 }
 
 @Module({
+  // AttendanceModule: present % for report cards. StudentsModule: StudentAccess (decision #19).
+  imports: [AttendanceModule, StudentsModule],
   // Static routes (exams/setup/…, rooms, grading, staff, my-sheets, sheets) are declared before
   // exams/:id so they are never taken for an exam id.
   controllers: [
     ExamSetupController,
     MarkSheetController,
     MarkSheetAdminController,
+    ExamResultsController,
+    ExamPublishController,
     ExamsReadController,
     ExamsAdminController,
   ],
@@ -390,6 +504,7 @@ export class ExamsAdminController {
     SeatPlanService,
     ExamRosterService,
     MarkSheetService,
+    ExamResultsService,
   ],
   // MarkSheetService: test-only routes (rollback checks) inject it.
   exports: [MarkSheetService],

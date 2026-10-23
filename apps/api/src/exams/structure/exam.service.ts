@@ -511,6 +511,39 @@ export class ExamService {
     return result;
   }
 
+  /** How many roster rows a sync would change (read-only, no locks; for the publish check). */
+  async rosterDrift(examId: string, classLevelId: string): Promise<number> {
+    const tx = this.db.tx;
+    const exam = await tx.exam.findUniqueOrThrow({
+      where: { id: examId },
+      select: { academicYearId: true },
+    });
+    const enrolments = await this.enrolled(exam.academicYearId, [classLevelId]);
+    const candidates = await tx.examCandidate.findMany({
+      where: { examId, classLevelId },
+      select: { studentId: true, status: true, sectionId: true, roll: true, studyGroupId: true },
+    });
+    const byStudent = new Map(candidates.map((c) => [c.studentId, c]));
+    const enrolled = new Set(enrolments.map((e) => e.studentId));
+    let drift = 0;
+    for (const e of enrolments) {
+      const c = byStudent.get(e.studentId);
+      if (
+        !c ||
+        c.status === 'WITHDRAWN' ||
+        c.sectionId !== e.sectionId ||
+        c.roll !== e.roll ||
+        c.studyGroupId !== e.studyGroupId
+      ) {
+        drift++;
+      }
+    }
+    for (const c of candidates) {
+      if (c.status === 'ENROLLED' && !enrolled.has(c.studentId)) drift++;
+    }
+    return drift;
+  }
+
   // ─────────────────────────── Helpers ───────────────────────────
 
   /** The exam row, locked for this transaction (one writer per exam's setup at a time). */

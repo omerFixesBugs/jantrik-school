@@ -682,3 +682,200 @@ export interface MarkSheetHistoryEntry {
   reason: string | null;
   changes: { studentId: string; key: string; from: MarkCell | null; to: MarkCell }[];
 }
+
+// ─────────────────────────── Results ───────────────────────────
+
+/** POST /exams/:id/classes/:examClassId/publish: `baseVersion` is the version the admin saw. */
+export const publishResultsSchema = z.object({ baseVersion: z.number().int().min(0) });
+
+export const unpublishResultsSchema = z.object({ reason: reasonSchema });
+
+export const tabulationQuerySchema = z.object({
+  sectionId: z.uuid().optional(),
+  locale: z.enum(['bn', 'en']).default('bn'),
+});
+
+export const reportCardsQuerySchema = z
+  .object({ sectionId: z.uuid().optional(), studentId: z.uuid().optional() })
+  .refine((q) => q.sectionId || q.studentId, 'A section or a student');
+
+export const remarksQuerySchema = z.object({ sectionId: z.uuid() });
+
+/** PUT /exams/:id/remarks: the class teacher's (or an admin's) remark per student; '' clears. */
+export const saveRemarksSchema = z.object({
+  sectionId: z.uuid(),
+  remarks: z
+    .array(z.object({ studentId: z.uuid(), text: z.string().trim().max(300) }))
+    .min(1)
+    .max(500),
+});
+export type SaveRemarksInput = z.input<typeof saveRemarksSchema>;
+
+export interface PublishCheck {
+  examClassId: string;
+  isPublished: boolean;
+  publishedVersion: number;
+  publishedAt: string | null;
+  /** Marks or remarks changed after the last publish: republish to show them. */
+  stale: boolean;
+  /** Publish is refused while any of these remain. */
+  blockers: {
+    /** Sheets with students that are not locked yet. */
+    unlockedSheets: {
+      examSubjectId: string;
+      subject: CodedRef;
+      section: { id: string; name: string };
+      status: MarkSheetStatus;
+    }[];
+    /** Students with a part not entered. */
+    incompleteStudents: number;
+  };
+  warnings: {
+    /** Enrolments that differ from the roster (sync the roster first if they matter). */
+    rosterChanges: number;
+    /** Students in a group with elective subjects but no choice recorded. */
+    missingChoices: number;
+  };
+  students: number;
+}
+
+export interface ResultSubjectCell {
+  examSubjectId: string;
+  optional: boolean;
+  status: 'COMPLETE' | 'INCOMPLETE' | 'ABSENT';
+  obtainedH: number;
+  fullMarks: number;
+  letter: string | null;
+  gradePoint: number | null;
+  passed: boolean;
+  marks: Record<string, MarkCell>;
+}
+
+export interface ResultRow {
+  studentId: string;
+  studentCode: string;
+  nameBn: string | null;
+  nameEn: string | null;
+  roll: number | null;
+  section: { id: string; name: string };
+  subjects: ResultSubjectCell[];
+  totalH: number;
+  fullMarks: number;
+  percentH: number;
+  gpaH: number | null;
+  gpaWithoutOptionalH: number | null;
+  letter: string | null;
+  passed: boolean;
+  failedSubjects: number;
+  classPosition: number | null;
+  sectionPosition: number | null;
+  complete: boolean;
+}
+
+/** GET …/tabulation: live (PREVIEW) before publish, the published snapshot after. */
+export interface Tabulation {
+  exam: { id: string; nameBn: string; nameEn: string; resultMode: ExamResultMode };
+  classLevel: CodedRef;
+  section: { id: string; name: string } | null;
+  source: 'PREVIEW' | 'PUBLISHED';
+  publishedVersion: number;
+  stale: boolean;
+  gpaDecimals: number;
+  subjects: {
+    examSubjectId: string;
+    subject: CodedRef;
+    fullMarks: number;
+    components: ExamComponentView[];
+  }[];
+  rows: ResultRow[];
+}
+
+export interface ReportCardSubject {
+  subject: CodedRef;
+  optional: boolean;
+  status: 'COMPLETE' | 'INCOMPLETE' | 'ABSENT';
+  components: {
+    key: string;
+    nameBn: string;
+    nameEn: string;
+    fullMarks: number;
+    mark: MarkCell | null;
+  }[];
+  obtainedH: number;
+  fullMarks: number;
+  letter: string | null;
+  gradePoint: number | null;
+  passed: boolean;
+  /** The class's highest marks in this subject. */
+  highestH: number | null;
+}
+
+export interface ReportCard {
+  student: {
+    id: string;
+    studentCode: string;
+    nameBn: string | null;
+    nameEn: string | null;
+    photoUrl: string | null;
+    /** Only for OWNER/ADMIN, the student's current section teachers and the guardian (#19). */
+    fatherNameBn: string | null;
+    fatherNameEn: string | null;
+    motherNameBn: string | null;
+    motherNameEn: string | null;
+  };
+  section: { id: string; name: string };
+  studyGroup: CodedRef | null;
+  roll: number | null;
+  subjects: ReportCardSubject[];
+  totalH: number;
+  fullMarks: number;
+  percentH: number;
+  gpaH: number | null;
+  gpaWithoutOptionalH: number | null;
+  letter: string | null;
+  passed: boolean;
+  failedSubjects: number;
+  classPosition: number | null;
+  sectionPosition: number | null;
+  classSize: number;
+  attendance: { present: number; total: number; percentH: number | null } | null;
+  remarks: string | null;
+}
+
+/** GET /exams/:id/report-cards and the guardian's own child's card. */
+export interface ReportCards {
+  institute: { name: string };
+  exam: {
+    id: string;
+    nameBn: string;
+    nameEn: string;
+    kind: ExamKind;
+    resultMode: ExamResultMode;
+    startsOn: IsoDate;
+    endsOn: IsoDate;
+    attendance: { from: IsoDate; to: IsoDate } | null;
+  };
+  classLevel: CodedRef;
+  publishedVersion: number;
+  publishedAt: string;
+  grading: {
+    bands: GradeBandView[];
+    gpaDecimals: number;
+    gpaMax: number;
+    optionalBonusAbove: number | null;
+  } | null;
+  cards: ReportCard[];
+}
+
+export interface RemarksView {
+  section: { id: string; name: string };
+  isPublished: boolean;
+  students: {
+    studentId: string;
+    studentCode: string;
+    nameBn: string | null;
+    nameEn: string | null;
+    roll: number | null;
+    remarks: string | null;
+  }[];
+}
