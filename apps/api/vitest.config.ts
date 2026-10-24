@@ -23,6 +23,15 @@ const platformUrl = (): string => {
   return url.toString();
 };
 
+/** The device receiver's login (DATABASE_INGEST_URL) on the test database, derived like the platform one. */
+const ingestUrl = (): string => {
+  const url = new URL(required('DATABASE_URL_TEST'));
+  const login = new URL(required('DATABASE_INGEST_URL'));
+  url.username = login.username;
+  url.password = login.password;
+  return url.toString();
+};
+
 export default defineConfig({
   test: {
     globals: true,
@@ -37,6 +46,7 @@ export default defineConfig({
       NODE_ENV: 'test',
       DATABASE_URL: required('DATABASE_URL_TEST'),
       DATABASE_PLATFORM_URL: platformUrl(),
+      DATABASE_INGEST_URL: ingestUrl(),
       DATABASE_MIGRATION_URL_TEST: required('DATABASE_MIGRATION_URL_TEST'),
       REDIS_URL: process.env['REDIS_URL_TEST'] ?? 'redis://localhost:6379/1',
       QUEUE_PREFIX: 'jantrik-test',
@@ -48,6 +58,9 @@ export default defineConfig({
       DEV_LAN: 'false',
       // Tests send X-Forwarded-For to simulate different client IPs.
       TRUST_PROXY: 'true',
+      // The test harness boots the device receiver itself.
+      INGEST_IN_PROCESS: 'false',
+      INGEST_TRUST_PROXY: 'true',
       CORS_ORIGINS: 'http://localhost:3000',
     },
   },

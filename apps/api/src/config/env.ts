@@ -3,6 +3,10 @@ import { z } from 'zod';
 
 const positiveInt = (fallback: number) => z.coerce.number().int().positive().default(fallback);
 
+/** The receiver runs inside the API unless told otherwise; production runs it as its own process. */
+const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_ENV: string }) =>
+  env.INGEST_IN_PROCESS ?? env.NODE_ENV !== 'production';
+
 /** Environment variables the API needs. Validated once at startup. */
 export const envSchema = z
   .object({
@@ -26,6 +30,12 @@ export const envSchema = z
      * platform_* functions. Same database as DATABASE_URL.
      */
     DATABASE_PLATFORM_URL: z.string().min(1),
+    /**
+     * The device receiver's own login (role jantrik_ingest_app): the only role that may run the
+     * ingest_* functions. Same database as DATABASE_URL. Required when the receiver runs in this
+     * process.
+     */
+    DATABASE_INGEST_URL: z.string().min(1).optional(),
     REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
     /** BullMQ key prefix, so several environments can share one Redis. */
     QUEUE_PREFIX: z.string().min(1).default('jantrik'),
@@ -61,6 +71,21 @@ export const envSchema = z
      * Refused in any other NODE_ENV.
      */
     JANTRIK_TEST_TODAY: isoDateSchema.optional(),
+
+    // Device receiver (ZKTeco attendance machines).
+    /** Run the receiver inside the API process. Default: yes, except in production (own process). */
+    INGEST_IN_PROCESS: z.stringbool().optional(),
+    INGEST_PORT: positiveInt(4080),
+    /** Host and port a device is told to connect to; shown to admins in the device setup guide. */
+    INGEST_PUBLIC_HOST: z.string().min(1).default('localhost'),
+    INGEST_PUBLIC_PORT: z.coerce.number().int().positive().optional(),
+    /** Express "trust proxy" for the receiver (same values as TRUST_PROXY). */
+    INGEST_TRUST_PROXY: z.string().default('false'),
+    INGEST_PER_IP_PER_MIN: positiveInt(1200),
+    INGEST_PER_DEVICE_PER_MIN: positiveInt(300),
+    INGEST_REFUSED_PER_IP_PER_10MIN: positiveInt(30),
+    INGEST_MAX_ATTLOG_BYTES: positiveInt(524288),
+    INGEST_MAX_DRAIN_BYTES: positiveInt(2097152),
 
     // Rate limits. Per-phone / per-identifier limits are the real protection; per-IP limits are
     // generous because many Bangladeshi users share one IP (carrier CGNAT, school Wi-Fi).
@@ -98,6 +123,14 @@ export const envSchema = z
         message: 'PLATFORM_TOTP_KEY is required in production',
       });
     }
+    if (ingestInProcess(env) && !env.DATABASE_INGEST_URL) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DATABASE_INGEST_URL'],
+        message:
+          'DATABASE_INGEST_URL is required when the device receiver runs in the API process (INGEST_IN_PROCESS)',
+      });
+    }
     if (!env.COOKIE_SECURE && env.NODE_ENV === 'production') {
       ctx.addIssue({
         code: 'custom',
@@ -105,7 +138,12 @@ export const envSchema = z
         message: 'COOKIE_SECURE must be true in production',
       });
     }
-  });
+  })
+  .transform((env) => ({
+    ...env,
+    INGEST_IN_PROCESS: ingestInProcess(env),
+    INGEST_PUBLIC_PORT: env.INGEST_PUBLIC_PORT ?? env.INGEST_PORT,
+  }));
 
 export type Env = z.infer<typeof envSchema>;
 

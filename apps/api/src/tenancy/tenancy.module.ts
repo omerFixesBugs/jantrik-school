@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
 import { Db } from './db.service.js';
 import { InstituteProvisioning } from './institute-provisioning.service.js';
@@ -10,6 +11,7 @@ import { TenantJobRunner } from './tenant-job-runner.service.js';
 @Module({
   providers: [
     RequestContext,
+    Clock,
     Db,
     TenantAccessService,
     TenantContextInterceptor,
@@ -18,6 +20,7 @@ import { TenantJobRunner } from './tenant-job-runner.service.js';
   ],
   exports: [
     RequestContext,
+    Clock,
     Db,
     TenantAccessService,
     TenantContextInterceptor,

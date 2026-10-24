@@ -35,6 +35,15 @@ const platformUrl = (): string => {
   return url.toString();
 };
 
+/** The device receiver's login (DATABASE_INGEST_URL) on the e2e database, derived like the platform one. */
+const ingestUrl = (): string => {
+  const url = new URL(required('DATABASE_URL_E2E'));
+  const login = new URL(required('DATABASE_INGEST_URL'));
+  url.username = login.username;
+  url.password = login.password;
+  return url.toString();
+};
+
 export default defineConfig({
   testDir: './e2e',
   globalSetup: './e2e/global-setup.ts',
@@ -68,6 +77,11 @@ export default defineConfig({
         API_PORT: '4000',
         DATABASE_URL: required('DATABASE_URL_E2E'),
         DATABASE_PLATFORM_URL: platformUrl(),
+        DATABASE_INGEST_URL: ingestUrl(),
+        INGEST_IN_PROCESS: 'true',
+        INGEST_PORT: '4280',
+        INGEST_PUBLIC_PORT: '4280',
+        INGEST_TRUST_PROXY: 'true',
         REDIS_URL: E2E_REDIS_URL,
         QUEUE_PREFIX: 'jantrik-e2e',
         SMS_PROVIDER: 'outbox',

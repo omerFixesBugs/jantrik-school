@@ -30,3 +30,16 @@ export const PLATFORM_URL = (() => {
   url.password = new URL(login).password;
   return url.toString();
 })();
+
+/**
+ * The device receiver's login (jantrik_ingest_app: user and password of DATABASE_INGEST_URL) on
+ * the test database; server, port and database come from APP_URL.
+ */
+export const INGEST_URL = (() => {
+  const login = process.env['DATABASE_INGEST_URL'];
+  if (!login) throw new Error('DATABASE_INGEST_URL is not set (see .env.example)');
+  const url = new URL(APP_URL);
+  url.username = new URL(login).username;
+  url.password = new URL(login).password;
+  return url.toString();
+})();

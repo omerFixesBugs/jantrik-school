@@ -6,7 +6,7 @@ set -eu
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
   -v owner_pw="$DB_OWNER_PASSWORD" -v app_pw="$DB_APP_PASSWORD" \
-  -v platform_pw="$DB_PLATFORM_PASSWORD" <<'SQL'
+  -v platform_pw="$DB_PLATFORM_PASSWORD" -v ingest_pw="$DB_INGEST_PASSWORD" <<'SQL'
 -- Owns the schema and runs migrations. Not a superuser, so FORCE ROW LEVEL SECURITY applies to it.
 -- CREATEDB is needed for Prisma's shadow database during `prisma migrate dev`.
 CREATE ROLE jantrik_owner LOGIN CREATEDB NOSUPERUSER NOBYPASSRLS PASSWORD :'owner_pw';
@@ -38,6 +38,16 @@ GRANT jantrik_platform TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 -- can never read an institute's rows. jantrik_app in turn cannot run the platform functions, so
 -- an SQL injection on either side stays on that side. Schema USAGE comes from a migration.
 CREATE ROLE jantrik_platform_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD :'platform_pw';
+
+-- Owns the ingest_* SECURITY DEFINER functions (the ZKTeco device receiver): device lookup by
+-- serial number and the writes of punches. Same rules as jantrik_auth.
+CREATE ROLE jantrik_ingest NOLOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
+
+-- Runtime role of the device receiver only (DATABASE_INGEST_URL). It may run the ingest_*
+-- functions and nothing else: no table grants and NOT a member of jantrik_app, so a device
+-- request can never read an institute's rows. Schema USAGE comes from a migration.
+CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD :'ingest_pw';
 
 CREATE DATABASE jantrik OWNER jantrik_owner;
 CREATE DATABASE jantrik_test OWNER jantrik_owner;

@@ -23,6 +23,7 @@ import { FeesModule } from '../../src/fees/fees.module.js';
 import { REDIS } from '../../src/redis/redis.constants.js';
 import { SMS_PROVIDER, type MemorySmsProvider } from '../../src/sms/sms.providers.js';
 import { TenantAccessService } from '../../src/tenancy/tenant-access.service.js';
+import { Clock } from '../../src/common/clock.js';
 import { TestController } from './test.controller.js';
 
 export interface Harness {
@@ -35,13 +36,16 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function createHarness(): Promise<Harness> {
-  const moduleRef = await Test.createTestingModule({
+export async function createHarness(opts: { clock?: Clock } = {}): Promise<Harness> {
+  const builder = Test.createTestingModule({
     // AttendanceModule, FeesModule and ExamsModule again so TestController can inject their
     // exported services (same instances).
     imports: [AppModule, AttendanceModule, FeesModule, ExamsModule],
     controllers: [TestController],
-  }).compile();
+  });
+  // Tests that need to control time pass a FakeClock (test/support/clock.ts).
+  if (opts.clock) builder.overrideProvider(Clock).useValue(opts.clock);
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
   configureApp(app);
   await app.init();
