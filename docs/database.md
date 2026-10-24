@@ -33,8 +33,8 @@ the template.
 | `jantrik_search`       | Owner of `search_student_ids()`                                | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                 |
 | `jantrik_platform`     | Owner of the `platform_*` functions (Jantrik's own admins)     | Same rules as `jantrik_auth`. Grants on the platform tables and explicit `TO jantrik_platform` policies for institute metadata only, never student/guardian/attendance rows. See [platform.md](platform.md).                                                                       |
 | `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)            | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                               |
-| `jantrik_ingest`       | Owner of the `ingest_*` functions (the ZKTeco device receiver) | Same rules as `jantrik_auth`. The functions arrive in step 11's migrations.                                                                                                                                                                                                        |
-| `jantrik_ingest_app`   | The device receiver (`DATABASE_INGEST_URL`)                    | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. Meant to be the **only** role with EXECUTE on the `ingest_*` functions (step 11's migrations grant it), and that is all it has: not a member of `jantrik_app`, no table grants.                                                     |
+| `jantrik_ingest`       | Owner of the `ingest_*` functions (the ZKTeco device receiver) | Same rules as `jantrik_auth`, with `TO jantrik_ingest` policies on the device tables and by column on tenants, modules and attendance settings. See "Devices (step 11)" below.                                                                                                     |
+| `jantrik_ingest_app`   | The device receiver (`DATABASE_INGEST_URL`)                    | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the four `ingest_*` functions (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants.                                                         |
 
 The roles and databases (`jantrik`, `jantrik_test`) are created by
 [`docker/postgres/init/01-roles.sh`](../docker/postgres/init/01-roles.sh). That script only runs
@@ -169,13 +169,18 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   / `app_current_user_id()`, so a missing context returns nothing. The only exceptions are the
   three pre-context login lookups and the `platform_*` functions (`docs/platform.md`): those
   belong to `jantrik_platform`, need a live platform session instead, and may take an institute
-  id. `test/schema-safety.test.ts` fails on any other definer function that takes a tenant/uuid
+  id. The `ingest_*` functions (step 11) have no context either: they take a device's serial
+  number, never a tenant or device id, and scope every query by the device it names.
+  `test/schema-safety.test.ts` fails on any other definer function that takes a tenant/uuid
   argument or isn't scoped by context.
 - **Every definer function** pins exactly `search_path = pg_catalog, public, pg_temp`, and PUBLIC
   may not run it (`schema-safety.test.ts` checks every one).
 - **Platform functions** (owned by `jantrik_platform`): EXECUTE for `jantrik_platform_app` only,
   never `jantrik_app`. Don't copy the `GRANT … TO jantrik_app` of an auth function;
   `schema-safety.test.ts` checks this by owner, so a new function is covered too.
+- **Ingest functions** (owned by `jantrik_ingest`): EXECUTE for `jantrik_ingest_app` only, the
+  same way. Their helpers (`ingest_uuid7`, `ingest_find_device`) are owned by `jantrik_ingest`
+  too, pinned, and nobody else may run them. `schema-safety.test.ts` checks by name and by owner.
 - **Privileges on a definer function:** REVOKE/GRANT _before_ `ALTER FUNCTION … OWNER TO`, or
   `SET ROLE <owner>` first. Only a function's owner can change its privileges. A REVOKE run by
   anyone else is a silent no-op, which left PUBLIC with EXECUTE until migration
@@ -373,15 +378,50 @@ ZKTeco attendance devices. Five tenant tables (forced RLS, composite keys, every
 - **`attendance_settings`** gained the device and staff columns (auto mark, grace, cutoff, office
   hours, device hours, per-minute cap, staff ID start, punch retention), NOT NULL with DDL
   defaults and range CHECKs (no backfill).
-- **The receiver's roles.** `jantrik_ingest` (owner of the `ingest_*` functions, which arrive in
-  the next migration) has no tenant context and sees rows only through its own
-  `TO jantrik_ingest` policies, by column: `tenants (id, status, timezone)`,
-  `tenant_modules (tenant_id, module_key, enabled)`, `attendance_settings` (the device hours and
-  the cap), all of `attendance_devices` and UPDATE on the receiver's columns, INSERT on punches
-  and SELECT on the columns the dedupe and the per-minute cap need, the commands' delivery
-  columns, and the source addresses' counters. `jantrik_ingest_app` has schema USAGE and nothing
-  else (EXECUTE on the functions comes with them).
-- Tests: `packages/db/test/devices-rls.test.ts`; the table list in `schema-safety.test.ts`.
+- **The receiver's roles.** `jantrik_ingest` (owner of the `ingest_*` functions) has no tenant
+  context and sees rows only through its own `TO jantrik_ingest` policies, by column:
+  `tenants (id, status, timezone)`, `tenant_modules (tenant_id, module_key, enabled)`,
+  `attendance_settings` (the device hours and the cap), all of `attendance_devices` and UPDATE on
+  the receiver's columns, INSERT on punches and SELECT on the columns the dedupe and the
+  per-minute cap need, the commands' delivery columns, and the source addresses' counters.
+  `jantrik_ingest_app` has schema USAGE and EXECUTE on the four functions, nothing else.
+- **The `ingest_*` family** (migration `20261029000100_devices_ingest_functions`). Those policies
+  see every institute, so each function takes the device's serial number (never a tenant or
+  device id), resolves it again itself and scopes every query by that device's
+  `(tenant_id, id)`. Times come from the caller (`p_now`, the receiver's clock), never `now()`.
+  A serial is refused as `UNKNOWN` (no such device, or not `^[A-Z0-9]{6,32}$` once upper-cased),
+  `INACTIVE` (only deactivated copies), `INSTITUTE_INACTIVE` (not ACTIVE or TRIAL) or
+  `MODULE_OFF` (ATTENDANCE missing or off); a refused serial gets nothing and writes nothing.
+  Helpers: `ingest_find_device` (that resolution) and `ingest_uuid7`, which makes UUIDv7 ids like
+  Prisma's `uuid(7)` from `p_now` (no table has an id default, and the live feed orders and pages
+  by id).
+- **`ingest_resolve(sn, ip, now, firmware, user_count, push_version)`:** always one row:
+  `accepted` and the refusal code, or the device (id, institute, zone, direction, ATTLOG stamp,
+  clock offset and samples, `registered_on` = its creation date in the institute's zone), the
+  institute's device hours and per-minute cap (05:00, 20:00, 60 without a settings row) and
+  `previous_seen_at`. It then records `last_seen_at` and `last_ip`, and the firmware, user count
+  and push version only when given.
+- **`ingest_store_punches(sn, ip, now, rows, stamp, clock_samples, clock_offset)`:** stores one
+  upload (`rows`: at most 10000, as the receiver computed them with the shared rules; the CHECKs
+  validate them) and returns `tenant_id, inserted, duplicates, held, dropped`, or no row when
+  refused. It locks the device row, so one upload per device runs at a time. A punch already
+  stored is a duplicate: counted, not stored again, not counted against the cap twice. Source
+  address: the device's first one is trusted; any address not trusted puts `NEW_IP` and
+  `source_ip` on its punches, and is recorded untrusted while the device has fewer than 50
+  untrusted ones. Per-minute cap N: with c the device's punches already stored in that minute
+  (this upload's included), c ≥ 5N drops the row and N ≤ c < 5N stores it with `BURST` (held).
+  It then writes the stamp (when it is 1–32 letters or digits and not `0`), the clock samples and
+  offset, `last_punch_at`, and `last_flood_at`/`last_flood_dropped` when something was dropped.
+- **`ingest_take_commands(sn, now, max)`:** the device's next commands in `seq` order, at most
+  `least(max, 50)`: PENDING ones and SENT ones unanswered for 5 minutes with fewer than 5
+  attempts (`FOR UPDATE SKIP LOCKED`); they become SENT with one more attempt. A command sent 5
+  times and unanswered for 5 minutes becomes FAILED first.
+- **`ingest_command_results(sn, now, results)`:** the device's answers (at most 200
+  `{id: seq, return_code}`). Only this device's SENT or PENDING commands change: code 0 is DONE,
+  anything else FAILED, with the code and `done_at`. Returns how many changed, so another
+  device's `seq` changes nothing.
+- Tests: `packages/db/test/devices-rls.test.ts`, `ingest-functions.test.ts`; the table list and
+  the ingest checks in `schema-safety.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
