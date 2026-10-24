@@ -3,10 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma, type AttendanceDevice, type DeviceSourceIp } from '@jantrik/db';
 import {
   DEVICE_CLOCK_WARNING_SEC,
-  STAFF_ROLE_VALUES,
-  deviceDisplayName,
   deviceState,
-  userUpsertPayload,
   type DeviceAddress,
   type DeviceChanges,
   type DeviceCommandStatus,
@@ -26,6 +23,7 @@ import type { Env } from '../config/env.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { staffNames, staffRef } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
+import { deviceUsers, queueUpserts } from './device-users.js';
 import { DEVICES_TENANTS_KEY } from './devices.constants.js';
 
 interface DeviceCounts {
@@ -195,72 +193,22 @@ export class DevicesService {
     const tx = this.db.tx;
     const device = await this.lockDevice(id);
     if (!device.isActive) throw apiError(409, 'DEVICE_INACTIVE', 'This device is switched off');
-    const people = await tx.devicePerson.findMany({
-      select: {
-        deviceUserId: true,
-        staffUserId: true,
-        student: { select: { nameEn: true, studentCode: true, status: true, deletedAt: true } },
-        staffProfile: { select: { name: true } },
-      },
-      orderBy: { deviceUserId: 'asc' },
+    const { queued, skipped } = await queueUpserts(tx, {
+      tenantId: device.tenantId,
+      deviceIds: [id],
+      users: await deviceUsers(tx),
+      createdById: this.context.requirePrincipal().userId,
     });
-    const staffIds = people.flatMap((p) => (p.staffUserId ? [p.staffUserId] : []));
-    const activeStaff = new Set(
-      (
-        await tx.membership.findMany({
-          where: {
-            userId: { in: staffIds },
-            status: 'ACTIVE',
-            role: { in: [...STAFF_ROLE_VALUES] },
-          },
-          select: { userId: true },
-        })
-      ).map((m) => m.userId),
-    );
-    const waiting = new Set(
-      (
-        await tx.deviceCommand.findMany({
-          where: { deviceId: id, kind: 'USER_UPSERT', status: { in: ['PENDING', 'SENT'] } },
-          select: { payload: true },
-        })
-      ).map((c) => c.payload),
-    );
-    const me = this.context.requirePrincipal().userId;
-    const queue: Prisma.DeviceCommandCreateManyInput[] = [];
-    let skipped = 0;
-    for (const p of people) {
-      let name: string;
-      if (p.student) {
-        if (p.student.status !== 'ACTIVE' || p.student.deletedAt !== null) continue;
-        name = deviceDisplayName(p.student.nameEn, p.student.studentCode);
-      } else if (p.staffUserId && p.staffProfile && activeStaff.has(p.staffUserId)) {
-        name = deviceDisplayName(p.staffProfile.name, p.deviceUserId);
-      } else continue;
-      const payload = userUpsertPayload(p.deviceUserId, name);
-      if (waiting.has(payload)) {
-        skipped += 1;
-        continue;
-      }
-      queue.push({
-        tenantId: device.tenantId,
-        deviceId: id,
-        kind: 'USER_UPSERT',
-        deviceUserId: p.deviceUserId,
-        payload,
-        createdById: me,
-      });
-    }
-    if (queue.length > 0) {
-      await tx.deviceCommand.createMany({ data: queue });
+    if (queued > 0) {
       // One row per sync, against the device; the counts only (the commands carry names).
       await this.audit.record({
         entity: 'device_command',
         entityId: id,
         action: 'CREATE',
-        newValues: { kind: 'USER_UPSERT', queued: queue.length, skipped },
+        newValues: { kind: 'USER_UPSERT', queued, skipped },
       });
     }
-    return { queued: queue.length, skipped };
+    return { queued, skipped };
   }
 
   /** The latest commands (never their payload, which carries names). */

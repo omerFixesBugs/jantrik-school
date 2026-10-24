@@ -8,29 +8,54 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
+  Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
+  DEVICE_IMPORT_MAX_BYTES,
   createDeviceSchema,
   deviceCommandsQuerySchema,
+  deviceDefaultsSchema,
+  deviceImportQuerySchema,
+  devicePeopleCsvQuerySchema,
+  devicePeopleQuerySchema,
   punchFeedQuerySchema,
+  removeFromDevicesSchema,
   reviewPunchSchema,
+  setDeviceUserIdSchema,
+  staffRangeCheckQuerySchema,
   updateDeviceSchema,
   type DeviceAddress,
   type DeviceAlert,
   type DeviceCommandView,
+  type DeviceDefaultsResult,
+  type DeviceIdCollisionView,
+  type DeviceImportResult,
   type DeviceList,
+  type DevicePeopleList,
   type DeviceSyncResult,
   type DeviceView,
   type FeedPunch,
   type PunchFeed,
+  type RemoveFromDevicesResult,
+  type SetDeviceIdResult,
+  type StaffRangeCheck,
+  type StaleDevicePerson,
   type TrustAddressResult,
   type UnknownDeviceId,
 } from '@jantrik/shared';
+import type { Response } from 'express';
 import { AttendanceModule } from '../attendance/attendance.module.js';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import { DeviceAlertsService } from './device-alerts.service.js';
+import { DevicePeopleCsvService } from './device-people-csv.service.js';
+import { DevicePeopleRoster } from './device-people-roster.js';
+import { DevicePeopleService } from './device-people.service.js';
 import { DevicePunchesService } from './device-punches.service.js';
 import { DevicesService } from './devices.service.js';
 import { PunchReviewEffects } from './punch-review-effects.js';
@@ -40,6 +65,13 @@ export class UpdateDeviceDto extends zodDto(updateDeviceSchema) {}
 export class DeviceCommandsQueryDto extends zodDto(deviceCommandsQuerySchema) {}
 export class PunchFeedQueryDto extends zodDto(punchFeedQuerySchema) {}
 export class ReviewPunchDto extends zodDto(reviewPunchSchema) {}
+export class DevicePeopleQueryDto extends zodDto(devicePeopleQuerySchema) {}
+export class SetDeviceUserIdDto extends zodDto(setDeviceUserIdSchema) {}
+export class DeviceDefaultsDto extends zodDto(deviceDefaultsSchema) {}
+export class DevicePeopleCsvQueryDto extends zodDto(devicePeopleCsvQuerySchema) {}
+export class DeviceImportQueryDto extends zodDto(deviceImportQuerySchema) {}
+export class RemoveFromDevicesDto extends zodDto(removeFromDevicesSchema) {}
+export class StaffRangeCheckQueryDto extends zodDto(staffRangeCheckQuerySchema) {}
 
 /** Attendance devices: OWNER/ADMIN, module ATTENDANCE. */
 @Controller('attendance/devices')
@@ -132,10 +164,97 @@ export class DevicesController {
   }
 }
 
+/** People ↔ device IDs: OWNER/ADMIN, module ATTENDANCE. */
+@Controller('attendance/device-people')
+@RequireModule('ATTENDANCE')
+@Roles('OWNER', 'ADMIN')
+export class DevicePeopleController {
+  constructor(
+    private readonly people: DevicePeopleService,
+    private readonly csv: DevicePeopleCsvService,
+  ) {}
+
+  /** This year's students and the staff, each with their ID, suggested default and sync state. */
+  @Get()
+  list(@Query() query: DevicePeopleQueryDto): Promise<DevicePeopleList> {
+    return this.people.list(query);
+  }
+
+  /** Set or clear one person's ID; a new ID is sent to every active device. */
+  @Put()
+  set(@Body() dto: SetDeviceUserIdDto): Promise<SetDeviceIdResult> {
+    return this.people.set(dto);
+  }
+
+  @Get('collisions')
+  collisions(): Promise<DeviceIdCollisionView[]> {
+    return this.people.collisions();
+  }
+
+  /** Default IDs for people without one: a dry run, then the same with dryRun false. */
+  @Post('defaults')
+  @HttpCode(200)
+  defaults(@Body() dto: DeviceDefaultsDto): Promise<DeviceDefaultsResult> {
+    return this.people.defaults(dto);
+  }
+
+  /** Everyone with their ID or suggested default: UTF-8 with a BOM, ASCII digits. */
+  @Get('csv')
+  async exportCsv(
+    @Query() query: DevicePeopleCsvQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    const { filename, csv } = await this.csv.exportCsv(query.locale);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return csv;
+  }
+
+  /** multipart/form-data with `file` (.csv, at most 1 MB); apply=1 writes the OK rows. */
+  @Post('import')
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: DEVICE_IMPORT_MAX_BYTES, files: 1, fields: 0 } }),
+  )
+  importCsv(
+    @Query() query: DeviceImportQueryDto,
+    @UploadedFile() file: { buffer: Buffer; originalname: string } | undefined,
+  ): Promise<DeviceImportResult> {
+    return this.csv.importCsv(file, query.apply);
+  }
+
+  /** People no longer active whose ID a device still has. */
+  @Get('stale')
+  stale(): Promise<StaleDevicePerson[]> {
+    return this.people.stale();
+  }
+
+  @Post('remove-from-devices')
+  @HttpCode(200)
+  removeFromDevices(@Body() dto: RemoveFromDevicesDto): Promise<RemoveFromDevicesResult> {
+    return this.people.removeFromDevices(dto.deviceUserIds);
+  }
+
+  /** For the settings form: current students' code numbers within a staff start's 1000. */
+  @Get('staff-range-check')
+  staffRangeCheck(@Query() query: StaffRangeCheckQueryDto): Promise<StaffRangeCheck> {
+    return this.people.staffRangeCheck(query.start);
+  }
+}
+
 @Module({
   // AttendanceSettingsService: the timezone, the device settings and working days.
   imports: [AttendanceModule],
-  controllers: [DevicesController],
-  providers: [DevicesService, DevicePunchesService, DeviceAlertsService, PunchReviewEffects],
+  controllers: [DevicesController, DevicePeopleController],
+  providers: [
+    DevicesService,
+    DevicePunchesService,
+    DeviceAlertsService,
+    PunchReviewEffects,
+    DevicePeopleRoster,
+    DevicePeopleService,
+    DevicePeopleCsvService,
+  ],
 })
 export class DevicesModule {}

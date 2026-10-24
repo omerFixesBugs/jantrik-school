@@ -322,6 +322,11 @@ describe('global names never leave the API', () => {
       [`/attendance/devices/${deviceId}/ips`],
       ['/attendance/devices/unknown-ids'],
       ['/attendance/devices/alerts'],
+      ['/attendance/device-people'],
+      ['/attendance/device-people/collisions'],
+      ['/attendance/device-people/csv', { locale: 'en' }],
+      ['/attendance/device-people/csv', { locale: 'bn' }],
+      ['/attendance/device-people/stale'],
     ];
     for (const [path, query] of paths) {
       expect(leaks(await text(s.admin, path, query)), path).toEqual([]);
@@ -350,6 +355,45 @@ describe('global names never leave the API', () => {
     }
   });
 
+  it('device people: answers naming people use staff profiles (defaults, import, ID taken)', async () => {
+    const send = (method: 'post' | 'put', path: string, body: object) =>
+      http(h)[method](path).set(bearer(s.admin)).send(body);
+    const bodies = [
+      (
+        await send('post', '/attendance/device-people/defaults', {
+          kind: 'ALL',
+          dryRun: true,
+        }).expect(200)
+      ).body,
+      (
+        await http(h)
+          .post('/attendance/device-people/import')
+          .set(bearer(s.admin))
+          .attach(
+            'file',
+            Buffer.from(
+              toCsv([
+                ['staff_phone', 'device_id'],
+                [person.phone.slice(3), '9002'],
+              ]),
+            ),
+            'ids.csv',
+          )
+          .expect(200)
+      ).body,
+      (
+        await send('put', '/attendance/device-people', { studentId, deviceUserId: '9001' }).expect(
+          409,
+        )
+      ).body,
+    ];
+    for (const body of bodies) expect(leaks(JSON.stringify(body))).toEqual([]);
+    expect(JSON.stringify(bodies[1])).toContain('Typed Teacher');
+    expect(bodies[2]).toMatchObject({
+      holder: { name: 'Typed Teacher', nameBn: 'টাইপ করা শিক্ষক' },
+    });
+  });
+
   it('the typed names are what this institute shows', async () => {
     expect(await text(s.admin, '/staff')).toContain('Typed Teacher');
     expect(await text(s.admin, `/students/${studentId}`)).toContain('Typed Guardian');
@@ -359,5 +403,9 @@ describe('global names never leave the API', () => {
     // The punch feed and who trusted the device's address.
     expect(await text(s.admin, '/attendance/devices/punches')).toContain('Typed Teacher');
     expect(await text(s.admin, `/attendance/devices/${deviceId}/ips`)).toContain('Typed Teacher');
+    expect(await text(s.admin, '/attendance/device-people')).toContain('Typed Teacher');
+    expect(await text(s.admin, '/attendance/device-people/csv', { locale: 'en' })).toContain(
+      'Typed Teacher',
+    );
   });
 });

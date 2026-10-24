@@ -32,4 +32,5 @@ export * from './exams-api.js';
 export * from './exams-results.js';
 export * from './devices.js';
 export * from './devices-api.js';
+export * from './device-people.js';
 export * from './staff-attendance.js';

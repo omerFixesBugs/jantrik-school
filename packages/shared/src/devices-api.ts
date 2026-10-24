@@ -1,8 +1,14 @@
 import { z } from 'zod';
 import type { PersonRef } from './attendance.js';
 import type { IsoDate } from './dates.js';
+import type {
+  DefaultIdConflictReason,
+  DeviceImportError,
+  DeviceImportStatus,
+} from './device-people.js';
 import {
   DEVICE_DIRECTIONS,
+  deviceUserIdSchema,
   type DeviceDirection,
   type DeviceState,
   type PunchDirection,
@@ -12,9 +18,11 @@ import {
   type VerifyKind,
 } from './devices.js';
 import { toAsciiDigits } from './digits.js';
+import type { StaffRole } from './staff.js';
 
 // The devices screen (OWNER/ADMIN): devices, their commands and addresses, the live punch feed
-// and its review, unknown IDs and alerts. Module ATTENDANCE.
+// and its review, unknown IDs and alerts; and the people screen: who has which device ID.
+// Module ATTENDANCE.
 
 export const DEVICE_BRANDS = ['ZKTECO'] as const;
 export type DeviceBrand = (typeof DEVICE_BRANDS)[number];
@@ -94,6 +102,88 @@ export type PunchReviewAction = (typeof PUNCH_REVIEW_ACTIONS)[number];
 
 /** POST /attendance/devices/punches/:id/review */
 export const reviewPunchSchema = z.object({ action: z.enum(PUNCH_REVIEW_ACTIONS) });
+
+// ─────────────────────────── People and device IDs ───────────────────────────
+
+export const DEVICE_PERSON_KINDS = ['STUDENT', 'STAFF'] as const;
+export type DevicePersonKind = (typeof DEVICE_PERSON_KINDS)[number];
+
+/** GET /attendance/device-people */
+export const devicePeopleQuerySchema = z.object({
+  kind: z.enum(DEVICE_PERSON_KINDS).optional(),
+  /** Only people without an ID. */
+  unmapped: z.stringbool().optional(),
+  /** Only this section's students. */
+  sectionId: z.uuid().optional(),
+});
+export type DevicePeopleQuery = z.input<typeof devicePeopleQuerySchema>;
+
+/** PUT /attendance/device-people: one student or one staff member; null clears their ID. */
+export const setDeviceUserIdSchema = z
+  .object({
+    studentId: z.uuid().optional(),
+    staffUserId: z.uuid().optional(),
+    deviceUserId: deviceUserIdSchema.nullable(),
+  })
+  .refine((v) => (v.studentId === undefined) !== (v.staffUserId === undefined), {
+    message: 'Exactly one of studentId and staffUserId',
+    path: ['studentId'],
+  });
+export type SetDeviceUserIdInput = z.input<typeof setDeviceUserIdSchema>;
+
+/** POST /attendance/device-people/defaults: a dry run first, then the same with false. */
+export const deviceDefaultsSchema = z.object({
+  kind: z.enum([...DEVICE_PERSON_KINDS, 'ALL']),
+  dryRun: z.boolean(),
+});
+export type DeviceDefaultsInput = z.input<typeof deviceDefaultsSchema>;
+
+/** GET /attendance/device-people/csv: names, classes and roles in this language. */
+export const devicePeopleCsvQuerySchema = z.object({ locale: z.enum(['bn', 'en']).default('bn') });
+
+/** POST /attendance/device-people/import?apply=0|1: 0 previews, 1 writes the OK rows. */
+export const deviceImportQuerySchema = z.object({
+  apply: z
+    .enum(['0', '1'])
+    .default('0')
+    .transform((v) => v === '1'),
+});
+
+export const DEVICE_IMPORT_MAX_BYTES = 1024 * 1024;
+export const DEVICE_IMPORT_MAX_ROWS = 5000;
+/** The CSV's columns: the header row in both languages (the import reads the first three). */
+export const DEVICE_PEOPLE_CSV_COLUMNS = [
+  'student_code',
+  'staff_phone',
+  'device_id',
+  'name',
+  'class',
+  'section',
+  'role',
+  'status',
+] as const;
+
+/** POST /attendance/device-people/remove-from-devices */
+export const removeFromDevicesSchema = z.object({
+  deviceUserIds: z
+    .array(deviceUserIdSchema)
+    .min(1)
+    .max(500)
+    .transform((ids) => [...new Set(ids)]),
+});
+
+/** The numbers a staff start covers in the settings warning: start to start + 999. */
+export const STAFF_RANGE_SIZE = 1000;
+
+/** GET /attendance/device-people/staff-range-check?start= (Bangla digits accepted). */
+export const staffRangeCheckQuerySchema = z.object({
+  start: z
+    .string()
+    .transform((v) => toAsciiDigits(v).trim())
+    .pipe(z.string().regex(/^\d{1,10}$/, 'A whole number'))
+    .transform(Number)
+    .pipe(z.number().int().min(100).max(999_999_999)),
+});
 
 // ─────────────────────────── Responses ───────────────────────────
 
@@ -241,6 +331,141 @@ export type DeviceAlert =
   | (AlertDevice & { kind: 'HELD'; count: number })
   | (AlertDevice & { kind: 'CLOCK'; minutes: number; ahead: boolean });
 
+/** Who holds, wants or asks for a device ID. Names from students and staff_profiles only. */
+export interface DevicePersonRef {
+  kind: DevicePersonKind;
+  /** The student's id, or the staff member's user id. */
+  id: string;
+  /** Students: the English name (the Bangla one when there is none); staff: the profile name. */
+  name: string;
+  nameBn: string | null;
+  /** Students only. */
+  studentCode?: string;
+}
+
+export const DEVICE_SYNC_STATES = ['NONE', 'PENDING', 'FAILED', 'DONE'] as const;
+/**
+ * The person's ID across the active devices: NONE (not sent to every one of them), PENDING (an
+ * add is waiting or sent), FAILED (a device's latest add failed), DONE (every device's latest
+ * add succeeded).
+ */
+export type DeviceSyncState = (typeof DEVICE_SYNC_STATES)[number];
+
+interface DevicePersonIds {
+  deviceUserId: string | null;
+  /** The ID "assign default IDs" would give now; null when they have one or for a conflict. */
+  suggested: string | null;
+  sync: DeviceSyncState;
+}
+
+/**
+ * GET /attendance/device-people: active students enrolled this year (by class, section, roll),
+ * then staff with an active staff role and a profile (in the order they were added).
+ */
+export type DevicePersonRow =
+  | (DevicePersonIds & {
+      kind: 'STUDENT';
+      id: string;
+      nameBn: string | null;
+      nameEn: string | null;
+      studentCode: string;
+      classLevel: { id: string; nameBn: string; nameEn: string };
+      section: { id: string; name: string } | null;
+    })
+  | (DevicePersonIds & {
+      kind: 'STAFF';
+      /** The user id. */
+      id: string;
+      name: string;
+      nameBn: string | null;
+      /** The active staff roles. */
+      roles: StaffRole[];
+    });
+
+export interface DevicePeopleList {
+  people: DevicePersonRow[];
+  /** Everyone, whatever the filters. */
+  counts: { students: number; studentsUnmapped: number; staff: number; staffUnmapped: number };
+}
+
+/** PUT /attendance/device-people */
+export interface SetDeviceIdResult {
+  deviceUserId: string | null;
+  /** The ID before (null when there was none). */
+  previous: string | null;
+  /** The ID changed from another one: fingerprints stay under the old ID on the device. */
+  reenrol: boolean;
+  /** USER_UPSERT commands queued (one per active device). */
+  queued: number;
+}
+
+/** GET /attendance/device-people/collisions */
+export interface DeviceIdCollisionView {
+  deviceUserId: string;
+  /** People without an ID whose default it is (a student code's digits). */
+  wantedBy: DevicePersonRef[];
+  heldBy: DevicePersonRef | null;
+}
+
+/** POST /attendance/device-people/defaults (people without an ID only). */
+export interface DeviceDefaultsResult {
+  assigned: { person: DevicePersonRef; deviceUserId: string }[];
+  conflicts: {
+    person: DevicePersonRef;
+    deviceUserId: string | null;
+    reason: DefaultIdConflictReason;
+    /** TAKEN: who holds it. */
+    heldBy: DevicePersonRef | null;
+  }[];
+  /** USER_UPSERT commands queued (0 for a dry run). */
+  queued: number;
+}
+
+export interface DeviceImportRow {
+  /** The row number in the file (the header is row 1). */
+  row: number;
+  person: DevicePersonRef | null;
+  /** Their ID now. */
+  previous: string | null;
+  /** The ID the row asks for; null clears (or the cell is not a valid ID). */
+  deviceUserId: string | null;
+  status: DeviceImportStatus;
+  error?: DeviceImportError;
+}
+
+/** POST /attendance/device-people/import */
+export interface DeviceImportResult {
+  /** False for a preview. */
+  applied: boolean;
+  rows: DeviceImportRow[];
+  counts: { ok: number; unchanged: number; error: number };
+  /** USER_UPSERT commands queued (0 for a preview). */
+  queued: number;
+}
+
+/** GET /attendance/device-people/stale: on a device, but no longer active here. */
+export interface StaleDevicePerson {
+  person: DevicePersonRef;
+  deviceUserId: string;
+  /** When a device last confirmed adding them. */
+  lastSyncAt: string;
+}
+
+/** POST /attendance/device-people/remove-from-devices */
+export interface RemoveFromDevicesResult {
+  /** IDs whose mapping was deleted (now free). */
+  freed: string[];
+  /** USER_DELETE commands queued (one per ID and active device). */
+  queued: number;
+}
+
+/** GET /attendance/device-people/staff-range-check */
+export interface StaffRangeCheck {
+  start: number;
+  /** Current students whose code gives a number from start to start + 999. */
+  studentDefaultsInRange: number;
+}
+
 /** Error codes in 4xx bodies (`{ statusCode, code, message }`). */
 export type DevicesErrorCode =
   /** 409: the serial number is active somewhere (the message never says where). */
@@ -249,4 +474,18 @@ export type DevicesErrorCode =
   | 'SERIAL_LOCKED'
   | 'DEVICE_INACTIVE'
   /** 422: only a held (BURST) punch can be accepted. */
-  | 'NOT_HELD';
+  | 'NOT_HELD'
+  /** 409: someone else here has this device ID (`holder: DevicePersonRef | null`). */
+  | 'DEVICE_ID_TAKEN'
+  /** 422: the user has no active staff role (or no staff profile) here. */
+  | 'NOT_STAFF'
+  /** 409: these IDs belong to active people (`people: { deviceUserId, person }[]`). */
+  | 'PERSON_ACTIVE'
+  /** 422: the uploaded CSV of device IDs (more than 1 MB is a plain 413). */
+  | 'FILE_MISSING'
+  | 'FILE_TYPE'
+  | 'FILE_INVALID'
+  | 'FILE_EMPTY'
+  | 'MISSING_COLUMNS'
+  | 'NO_DATA_ROWS'
+  | 'TOO_MANY_ROWS';
