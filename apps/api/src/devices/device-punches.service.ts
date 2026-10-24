@@ -26,6 +26,7 @@ import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
 import { staffNames } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
+import { REVIEW_WINDOW_MS } from './devices.constants.js';
 import { PunchReviewEffects } from './punch-review-effects.js';
 
 /** The flags an admin reviews (the others only explain how a time was read). */
@@ -86,6 +87,7 @@ export class DevicePunchesService {
   /**
    * Newest first. Punches of one upload share their received time, so the punch time and the id
    * order within it. `after` keeps only punches received after that position (the 5-second poll).
+   * `flagged` looks back over the review window only (the received-time index bounds the scan).
    */
   async feed(query: {
     after?: string;
@@ -94,10 +96,13 @@ export class DevicePunchesService {
     deviceId?: string;
   }): Promise<PunchFeed> {
     const after = query.after ? parseCursor(query.after) : null;
+    const reviewSince = new Date(this.clock.now().getTime() - REVIEW_WINDOW_MS);
     const rows = await this.db.tx.devicePunch.findMany({
       where: {
         ...(query.deviceId ? { deviceId: query.deviceId } : {}),
-        ...(query.flagged ? { review: null, flags: { hasSome: REVIEW_FLAGS } } : {}),
+        ...(query.flagged
+          ? { review: null, flags: { hasSome: REVIEW_FLAGS }, receivedAt: { gte: reviewSince } }
+          : {}),
         ...(after
           ? {
               OR: [
@@ -168,7 +173,11 @@ export class DevicePunchesService {
     return punch!;
   }
 
-  /** Device IDs that punched in the last 30 days (local dates) and belong to nobody. */
+  /**
+   * Device IDs that punched in the last 30 days (local dates) and belong to nobody. One pass over
+   * those days: the device of each ID's latest punch is picked while grouping, and the device
+   * names are joined once.
+   */
   async unknownIds(): Promise<UnknownDeviceId[]> {
     const tx = this.db.tx;
     const { timezone } = await tx.tenant.findFirstOrThrow({ select: { timezone: true } });
@@ -177,7 +186,8 @@ export class DevicePunchesService {
       { device_user_id: string; count: number; last_punch_at: Date; last_device_name: string }[]
     >`
       WITH unknown AS (
-        SELECT p.device_user_id, count(*)::int AS count, max(p.punched_at) AS last_punch_at
+        SELECT p.device_user_id, count(*)::int AS count, max(p.punched_at) AS last_punch_at,
+               (array_agg(p.device_id ORDER BY p.punched_at DESC, p.id DESC))[1] AS last_device_id
         FROM device_punches p
         WHERE p.local_date >= ${from}::date
           AND NOT EXISTS (SELECT 1 FROM device_people dp
@@ -187,14 +197,9 @@ export class DevicePunchesService {
         ORDER BY last_punch_at DESC, p.device_user_id
         LIMIT ${UNKNOWN_IDS_SHOWN}
       )
-      SELECT u.device_user_id, u.count, u.last_punch_at,
-             (SELECT d.name
-              FROM device_punches p
-              JOIN attendance_devices d ON d.tenant_id = p.tenant_id AND d.id = p.device_id
-              WHERE p.device_user_id = u.device_user_id AND p.local_date >= ${from}::date
-              ORDER BY p.punched_at DESC, p.id DESC
-              LIMIT 1) AS last_device_name
+      SELECT u.device_user_id, u.count, u.last_punch_at, d.name AS last_device_name
       FROM unknown u
+      JOIN attendance_devices d ON d.id = u.last_device_id
       ORDER BY u.last_punch_at DESC, u.device_user_id`;
     return rows.map((r) => ({
       deviceUserId: r.device_user_id,

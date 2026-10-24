@@ -20,3 +20,9 @@ export const processPunchesJobId = (tenantId: string): string => `punches-${tena
  * its own TenantJobRunner transaction, never by a cross-tenant query.
  */
 export const DEVICES_TENANTS_KEY = 'devices:tenants';
+
+/**
+ * Flagged punches are reviewed within this long of arriving: the flagged feed and the NEW_IP and
+ * HELD alerts look this far back.
+ */
+export const REVIEW_WINDOW_MS = 7 * 24 * 3600_000;

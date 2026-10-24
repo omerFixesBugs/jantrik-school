@@ -12,14 +12,12 @@ import {
 } from '../attendance/attendance-settings.service.js';
 import { Clock } from '../common/clock.js';
 import { Db } from '../tenancy/db.service.js';
+import { REVIEW_WINDOW_MS } from './devices.constants.js';
 
 const MINUTE = 60_000;
-const DAY = 24 * 60 * MINUTE;
 /** A device offline (or never connected) this long is an alert. */
 const OFFLINE_ALERT_MS = 10 * MINUTE;
-/** New addresses and held punches are looked for this far back. */
-const RECENT_MS = 7 * DAY;
-const FLOOD_RECENT_MS = DAY;
+const FLOOD_RECENT_MS = 24 * 60 * MINUTE;
 
 const seconds = (hhmm: string): number => {
   const [h = 0, m = 0, s = 0] = hhmm.split(':').map(Number);
@@ -69,12 +67,12 @@ export class DeviceAlertsService {
       }
     }
 
-    // Untrusted addresses that sent punches lately (only such punches keep their address).
-    const recent = new Date(now.getTime() - RECENT_MS);
-    const sources = await tx.devicePunch.findMany({
+    // Untrusted addresses that sent punches lately (only such punches keep their address), one
+    // row per device and address (GROUP BY in the database).
+    const recent = new Date(now.getTime() - REVIEW_WINDOW_MS);
+    const sources = await tx.devicePunch.groupBy({
+      by: ['deviceId', 'sourceIp'],
       where: { deviceId: { in: ids }, receivedAt: { gte: recent }, sourceIp: { not: null } },
-      distinct: ['deviceId', 'sourceIp'],
-      select: { deviceId: true, sourceIp: true },
     });
     const sending = new Set(sources.map((s) => `${s.deviceId} ${s.sourceIp}`));
     const untrusted = await tx.deviceSourceIp.findMany({

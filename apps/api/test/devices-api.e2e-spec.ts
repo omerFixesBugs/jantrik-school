@@ -582,6 +582,34 @@ describe('devices API', () => {
       });
       await review(randomUUID(), 'OK').expect(404);
     });
+
+    it('the flagged view looks back 7 days; older flagged punches stay in the feed', async () => {
+      const t = await institute();
+      // Registered 9 days ago, so it may upload then.
+      clock.set(at('08:00:00', addDays(DAY, -9)));
+      const device = await addDevice(t.admin);
+      const reader = sim(device.serialNo);
+      // Before 05:00: OUTSIDE_HOURS, received 8 days, 7 days and 0 days ago.
+      for (const days of [-8, -7, 0]) {
+        const day = addDays(DAY, days);
+        clock.set(at('08:00:00', day));
+        const res = await reader.uploadAttlog([reader.attlogLine('101', at('04:30:00', day))]);
+        expect(res.status).toBe(200);
+      }
+      const dayOf = (p: FeedPunch) => p.localDate;
+      expect((await feed(t.admin, { flagged: '1' })).punches.map(dayOf)).toEqual([
+        DAY,
+        addDays(DAY, -7), // exactly 7 days ago: still in
+      ]);
+      expect((await feed(t.admin)).punches.map(dayOf)).toEqual([
+        DAY,
+        addDays(DAY, -7),
+        addDays(DAY, -8),
+      ]);
+      expect((await feed(t.admin)).punches.every((p) => p.flags.includes('OUTSIDE_HOURS'))).toBe(
+        true,
+      );
+    });
   });
 
   describe('source addresses', () => {
