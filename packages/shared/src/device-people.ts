@@ -5,15 +5,25 @@ import { parseImportPhone } from './import.js';
 /**
  * People ↔ device IDs: which ID "assign default IDs" gives each person, and what a CSV of IDs
  * would change. Pure rules; the API loads the people and holds the lock. Person keys are opaque.
+ *
+ * An ID still on a device (`onDevice`: ID → the person a device has under it) keeps their
+ * fingerprints there, so it goes to nobody else until the devices confirm removing it: their
+ * finger would punch as the new holder. Giving it back to that same person is fine.
  */
 
 // ---------------------------------------------------------------------------------------------
 // Default IDs
 
-export const DEFAULT_ID_CONFLICT_REASONS = ['NO_DEFAULT', 'TAKEN', 'SHARED'] as const;
+export const DEFAULT_ID_CONFLICT_REASONS = [
+  'NO_DEFAULT',
+  'TAKEN',
+  'SHARED',
+  'ID_STILL_ON_DEVICE',
+] as const;
 /**
  * NO_DEFAULT: the student code has no usable digits (or no staff number is left); TAKEN: someone
- * holds the number; SHARED: another unmapped student's code gives the same number.
+ * holds the number; SHARED: another unmapped student's code gives the same number;
+ * ID_STILL_ON_DEVICE: a device still has someone else under the number.
  */
 export type DefaultIdConflictReason = (typeof DEFAULT_ID_CONFLICT_REASONS)[number];
 
@@ -25,9 +35,9 @@ export interface DefaultIds {
 /**
  * The ID each person without one would get now. Students: the digits of their code when that is
  * a valid ID, nobody holds it and no other unmapped student's code gives it (otherwise none of
- * them gets it). Staff, in the order given: the next free number from `staffStart`, never one a
- * listed student's code gives, mapped or not. `held` is every ID in use, also by people not
- * listed.
+ * them gets it), nor a device has someone else under it. Staff, in the order given: the next free
+ * number from `staffStart`, never one a listed student's code gives, mapped or not, nor one still
+ * on a device. `held` is every ID in use, also by people not listed.
  */
 export function defaultDeviceIds(input: {
   /** The current year's students. */
@@ -35,6 +45,8 @@ export function defaultDeviceIds(input: {
   /** Staff in the order they get numbers. */
   staff: { key: string; current: string | null }[];
   held: ReadonlySet<string>;
+  /** ID → the person a device still has under it. */
+  onDevice: ReadonlyMap<string, string>;
   staffStart: number;
 }): DefaultIds {
   const out: DefaultIds = { assigned: [], conflicts: [] };
@@ -50,11 +62,13 @@ export function defaultDeviceIds(input: {
       out.conflicts.push({ key, deviceUserId: wanted, reason: 'TAKEN' });
     else if (wantedBy.get(wanted)! > 1)
       out.conflicts.push({ key, deviceUserId: wanted, reason: 'SHARED' });
+    else if ((input.onDevice.get(wanted) ?? key) !== key)
+      out.conflicts.push({ key, deviceUserId: wanted, reason: 'ID_STILL_ON_DEVICE' });
     else out.assigned.push({ key, deviceUserId: wanted });
   }
 
   const reserved = new Set(students.flatMap((s) => (s.wanted === null ? [] : [s.wanted])));
-  const used = new Set(input.held);
+  const used = new Set([...input.held, ...input.onDevice.keys()]);
   // Every number below the last one given is used or reserved, so the search goes on from there.
   let from = input.staffStart;
   for (const { key, current } of input.staff) {
@@ -83,6 +97,7 @@ export const DEVICE_IMPORT_ERRORS = [
   'DUPLICATE_PERSON',
   'DUPLICATE_ID',
   'TAKEN',
+  'ID_STILL_ON_DEVICE',
 ] as const;
 export type DeviceImportError = (typeof DEVICE_IMPORT_ERRORS)[number];
 
@@ -106,6 +121,8 @@ export interface DeviceImportLookup {
   current: ReadonlyMap<string, string>;
   /** ID → whoever holds it, also people the file cannot name. */
   holders: ReadonlyMap<string, string>;
+  /** ID → the person a device still has under it. */
+  onDevice: ReadonlyMap<string, string>;
 }
 
 export interface DeviceImportCheck {
@@ -126,8 +143,10 @@ export const importStudentCode = (code: string): string => toAsciiDigits(code).t
  * UNKNOWN_STAFF, BAD_DEVICE_ID. Across rows: DUPLICATE_PERSON (the same person twice) and
  * DUPLICATE_ID (one ID on two rows) mark every such row. A row asking for the ID the person has
  * is UNCHANGED. A row asking for an ID held by someone this file does not move away (no OK row
- * of theirs) is TAKEN, which can stop the person they waited on in turn. Swaps are fine: the
- * apply removes every changing person's ID before giving the new ones.
+ * of theirs) is TAKEN, which can stop the person they waited on in turn. A row asking for an ID
+ * a device still has under someone else is ID_STILL_ON_DEVICE, even when the file moves its
+ * holder away. Other swaps are fine: the apply removes every changing person's ID before giving
+ * the new ones.
  */
 export function checkDeviceImport(
   lines: DeviceImportLine[],
@@ -184,8 +203,12 @@ export function checkDeviceImport(
     for (const r of out) {
       if (r.status !== 'OK' || r.deviceUserId === null) continue;
       const holder = lookup.holders.get(r.deviceUserId);
-      if (holder === undefined || holder === r.key || moving.has(holder)) continue;
-      Object.assign(r, { status: 'ERROR', error: 'TAKEN' });
+      let error: DeviceImportError;
+      if (holder !== undefined && holder !== r.key && !moving.has(holder)) error = 'TAKEN';
+      else if ((lookup.onDevice.get(r.deviceUserId) ?? r.key) !== r.key)
+        error = 'ID_STILL_ON_DEVICE';
+      else continue;
+      Object.assign(r, { status: 'ERROR', error });
       moving.delete(r.key!);
       changed = true;
     }

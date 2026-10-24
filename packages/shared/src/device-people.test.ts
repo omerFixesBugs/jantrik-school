@@ -17,6 +17,7 @@ describe('defaultDeviceIds', () => {
         ],
         staff: [],
         held: new Set(['555']),
+        onDevice: new Map(),
         staffStart: 9001,
       }),
     ).toEqual({ assigned: [{ key: 's1', deviceUserId: '20260042' }], conflicts: [] });
@@ -37,6 +38,7 @@ describe('defaultDeviceIds', () => {
         staff: [],
         // 777 is held by someone not listed (an inactive student, say).
         held: new Set(['444', '777']),
+        onDevice: new Map(),
         staffStart: 9001,
       }),
     ).toEqual({
@@ -65,6 +67,7 @@ describe('defaultDeviceIds', () => {
           { key: 't4', current: null },
         ],
         held: new Set(['20260001', '9001', '9003']),
+        onDevice: new Map(),
         staffStart: 9001,
       }).assigned,
     ).toEqual([
@@ -75,16 +78,50 @@ describe('defaultDeviceIds', () => {
     ]);
   });
 
+  it('a number still on a device for someone else is not given; its own person may have it back', () => {
+    expect(
+      defaultDeviceIds({
+        students: [
+          // 301 was taken from someone else and a device still has them under it.
+          { key: 's1', code: 'S-301', current: null },
+          // 302 was taken from s2 and is still on a device for s2.
+          { key: 's2', code: 'S-302', current: null },
+        ],
+        staff: [{ key: 't1', current: null }],
+        held: new Set(),
+        onDevice: new Map([
+          ['301', 'gone'],
+          ['302', 's2'],
+          ['9001', 'old staff'],
+        ]),
+        staffStart: 9001,
+      }),
+    ).toEqual({
+      assigned: [
+        { key: 's2', deviceUserId: '302' },
+        { key: 't1', deviceUserId: '9002' },
+      ],
+      conflicts: [{ key: 's1', deviceUserId: '301', reason: 'ID_STILL_ON_DEVICE' }],
+    });
+  });
+
   it('a changed start is honoured; no free number left is a conflict', () => {
     const staff = [{ key: 't1', current: null }];
     expect(
-      defaultDeviceIds({ students: [], staff, held: new Set(), staffStart: 500 }).assigned,
+      defaultDeviceIds({
+        students: [],
+        staff,
+        held: new Set(),
+        onDevice: new Map(),
+        staffStart: 500,
+      }).assigned,
     ).toEqual([{ key: 't1', deviceUserId: '500' }]);
     expect(
       defaultDeviceIds({
         students: [],
         staff: [...staff, { key: 't2', current: null }],
         held: new Set(['999999998']),
+        onDevice: new Map(),
         staffStart: 999_999_998,
       }),
     ).toEqual({
@@ -124,6 +161,7 @@ describe('checkDeviceImport', () => {
       ['9001', 't1'],
       ['500', 'gone'],
     ]),
+    onDevice: new Map(),
   };
   const line = (row: number, studentCode: string, staffPhone: string, deviceId: string) =>
     ({ row, studentCode, staffPhone, deviceId }) satisfies DeviceImportLine;
@@ -250,6 +288,36 @@ describe('checkDeviceImport', () => {
       [4, 'ERROR', 'TAKEN'],
       [5, 'OK', undefined],
       [6, 'OK', undefined],
+    ]);
+  });
+
+  it('an ID still on a device for someone else is refused, also when its holder moves; its own person may take it back', () => {
+    const synced: DeviceImportLookup = {
+      ...lookup,
+      // s1's 101 is on a device; 600 was taken from s3 and 700 from someone the file cannot
+      // name, and devices still have them.
+      onDevice: new Map([
+        ['101', 's1'],
+        ['600', 's3'],
+        ['700', 'old'],
+      ]),
+    };
+    expect(
+      checkDeviceImport(
+        [
+          // s1 and s2 try to swap: s2 may not take 101, so s2 stays and 102 is not free for s1.
+          line(2, 'SHS-1', '', '102'),
+          line(3, 'SHS-2', '', '101'),
+          line(4, 'SHS-3', '', '600'),
+          line(5, 'SHS-4', '', '700'),
+        ],
+        synced,
+      ).map((r) => [r.row, r.status, r.error]),
+    ).toEqual([
+      [2, 'ERROR', 'TAKEN'],
+      [3, 'ERROR', 'ID_STILL_ON_DEVICE'],
+      [4, 'OK', undefined],
+      [5, 'ERROR', 'ID_STILL_ON_DEVICE'],
     ]);
   });
 });

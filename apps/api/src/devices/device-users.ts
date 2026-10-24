@@ -51,32 +51,32 @@ export async function deviceUsers(tx: TenantTx, deviceUserIds?: string[]): Promi
 }
 
 /**
- * Queue a USER_UPSERT for each user on each device, except those already waiting (PENDING or
- * SENT) there with the same payload. Inserts only: no command row is locked.
+ * Queue a USER_UPSERT for each user on each device, except where the last command waiting
+ * (PENDING or SENT) there for that ID is this same upsert. A waiting removal queued after it does
+ * not count as the user being on its way. Inserts only: no command row is locked.
  */
 export async function queueUpserts(
   tx: TenantTx,
   input: { tenantId: string; deviceIds: string[]; users: DeviceUser[]; createdById: string },
 ): Promise<{ queued: number; skipped: number }> {
   if (input.deviceIds.length === 0 || input.users.length === 0) return { queued: 0, skipped: 0 };
-  const waiting = new Set(
-    (
-      await tx.deviceCommand.findMany({
-        where: {
-          deviceId: { in: input.deviceIds },
-          kind: 'USER_UPSERT',
-          status: { in: ['PENDING', 'SENT'] },
-        },
-        select: { deviceId: true, payload: true },
-      })
-    ).map((c) => `${c.deviceId}\n${c.payload}`),
-  );
+  const lastWaiting = new Map<string, string>();
+  for (const c of await tx.deviceCommand.findMany({
+    where: {
+      deviceId: { in: input.deviceIds },
+      deviceUserId: { in: input.users.map((u) => u.deviceUserId) },
+      status: { in: ['PENDING', 'SENT'] },
+    },
+    orderBy: { seq: 'asc' },
+    select: { deviceId: true, deviceUserId: true, kind: true, payload: true },
+  })) {
+    lastWaiting.set(`${c.deviceId}:${c.deviceUserId}`, c.kind === 'USER_UPSERT' ? c.payload : '');
+  }
   const queue: Prisma.DeviceCommandCreateManyInput[] = [];
   let skipped = 0;
   for (const deviceId of input.deviceIds) {
     for (const u of input.users) {
-      // A payload never contains a line break, so the pair is unambiguous.
-      if (waiting.has(`${deviceId}\n${u.payload}`)) {
+      if (lastWaiting.get(`${deviceId}:${u.deviceUserId}`) === u.payload) {
         skipped += 1;
         continue;
       }

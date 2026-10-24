@@ -14,13 +14,18 @@ import { RequestContext } from '../common/request-context.js';
 import { Db } from '../tenancy/db.service.js';
 import { activeDeviceIds, deviceUsers, queueUpserts } from './device-users.js';
 
+/** Audit entities: one person's ID (PUT), and a batch (defaults, import, removal). */
+export const DEVICE_PERSON = 'device_person';
+export const DEVICE_PEOPLE_BATCH = 'device_people_batch';
+
 /** A person's key in the ID rules: `STUDENT:<student id>` or `STAFF:<user id>`. */
 export const personKey = (kind: DevicePersonKind, id: string) => `${kind}:${id}`;
 export const kindOfKey = (key: string): DevicePersonKind =>
   key.startsWith('STUDENT:') ? 'STUDENT' : 'STAFF';
+const idOfKey = (key: string) => key.slice(key.indexOf(':') + 1);
 /** The device_people columns that name the person behind a key. */
 export function personColumns(key: string): { studentId: string } | { staffUserId: string } {
-  const id = key.slice(key.indexOf(':') + 1);
+  const id = idOfKey(key);
   return kindOfKey(key) === 'STUDENT' ? { studentId: id } : { staffUserId: id };
 }
 
@@ -99,7 +104,22 @@ export interface Roster {
   defaults: DefaultIds;
   /** Key → the ID from `defaults`. */
   suggested: Map<string, string>;
+  /** IDs an active device still has someone under (see `onDevice`). */
+  onDevice: Map<string, OnDevice>;
   refs: Map<string, DevicePersonRef>;
+}
+
+/** Someone an active device has under an ID (its last confirmed command for it was an add). */
+export interface OnDevice {
+  /** Its holder; when nobody holds it, the person it was last taken from. */
+  key: string;
+  person: DevicePersonRef;
+  /** The active devices that have them. */
+  deviceIds: string[];
+  /** When a device last confirmed adding them. */
+  lastSyncAt: Date;
+  /** A removal is queued after that add and not confirmed yet. */
+  removing: boolean;
 }
 
 export const isUniqueViolation = (error: unknown) =>
@@ -108,6 +128,15 @@ export const isUniqueViolation = (error: unknown) =>
 /** 409 DEVICE_ID_TAKEN, naming the holder when known (always someone of this institute). */
 export const deviceIdTaken = (holder: DevicePersonRef | null) =>
   apiError(409, 'DEVICE_ID_TAKEN', 'Someone else here has this device ID', { holder });
+
+/** 409 ID_STILL_ON_DEVICE: a device still has `previous` under the ID. */
+export const idStillOnDevice = (previous: DevicePersonRef) =>
+  apiError(
+    409,
+    'ID_STILL_ON_DEVICE',
+    'A device still has someone else under this ID; remove it from the devices first',
+    { previous },
+  );
 
 /**
  * The people who get device IDs, who holds which ID, and the defaults, read in the request
@@ -178,15 +207,124 @@ export class DevicePeopleRoster {
         },
       ];
     });
+    const onDevice = await this.onDevice();
+    for (const o of onDevice.values()) if (!refs.has(o.key)) refs.set(o.key, o.person);
     const { settings } = await this.settings.load();
     const defaults = defaultDeviceIds({
       students: students.map((s) => ({ key: s.key, code: s.studentCode, current: s.deviceUserId })),
       staff: staff.map((s) => ({ key: s.key, current: s.deviceUserId })),
       held: new Set(holders.keys()),
+      onDevice: new Map([...onDevice].map(([id, o]) => [id, o.key])),
       staffStart: settings.staffDeviceIdStart,
     });
     const suggested = new Map(defaults.assigned.map((a) => [a.key, a.deviceUserId]));
-    return { students, staff, holders, defaults, suggested, refs };
+    return { students, staff, holders, defaults, suggested, onDevice, refs };
+  }
+
+  /**
+   * IDs (all, or these) whose last confirmed command on some active device was an add, and who
+   * the devices have under them: the holder, or when nobody holds the ID, the person it was last
+   * taken from (by a change, a clear, an import or a removal, read from their audit rows). IDs
+   * nobody here is known for (rows written outside this API) are left out.
+   */
+  async onDevice(ids?: string[]): Promise<Map<string, OnDevice>> {
+    const tx = this.db.tx;
+    const only = ids ? Prisma.sql`AND c.device_user_id = ANY(${ids}::text[])` : Prisma.empty;
+    const rows = await tx.$queryRaw<
+      { device_user_id: string; device_ids: string[]; last_sync_at: Date; removing: boolean }[]
+    >`
+      WITH latest AS (
+        SELECT DISTINCT ON (c.device_id, c.device_user_id)
+               c.device_id, c.device_user_id, c.kind, c.seq,
+               coalesce(c.done_at, c.updated_at) AS done_at
+        FROM device_commands c
+        JOIN attendance_devices d ON d.tenant_id = c.tenant_id AND d.id = c.device_id
+        WHERE d.is_active AND c.status = 'DONE' ${only}
+        ORDER BY c.device_id, c.device_user_id, c.seq DESC
+      ), still AS (
+        SELECT l.*, EXISTS (SELECT 1 FROM device_commands x
+                            WHERE x.device_id = l.device_id
+                              AND x.device_user_id = l.device_user_id
+                              AND x.kind = 'USER_DELETE' AND x.status IN ('PENDING', 'SENT')
+                              AND x.seq > l.seq) AS removing
+        FROM latest l
+        WHERE l.kind = 'USER_UPSERT'
+      )
+      SELECT device_user_id, array_agg(device_id::text ORDER BY device_id) AS device_ids,
+             max(done_at) AS last_sync_at, bool_or(removing) AS removing
+      FROM still
+      GROUP BY device_user_id`;
+    if (rows.length === 0) return new Map();
+    const held = await tx.devicePerson.findMany({
+      where: { deviceUserId: { in: rows.map((r) => r.device_user_id) } },
+      select: HOLDER_SELECT,
+    });
+    const keyOf = new Map(held.map((h) => [h.deviceUserId, holderKey(h)]));
+    const refs = new Map(held.map((h) => [holderKey(h), holderRef(h)]));
+    const unheld = rows.map((r) => r.device_user_id).filter((id) => !keyOf.has(id));
+    if (unheld.length > 0) {
+      for (const [id, key] of await this.lastTakenFrom(unheld)) keyOf.set(id, key);
+      const missing = [...new Set(keyOf.values())].filter((k) => !refs.has(k));
+      const studentIds = missing.filter((k) => kindOfKey(k) === 'STUDENT').map(idOfKey);
+      const staffIds = missing.filter((k) => kindOfKey(k) === 'STAFF').map(idOfKey);
+      for (const st of await tx.student.findMany({
+        where: { id: { in: studentIds } },
+        select: { id: true, nameBn: true, nameEn: true, studentCode: true },
+      })) {
+        refs.set(personKey('STUDENT', st.id), studentRef(st));
+      }
+      for (const p of await tx.staffProfile.findMany({
+        where: { userId: { in: staffIds } },
+        select: { userId: true, name: true, nameBn: true },
+      })) {
+        refs.set(personKey('STAFF', p.userId), staffPersonRef(p.userId, p));
+      }
+    }
+    const out = new Map<string, OnDevice>();
+    for (const r of rows) {
+      const key = keyOf.get(r.device_user_id);
+      const person = key === undefined ? undefined : refs.get(key);
+      if (key === undefined || person === undefined) continue;
+      out.set(r.device_user_id, {
+        key,
+        person,
+        deviceIds: r.device_ids,
+        lastSyncAt: r.last_sync_at,
+        removing: r.removing,
+      });
+    }
+    return out;
+  }
+
+  /** For IDs nobody holds: the person each was last taken from, by the audit rows. */
+  private async lastTakenFrom(ids: string[]): Promise<Map<string, string>> {
+    const rows = await this.db.tx.$queryRaw<
+      { device_user_id: string; student_id: string | null; staff_user_id: string | null }[]
+    >`
+      SELECT DISTINCT ON (r.device_user_id) r.device_user_id, r.student_id, r.staff_user_id
+      FROM (
+        SELECT a.old_values->>'deviceUserId' AS device_user_id,
+               a.old_values->>'studentId' AS student_id,
+               a.old_values->>'staffUserId' AS staff_user_id, a.created_at, a.id
+        FROM audit_logs a
+        WHERE a.entity = ${DEVICE_PERSON} AND a.action IN ('UPDATE', 'DELETE')
+        UNION ALL
+        SELECT x->>'from', x->>'studentId', x->>'staffUserId', a.created_at, a.id
+        FROM audit_logs a CROSS JOIN LATERAL jsonb_array_elements(a.new_values->'changes') x
+        WHERE a.entity = ${DEVICE_PEOPLE_BATCH} AND a.new_values->>'source' = 'IMPORT'
+        UNION ALL
+        SELECT x->>'deviceUserId', x->>'studentId', x->>'staffUserId', a.created_at, a.id
+        FROM audit_logs a CROSS JOIN LATERAL jsonb_array_elements(a.new_values->'freed') x
+        WHERE a.entity = ${DEVICE_PEOPLE_BATCH} AND a.new_values->>'source' = 'REMOVE_FROM_DEVICES'
+      ) r
+      WHERE r.device_user_id = ANY(${ids}::text[])
+      ORDER BY r.device_user_id, r.created_at DESC, r.id DESC`;
+    return new Map(
+      rows.map((r) => [
+        r.device_user_id,
+        r.student_id ? personKey('STUDENT', r.student_id) : personKey('STAFF', r.staff_user_id!),
+      ]),
+    );
   }
 
   /** User id → their ACTIVE staff roles here. */

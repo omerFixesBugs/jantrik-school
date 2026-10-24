@@ -414,7 +414,7 @@ export interface DeviceDefaultsResult {
     person: DevicePersonRef;
     deviceUserId: string | null;
     reason: DefaultIdConflictReason;
-    /** TAKEN: who holds it. */
+    /** TAKEN: who holds it; ID_STILL_ON_DEVICE: who a device still has under it. */
     heldBy: DevicePersonRef | null;
   }[];
   /** USER_UPSERT commands queued (0 for a dry run). */
@@ -443,10 +443,20 @@ export interface DeviceImportResult {
   queued: number;
 }
 
-/** GET /attendance/device-people/stale: on a device, but no longer active here. */
+/**
+ * GET /attendance/device-people/stale: someone an active device still has under an ID they should
+ * no longer use there. INACTIVE: they hold the ID but are no longer active here. RELEASED: the ID
+ * was changed, cleared or removed from them; it goes to nobody else until every device that has
+ * them confirms removing it (their finger would punch as the new holder).
+ */
 export interface StaleDevicePerson {
   person: DevicePersonRef;
   deviceUserId: string;
+  reason: 'INACTIVE' | 'RELEASED';
+  /** The active devices that have them under this ID. */
+  devices: { id: string; name: string }[];
+  /** A removal is queued and not confirmed yet. */
+  removing: boolean;
   /** When a device last confirmed adding them. */
   lastSyncAt: string;
 }
@@ -477,6 +487,11 @@ export type DevicesErrorCode =
   | 'NOT_HELD'
   /** 409: someone else here has this device ID (`holder: DevicePersonRef | null`). */
   | 'DEVICE_ID_TAKEN'
+  /**
+   * 409: a device still has someone else under this ID (`previous: DevicePersonRef`); remove it
+   * from the devices first.
+   */
+  | 'ID_STILL_ON_DEVICE'
   /** 422: the user has no active staff role (or no staff profile) here. */
   | 'NOT_STAFF'
   /** 409: these IDs belong to active people (`people: { deviceUserId, person }[]`). */

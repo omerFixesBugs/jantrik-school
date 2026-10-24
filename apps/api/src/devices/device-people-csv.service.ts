@@ -17,6 +17,7 @@ import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { Db } from '../tenancy/db.service.js';
 import {
+  DEVICE_PEOPLE_BATCH,
   DevicePeopleRoster,
   HOLDER_SELECT,
   holderKey,
@@ -25,7 +26,6 @@ import {
   staffPersonRef,
   studentRef,
 } from './device-people-roster.js';
-import { DEVICE_PEOPLE_BATCH } from './device-people.service.js';
 
 const ROLE_LABELS: Record<'bn' | 'en', Record<StaffRole, string>> = {
   bn: {
@@ -102,7 +102,8 @@ export class DevicePeopleCsvService {
    * A CSV of `student_code` or `staff_phone` with `device_id` per row. The preview writes
    * nothing. The apply checks the file again against the database as it is now, under the lock,
    * and writes only the OK rows: every changing person's ID is removed first, then the new ones
-   * are given (so a swap works), audited as one batch, then sent to the active devices.
+   * are given (so a swap works), audited as one batch, then sent to the active devices. An ID a
+   * device still has someone else under is refused (ID_STILL_ON_DEVICE), also in a swap.
    */
   async importCsv(
     file: { buffer: Buffer; originalname: string } | undefined,
@@ -202,6 +203,7 @@ export class DevicePeopleCsvService {
         staff: named(staff),
         current: new Map(rows.map((r) => [holderKey(r), r.deviceUserId])),
         holders: new Map(rows.map((r) => [r.deviceUserId, holderKey(r)])),
+        onDevice: new Map([...(await this.roster.onDevice())].map(([id, o]) => [id, o.key])),
       },
       refs,
     };

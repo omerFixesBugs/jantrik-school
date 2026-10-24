@@ -911,10 +911,25 @@ describe('device people API', () => {
         (await get(f.admin, '/attendance/device-people/stale').expect(200))
           .body as StaleDevicePerson[];
       const at = new Date(T0.getTime() + 60_000).toISOString();
+      const gate = [{ id: on.id, name: 'Gate' }];
       expect(await stale()).toEqual([
-        { person: studentRef(f, 0), deviceUserId: '101', lastSyncAt: at },
-        { person: staffRef(f, 1), deviceUserId: '9001', lastSyncAt: at },
-      ]);
+        {
+          person: studentRef(f, 0),
+          deviceUserId: '101',
+          reason: 'INACTIVE',
+          devices: gate,
+          removing: false,
+          lastSyncAt: at,
+        },
+        {
+          person: staffRef(f, 1),
+          deviceUserId: '9001',
+          reason: 'INACTIVE',
+          devices: gate,
+          removing: false,
+          lastSyncAt: at,
+        },
+      ] satisfies StaleDevicePerson[]);
 
       const refused = await post(f.admin, '/attendance/device-people/remove-from-devices', {
         deviceUserIds: ['101', '102'],
@@ -962,7 +977,11 @@ describe('device people API', () => {
           queued: 2,
         },
       ]);
-      expect(await stale()).toEqual([]);
+      // Freed here, but still on the device until it confirms the removal.
+      expect((await stale()).map((p) => [p.deviceUserId, p.reason, p.removing])).toEqual([
+        ['101', 'RELEASED', true],
+        ['9001', 'RELEASED', true],
+      ]);
       // The device removes them (and adds 103 meanwhile, whose student was deleted).
       await reader.poll();
       expect((await stale()).map((p) => p.deviceUserId)).toEqual(['103']);
@@ -977,6 +996,139 @@ describe('device people API', () => {
       await post(f.admin, '/attendance/device-people/remove-from-devices', {
         deviceUserIds: [],
       }).expect(400);
+    });
+  });
+
+  describe('an ID a device still has someone under', () => {
+    it('goes to nobody else until the devices confirm removing it; its own person may have it back', async () => {
+      const f = await fixture();
+      const on = await addDevice(f.admin);
+      const off = await addDevice(f.admin, false);
+      const reader = sim(on);
+      // a1 holds a3's code number; both a1's and a2's IDs reach the device.
+      await setId(f.admin, { studentId: f.students[0], deviceUserId: '20260003' });
+      await setId(f.admin, { studentId: f.students[1], deviceUserId: '555' });
+      clock.set(new Date(T0.getTime() + 60_000));
+      await reader.poll();
+      const stale = async () =>
+        (await get(f.admin, '/attendance/device-people/stale').expect(200))
+          .body as StaleDevicePerson[];
+      const refused = async (body: object) =>
+        (await put(f.admin, body).expect(409)).body as { code: string; previous: unknown };
+
+      // Swapping two IDs that are on the device would hand each one the other's fingerprints.
+      const swap = toCsv([
+        ['student_code', 'device_id'],
+        [CODES[0]!, '555'],
+        [CODES[1]!, '20260003'],
+      ]);
+      expect((await imported(f.admin, swap, false)).rows.map((r) => [r.status, r.error])).toEqual([
+        ['ERROR', 'ID_STILL_ON_DEVICE'],
+        ['ERROR', 'TAKEN'],
+      ]);
+
+      // a1 changes ID: 20260003 is freed here but the device still has a1 under it.
+      expect(await setId(f.admin, { studentId: f.students[0], deviceUserId: '101' })).toEqual({
+        deviceUserId: '101',
+        previous: '20260003',
+        reenrol: true,
+        queued: 1,
+      });
+      expect(await stale()).toEqual([
+        {
+          person: studentRef(f, 0),
+          deviceUserId: '20260003',
+          reason: 'RELEASED',
+          devices: [{ id: on.id, name: 'Gate' }],
+          removing: false,
+          lastSyncAt: new Date(T0.getTime() + 60_000).toISOString(),
+        },
+      ] satisfies StaleDevicePerson[]);
+      for (const body of [
+        { studentId: f.students[2], deviceUserId: '20260003' },
+        { staffUserId: f.staff[0]!.id, deviceUserId: '20260003' },
+      ]) {
+        expect(await refused(body)).toEqual({
+          statusCode: 409,
+          code: 'ID_STILL_ON_DEVICE',
+          message:
+            'A device still has someone else under this ID; remove it from the devices first',
+          previous: studentRef(f, 0),
+        });
+      }
+      const take = toCsv([
+        ['student_code', 'device_id'],
+        [CODES[2]!, '20260003'],
+      ]);
+      expect((await imported(f.admin, take, true)).rows[0]).toMatchObject({
+        status: 'ERROR',
+        error: 'ID_STILL_ON_DEVICE',
+      });
+      // a3's code gives 20260003: not given; a4's is.
+      const dry = await defaults(f.admin, 'STUDENT', true);
+      expect(dry.assigned.map((a) => [a.person.id, a.deviceUserId])).toEqual([
+        [f.students[3], '20260004'],
+      ]);
+      expect(dry.conflicts).toEqual([
+        {
+          person: studentRef(f, 2),
+          deviceUserId: '20260003',
+          reason: 'ID_STILL_ON_DEVICE',
+          heldBy: studentRef(f, 0),
+        },
+      ]);
+      expect((await people(f.admin)).people[2]!.suggested).toBeNull();
+      expect((await get(f.admin, '/attendance/device-people/collisions').expect(200)).body).toEqual(
+        [{ deviceUserId: '20260003', wantedBy: [studentRef(f, 2)], heldBy: studentRef(f, 0) }],
+      );
+      expect((await mapped(f.tenantId))[f.students[2]!]).toBeUndefined();
+
+      // Back to a1, whose fingerprints are still there under it.
+      expect(await setId(f.admin, { studentId: f.students[0], deviceUserId: '20260003' })).toEqual({
+        deviceUserId: '20260003',
+        previous: '101',
+        reenrol: false,
+        queued: 1,
+      });
+      expect(await stale()).toEqual([]);
+
+      // Cleared again, then removed: still refused until the device confirms the removal.
+      await setId(f.admin, { studentId: f.students[0], deviceUserId: null });
+      const before = (await commands(f.tenantId, on.id)).length;
+      expect(
+        (
+          await post(f.admin, '/attendance/device-people/remove-from-devices', {
+            deviceUserIds: ['20260003'],
+          }).expect(200)
+        ).body,
+      ).toEqual({ freed: [], queued: 1 } satisfies RemoveFromDevicesResult);
+      expect((await commands(f.tenantId, on.id)).slice(before)).toEqual([
+        {
+          kind: 'USER_DELETE',
+          deviceUserId: '20260003',
+          payload: 'DATA DELETE USERINFO PIN=20260003',
+          status: 'PENDING',
+        },
+      ]);
+      expect(await commands(f.tenantId, off.id)).toEqual([]);
+      expect((await stale()).map((p) => [p.deviceUserId, p.reason, p.removing])).toEqual([
+        ['20260003', 'RELEASED', true],
+      ]);
+      expect((await refused({ studentId: f.students[2], deviceUserId: '20260003' })).code).toBe(
+        'ID_STILL_ON_DEVICE',
+      );
+
+      // The device runs what is waiting (a1's 101 and 20260003, then the removal) and confirms.
+      await reader.poll();
+      expect((await commands(f.tenantId, on.id)).filter((c) => c.status !== 'DONE')).toEqual([]);
+      // 20260003 is free; 101 reached the device after a1 had moved on, so it is listed now.
+      expect((await stale()).map((p) => [p.deviceUserId, p.reason])).toEqual([['101', 'RELEASED']]);
+      expect(await setId(f.admin, { studentId: f.students[2], deviceUserId: '20260003' })).toEqual({
+        deviceUserId: '20260003',
+        previous: null,
+        reenrol: false,
+        queued: 1,
+      });
     });
   });
 

@@ -22,11 +22,14 @@ import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import { Db } from '../tenancy/db.service.js';
 import {
+  DEVICE_PEOPLE_BATCH,
+  DEVICE_PERSON,
   DevicePeopleRoster,
   HOLDER_SELECT,
   deviceIdTaken,
   holderKey,
   holderRef,
+  idStillOnDevice,
   isUniqueViolation,
   kindOfKey,
   personColumns,
@@ -35,14 +38,12 @@ import {
 } from './device-people-roster.js';
 import { activeDeviceIds } from './device-users.js';
 
-/** Batches (defaults, import, removal) are audited as one row listing every change. */
-export const DEVICE_PEOPLE_BATCH = 'device_people_batch';
-
 /**
  * People ↔ device IDs (OWNER/ADMIN): the list, setting one ID, collisions, default IDs, people no
  * longer active who are still on the devices, and the staff range check. Writes take the
  * institute's device-people lock first; adding an ID queues USER_UPSERT on the active devices,
- * clearing one queues nothing (the device keeps their fingerprints).
+ * clearing one queues nothing (the device keeps their fingerprints). An ID a device still has
+ * someone under goes to nobody else until the devices confirm removing it.
  */
 @Injectable()
 export class DevicePeopleService {
@@ -108,7 +109,9 @@ export class DevicePeopleService {
 
   /**
    * Set (or with null clear) one person's ID. A student must exist; a staff member must have an
-   * active staff role and a profile. An ID someone else holds is DEVICE_ID_TAKEN, naming them.
+   * active staff role and a profile. An ID someone else holds is DEVICE_ID_TAKEN, naming them; one
+   * a device still has someone else under is ID_STILL_ON_DEVICE (giving it back to them is fine,
+   * without re-enrolling).
    */
   async set(input: {
     studentId?: string;
@@ -130,7 +133,7 @@ export class DevicePeopleService {
     if (next === null) {
       await tx.devicePerson.delete({ where: { id: existing!.id } });
       await this.audit.record({
-        entity: 'device_person',
+        entity: DEVICE_PERSON,
         entityId: existing!.id,
         action: 'DELETE',
         oldValues: { ...columns, deviceUserId: previous },
@@ -142,6 +145,8 @@ export class DevicePeopleService {
       select: HOLDER_SELECT,
     });
     if (holder) throw deviceIdTaken(holderRef(holder));
+    const onDevice = (await this.roster.onDevice([next])).get(next);
+    if (onDevice && onDevice.key !== key) throw idStillOnDevice(onDevice.person);
     const me = this.context.requirePrincipal();
     let id: string;
     try {
@@ -168,7 +173,7 @@ export class DevicePeopleService {
       throw error;
     }
     await this.audit.record({
-      entity: 'device_person',
+      entity: DEVICE_PERSON,
       entityId: id,
       action: existing ? 'UPDATE' : 'CREATE',
       ...(existing ? { oldValues: { ...columns, deviceUserId: previous } } : {}),
@@ -177,14 +182,16 @@ export class DevicePeopleService {
     return {
       deviceUserId: next,
       previous,
-      reenrol: previous !== null,
+      // Back to an ID a device still has them under: their fingerprints are there.
+      reenrol: previous !== null && onDevice === undefined,
       queued: await this.roster.queueUpserts([next]),
     };
   }
 
   /**
    * Numbers someone without an ID wants (their student code's digits) while another person holds
-   * them, or that two such students want. Holders include people no longer active.
+   * them, or that two such students want. Holders include people no longer active and people a
+   * device still has under an ID nobody holds.
    */
   async collisions(): Promise<DeviceIdCollisionView[]> {
     const r = await this.roster.load();
@@ -209,11 +216,23 @@ export class DevicePeopleService {
         people.push({ key, kind: kindOfKey(key), current: h.deviceUserId, wanted: null });
       }
     }
-    return deviceIdCollisions(people).map((c) => ({
-      deviceUserId: c.deviceUserId,
-      wantedBy: c.wantedBy.map((k) => r.refs.get(k)!),
-      heldBy: c.heldBy === null ? null : r.refs.get(c.heldBy)!,
-    }));
+    for (const [id, o] of r.onDevice) {
+      if (!r.holders.has(id)) {
+        people.push({ key: o.key, kind: kindOfKey(o.key), current: id, wanted: null });
+      }
+    }
+    return deviceIdCollisions(people).flatMap((c) => {
+      // Someone may want back the number a device still has them under.
+      const wantedBy = c.wantedBy.filter((k) => k !== c.heldBy);
+      if (wantedBy.length === 0) return [];
+      return [
+        {
+          deviceUserId: c.deviceUserId,
+          wantedBy: wantedBy.map((k) => r.refs.get(k)!),
+          heldBy: c.heldBy === null ? null : r.refs.get(c.heldBy)!,
+        },
+      ];
+    });
   }
 
   /**
@@ -235,11 +254,13 @@ export class DevicePeopleService {
         .filter((c) => wanted(c.key))
         .map((c) => {
           const holder = c.reason === 'TAKEN' ? r.holders.get(c.deviceUserId!) : undefined;
+          const onDevice =
+            c.reason === 'ID_STILL_ON_DEVICE' ? r.onDevice.get(c.deviceUserId!) : undefined;
           return {
             person: r.refs.get(c.key)!,
             deviceUserId: c.deviceUserId,
             reason: c.reason,
-            heldBy: holder ? holderRef(holder) : null,
+            heldBy: holder ? holderRef(holder) : (onDevice?.person ?? null),
           };
         }),
       queued: 0,
@@ -260,38 +281,54 @@ export class DevicePeopleService {
   }
 
   /**
-   * People with an ID who are no longer active (a student deleted or not ACTIVE, staff without an
-   * active staff role) and are still on a device: one confirmed it added them, and has not
-   * confirmed removing them since.
+   * People an active device still has (its last confirmed command for the ID was an add) who
+   * should not be there under that ID: INACTIVE (they hold it but are no longer active: a student
+   * deleted or not ACTIVE, staff without an active staff role) or RELEASED (the ID was changed,
+   * cleared or removed from them, and the devices have not confirmed removing it yet).
    */
   async stale(): Promise<StaleDevicePerson[]> {
-    const rows = await this.db.tx.devicePerson.findMany({ select: HOLDER_SELECT });
-    const inactive = await this.inactive(rows);
-    if (inactive.length === 0) return [];
-    const sent = await this.db.tx.$queryRaw<{ device_user_id: string; last_sync_at: Date }[]>`
-      SELECT c.device_user_id, max(coalesce(c.done_at, c.updated_at)) AS last_sync_at
-      FROM device_commands c
-      WHERE c.device_user_id = ANY(${inactive.map((r) => r.deviceUserId)}::text[])
-        AND c.kind = 'USER_UPSERT' AND c.status = 'DONE'
-        AND NOT EXISTS (SELECT 1 FROM device_commands x
-                        WHERE x.tenant_id = c.tenant_id AND x.device_id = c.device_id
-                          AND x.device_user_id = c.device_user_id
-                          AND x.kind = 'USER_DELETE' AND x.status = 'DONE' AND x.seq > c.seq)
-      GROUP BY c.device_user_id`;
-    const lastSync = new Map(sent.map((s) => [s.device_user_id, s.last_sync_at]));
-    return inactive
-      .filter((r) => lastSync.has(r.deviceUserId))
-      .sort((a, b) => Number(a.deviceUserId) - Number(b.deviceUserId))
-      .map((r) => ({
-        person: holderRef(r),
-        deviceUserId: r.deviceUserId,
-        lastSyncAt: lastSync.get(r.deviceUserId)!.toISOString(),
-      }));
+    const tx = this.db.tx;
+    const onDevice = await this.roster.onDevice();
+    if (onDevice.size === 0) return [];
+    const rows = await tx.devicePerson.findMany({
+      where: { deviceUserId: { in: [...onDevice.keys()] } },
+      select: HOLDER_SELECT,
+    });
+    const held = new Set(rows.map((r) => r.deviceUserId));
+    const inactive = new Set((await this.inactive(rows)).map((r) => r.deviceUserId));
+    const names = new Map(
+      (
+        await tx.attendanceDevice.findMany({
+          where: { id: { in: [...new Set([...onDevice.values()].flatMap((o) => o.deviceIds))] } },
+          select: { id: true, name: true },
+        })
+      ).map((d) => [d.id, d.name]),
+    );
+    const out: StaleDevicePerson[] = [];
+    for (const [deviceUserId, o] of onDevice) {
+      const reason = !held.has(deviceUserId)
+        ? 'RELEASED'
+        : inactive.has(deviceUserId)
+          ? 'INACTIVE'
+          : null;
+      if (reason === null) continue;
+      out.push({
+        person: o.person,
+        deviceUserId,
+        reason,
+        devices: o.deviceIds.map((id) => ({ id, name: names.get(id) ?? '' })),
+        removing: o.removing,
+        lastSyncAt: o.lastSyncAt.toISOString(),
+      });
+    }
+    return out.sort((a, b) => Number(a.deviceUserId) - Number(b.deviceUserId));
   }
 
   /**
-   * Remove people from every active device (USER_DELETE) and free their IDs. Refused with
-   * PERSON_ACTIVE, changing nothing, when any ID belongs to someone active.
+   * Remove people from every active device (USER_DELETE) and free their IDs; also IDs nobody
+   * holds (a device may still have someone under them). Refused with PERSON_ACTIVE, changing
+   * nothing, when any ID belongs to someone active. An ID goes to someone else only once every
+   * device that had it confirms the removal.
    */
   async removeFromDevices(deviceUserIds: string[]): Promise<RemoveFromDevicesResult> {
     const tx = this.db.tx;
