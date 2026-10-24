@@ -25,10 +25,18 @@ const newSerial = () => `T${randomUUID().replace(/-/g, '').slice(0, 15).toUpperC
 /** A Dhaka wall-clock time on 2026-10-20 as an instant. */
 const at = (time: string) => new Date(`2026-10-20T${time}+06:00`);
 
-function setup(h: () => IngestHarness) {
+/** `h` is the harness; `now` the receiver's clock (a FakeClock, or the real one). */
+function setup(h: () => IngestHarness, now: () => Date) {
   const institute = (opts: { modules?: 'ATTENDANCE'[] } = {}) =>
     createTenant(h(), { modules: opts.modules ?? ['ATTENDANCE'] });
-  const addDevice = (tenantId: string, opts: { isActive?: boolean } = {}) =>
+  /**
+   * A device registered an hour ago by default: its first contact then comes within 24 hours of
+   * registration, so the address it first calls from is trusted (later first contacts are not).
+   */
+  const addDevice = (
+    tenantId: string,
+    opts: { isActive?: boolean; registeredAgoMs?: number } = {},
+  ) =>
     withTenant(h().prisma, tenantId, (tx) =>
       tx.attendanceDevice.create({
         data: {
@@ -37,21 +45,31 @@ function setup(h: () => IngestHarness) {
           name: 'Main gate',
           direction: 'BOTH',
           isActive: opts.isActive ?? true,
-          // Punches dated before the day a device was added are skipped.
-          createdAt: new Date('2026-01-01T00:00:00Z'),
+          createdAt: new Date(now().getTime() - (opts.registeredAgoMs ?? 3600_000)),
         },
+      }),
+    );
+  /** An admin trusting an address the device called from, as the app role does it. */
+  const trustAddress = (tenantId: string, deviceId: string, ip: string) =>
+    withTenant(h().prisma, tenantId, (tx) =>
+      tx.deviceSourceIp.updateMany({
+        where: { deviceId, ip, trustedAt: null },
+        data: { trustedAt: now() },
       }),
     );
   const sim = (sn: string, opts: Partial<SimulatorOptions> = {}) =>
     new ZkDeviceSimulator({ baseUrl: h().baseUrl, sn, forwardedFor: randomIp(), ...opts });
-  return { institute, addDevice, sim };
+  return { institute, addDevice, trustAddress, sim };
 }
 
 describe('device receiver', () => {
   const T0 = at('08:00:00');
   const clock = new FakeClock(T0);
   let h: IngestHarness;
-  const { institute, addDevice, sim } = setup(() => h);
+  const { institute, addDevice, trustAddress, sim } = setup(
+    () => h,
+    () => clock.now(),
+  );
 
   beforeAll(async () => {
     h = await createIngestHarness({ clock });
@@ -563,6 +581,55 @@ describe('device receiver', () => {
     });
   });
 
+  describe('the first address is trusted only within 24 hours of registration', () => {
+    const queueUpsert = (tenantId: string, deviceId: string, pin: string) =>
+      inTenant(tenantId, (tx) =>
+        tx.deviceCommand.create({
+          data: {
+            tenantId,
+            deviceId,
+            kind: 'USER_UPSERT',
+            deviceUserId: pin,
+            payload: `DATA UPDATE USERINFO PIN=${pin}\tName=Rahim`,
+          },
+        }),
+      );
+    const commandOf = async (tenantId: string, id: string) =>
+      inTenant(tenantId, (tx) => tx.deviceCommand.findUniqueOrThrow({ where: { id } }));
+
+    it('registered 23 hours ago: its first address is trusted, so commands flow and no NEW_IP', async () => {
+      const t = await institute();
+      const dev = await addDevice(t.id, { registeredAgoMs: 23 * 3600_000 });
+      const command = await queueUpsert(t.id, dev.id, '811');
+      const device = sim(dev.serialNo);
+      expect((await device.punch('811', { at: at('07:59:00') })).body).toBe('OK: 1');
+      expect((await device.poll()).commands.map((c) => c.returnCode)).toEqual([0]);
+      expect(await commandOf(t.id, command.id)).toMatchObject({ status: 'DONE', attempts: 1 });
+      const [row] = await punchesOf(t.id, dev.id);
+      expect(row).toMatchObject({ flags: [], sourceIp: null });
+    });
+
+    it('registered 2 days ago: NEW_IP and no commands until an admin trusts the address', async () => {
+      const t = await institute();
+      const dev = await addDevice(t.id, { registeredAgoMs: 2 * 24 * 3600_000 });
+      const command = await queueUpsert(t.id, dev.id, '812');
+      const ip = randomIp();
+      const device = sim(dev.serialNo, { forwardedFor: ip });
+      expect((await device.punch('812', { at: at('07:58:00') })).body).toBe('OK: 1');
+      expect(await device.poll()).toEqual({ commands: [] });
+      expect(await commandOf(t.id, command.id)).toMatchObject({ status: 'PENDING', attempts: 0 });
+
+      await trustAddress(t.id, dev.id, ip);
+      expect((await device.poll()).commands.map((c) => c.returnCode)).toEqual([0]);
+      expect(await commandOf(t.id, command.id)).toMatchObject({ status: 'DONE', attempts: 1 });
+      expect((await device.punch('812', { at: at('07:59:00') })).body).toBe('OK: 1');
+      expect((await punchesOf(t.id, dev.id)).map((r) => [r.flags, r.sourceIp])).toEqual([
+        [['NEW_IP'], ip],
+        [[], null],
+      ]);
+    });
+  });
+
   it('HEAD and other methods reach no route and no database (HEAD would take commands)', async () => {
     const t = await institute();
     const dev = await addDevice(t.id);
@@ -711,6 +778,60 @@ describe('device receiver', () => {
       return [...new Set(rows.map((r) => r.found))];
     }
 
+    /**
+     * Captures everything that could print until the mocks are restored: the streams, Nest's
+     * Logger and console (vitest replaces console with its own, which does not write to
+     * process.stdout). Each value is kept whole: objects to any depth, and Buffers and byte arrays
+     * (inside objects too) also as UTF-8 text, base64 and hex, which printing would show only as
+     * truncated hex.
+     */
+    function captureOutput(): string[] {
+      const output: string[] = [];
+      const textOf = (args: unknown[]) => {
+        const bytes: string[] = [];
+        const seen = new WeakSet<object>();
+        const walk = (value: unknown): void => {
+          if (value instanceof Uint8Array) {
+            const b = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+            bytes.push(b.toString('utf8'), b.toString('base64'), b.toString('hex'));
+          } else if (value !== null && typeof value === 'object' && !seen.has(value)) {
+            seen.add(value);
+            const items =
+              value instanceof Map
+                ? [...value.keys(), ...value.values()]
+                : value instanceof Set
+                  ? [...value]
+                  : Object.values(value);
+            items.forEach(walk);
+          }
+        };
+        args.forEach(walk);
+        return [formatWithOptions({ depth: Infinity }, ...args), ...bytes].join('\n');
+      };
+      for (const stream of [process.stdout, process.stderr]) {
+        vi.spyOn(stream, 'write').mockImplementation(((chunk: unknown) => {
+          output.push(textOf([chunk]));
+          return true;
+        }) as typeof stream.write);
+      }
+      for (const level of ['log', 'warn', 'error', 'debug', 'verbose', 'fatal'] as const) {
+        const original = Logger.prototype[level];
+        vi.spyOn(Logger.prototype, level).mockImplementation(function (
+          this: Logger,
+          ...args: unknown[]
+        ) {
+          output.push(textOf(args));
+          return (original as (...a: unknown[]) => void).apply(this, args);
+        });
+      }
+      for (const method of ['log', 'info', 'warn', 'error', 'debug', 'trace'] as const) {
+        vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+          output.push(textOf(args));
+        });
+      }
+      return output;
+    }
+
     /** Every key in the test Redis database whose name or value contains one of `needles`. */
     async function findInRedis(redis: Redis, needles: string[]) {
       const found: string[] = [];
@@ -743,37 +864,24 @@ describe('device receiver', () => {
 
     it('fingerprint, face, photo and user-info uploads are answered OK and kept nowhere', async () => {
       const SENTINEL = `ZKSENTINEL${randomUUID().replace(/-/g, '')}`;
-      const needles = [SENTINEL, Buffer.from(SENTINEL).toString('base64')];
+      const needles = ['utf8', 'base64', 'hex'].map((form) =>
+        Buffer.from(SENTINEL).toString(form as BufferEncoding),
+      );
       const t = await institute();
       const dev = await addDevice(t.id);
       const device = sim(dev.serialNo);
       const unknown = newSerial();
 
-      // Everything that could print: the streams, Nest's Logger and console (vitest replaces
-      // console with its own, which does not write to process.stdout). Objects are printed whole.
-      const output: string[] = [];
-      const text = (args: unknown[]) => formatWithOptions({ depth: Infinity }, ...args);
-      for (const stream of [process.stdout, process.stderr]) {
-        vi.spyOn(stream, 'write').mockImplementation(((chunk: unknown) => {
-          output.push(String(chunk));
-          return true;
-        }) as typeof stream.write);
-      }
-      for (const level of ['log', 'warn', 'error', 'debug', 'verbose', 'fatal'] as const) {
-        const original = Logger.prototype[level];
-        vi.spyOn(Logger.prototype, level).mockImplementation(function (
-          this: Logger,
-          ...args: unknown[]
-        ) {
-          output.push(text(args));
-          return (original as (...a: unknown[]) => void).apply(this, args);
-        });
-      }
-      for (const method of ['log', 'info', 'warn', 'error', 'debug', 'trace'] as const) {
-        vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
-          output.push(text(args));
-        });
-      }
+      // The capture itself first: the sentinel's own bytes, logged the way a request chunk would
+      // be (alone, or inside an object), are found. Then a fresh capture for the real run.
+      const probe = captureOutput();
+      console.log(Buffer.from(SENTINEL));
+      console.log({ chunk: new Uint8Array(Buffer.from(SENTINEL)) });
+      vi.restoreAllMocks();
+      expect(probe).toHaveLength(2);
+      for (const printed of probe) expect(printed).toContain(SENTINEL);
+
+      const output = captureOutput();
       // Controls: leaks planted inside a request, the way a debugging line would leak a body.
       const planted = `PLANTED${randomUUID().replace(/-/g, '')}`;
       const service = h.app.get(IngestService);
@@ -781,6 +889,8 @@ describe('device receiver', () => {
       vi.spyOn(service, 'handshake').mockImplementation((...args) => {
         console.log({ body: { note: `${planted}-console` } });
         console.error(`${planted}-console-error`);
+        console.log(Buffer.from(`${planted}-buffer`));
+        console.info({ req: { chunks: [Buffer.from(`${planted}-nested-buffer`)] } });
         new Logger('Planted').debug(`${planted}-logger`);
         return handshake(...args);
       });
@@ -819,7 +929,7 @@ describe('device receiver', () => {
       // The logs.
       const logs = output.join('\n');
       expect(logs).toContain(`device refused: ${unknown} (UNKNOWN)`);
-      for (const leak of ['console', 'console-error', 'logger']) {
+      for (const leak of ['console', 'console-error', 'buffer', 'nested-buffer', 'logger']) {
         expect(logs).toContain(`${planted}-${leak}`);
       }
       for (const needle of needles) expect(logs).not.toContain(needle);
@@ -829,7 +939,10 @@ describe('device receiver', () => {
 
 describe('device receiver limits', () => {
   let h: IngestHarness;
-  const { institute, addDevice } = setup(() => h);
+  const { institute, addDevice, sim } = setup(
+    () => h,
+    () => new Date(),
+  );
 
   beforeAll(async () => {
     h = await createIngestHarness({
@@ -873,27 +986,41 @@ describe('device receiver limits', () => {
   it('429 per device and address: requests from elsewhere cannot use up the device’s share', async () => {
     const dev = await addDevice((await institute()).id);
     const query = vi.spyOn(h.ingestDb, '$queryRaw');
+    // The device's first contact: its address is the trusted one.
+    const own = randomIp();
+    expect((await ping(dev.serialNo, own)).text).toBe('OK');
     const attacker = randomIp();
     for (let i = 0; i < 3; i++) expect((await ping(dev.serialNo, attacker)).text).toBe('OK');
+    // Over its share: refused before any database call.
     expectLimited(await ping(dev.serialNo, attacker));
-    expect(query).toHaveBeenCalledTimes(3);
+    expect(query).toHaveBeenCalledTimes(4);
     // The device itself, from its own address, still gets through.
-    expect((await ping(dev.serialNo, randomIp())).text).toBe('OK');
+    expect((await ping(dev.serialNo, own)).text).toBe('OK');
   });
 
-  it('429 for one serial from rotating addresses once all of them together reach the cap', async () => {
-    const dev = await addDevice((await institute()).id);
-    const query = vi.spyOn(h.ingestDb, '$queryRaw');
-    // One address uses its share of 3; what it is refused beyond that does not count for all.
-    const first = randomIp();
-    for (let i = 0; i < 3; i++) expect((await ping(dev.serialNo, first)).text).toBe('OK');
-    for (let i = 0; i < 2; i++) expectLimited(await ping(dev.serialNo, first));
-    // Fresh addresses (an IPv4 and an IPv6 /64) bring all of them to 5, then the cap holds.
-    expect((await ping(dev.serialNo, randomIp())).text).toBe('OK');
-    expect((await ping(dev.serialNo, `${prefix64()}::1`)).text).toBe('OK');
-    expectLimited(await ping(dev.serialNo, randomIp()));
-    expectLimited(await ping(dev.serialNo, `${prefix64()}::1`));
-    expect(query).toHaveBeenCalledTimes(5);
+  it('untrusted addresses share one budget per serial; the trusted address is never charged', async () => {
+    const t = await institute();
+    const dev = await addDevice(t.id);
+    const own = randomIp();
+    const device = sim(dev.serialNo, { forwardedFor: own });
+    const poll = () =>
+      ingestHttp(h).get(`/iclock/getrequest?SN=${dev.serialNo}`).set('X-Forwarded-For', own);
+    // First contact: trusted. (Its own share is 3 a minute: this, an upload and a poll.)
+    expect((await device.ping()).body).toBe('OK');
+    // Rotating untrusted addresses, IPv4 and IPv6 /64s, one request each: 5 in all get through,
+    // then every further one is refused, however many addresses take part.
+    const stranger = (i: number) => (i % 2 ? randomIp() : `${prefix64()}::1`);
+    for (let i = 0; i < 5; i++) expect((await ping(dev.serialNo, stranger(i))).text).toBe('OK');
+    for (let i = 0; i < 4; i++) expectLimited(await ping(dev.serialNo, stranger(i)));
+    // Meanwhile the trusted address keeps uploading and polling.
+    expect((await device.punch('101')).body).toBe('OK: 1');
+    expect((await poll()).text).toBe('OK');
+    const [row] = await withTenant(h.prisma, t.id, (tx) =>
+      tx.devicePunch.findMany({ where: { deviceId: dev.id } }),
+    );
+    // From the trusted address (this harness runs on the real clock, so other flags may vary).
+    expect(row?.flags).not.toContain('NEW_IP');
+    expect(row?.sourceIp).toBeNull();
   });
 
   /** A random IPv6 /64 prefix (documentation range), as `2001:db8:x:y`. */

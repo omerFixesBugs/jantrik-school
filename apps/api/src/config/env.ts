@@ -84,7 +84,10 @@ export const envSchema = z
     INGEST_PER_IP_PER_MIN: positiveInt(1200),
     /** Requests per minute for one serial number from one address (an IPv6 /64). */
     INGEST_PER_DEVICE_PER_MIN: positiveInt(300),
-    /** Requests per minute for one serial number from all addresses together. */
+    /**
+     * Requests per minute for one serial number from all the addresses it does not trust, together
+     * (a trusted address has only its own share above).
+     */
     INGEST_PER_DEVICE_ALL_PER_MIN: positiveInt(1200),
     INGEST_REFUSED_PER_IP_PER_10MIN: positiveInt(30),
     INGEST_MAX_ATTLOG_BYTES: positiveInt(524288),
