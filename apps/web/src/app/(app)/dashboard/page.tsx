@@ -65,6 +65,7 @@ import {
   type BoardPeriod,
 } from '@/components/dashboard/attendance-overview';
 import { KpiTile } from '@/components/dashboard/kpi';
+import { DeviceAlertsBanner } from '@/components/devices/dashboard-alerts';
 import {
   AttentionCard,
   DashboardHero,
@@ -466,6 +467,7 @@ function StaffDashboard({ context }: { context: MeContext }) {
 
       <UnsentBanner count={unsent} />
       <HeldSmsBanner />
+      <DeviceAlertsBanner ready={Boolean(report.data)} />
       {canSeeFees && <PendingFeeSubmissions />}
 
       <ul

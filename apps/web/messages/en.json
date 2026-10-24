@@ -411,6 +411,7 @@
     "tabToday": "Today",
     "tabRegister": "Monthly register",
     "tabSettings": "Settings",
+    "tabDevices": "Devices",
     "todayTitle": "Today's attendance",
     "totalsTaken": "Taken for {taken} of {total} {section}",
     "percentPresent": "{percent}% present",
