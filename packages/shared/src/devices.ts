@@ -205,6 +205,9 @@ export function verifyKind(code: number | null): VerifyKind {
 // ---------------------------------------------------------------------------------------------
 // Protocol answers and commands
 
+const SERIAL_RE = /^[A-Za-z0-9]{6,32}$/;
+const STAMP_RE = /^[1-9]\d{0,18}$/;
+
 /** The `GET OPTION FROM` answer to a device's handshake. LF lines, trailing LF. */
 export function handshakeOptions(input: {
   sn: string;
@@ -213,7 +216,10 @@ export function handshakeOptions(input: {
   at: Date;
   legacy: boolean;
 }): string {
-  const stamp = input.attlogStamp && input.attlogStamp !== '0' ? input.attlogStamp : 'None';
+  // Only a positive integer reaches the device: a stamp with a line break could add option lines.
+  if (!SERIAL_RE.test(input.sn)) throw new Error('Not a valid device serial number');
+  const stamp =
+    input.attlogStamp !== null && STAMP_RE.test(input.attlogStamp) ? input.attlogStamp : 'None';
   const [attKey, opKey, photoKey] = input.legacy
     ? ['Stamp', 'OpStamp', 'PhotoStamp']
     : ['ATTLOGStamp', 'OPERLOGStamp', 'ATTPHOTOStamp'];

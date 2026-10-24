@@ -130,14 +130,15 @@ export function wallClockToUtc(wallClock: string, timeZone: string): Date {
     number,
   ];
   const asUtc = Date.UTC(y, mo - 1, d, h, mi, s);
-  let guess = asUtc - timeZoneOffsetMinutes(timeZone, new Date(asUtc)) * 60000;
-  const second = asUtc - timeZoneOffsetMinutes(timeZone, new Date(guess)) * 60000;
-  if (second !== guess) {
-    // the offset changed between the two guesses: take the earlier valid reading
-    const other = asUtc - timeZoneOffsetMinutes(timeZone, new Date(second)) * 60000;
-    guess = other === second ? Math.min(guess, second) : Math.max(guess, second);
-  }
-  return new Date(guess);
+  // The offsets a day either side bracket any single change; keep the readings that are
+  // self-consistent and take the earliest (the first of a repeated hour). In a gap neither is
+  // consistent, so the earlier offset moves the time forward.
+  const before = timeZoneOffsetMinutes(timeZone, new Date(asUtc - 86_400_000));
+  const after = timeZoneOffsetMinutes(timeZone, new Date(asUtc + 86_400_000));
+  const valid = [before, after]
+    .map((offset) => asUtc - offset * 60000)
+    .filter((t) => asUtc - t === timeZoneOffsetMinutes(timeZone, new Date(t)) * 60000);
+  return new Date(valid.length ? Math.min(...valid) : asUtc - before * 60000);
 }
 
 /** The calendar date of an instant in a timezone. */

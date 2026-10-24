@@ -234,6 +234,32 @@ describe('handshakeOptions', () => {
       expect(out).not.toContain('Stamp=0');
     }
   });
+  it('only writes a positive integer stamp, so nothing can inject option lines', () => {
+    expect(opts('1234567890')).toContain('ATTLOGStamp=1234567890\n');
+    const bad = [
+      '00',
+      '0',
+      '-1',
+      '12a',
+      '1\nTransFlag=TransData FP',
+      '1\r\nX=1',
+      ' 5',
+      '1'.repeat(20),
+    ];
+    for (const stamp of bad) {
+      const out = opts(stamp);
+      expect(out).toContain('ATTLOGStamp=None\n');
+      expect(out.split('\n').filter((l) => l.startsWith('TransFlag='))).toHaveLength(1);
+    }
+  });
+  it('refuses a serial number that is not valid', () => {
+    const bad = ['', 'ABC12', 'A'.repeat(33), 'ABC123\nTransFlag=X', 'ABC 12345', 'ABC-12345'];
+    for (const sn of bad) {
+      expect(() =>
+        handshakeOptions({ sn, attlogStamp: null, timeZone: 'Asia/Dhaka', at, legacy: false }),
+      ).toThrow();
+    }
+  });
   it('uses the old key names for legacy firmware', () => {
     const out = opts(null, 'Asia/Dhaka', true);
     expect(out).toContain('\nStamp=None\nOpStamp=9999\nPhotoStamp=9999\n');

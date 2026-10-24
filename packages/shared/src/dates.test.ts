@@ -72,3 +72,39 @@ describe('wall-clock time zones', () => {
     expect(timeZoneOffsetMinutes('America/New_York', new Date('2026-12-01T00:00:00Z'))).toBe(-300);
   });
 });
+
+describe('wallClockToUtc around DST changes in other zones', () => {
+  // [zone, wall clock, expected UTC]; ambiguous times take the earlier instant, gap times move forward
+  it.each([
+    // Berlin: spring forward 2026-03-29 01:00Z, fall back 2026-10-25 01:00Z
+    ['Europe/Berlin', '2026-03-29 01:30:00', '2026-03-29T00:30:00Z'],
+    ['Europe/Berlin', '2026-03-29 01:59:59', '2026-03-29T00:59:59Z'],
+    ['Europe/Berlin', '2026-03-29 02:30:00', '2026-03-29T01:30:00Z'], // gap
+    ['Europe/Berlin', '2026-03-29 03:30:00', '2026-03-29T01:30:00Z'],
+    ['Europe/Berlin', '2026-10-25 01:59:59', '2026-10-24T23:59:59Z'],
+    ['Europe/Berlin', '2026-10-25 02:30:00', '2026-10-25T00:30:00Z'], // ambiguous
+    ['Europe/Berlin', '2026-10-25 03:30:00', '2026-10-25T02:30:00Z'],
+    // New York: spring forward 2026-03-08 07:00Z, fall back 2026-11-01 06:00Z
+    ['America/New_York', '2026-03-08 01:30:00', '2026-03-08T06:30:00Z'],
+    ['America/New_York', '2026-03-08 02:30:00', '2026-03-08T07:30:00Z'], // gap
+    ['America/New_York', '2026-03-08 03:30:00', '2026-03-08T07:30:00Z'],
+    ['America/New_York', '2026-11-01 00:30:00', '2026-11-01T04:30:00Z'],
+    ['America/New_York', '2026-11-01 01:30:00', '2026-11-01T05:30:00Z'], // ambiguous
+    ['America/New_York', '2026-11-01 02:30:00', '2026-11-01T07:30:00Z'],
+    // Lord Howe (30 minute change): DST starts 2026-10-04, ends 2026-04-05
+    ['Australia/Lord_Howe', '2026-10-04 01:45:00', '2026-10-03T15:15:00Z'],
+    ['Australia/Lord_Howe', '2026-10-04 02:15:00', '2026-10-03T15:45:00Z'], // gap
+    ['Australia/Lord_Howe', '2026-10-04 03:00:00', '2026-10-03T16:00:00Z'],
+    ['Australia/Lord_Howe', '2026-04-05 01:15:00', '2026-04-04T14:15:00Z'],
+    ['Australia/Lord_Howe', '2026-04-05 01:45:00', '2026-04-04T14:45:00Z'], // ambiguous
+    ['Australia/Lord_Howe', '2026-04-05 02:15:00', '2026-04-04T15:45:00Z'],
+  ])('%s %s', (zone, wallClock, utc) => {
+    expect(wallClockToUtc(wallClock, zone).toISOString()).toBe(new Date(utc).toISOString());
+  });
+
+  it('London ambiguous hour takes the first occurrence', () => {
+    expect(wallClockToUtc('2026-10-25 01:30:00', 'Europe/London').toISOString()).toBe(
+      '2026-10-25T00:30:00.000Z',
+    );
+  });
+});
