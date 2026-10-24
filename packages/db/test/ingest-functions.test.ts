@@ -209,7 +209,7 @@ describe('ingest functions', () => {
     for (const sql of [
       'SELECT ingest_uuid7(now())',
       "SELECT * FROM ingest_find_device('ABC123')",
-      "SELECT ingest_note_address('ABC123', '10.0.0.1', now())",
+      "SELECT * FROM ingest_find_device_at('ABC123', '10.0.0.1', now())",
     ]) {
       await expect(ingest.$queryRawUnsafe(sql)).rejects.toThrow(/permission denied/i);
     }
@@ -544,35 +544,185 @@ describe('ingest functions', () => {
     });
   });
 
-  it('records at most 50 untrusted addresses per device, and still flags the next ones', async () => {
+  it('keeps 50 untrusted addresses per device: a new one evicts the least recently seen', async () => {
     const dev = await addDevice(a);
-    await store(dev.serialNo, []);
-    // 50 untrusted addresses already (as the receiver would have recorded them).
-    await withTenant(owner, a, (tx) =>
-      tx.deviceSourceIp.createMany({
-        data: Array.from({ length: 50 }, (_, i) => ({
-          tenantId: a,
-          deviceId: dev.id,
-          ip: `10.0.0.${i + 1}`,
-          firstSeenAt: T0,
-          lastSeenAt: T0,
-        })),
-      }),
-    );
-    expect(
-      await store(dev.serialNo, [punch('101', '2026-10-20 08:00:00')], { ip: '198.51.100.9' }),
-    ).toEqual([{ tenant_id: a, inserted: 1, duplicates: 0, held: 0, dropped: 0 }]);
-    expect(await punchesOf(a, dev.id)).toEqual([
-      expect.objectContaining({ flags: ['NEW_IP'], sourceIp: '198.51.100.9' }),
+    await resolve(dev.serialNo); // IP: trusted on first contact
+    const ipN = (n: number) => `10.0.0.${n}`;
+    const trust = (ip: string) =>
+      withTenant(app, a, (tx) =>
+        tx.deviceSourceIp.updateMany({
+          where: { deviceId: dev.id, ip },
+          data: { trustedAt: after(MIN) },
+        }),
+      );
+    // Addresses one after another (an attacker rotating them); the admin trusted the first.
+    for (let n = 1; n <= 51; n++) {
+      expect(await resolve(dev.serialNo, after(n * MIN), { ip: ipN(n) })).toMatchObject({
+        ip_trusted: false,
+      });
+      if (n === 1) await trust(ipN(1));
+    }
+    const trusted = async () => (await addressesOf(a, dev.id)).filter((x) => x.trustedAt !== null);
+    const trustedBefore = await trusted();
+    expect(trustedBefore.map((x) => x.ip)).toEqual([IP, ipN(1)]);
+    // 2…51 fill the 50 untrusted places. 2 is seen again, so 3 is now the least recently seen:
+    // the 52nd address evicts 3, an upload from the 53rd evicts 4 (and its punch is flagged).
+    await resolve(dev.serialNo, after(60 * MIN), { ip: ipN(2) });
+    await resolve(dev.serialNo, after(61 * MIN), { ip: ipN(52) });
+    await store(dev.serialNo, [punch('101', '2026-10-20 08:00:00')], {
+      ip: ipN(53),
+      now: after(62 * MIN),
+    });
+    expect((await punchesOf(a, dev.id)).map((p) => [p.flags, p.sourceIp])).toEqual([
+      [['NEW_IP'], ipN(53)],
     ]);
-    expect(await resolve(dev.serialNo, T0, { ip: '198.51.100.10' })).toMatchObject({
+    const untrusted = (await addressesOf(a, dev.id)).filter((x) => x.trustedAt === null);
+    expect(untrusted.map((x) => x.ip).sort()).toEqual(
+      [2, ...Array.from({ length: 49 }, (_, i) => i + 5)].map(ipN).sort(),
+    );
+    expect(untrusted.find((x) => x.ip === ipN(53))).toMatchObject({ punchCount: 1 });
+    // Trusted rows are never evicted, nor changed by it.
+    expect(await trusted()).toEqual(trustedBefore);
+  });
+
+  it('trusts a first address automatically only on first contact within 24 hours of registration', async () => {
+    const hours = (dev: { createdAt: Date }, h: number) =>
+      new Date(dev.createdAt.getTime() + h * 3600_000);
+
+    // A fresh institute whose first device has been seen: the decision is about the calling
+    // device, never another one of its institute.
+    const t = (await createTenant(app, { status: 'ACTIVE', modules: ['ATTENDANCE'] })).id;
+
+    // Seen before (here without an address): not a first contact any more.
+    const seen = await addDevice(t);
+    await resolve(seen.serialNo, hours(seen, 1), { ip: null });
+    expect(await resolve(seen.serialNo, hours(seen, 2))).toMatchObject({ ip_trusted: false });
+
+    const early = await addDevice(t);
+    expect(await resolve(early.serialNo, hours(early, 23.5))).toMatchObject({ ip_trusted: true });
+
+    // Later: recorded untrusted, so its punches are flagged and it gets no commands until an
+    // admin trusts the address.
+    const late = await addDevice(t);
+    const [command] = await queue(t, late.id, ['101']);
+    expect(await resolve(late.serialNo, hours(late, 24.5))).toMatchObject({
       accepted: true,
       ip_trusted: false,
     });
-    const addresses = await addressesOf(a, dev.id);
-    expect(addresses).toHaveLength(51);
-    expect(addresses.filter((x) => x.ip.startsWith('198.51.100.'))).toEqual([]);
+    await store(late.serialNo, [punch('101', '2026-10-20 08:00:00')], { now: hours(late, 24.6) });
+    expect((await punchesOf(t, late.id)).map((p) => p.flags)).toEqual([['NEW_IP']]);
+    expect(await take(late.serialNo, hours(late, 24.7))).toEqual([]);
+    expect((await addressesOf(t, late.id)).map((x) => [x.ip, x.trustedAt])).toEqual([[IP, null]]);
+    await withTenant(app, t, (tx) =>
+      tx.deviceSourceIp.updateMany({
+        where: { deviceId: late.id, ip: IP },
+        data: { trustedAt: hours(late, 25) },
+      }),
+    );
+    expect((await take(late.serialNo, hours(late, 26))).map((c) => c.seq)).toEqual([command!.seq]);
+
+    // An upload follows the same rule.
+    const uploaded = await addDevice(t);
+    await store(uploaded.serialNo, [punch('101', '2026-10-20 08:00:00')], {
+      now: hours(uploaded, 25),
+    });
+    expect((await punchesOf(t, uploaded.id)).map((p) => [p.flags, p.sourceIp])).toEqual([
+      [['NEW_IP'], IP],
+    ]);
   });
+
+  it("checks an address against the calling device's own trusted addresses", async () => {
+    const x1 = await addDevice(a);
+    const x2 = await addDevice(a);
+    const y1 = await addDevice(b);
+    const [ipX1, ipX2, ipY1] = ['192.0.2.11', '192.0.2.12', '192.0.2.13'];
+    // Each device trusts its own first address.
+    await resolve(x1.serialNo, T0, { ip: ipX1 });
+    await resolve(x2.serialNo, T0, { ip: ipX2 });
+    await resolve(y1.serialNo, T0, { ip: ipY1 });
+    // X1 has a command sent 5 times and unanswered since T0: X1's next call fails it.
+    const [exhausted] = await queue(a, x1.id, ['101']);
+    await withTenant(owner, a, (tx) =>
+      tx.deviceCommand.update({
+        where: { id: exhausted!.id },
+        data: { status: 'SENT', attempts: 5, sentAt: T0 },
+      }),
+    );
+    const [own] = await queue(a, x2.id, ['102']);
+    const status = async (tenantId: string, deviceId: string) =>
+      (await commandsOf(tenantId, deviceId)).map((c) => [c.status, c.attempts]);
+
+    // X2 from an address only X1 trusts (same institute), or only Y1 trusts (another): nothing.
+    for (const ip of [ipX1, ipY1]) {
+      expect(await take(x2.serialNo, after(10 * MIN), 10, ip)).toEqual([]);
+      expect(await answer(x2.serialNo, after(10 * MIN), [{ seq: own!.seq, code: 0 }], ip)).toBe(0);
+    }
+    expect(await status(a, x2.id)).toEqual([['PENDING', 0]]);
+
+    // From its own address, its own command; X1's exhausted one is not X2's to fail.
+    expect((await take(x2.serialNo, after(10 * MIN), 10, ipX2)).map((c) => c.seq)).toEqual([
+      own!.seq,
+    ]);
+    expect(await status(a, x1.id)).toEqual([['SENT', 5]]);
+    expect(await take(x1.serialNo, after(10 * MIN), 10, ipX1)).toEqual([]);
+    expect(await status(a, x1.id)).toEqual([['FAILED', 5]]);
+  });
+
+  it.each(['resolve', 'store'] as const)(
+    '%s refuses a device deactivated, and its serial number registered again, while the call waits',
+    async (kind) => {
+      const old = await addDevice(a);
+      let registered!: () => void;
+      let commit!: () => void;
+      const ready = new Promise<void>((r) => (registered = r));
+      const go = new Promise<void>((r) => (commit = r));
+      // An admin deactivates the device and registers its serial number again, as a new device.
+      const admin = withTenant(
+        app,
+        a,
+        async (tx) => {
+          await tx.attendanceDevice.update({ where: { id: old.id }, data: { isActive: false } });
+          const replacement = await tx.attendanceDevice.create({
+            data: { tenantId: a, serialNo: old.serialNo, name: 'New gate', direction: 'IN' },
+          });
+          registered();
+          await go;
+          return replacement;
+        },
+        { timeout: 20_000 },
+      );
+      await ready;
+      // Started now (a Prisma query runs only once awaited).
+      const call = (async () =>
+        kind === 'resolve'
+          ? resolve(old.serialNo)
+          : store(old.serialNo, [punch('101', '2026-10-20 08:00:00')]))();
+      // Wait until the call waits for the device's lock, then commit.
+      try {
+        for (let i = 0; ; i++) {
+          const [w] = await app.$queryRaw<{ n: bigint }[]>`
+            SELECT count(*) AS n FROM pg_locks l JOIN pg_stat_activity s ON s.pid = l.pid
+            WHERE NOT l.granted AND s.usename = 'jantrik_ingest_app'`;
+          if (w!.n > 0n) break;
+          if (i > 100) throw new Error('the call never waited for the lock');
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      } finally {
+        commit();
+      }
+      const replacement = await admin;
+
+      expect(await call).toEqual(kind === 'resolve' ? refused('INACTIVE') : []);
+      // Nothing written under either device.
+      for (const id of [old.id, replacement.id]) {
+        expect(await deviceRow(a, id)).toMatchObject({ lastSeenAt: null, lastIp: null });
+        expect(await addressesOf(a, id)).toEqual([]);
+        expect(await punchesOf(a, id)).toEqual([]);
+      }
+      // The next call reaches the new device.
+      expect(await resolve(old.serialNo)).toMatchObject({ device_id: replacement.id });
+    },
+  );
 
   it('caps punches per device and minute: over N held as BURST, from 5 x N dropped', async () => {
     const t = { id: await cappedInstitute() };
@@ -775,14 +925,13 @@ describe('ingest functions', () => {
     const commands = async () =>
       (await commandsOf(a, dev.id)).map((c) => [c.status, c.attempts, c.returnCode]);
 
-    // No address: nothing recorded, nothing trusted.
+    // First contact trusts its address; no address records nothing; a later one is recorded,
+    // untrusted.
+    expect(await resolve(dev.serialNo, T0)).toMatchObject({ ip_trusted: true });
     expect(await resolve(dev.serialNo, T0, { ip: null })).toMatchObject({
       accepted: true,
       ip_trusted: false,
     });
-    expect(await addressesOf(a, dev.id)).toEqual([]);
-    // First contact trusts its address; a later one is recorded, untrusted.
-    expect(await resolve(dev.serialNo, T0)).toMatchObject({ ip_trusted: true });
     expect(await resolve(dev.serialNo, after(MIN), { ip: other })).toMatchObject({
       ip_trusted: false,
     });

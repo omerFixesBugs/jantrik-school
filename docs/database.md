@@ -179,7 +179,7 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   never `jantrik_app`. Don't copy the `GRANT … TO jantrik_app` of an auth function;
   `schema-safety.test.ts` checks this by owner, so a new function is covered too.
 - **Ingest functions** (owned by `jantrik_ingest`): EXECUTE for `jantrik_ingest_app` only, the
-  same way. Their helpers (`ingest_uuid7`, `ingest_find_device`, `ingest_note_address`) are owned
+  same way. Their helpers (`ingest_uuid7`, `ingest_find_device`, `ingest_find_device_at`) are owned
   by `jantrik_ingest` too, pinned, and nobody else may run them. `schema-safety.test.ts` checks by
   name and by owner.
 - **No login role may CREATE in `public`** (`schema-safety.test.ts`). The definer bodies use
@@ -387,25 +387,35 @@ ZKTeco attendance devices. Five tenant tables (forced RLS, composite keys, every
   `tenants (id, status, timezone)`, `tenant_modules (tenant_id, module_key, enabled)`,
   `attendance_settings` (the device hours and the cap), all of `attendance_devices` and UPDATE on
   the receiver's columns, INSERT on punches and SELECT on the columns the dedupe and the
-  per-minute cap need, the commands' delivery columns, and the source addresses' counters.
+  per-minute cap need, the commands' delivery columns, the source addresses' counters, and DELETE
+  on untrusted source addresses only (policy `ingest_delete`, to make room for new ones).
   `jantrik_ingest_app` has schema USAGE and EXECUTE on the four functions, nothing else.
-- **The `ingest_*` family** (migrations `20261029000100_devices_ingest_functions` and
-  `20261029000200_devices_ingest_trust`). Those policies
-  see every institute, so each function takes the device's serial number (never a tenant or
-  device id), resolves it again itself and scopes every query by that device's
+- **The `ingest_*` family** (migrations `20261029000100_devices_ingest_functions`,
+  `20261029000200_devices_ingest_trust` and `20261029000300_devices_ingest_trust_hardening`).
+  Those policies see every institute, so each function takes the device's serial number (never a
+  tenant or device id), resolves it again itself and scopes every query by that device's
   `(tenant_id, id)`. Times come from the caller (`p_now`, the receiver's clock), never `now()`.
   A serial is refused as `UNKNOWN` (no such device, or not `^[A-Z0-9]{6,32}$` once upper-cased),
   `INACTIVE` (only deactivated copies), `INSTITUTE_INACTIVE` (not ACTIVE or TRIAL) or
-  `MODULE_OFF` (ATTENDANCE missing or off); a refused serial gets nothing and writes nothing.
-  Helpers: `ingest_find_device` (that resolution), `ingest_note_address` (below) and
+  `MODULE_OFF` (ATTENDANCE missing or off); a refused serial gets nothing and writes nothing. The
+  resolution locks the device row it finds (`FOR NO KEY UPDATE` in the lookup itself, so the
+  serial and `is_active` are checked again on the locked row, and the institute checks come
+  after): until the call ends the device cannot be deactivated, nor its serial number given to
+  another device, and one device's calls run one at a time. Helpers: `ingest_find_device` (that
+  resolution), `ingest_find_device_at` (the same, plus the caller's address, below) and
   `ingest_uuid7`, which makes UUIDv7 ids like Prisma's `uuid(7)` from `p_now` (no table has an id
   default, and the live feed orders and pages by id).
-- **Source addresses and trust.** Every resolve and upload records the address it came from
-  (`ingest_note_address`): a device's first address ever is trusted; any other is recorded
-  untrusted (at most 50 per device; later ones stay untrusted, just unrecorded) until an admin
-  trusts it (the app's UPDATE on `trusted_at`). Commands go only to a trusted address, and only a
-  trusted address may answer them, so knowing a serial number is not enough to take or complete a
-  device's commands. Punches from an untrusted address are still stored, with `NEW_IP`.
+- **Source addresses and trust.** Every resolve and upload records the address it came from,
+  against the device it locked (`ingest_find_device_at`). A new address is trusted automatically
+  only on the device's first contact (never seen before), within 24 hours of its registration
+  (`created_at`), while it has no trusted address; any other is recorded untrusted (`NEW_IP`, an
+  alert) until an admin trusts it (the app's UPDATE on `trusted_at`). A device keeps at most 50
+  untrusted addresses: a new one evicts the least recently seen untrusted ones, so rotating
+  addresses cannot keep the school's real new one from being recorded and trusted; trusted
+  addresses are never deleted. Commands go only to an address the calling device itself trusts,
+  and only such an address may answer them, so knowing a serial number is not enough to take or
+  complete a device's commands. Punches from an untrusted address are still stored, with
+  `NEW_IP`.
 - **`ingest_resolve(sn, ip, now, firmware, user_count, push_version)`:** always one row:
   `accepted` and the refusal code, or the device (id, institute, zone, direction, ATTLOG stamp,
   clock offset and samples, `registered_on` = its creation date in the institute's zone), the
@@ -415,8 +425,7 @@ ZKTeco attendance devices. Five tenant tables (forced RLS, composite keys, every
 - **`ingest_store_punches(sn, ip, now, rows, stamp, clock_samples, clock_offset)`:** stores one
   upload (`rows`: at most 10000, as the receiver computed them with the shared rules; the CHECKs
   validate them) and returns `tenant_id, inserted, duplicates, held, dropped`, or no row when
-  refused. It locks the device row, so one upload per device runs at a time, and stops if the
-  device was deactivated meanwhile. A punch already stored is a duplicate: counted, not stored
+  refused. A punch already stored is a duplicate: counted, not stored
   again, not counted against the cap twice. Punches from an untrusted address get `NEW_IP` and
   `source_ip`; the address's `punch_count` counts the stored punches. Per-minute cap N: with c the
   device's punches already stored in that minute (the upload's earlier rows included), c ≥ 5N

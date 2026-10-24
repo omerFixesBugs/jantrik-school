@@ -714,6 +714,25 @@ describe('the device receiver roles', () => {
     expect(counts).toEqual([1, 0, 1, 1, 2, 1]);
   });
 
+  it('jantrik_ingest may delete only untrusted addresses (to make room for new ones)', async () => {
+    const untrusted = await withTenant(owner, a.tenantId, (tx) =>
+      tx.deviceSourceIp.create({
+        data: {
+          tenantId: a.tenantId,
+          deviceId: a.deviceId,
+          ip: '10.2.2.2',
+          firstSeenAt: new Date(),
+          lastSeenAt: new Date(),
+        },
+      }),
+    );
+    const deleted = await asIngest(async (tx) => [
+      await tx.$executeRawUnsafe(`DELETE FROM device_source_ips WHERE id = '${a.sourceIpId}'`),
+      await tx.$executeRawUnsafe(`DELETE FROM device_source_ips WHERE id = '${untrusted.id}'`),
+    ]);
+    expect(deleted).toEqual([0, 1]);
+  });
+
   it('the owner does not inherit what jantrik_ingest may see', async () => {
     expect(await owner.attendanceDevice.count()).toBe(0);
   });
