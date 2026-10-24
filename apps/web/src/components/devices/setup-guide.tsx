@@ -10,6 +10,7 @@ import {
   PowerOffIcon,
   ShieldCheckIcon,
   ShieldOffIcon,
+  WifiOffIcon,
 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import type { ReactNode } from 'react';
@@ -22,6 +23,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import type { Locale } from '@/i18n/config';
+import { cn } from '@/lib/utils';
 import { TrustState, useAddressTrust, useDeviceAddresses } from './addresses';
 import { Ascii, copyText, formatSeen } from './kit';
 
@@ -146,12 +148,16 @@ function CopyRow({ label, text, testId }: { label: string; text: string; testId:
   );
 }
 
-/** Waiting, switched off, or connected (with the address it came from and whether it is ours). */
+/**
+ * Switched off, waiting for its first call, online now, or offline now (it has called before); a
+ * device that has called shows the address it came from and whether it is ours.
+ */
 function GuideStatus({ device }: { device: DeviceView }) {
   const t = useTranslations('devices.devices.guide');
   const locale = useLocale() as Locale;
-  const connected = device.lastSeenAt !== null;
-  const addresses = useDeviceAddresses(connected && device.lastIp ? device.id : null);
+  const seen = device.lastSeenAt !== null;
+  const online = device.state === 'ONLINE';
+  const addresses = useDeviceAddresses(seen && device.lastIp ? device.id : null);
   const { askTrust, askRevoke, dialogs } = useAddressTrust();
 
   if (!device.isActive) {
@@ -165,7 +171,7 @@ function GuideStatus({ device }: { device: DeviceView }) {
       </p>
     );
   }
-  if (!connected) {
+  if (!seen) {
     return (
       <div
         className="bg-info-soft flex items-start gap-3 rounded-lg px-3 py-3"
@@ -183,17 +189,27 @@ function GuideStatus({ device }: { device: DeviceView }) {
   const address = addresses.data?.find((a) => a.ip === device.lastIp);
   return (
     <div
-      className="bg-success-soft flex flex-col gap-3 rounded-lg px-3 py-3"
+      className={cn(
+        'flex flex-col gap-3 rounded-lg px-3 py-3',
+        online ? 'bg-success-soft' : 'bg-warning-soft',
+      )}
       data-testid="guide-status"
-      data-state="connected"
+      data-state={online ? 'connected' : 'offline'}
     >
       <div className="flex items-start gap-3">
-        <CircleCheckIcon aria-hidden className="text-success mt-0.5 size-5 shrink-0" />
+        {online ? (
+          <CircleCheckIcon aria-hidden className="text-success mt-0.5 size-5 shrink-0" />
+        ) : (
+          <WifiOffIcon aria-hidden className="text-warning mt-0.5 size-5 shrink-0" />
+        )}
         <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-success font-medium">{t('connected')}</span>
+          <span className={cn('font-medium', online ? 'text-success' : 'text-warning')}>
+            {online ? t('connected') : t('offline')}
+          </span>
           <span className="text-muted-foreground text-sm">
             {t('lastSeen', { when: formatSeen(device.lastSeenAt!, locale) })}
           </span>
+          {!online && <span className="text-muted-foreground text-sm">{t('offlineHint')}</span>}
         </div>
       </div>
       {device.lastIp && (

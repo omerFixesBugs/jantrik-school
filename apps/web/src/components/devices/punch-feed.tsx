@@ -72,10 +72,11 @@ const needsReview = (p: FeedPunch) =>
 
 /**
  * The last 50 punches (all, or the flagged ones not yet reviewed), polled every 5 s while the page
- * is visible. Each poll asks only for what arrived since a minute before the newest row and merges
- * it in by id (lib/devices/feed.ts); `reload` starts again from scratch.
+ * is visible and `enabled` (there are devices). Each poll asks only for what arrived since a minute
+ * before the newest row and merges it in by id (lib/devices/feed.ts); `reload` starts again from
+ * scratch.
  */
-export function usePunchFeed(flagged: boolean) {
+export function usePunchFeed(flagged: boolean, enabled = true) {
   const { client, session } = useAuth();
   const queryClient = useQueryClient();
   const key = deviceKeys.punches(session?.tenant?.id, flagged);
@@ -83,11 +84,16 @@ export function usePunchFeed(flagged: boolean) {
   const query = useQuery({
     queryKey: key,
     queryFn: async () => {
-      const held = fresh.current ? [] : (queryClient.getQueryData<FeedPunch[]>(key) ?? []);
+      const replace = fresh.current;
       fresh.current = false;
-      const page = await client.api<PunchFeed>(feedPath({ flagged, after: pollCursor(held) }));
-      return mergePunches(held, page.punches);
+      const held = () => queryClient.getQueryData<FeedPunch[]>(key) ?? [];
+      const after = replace ? undefined : pollCursor(held());
+      const page = await client.api<PunchFeed>(feedPath({ flagged, after }));
+      // Merged into the rows as they are now: a review made while this poll was on its way has
+      // already changed them, and an answer read before it never undoes it.
+      return mergePunches(held(), page.punches, { replace });
     },
+    enabled,
     refetchInterval: FEED_POLL_MS,
     refetchIntervalInBackground: false,
     // A view left and opened again starts fresh (no merging into an old list).

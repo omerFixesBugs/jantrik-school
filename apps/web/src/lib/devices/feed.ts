@@ -39,20 +39,29 @@ const newestFirst = (a: FeedPunch, b: FeedPunch): number =>
   Date.parse(b.punchedAt) - Date.parse(a.punchedAt) ||
   (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
-/** The held rows and a poll's answer as one list: one row per punch (the answer wins), newest 50. */
+/**
+ * The held rows and a poll's answer as one list, newest 50: one row per punch, the answer winning,
+ * except that an answer without a review never replaces a reviewed row (a review is never undone,
+ * so such an answer was read before the review). `replace` keeps only the answer's punches (a
+ * fresh start), with the same rule.
+ */
 export function mergePunches(
   held: readonly FeedPunch[],
   incoming: readonly FeedPunch[],
-  size = FEED_SIZE,
+  { replace = false }: { replace?: boolean } = {},
 ): FeedPunch[] {
-  const byId = new Map(held.map((p) => [p.id, p]));
-  for (const p of incoming) byId.set(p.id, p);
-  return [...byId.values()].sort(newestFirst).slice(0, size);
+  const heldById = new Map(held.map((p) => [p.id, p]));
+  const byId = replace ? new Map<string, FeedPunch>() : new Map(heldById);
+  for (const p of incoming) {
+    const mine = heldById.get(p.id);
+    byId.set(p.id, mine && mine.review !== null && p.review === null ? mine : p);
+  }
+  return [...byId.values()].sort(newestFirst).slice(0, FEED_SIZE);
 }
 
 export type Elapsed = { unit: 'minute' | 'hour' | 'day'; value: number };
 
-/** How long ago `since` was, in the largest sensible unit: minutes (≥ 1), hours, from 2 days days. */
+/** How long ago `since` was, in the largest sensible unit: minutes (≥ 1), hours, from 2 days, days. */
 export function elapsed(since: string, now: Date): Elapsed {
   const minutes = Math.max(1, Math.floor((now.getTime() - Date.parse(since)) / 60_000));
   if (minutes < 60) return { unit: 'minute', value: minutes };

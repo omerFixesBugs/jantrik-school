@@ -65,11 +65,11 @@ function DevicesScreen() {
   const list = useQuery({
     queryKey: deviceKeys.list(session?.tenant?.id),
     queryFn: () => client.api<DeviceList>('/attendance/devices'),
-    // Faster while the setup guide is open on a device that has not connected yet.
+    // Faster while the setup guide is open on a device that is not connected (yet, or now).
     refetchInterval: (query) => {
       if (!guide) return LIST_POLL_MS;
       const d = query.state.data?.devices.find((x) => x.id === guide.id) ?? guide;
-      return d.state === 'NEVER_CONNECTED' ? GUIDE_POLL_MS : LIST_POLL_MS;
+      return d.state === 'NEVER_CONNECTED' || d.state === 'OFFLINE' ? GUIDE_POLL_MS : LIST_POLL_MS;
     },
     refetchIntervalInBackground: false,
   });
@@ -77,7 +77,8 @@ function DevicesScreen() {
     d ? (list.data?.devices.find((x) => x.id === d.id) ?? d) : null;
   const guideDevice = live(guide);
 
-  const feed = usePunchFeed(flagged);
+  // No device, no punches: the feed does not poll while the list is empty, loading or failed.
+  const feed = usePunchFeed(flagged, (list.data?.devices.length ?? 0) > 0);
   const { reload } = feed;
   const control = useMemo<FeedControl>(
     () => ({

@@ -195,6 +195,8 @@
       "waiting": "Waiting for the device…",
       "waitingHint": "Once the steps are done, the device connects by itself and it shows here. Keep this page open.",
       "connected": "Connected",
+      "offline": "Offline now",
+      "offlineHint": "The device has connected before but is not calling now. Check its power and internet; this shows by itself when it is back.",
       "lastSeen": "Last call {when}",
       "fromAddress": "The device connected from <v>{ip}</v>. Is this your institute’s internet connection?",
       "notOursHint": "If not, stop trusting it: no commands go to that address, and punches from it send no entry SMS.",

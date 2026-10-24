@@ -99,6 +99,33 @@ describe('mergePunches', () => {
     expect(merged[0]!.id).toBe(ID(69));
     expect(merged.at(-1)!.id).toBe(ID(20));
   });
+
+  it('never puts back a review: a poll answered before it does not undo it', () => {
+    const at = '2026-10-25T03:01:00.000Z';
+    const reviewed = { ...punch(1, at), flags: ['NEW_IP' as const], review: 'REJECTED' as const };
+    const stale = { ...punch(1, at), flags: ['NEW_IP' as const], review: null };
+    const merged = mergePunches([reviewed], [stale, punch(2, '2026-10-25T03:02:00.000Z')]);
+    expect(merged.map((p) => [p.id, p.review])).toEqual([
+      [ID(2), null],
+      [ID(1), 'REJECTED'],
+    ]);
+  });
+
+  it('takes a newer review from the answer (the last decision wins)', () => {
+    const at = '2026-10-25T03:01:00.000Z';
+    const held = [{ ...punch(1, at), review: 'OK' as const }];
+    const merged = mergePunches(held, [{ ...punch(1, at), review: 'REJECTED' as const }]);
+    expect(merged[0]!.review).toBe('REJECTED');
+  });
+
+  it('starting again keeps only the answer, still without undoing a review', () => {
+    const held = [
+      { ...punch(1, '2026-10-25T03:01:00.000Z'), review: 'OK' as const },
+      punch(2, '2026-10-25T03:02:00.000Z'),
+    ];
+    const merged = mergePunches(held, [punch(1, '2026-10-25T03:01:00.000Z')], { replace: true });
+    expect(merged.map((p) => [p.id, p.review])).toEqual([[ID(1), 'OK']]);
+  });
 });
 
 describe('elapsed', () => {
