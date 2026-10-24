@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
 import type { Response } from 'express';
 import type { Redis } from 'ioredis';
 import { CLS_RES, ClsService } from 'nestjs-cls';
@@ -12,13 +12,14 @@ export interface RateLimitRule {
 }
 
 /**
- * Fixed-window rate limiter in Redis. Counters are shared by every API instance.
+ * Fixed-window rate limiter in Redis. Counters are shared by every API instance. The device
+ * receiver (src/ingest) has no request context (CLS) and uses `hit` and `peek` only.
  */
 @Injectable()
 export class RateLimiter {
   constructor(
     @Inject(REDIS) private readonly redis: Redis,
-    private readonly cls: ClsService,
+    @Optional() private readonly cls?: ClsService,
   ) {}
 
   /** Count one hit; returns whether it is within the limit and seconds until the window resets. */
@@ -35,6 +36,14 @@ export class RateLimiter {
     return { allowed: count <= rule.limit, retryAfter: Math.max(ttl, 1) };
   }
 
+  /** A counter's hits so far and seconds until its window resets, without counting one. */
+  async peek(key: string): Promise<{ count: number; retryAfter: number }> {
+    const results = await this.redis.multi().get(`rl:${key}`).ttl(`rl:${key}`).exec();
+    const count = Number(results?.[0]?.[1] ?? 0);
+    const ttl = Number(results?.[1]?.[1] ?? 0);
+    return { count, retryAfter: Math.max(ttl, 1) };
+  }
+
   /** Forget a counter (e.g. failed password attempts after a successful login). */
   async reset(key: string): Promise<void> {
     await this.redis.del(`rl:${key}`);
@@ -48,7 +57,7 @@ export class RateLimiter {
       if (!result.allowed) retryAfter = Math.max(retryAfter, result.retryAfter);
     }
     if (retryAfter > 0) {
-      const res = this.cls.isActive() ? this.cls.get<Response | undefined>(CLS_RES) : undefined;
+      const res = this.cls?.isActive() ? this.cls.get<Response | undefined>(CLS_RES) : undefined;
       res?.setHeader('Retry-After', String(retryAfter));
       throw new HttpException('Too many requests', HttpStatus.TOO_MANY_REQUESTS);
     }

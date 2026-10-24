@@ -77,7 +77,7 @@ export const randomIp = (): string => {
 export const http = (h: Harness) => request(h.app.getHttpServer());
 
 export async function createTenant(
-  h: Harness,
+  h: Pick<Harness, 'prisma'>,
   opts: { status?: TenantStatus; modules?: ('ATTENDANCE' | 'FEES' | 'EXAMS')[] } = {},
 ) {
   return provisionTenant(h.prisma, {
