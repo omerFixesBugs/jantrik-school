@@ -14,3 +14,9 @@ export interface ProcessPunchesJob {
  * custom job ids, hence the dash.
  */
 export const processPunchesJobId = (tenantId: string): string => `punches-${tenantId}`;
+
+/**
+ * Institutes with devices (ZSET, score = when last added), for the daily jobs: each is visited in
+ * its own TenantJobRunner transaction, never by a cross-tenant query.
+ */
+export const DEVICES_TENANTS_KEY = 'devices:tenants';

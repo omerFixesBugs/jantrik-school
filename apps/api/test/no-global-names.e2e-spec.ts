@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { findOrCreateUser, withContext, withTenant } from '@jantrik/db';
+import { ZkDeviceSimulator } from '@jantrik/device-sim';
 import { todayIn, toCsv, type StudentImportSummary } from '@jantrik/shared';
 import {
   bearer,
@@ -7,9 +8,11 @@ import {
   createTenant,
   http,
   otpLogin,
+  randomIp,
   randomPhone,
   type Harness,
 } from './support/harness.js';
+import { createIngestHarness, type IngestHarness } from './support/ingest.js';
 import { school, type School } from './support/school.js';
 
 // Decision #5: a person's global row (users.name / name_bn / email) never leaves the API for
@@ -216,15 +219,61 @@ describe('global names never leave the API', () => {
       await new Promise((r) => setTimeout(r, 200));
     }
     importId = up.id;
+
+    // A gate device: the teacher has a device ID, punches, and trusted the device's address.
+    ingest = await createIngestHarness();
+    const created = (
+      await http(h)
+        .post('/attendance/devices')
+        .set(bearer(s.admin))
+        .send({
+          serialNo: `N${randomUUID().replace(/-/g, '').slice(0, 15)}`,
+          name: 'Gate',
+          direction: 'IN',
+        })
+        .expect(201)
+    ).body as { id: string; serialNo: string };
+    deviceId = created.id;
+    await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.devicePerson.create({
+        data: { tenantId: s.tenantId, deviceUserId: '9001', staffUserId: userId },
+      }),
+    );
+    const device = new ZkDeviceSimulator({
+      baseUrl: ingest.baseUrl,
+      sn: created.serialNo,
+      forwardedFor: randomIp(),
+    });
+    expect((await device.punch('9001')).status).toBe(200);
+    await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.deviceSourceIp.updateMany({ where: { deviceId }, data: { trustedById: userId } }),
+    );
+    const punchId = (
+      (await http(h).get('/attendance/devices/punches').set(bearer(s.admin)).expect(200)).body as {
+        punches: { id: string }[];
+      }
+    ).punches[0]!.id;
+    keep(
+      'POST punch review',
+      await http(h)
+        .post(`/attendance/devices/punches/${punchId}/review`)
+        .set(bearer(s.admin))
+        .send({ action: 'OK' })
+        .expect(200),
+    );
   });
   let importId: string;
+  let ingest: IngestHarness;
+  let deviceId: string;
 
   afterAll(async () => {
+    await ingest.queue.obliterate({ force: true });
+    await ingest.close();
     await h.close();
   });
 
   it('the writes made while setting up return no global names either', () => {
-    expect(writes.length).toBe(6);
+    expect(writes.length).toBe(7);
     for (const [what, body] of writes) expect(leaks(body), what).toEqual([]);
   });
 
@@ -267,6 +316,12 @@ describe('global names never leave the API', () => {
       [`/student-imports/${importId}`],
       [`/student-imports/${importId}/rows`],
       [`/student-imports/${importId}/report.csv`, { locale: 'en' }],
+      ['/attendance/devices'],
+      ['/attendance/devices/punches'],
+      ['/attendance/devices/punches', { deviceId }],
+      [`/attendance/devices/${deviceId}/ips`],
+      ['/attendance/devices/unknown-ids'],
+      ['/attendance/devices/alerts'],
     ];
     for (const [path, query] of paths) {
       expect(leaks(await text(s.admin, path, query)), path).toEqual([]);
@@ -301,5 +356,8 @@ describe('global names never leave the API', () => {
     expect(
       await text(s.admin, '/attendance/sessions', { sectionId: s.sectionA, date: TODAY() }),
     ).toContain('Typed Teacher');
+    // The punch feed and who trusted the device's address.
+    expect(await text(s.admin, '/attendance/devices/punches')).toContain('Typed Teacher');
+    expect(await text(s.admin, `/attendance/devices/${deviceId}/ips`)).toContain('Typed Teacher');
   });
 });

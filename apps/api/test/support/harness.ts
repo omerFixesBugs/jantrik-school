@@ -18,6 +18,7 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module.js';
 import { AttendanceModule } from '../../src/attendance/attendance.module.js';
 import { configureApp } from '../../src/app.setup.js';
+import { DevicesModule } from '../../src/devices/devices.module.js';
 import { ExamsModule } from '../../src/exams/exams.module.js';
 import { FeesModule } from '../../src/fees/fees.module.js';
 import { REDIS } from '../../src/redis/redis.constants.js';
@@ -38,9 +39,9 @@ export interface Harness {
 
 export async function createHarness(opts: { clock?: Clock } = {}): Promise<Harness> {
   const builder = Test.createTestingModule({
-    // AttendanceModule, FeesModule and ExamsModule again so TestController can inject their
-    // exported services (same instances).
-    imports: [AppModule, AttendanceModule, FeesModule, ExamsModule],
+    // AttendanceModule, DevicesModule, FeesModule and ExamsModule again so TestController can
+    // inject their exported services (same instances).
+    imports: [AppModule, AttendanceModule, DevicesModule, FeesModule, ExamsModule],
     controllers: [TestController],
   });
   // Tests that need to control time pass a FakeClock (test/support/clock.ts).
