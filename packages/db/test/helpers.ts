@@ -9,7 +9,7 @@ import {
   type ProvisionTenantInput,
   type Tenant,
 } from '../src/index.js';
-import { APP_URL, OWNER_URL, PLATFORM_URL } from './env.js';
+import { APP_URL, INGEST_URL, OWNER_URL, PLATFORM_URL } from './env.js';
 
 export const appClient = (): PrismaClient => createPrismaClient(APP_URL);
 
@@ -19,6 +19,8 @@ export const randomPhone = (): string =>
 export const ownerClient = (): PrismaClient => createPrismaClient(OWNER_URL);
 /** The API platform module's role: the only one that may run the platform_* functions. */
 export const platformClient = (): PrismaClient => createPrismaClient(PLATFORM_URL);
+/** The device receiver's login: no table grants, only the ingest_* functions. */
+export const ingestClient = (): PrismaClient => createPrismaClient(INGEST_URL);
 
 /**
  * A live platform session of a new admin, made directly as the owner role (the login itself is

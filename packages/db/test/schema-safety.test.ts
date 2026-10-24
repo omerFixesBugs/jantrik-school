@@ -62,6 +62,11 @@ describe('schema safety net', () => {
         'exam_mark_sheets',
         'exam_marks',
         'exam_results',
+        'attendance_devices',
+        'device_people',
+        'device_commands',
+        'device_punches',
+        'device_source_ips',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

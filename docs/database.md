@@ -53,7 +53,10 @@ docker compose exec postgres psql -U postgres \
   -c "CREATE ROLE jantrik_platform NOLOGIN NOSUPERUSER NOBYPASSRLS" \
   -c "GRANT jantrik_platform TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
   -c "CREATE ROLE jantrik_platform_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'platform_dev_password'" \
-  -c "CREATE ROLE jantrik_ingest NOLOGIN NOSUPERUSER NOBYPASSRLS"   -c "GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE"   -c "CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'ingest_dev_password'"   -c "CREATE DATABASE jantrik_e2e OWNER jantrik_owner"
+  -c "CREATE ROLE jantrik_ingest NOLOGIN NOSUPERUSER NOBYPASSRLS" \
+  -c "GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
+  -c "CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'ingest_dev_password'" \
+  -c "CREATE DATABASE jantrik_e2e OWNER jantrik_owner"
 # A volume that already granted jantrik_app to jantrik_platform_app (early step 8): take it back.
 docker compose exec postgres psql -U postgres -c "REVOKE jantrik_app FROM jantrik_platform_app"
 docker compose exec postgres psql -U postgres -d jantrik_e2e \
@@ -336,6 +339,49 @@ Rules: [exams.md](exams.md). Fourteen tenant tables (forced RLS, composite keys,
 - `sms_purpose` gained `EXAM_RESULT` in its own migration (a new enum value cannot be used in the
   transaction that adds it).
 - Tests: `packages/db/test/exams-*-rls.test.ts`; the table list in `schema-safety.test.ts`.
+
+### Devices (step 11)
+
+ZKTeco attendance devices. Five tenant tables (forced RLS, composite keys, every foreign key
+`ON UPDATE RESTRICT`), migration `20261029000000_devices`:
+
+- **`attendance_devices`:** serial number (`^[A-Z0-9]{6,32}$`), name, gate, direction
+  (`IN` | `OUT` | `BOTH`), `is_active`, and columns only the receiver writes (last seen, last IP,
+  firmware, ATTLOG stamp, clock offset and samples, the last flood). A serial number is active in
+  one institute at most: a partial unique index on `serial_no WHERE is_active` across all
+  institutes (inactive copies are allowed). `jantrik_app` may add devices and UPDATE only name,
+  gate, direction, `is_active` and `serial_no`; no DELETE (a device is deactivated, its punches
+  stay).
+- **`device_people`:** a person's device ID (`^[1-9][0-9]{2,8}$`), for a student
+  (composite → students) or a staff member (composite → `staff_profiles (tenant_id, user_id)`, so
+  only this institute's staff), exactly one of the two. **One unique index on
+  `(tenant_id, device_user_id)` covers students and staff together**, so the database, not the UI,
+  keeps an ID to one person; partial uniques keep one ID per student and per staff member. The
+  app may insert, change and delete mappings.
+- **`device_commands`:** commands queued for one device (`seq`, from one sequence for all
+  institutes, is the id on the wire). `payload` is printable ASCII and tabs only (CHECK), so a name
+  can never add a line, i.e. a second command. The app inserts, cancels (UPDATE on `status`
+  only) and deletes (the retention job).
+- **`device_punches`:** raw punches, **immutable**. `jantrik_app` has no INSERT (only the receiver
+  stores punches) and may UPDATE only the processing and review columns (`processed_at`,
+  `outcome`, `review`, `reviewed_by_id`, `reviewed_at`). Its DELETE is limited by the restrictive
+  policy `retention_only` to punches whose `local_date` is more than 30 days old, so no bug can
+  delete recent punches. `flags` is a subset of `PUNCH_FLAGS` (CHECK); the unique
+  `(tenant_id, device_id, device_user_id, device_time)` is the dedupe.
+- **`device_source_ips`:** the addresses a device uploads from; the app may only trust one
+  (UPDATE on `trusted_at`, `trusted_by_id`).
+- **`attendance_settings`** gained the device and staff columns (auto mark, grace, cutoff, office
+  hours, device hours, per-minute cap, staff ID start, punch retention), NOT NULL with DDL
+  defaults and range CHECKs (no backfill).
+- **The receiver's roles.** `jantrik_ingest` (owner of the `ingest_*` functions, which arrive in
+  the next migration) has no tenant context and sees rows only through its own
+  `TO jantrik_ingest` policies, by column: `tenants (id, status, timezone)`,
+  `tenant_modules (tenant_id, module_key, enabled)`, `attendance_settings` (the device hours and
+  the cap), all of `attendance_devices` and UPDATE on the receiver's columns, INSERT on punches
+  and SELECT on the columns the dedupe and the per-minute cap need, the commands' delivery
+  columns, and the source addresses' counters. `jantrik_ingest_app` has schema USAGE and nothing
+  else (EXECUTE on the functions comes with them).
+- Tests: `packages/db/test/devices-rls.test.ts`; the table list in `schema-safety.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
