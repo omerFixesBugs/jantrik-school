@@ -243,7 +243,13 @@
     "examUsually": "usually {month}",
     "todayChangeLabel": "{change} points {more, select, true {higher} other {lower}} than the previous 7 days' average",
     "smsOff": "Turn on absent SMS",
-    "smsOffValue": "Off"
+    "smsOffValue": "Off",
+    "examsFigures": "Exam figures",
+    "examsMarks": "Marks entry",
+    "examsLocked": "{exam}: mark sheets locked",
+    "examsWaiting": "{count} submitted, waiting for lock",
+    "examsMine": "{count} of yours to finish",
+    "examsStarts": "Starts {date}"
   },
   "students": {
     "title": "{student} list",
@@ -390,7 +396,8 @@
     "body": "The internet looks weak. You don't need to do anything; we keep trying.",
     "drafts": "{count} attendance lists on this phone are waiting to be sent. They will go as soon as the connection is back.",
     "retry": "Try now",
-    "login": "Go to sign in"
+    "login": "Go to sign in",
+    "markDrafts": "{count} mark sheets on this phone are waiting to be sent. They will go as soon as the connection is back."
   },
   "errorPage": {
     "title": "Something went wrong",
@@ -1420,6 +1427,7 @@
     "keyAttendance": "Go to taking attendance",
     "keyToday": "Go to today’s attendance",
     "keyRegister": "Go to the monthly register",
+    "keyExams": "Go to exams",
     "keyHelp": "This list",
     "language": "Language: {language}",
     "languageKeywords": "language ভাষা English বাংলা",

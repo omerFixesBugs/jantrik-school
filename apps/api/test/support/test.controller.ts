@@ -9,6 +9,8 @@ import {
 } from '@nestjs/common';
 import { RequireModule, Roles } from '../../src/common/decorators.js';
 import { AttendanceService, type SubmitInput } from '../../src/attendance/attendance.service.js';
+import { SaveMarkSheetDto } from '../../src/exams/exams.module.js';
+import { MarkSheetService } from '../../src/exams/marks/mark-sheet.service.js';
 import { FeeCollectionService } from '../../src/fees/collection/fee-collection.service.js';
 import { CollectFeeDto } from '../../src/fees/fees.module.js';
 import { SmsService } from '../../src/sms/sms.service.js';
@@ -22,7 +24,15 @@ export class TestController {
     private readonly sms: SmsService,
     private readonly attendanceService: AttendanceService,
     private readonly fees: FeeCollectionService,
+    private readonly markSheets: MarkSheetService,
   ) {}
+
+  /** Saves a mark sheet and then fails: no mark, sheet or audit row may stay. */
+  @Post('exam-sheet-then-fail')
+  async examSheetThenFail(@Body() dto: SaveMarkSheetDto) {
+    await this.markSheets.save(dto);
+    throw new BadRequestException('handler failed after saving marks');
+  }
 
   @Get('students')
   async students(): Promise<{ id: string; tenantId: string; studentCode: string }[]> {

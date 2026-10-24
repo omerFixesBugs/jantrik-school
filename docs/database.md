@@ -291,6 +291,50 @@ Rules: [fees.md](fees.md). Fifteen tenant tables, all with forced RLS and compos
   IN list), or `migrate dev` keeps finding drift.
 - Tests: `packages/db/test/fees-*-rls.test.ts`.
 
+### Exams (step 10)
+
+Rules: [exams.md](exams.md). Fourteen tenant tables (forced RLS, composite keys, every foreign key
+`ON UPDATE RESTRICT`) and two global template tables:
+
+- **Grading rules as data:** `grading_schemes` and `grading_scheme_templates` gained `gpa_max`,
+  `optional_bonus_above`, `gpa_decimals`, `gpa_rounding` (`TRUNCATE` | `ROUND_HALF_UP`) and
+  `compulsory_fail_zero`, with DDL defaults (no backfill under forced RLS). The fail band is the
+  band with grade point 0 (no flag column).
+- **Subjects:** `subjects.pass_rule` (`PER_COMPONENT` | `COMBINED`); `subject_components` (key,
+  kind, full and pass marks) and `subject_pass_groups` (one combined pass mark per kind), both
+  cascading from the subject. Global `template_subject_components` and
+  `template_subject_pass_groups` (GRANT SELECT) carry the NCTB defaults; `provisionTenant()` copies
+  them with `template_subjects.pass_rule`.
+- **Setup:** `section_subject_teachers` (section × subject × user; the section and the subject are
+  joined by `(id, class_level_id)`, so the subject must belong to the section's class),
+  `student_subject_choices` (per enrolment year; a partial unique index allows one `OPTIONAL`),
+  `exam_rooms` (rows × cols ≤ 500). Choices and subject teachers RESTRICT a subject's or section's
+  deletion (the setup screens count them as "in use").
+- **Structure:** `exams`, `exam_classes`, `exam_subjects` (copied pass rule and elective flag),
+  `exam_subject_components`, `exam_subject_pass_groups`, `exam_candidates` (the per-exam roster:
+  section, group and roll snapshotted; status `ENROLLED` | `WITHDRAWN`; room and seat both set or
+  both NULL, a partial unique index per room and seat; remarks with who and when). Candidates have
+  no DELETE grant and column-level UPDATE.
+- **Marks:** `exam_mark_sheets` (exam subject × section; version, last submission id, states with
+  CHECKs that who/when are set) and `exam_marks` (integer hundredths `score_h`, `absent`; CHECK
+  `absent → score_h IS NULL`).
+  - **No DELETE on `exam_marks`**, and UPDATE only on `score_h`, `absent`, `updated_by_id`,
+    `updated_at`: the marks history lives in the audit log.
+  - A component is joined by `(id, exam_subject_id)` and a student by the candidate
+    `(exam_id, student_id)`, so a mark can only belong to its own exam subject and roster.
+  - Triggers (invoker, pinned `search_path`): `exam_marks_score_within_full` refuses a score above
+    the part's full marks; `exam_components_full_covers_marks` refuses lowering a part's full marks
+    under a saved mark. A part the caller cannot see (RLS) is skipped, so a cross-tenant write gets
+    the RLS error, not the trigger's.
+- **Results:** `exam_results`, the snapshot of one published version per exam class and student
+  (totals in hundredths, GPA, letter, failed subjects, class and section places — NULL means
+  unranked — attendance, remarks, the per-subject detail as jsonb). Rebuilt on every publish
+  (S I U D; each publish is audited). `exam_classes` holds `published_version`, `published_at/by`,
+  `grading_snapshot` and `subject_stats`.
+- `sms_purpose` gained `EXAM_RESULT` in its own migration (a new enum value cannot be used in the
+  transaction that adds it).
+- Tests: `packages/db/test/exams-*-rls.test.ts`; the table list in `schema-safety.test.ts`.
+
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
 > **In the API, services never call these.** Every authenticated request already runs inside one

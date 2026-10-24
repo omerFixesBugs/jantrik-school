@@ -9,16 +9,18 @@ import { Logo } from '@/components/brand';
 import { Button } from '@/components/ui/button';
 import type { Locale } from '@/i18n/config';
 import { countAllDrafts } from '@/lib/attendance/drafts';
+import { countAllMarkDrafts } from '@/lib/exams/sheet-drafts';
 
 /**
  * Shown when the API can't be reached while the app starts. Nobody is signed out; the caller
- * keeps retrying. Unsent attendance on the phone is shown as a number only: without a session
- * we don't know whose drafts they are.
+ * keeps retrying. Unsent attendance and marks on the phone are shown as numbers only: without a
+ * session we don't know whose drafts they are.
  */
 export function ConnectionScreen({ onRetry }: { onRetry: () => void }) {
   const t = useTranslations('connection');
   const locale = useLocale() as Locale;
   const [drafts] = useState(() => countAllDrafts());
+  const [markDrafts] = useState(() => countAllMarkDrafts());
 
   // Keep trying on our own: every 10 s and as soon as the browser is back online.
   useEffect(() => {
@@ -51,6 +53,14 @@ export function ConnectionScreen({ onRetry }: { onRetry: () => void }) {
             data-testid="connection-drafts"
           >
             {t('drafts', { count: formatCount(drafts, locale) })}
+          </p>
+        )}
+        {markDrafts > 0 && (
+          <p
+            className="bg-card w-full rounded-xl border px-4 py-3 text-left text-sm"
+            data-testid="connection-mark-drafts"
+          >
+            {t('markDrafts', { count: formatCount(markDrafts, locale) })}
           </p>
         )}
         <Button size="lg" className="mt-2 w-full" onClick={onRetry}>

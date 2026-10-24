@@ -97,4 +97,5 @@ Run from the repo root (see README.md for first-time setup).
   depends on the real date or weekday. Specs take dates from `todayIn`, never `Date.now()`
 - Attendance rules, drafts/offline sync, absent SMS: docs/attendance.md
 - Fees: setup, dues, fines, receipts, voids, bKash/Nagad, reminders: docs/fees.md
+- Exams rules (grading as data, marks entry, publish, report cards, result SMS): docs/exams.md
 - Single package: `pnpm --filter @jantrik/api <script>`

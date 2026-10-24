@@ -18,6 +18,7 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module.js';
 import { AttendanceModule } from '../../src/attendance/attendance.module.js';
 import { configureApp } from '../../src/app.setup.js';
+import { ExamsModule } from '../../src/exams/exams.module.js';
 import { FeesModule } from '../../src/fees/fees.module.js';
 import { REDIS } from '../../src/redis/redis.constants.js';
 import { SMS_PROVIDER, type MemorySmsProvider } from '../../src/sms/sms.providers.js';
@@ -36,9 +37,9 @@ export interface Harness {
 
 export async function createHarness(): Promise<Harness> {
   const moduleRef = await Test.createTestingModule({
-    // AttendanceModule and FeesModule again so TestController can inject their exported
-    // services (same instances).
-    imports: [AppModule, AttendanceModule, FeesModule],
+    // AttendanceModule, FeesModule and ExamsModule again so TestController can inject their
+    // exported services (same instances).
+    imports: [AppModule, AttendanceModule, FeesModule, ExamsModule],
     controllers: [TestController],
   }).compile();
   const app = moduleRef.createNestApplication();

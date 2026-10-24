@@ -17,6 +17,12 @@ export const DEMO = {
   shaplaGuardian: '01811000101',
   // Tasnim's mother (OTP only): a second guardian, so specs don't share one OTP cooldown.
   shaplaGuardian2: '01811000102',
+  // Guardians that only the exams spec logs in, so the specs above keep their OTP budget (each
+  // phone: one code a minute, 5 per 15 minutes): Arif (6 ক, roll 2), Sumaiya (6 ক, roll 3) and
+  // Rafi (9 ক, roll 2).
+  arifGuardian: '01811000702',
+  sumaiyaGuardian: '01811000703',
+  rafiGuardian: '01611000301',
   // Platform admin (Jantrik staff, /platform): password + authenticator app; enrols on first login.
   platformAdmin: '01700000001',
 };

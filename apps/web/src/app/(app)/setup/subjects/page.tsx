@@ -130,7 +130,7 @@ export default function SubjectsPage() {
                   <RowActions
                     name={name}
                     active={s.isActive}
-                    inUse={s.usage.attendance > 0}
+                    inUse={s.usage.attendance + s.usage.subjectTeachers + s.usage.choices > 0}
                     onEdit={() => setEditing(s)}
                     onToggleActive={() => toggle.mutate(s)}
                     onDelete={() => setDeleting(s)}

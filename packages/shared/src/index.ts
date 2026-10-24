@@ -27,3 +27,6 @@ export * from './color.js';
 export * from './themes.js';
 export * from './fees.js';
 export * from './fees-api.js';
+export * from './exams.js';
+export * from './exams-api.js';
+export * from './exams-results.js';

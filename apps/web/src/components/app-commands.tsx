@@ -296,6 +296,7 @@ export function AppCommands({
 
   // The keyboard layer. `g` goes only where the sidebar would.
   const attendance = canSee(navItem('attendance'), context);
+  const exams = canSee(navItem('exams'), context);
   const goTargets = useMemo(() => {
     const targets: Record<string, string> = { KeyD: '/dashboard' };
     if (seesStudents) targets['KeyS'] = '/students';
@@ -304,8 +305,9 @@ export function AppCommands({
       targets['KeyT'] = '/attendance/today';
       targets['KeyR'] = '/attendance/register';
     }
+    if (exams) targets['KeyE'] = '/exams';
     return targets;
-  }, [seesStudents, attendance]);
+  }, [seesStudents, attendance, exams]);
   useEffect(() => {
     const goTo = createGoSequence<string>(goTargets);
     const onKey = (e: KeyboardEvent) => {
@@ -394,6 +396,7 @@ function ShortcutsDialog({
     [['g', 'a'], t('keyAttendance')],
     [['g', 't'], t('keyToday')],
     [['g', 'r'], t('keyRegister')],
+    [['g', 'e'], t('keyExams')],
     [['?'], t('keyHelp')],
   ];
   return (

@@ -1,0 +1,18 @@
+{
+  "guardian": {
+    "title": "Exam results",
+    "back": "Back to the dashboard",
+    "allResults": "All results",
+    "open": "See all results",
+    "none": "No results are published yet. They appear here once published.",
+    "noneTitle": "No results yet",
+    "gpa": "GPA {gpa} ({letter})",
+    "percent": "{percent}%",
+    "passed": "Passed",
+    "failed": "Failed",
+    "position": "Merit {position} of {size}",
+    "publishedOn": "Published {date}",
+    "notFoundTitle": "Result not found",
+    "notFoundText": "This result is not published, or it is not your child's."
+  }
+}

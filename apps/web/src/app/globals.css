@@ -588,4 +588,91 @@
     border: 0;
     padding: 0;
   }
+  /* Report cards and admit cards (components/exams): A4 portrait, one sheet of paper per
+     `.exam-page`, with the receipt's isolation (only the print area stays in the flow). */
+  @page exam-a4 {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+  body:has(.exam-print.print-area) :not(:has(.exam-print)):not(.exam-print):not(.exam-print *) {
+    display: none !important;
+  }
+  body:has(.exam-print.print-area) :has(.exam-print) {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    transform: none !important;
+  }
+  body:has(.exam-print.print-area) .exam-print.print-area {
+    position: static;
+    display: block;
+    page: exam-a4;
+  }
+  .exam-print .exam-page {
+    break-after: page;
+    font-size: 9.5pt;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .exam-print .exam-page:last-child {
+    break-after: auto;
+  }
+  /* Smaller type and tight rows on paper, so a card with 17 subjects still fits one A4 page
+     (the screen sizes are kept for phones). */
+  .exam-print .exam-page {
+    line-height: 1.35;
+    gap: 7pt;
+  }
+  .exam-print .exam-page .text-sm,
+  .exam-print .exam-page .text-base {
+    font-size: 9.5pt;
+  }
+  .exam-print .exam-page .text-xs {
+    font-size: 8pt;
+  }
+  .exam-print .exam-page .text-lg {
+    font-size: 13pt;
+  }
+  .exam-print .exam-page th,
+  .exam-print .exam-page td {
+    padding-top: 1.5pt;
+    padding-bottom: 1.5pt;
+  }
+  .exam-print .exam-page th,
+  .exam-print .exam-page td,
+  .exam-print .exam-page dl,
+  .exam-print .exam-page section,
+  .exam-print .exam-page table,
+  .exam-print .exam-page footer p {
+    border-color: #999 !important;
+  }
+  /* The tabulation sheet and seat plan stay on the default landscape page. */
+  .tabulation-table {
+    width: 100%;
+    font-size: 7.5pt;
+  }
+  .tabulation-table thead {
+    display: table-header-group;
+  }
+  .tabulation-table tr {
+    break-inside: avoid;
+  }
+  .tabulation-table th,
+  .tabulation-table td {
+    border-color: #999 !important;
+    position: static !important;
+  }
+  .seat-room {
+    break-after: page;
+  }
+  .seat-room:last-child {
+    break-after: auto;
+  }
 }

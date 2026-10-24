@@ -235,7 +235,7 @@ export interface SetupSection {
   capacity: number | null;
   sortOrder: number;
   isActive: boolean;
-  usage: { enrolments: number; attendance: number; teachers: number };
+  usage: { enrolments: number; attendance: number; teachers: number; subjectTeachers: number };
 }
 
 export interface SetupSubject {
@@ -248,7 +248,8 @@ export interface SetupSubject {
   isOptional: boolean;
   sortOrder: number;
   isActive: boolean;
-  usage: { attendance: number };
+  /** subjectTeachers / choices: exams (who enters marks, students' elective choices). */
+  usage: { attendance: number; subjectTeachers: number; choices: number };
 }
 
 export interface SetupLabel {

@@ -74,6 +74,45 @@ first review) or _Changed_ (done differently, as described).
     - The sender's number of a bKash/Nagad transfer is masked for the accountant (the TrxID and amount suffice to check it).
 30. **_Approved (step 9)._ The bKash gateway (tokenized checkout) is a later step:** plan in [backlog.md](backlog.md).
 
+## Exams and results (step 10)
+
+Rules: [exams.md](exams.md). Owner decisions of 2026-10-23: browser print / Save as PDF; an
+elective pool with a choice per student for the 4th subject; 1st/2nd papers as one subject with
+paper parts and a PER_COMPONENT or COMBINED pass rule (COMBINED by default for BAN and ENG in
+classes 9–10); a teacher may fix and resubmit until the sheet is locked; GPA rounding TRUNCATE by
+default (#38).
+
+31. **Results are a snapshot taken at publish** (`exam_results`). Guardians, report cards and SMS read it, so merit places never shift silently. A correction or remark after publishing shows "changed since publish" (computed, not stored) until the admin republishes, which bumps the version. Before publishing the tabulation is live and marked "preview".
+    - To change: read live results everywhere (places would move under guardians' eyes).
+32. **Merit order is per exam**, prefilled from the last exam with the same result mode. Default: passed first, then GPA (GPA exams) or total marks, then total marks, then the lower roll. Students tied on every key share the place (1, 2, 2, 4). Failed students are ranked after the passed ones (or left unranked). Total marks include the 4th subject.
+    - To change: the exam's `merit_order` and `failed_ranking`.
+33. **No implicit 4th subject.** A pool subject without a recorded choice is not taken; the choices screen has "set for the whole section" and the publish check warns. The NCTB 9–10 template also puts **BIO** in the Science pool next to HMATH (new institutes; the demo picks it up on reseed).
+    - To change: treat a missing choice as "takes every pool subject as compulsory".
+34. **Absent is per part.** The row's Ab sets every part; absent counts 0 and fails the subject; all parts absent shows "absent". Blank means not entered, and a sheet with blanks cannot be submitted. There is no "exempt" marker yet ([backlog.md](backlog.md)).
+35. **Class teachers enter marks only for subjects they are assigned to.** Every teacher of a section may print its tabulation and report cards; only the class teacher (or the office) writes remarks. The web shows the results screens to OWNER/ADMIN in this release (teachers reach them by link).
+    - To change: `section_subject_teachers` per subject, or a teacher results view ([backlog.md](backlog.md)).
+36. **Result SMS is manual and skipped over the cap, not held**, so a skipped student can be sent another day (a held message's dedupe key could never be resent). A failed result SMS counts as sent for that version; resending needs a republish.
+37. **Decision #19 for exams:** mark sheets carry id, roll, name and student ID only; subject-only teachers get no tabulation or report cards; the CSV carries no phones or parents; report cards show parents' names only to those who may see them (and to the guardian of their own child); staff names come from the institute's staff rows.
+38. **To verify with a real board/school marksheet** (all data, editable per institute):
+    - **GPA rounding: TRUNCATE** (4.958 shows 4.95; never more than was earned). The alternative is ROUND_HALF_UP (4.96). Below 5 never shows as 5.00 either way (grade points are multiples of 0.5, so a GPA under 5 is at most 4.9…; tested).
+    - **Percentage to grade:** compared exactly (79.5 % is A under NONE). The scheme's `rounding_mode` can round half up or ceil to whole percent instead.
+    - **Pass marks** are prefilled as round-half-up(33 % × full): 70 → 23, 30 → 10, 25 → 8, 50 → 17, 100 → 33, and compared with the raw marks (22.5 of 70 against 23 fails).
+    - **Combined pass marks (COMBINED rule):** Bangla 9–10 CQ 46 of 140 and MCQ 20 of 60; English 9–10 WRITTEN 66 of 200. Each part's own pass mark is not used under COMBINED.
+    - **Absence under COMBINED:** absent in any part (one paper's MCQ, say) fails the subject, even if the combined sum would pass.
+    - **Component defaults** (the NCTB template):
+
+      | Classes | Subjects                      | Parts (pass mark)                        |
+      | ------- | ----------------------------- | ---------------------------------------- |
+      | 9–10    | BAN (COMBINED: CQ 46, MCQ 20) | P1_CQ 70, P1_MCQ 30, P2_CQ 70, P2_MCQ 30 |
+      | 9–10    | ENG (COMBINED: WRITTEN 66)    | P1 100, P2 100 (both WRITTEN)            |
+      | 9–10    | ICT                           | MCQ 25 (8), PRACTICAL 25 (8)             |
+      | 9–10    | PHY, CHEM, BIO, HMATH         | CQ 50 (17), MCQ 25 (8), PRACTICAL 25 (8) |
+      | 9–10    | the rest                      | CQ 70 (23), MCQ 30 (10)                  |
+      | 6–8     | ENG                           | WRITTEN 100 (33)                         |
+      | 6–8     | the rest                      | CQ 70 (23), MCQ 30 (10)                  |
+
+    - To change: Exams → Setup → Grading (rules and rounding) and Subject marks (parts, pass rule, combined marks); the template in `packages/db/src/reference-data/templates.ts` for new institutes.
+
 ## Deployment requirements (step 11)
 
 Recorded during step 8; to be done when the production setup is built.

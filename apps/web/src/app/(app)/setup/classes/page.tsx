@@ -200,7 +200,13 @@ export default function ClassesPage() {
                             <RowActions
                               name={sectionName}
                               active={s.isActive}
-                              inUse={s.usage.enrolments + s.usage.attendance + s.usage.teachers > 0}
+                              inUse={
+                                s.usage.enrolments +
+                                  s.usage.attendance +
+                                  s.usage.teachers +
+                                  s.usage.subjectTeachers >
+                                0
+                              }
                               onEdit={() => setDialog({ kind: 'section', classLevel: c, item: s })}
                               onToggleActive={() => toggleSection.mutate(s)}
                               onDelete={() =>
