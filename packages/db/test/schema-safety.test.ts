@@ -67,6 +67,7 @@ describe('schema safety net', () => {
         'device_commands',
         'device_punches',
         'device_source_ips',
+        'staff_attendance_days',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

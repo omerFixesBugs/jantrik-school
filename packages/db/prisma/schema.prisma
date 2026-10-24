@@ -292,6 +292,14 @@ enum AttendanceStatus {
   @@map("attendance_status")
 }
 
+/// Who wrote a register, a mark or a staff day: a person (MANUAL) or the device job (DEVICE).
+enum AttendanceSource {
+  MANUAL
+  DEVICE
+
+  @@map("attendance_source")
+}
+
 /// Why a tenant SMS was sent (billing reports group by this).
 enum SmsPurpose {
   ATTENDANCE_ABSENT
@@ -301,6 +309,10 @@ enum SmsPurpose {
   FEE_REMINDER
   /// A published exam result to the primary guardian (exams).
   EXAM_RESULT
+  /// A student's entry punch, to the primary guardian (devices; at most one a day).
+  ATTENDANCE_ENTRY
+  /// A student's exit punch, to the primary guardian (devices; at most one a day).
+  ATTENDANCE_EXIT
 
   @@map("sms_purpose")
 }
@@ -567,13 +579,14 @@ model User {
   feeSubmissionsSubmitted  FeeMobileSubmission[] @relation("FeeSubmissionSubmittedBy")
   feeSubmissionsReviewed   FeeMobileSubmission[] @relation("FeeSubmissionReviewedBy")
 
-  attendanceDevicesCreated AttendanceDevice[] @relation("AttendanceDeviceCreatedBy")
-  attendanceDevicesUpdated AttendanceDevice[] @relation("AttendanceDeviceUpdatedBy")
-  devicePeopleCreated      DevicePerson[]     @relation("DevicePersonCreatedBy")
-  devicePeopleUpdated      DevicePerson[]     @relation("DevicePersonUpdatedBy")
-  deviceCommandsCreated    DeviceCommand[]    @relation("DeviceCommandCreatedBy")
-  devicePunchesReviewed    DevicePunch[]      @relation("DevicePunchReviewedBy")
-  deviceSourceIpsTrusted   DeviceSourceIp[]   @relation("DeviceSourceIpTrustedBy")
+  attendanceDevicesCreated AttendanceDevice[]   @relation("AttendanceDeviceCreatedBy")
+  attendanceDevicesUpdated AttendanceDevice[]   @relation("AttendanceDeviceUpdatedBy")
+  devicePeopleCreated      DevicePerson[]       @relation("DevicePersonCreatedBy")
+  devicePeopleUpdated      DevicePerson[]       @relation("DevicePersonUpdatedBy")
+  deviceCommandsCreated    DeviceCommand[]      @relation("DeviceCommandCreatedBy")
+  devicePunchesReviewed    DevicePunch[]        @relation("DevicePunchReviewedBy")
+  deviceSourceIpsTrusted   DeviceSourceIp[]     @relation("DeviceSourceIpTrustedBy")
+  staffDaysUpdated         StaffAttendanceDay[] @relation("StaffAttendanceDayUpdatedBy")
 
   @@map("users")
 }
@@ -663,11 +676,12 @@ model Tenant {
   examMarks              ExamMark[]
   examResults            ExamResult[]
 
-  attendanceDevices AttendanceDevice[]
-  devicePeople      DevicePerson[]
-  deviceCommands    DeviceCommand[]
-  devicePunches     DevicePunch[]
-  deviceSourceIps   DeviceSourceIp[]
+  attendanceDevices   AttendanceDevice[]
+  devicePeople        DevicePerson[]
+  deviceCommands      DeviceCommand[]
+  devicePunches       DevicePunch[]
+  deviceSourceIps     DeviceSourceIp[]
+  staffAttendanceDays StaffAttendanceDay[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -1205,21 +1219,25 @@ model StudentImport {
 /// How this institute knows a staff member: the name and phone its admin typed. Shown instead
 /// of the person's global name (which another institute, or the person, may have set).
 model StaffProfile {
-  id        String   @id @default(uuid(7)) @db.Uuid
-  tenantId  String   @map("tenant_id") @db.Uuid
+  id                String   @id @default(uuid(7)) @db.Uuid
+  tenantId          String   @map("tenant_id") @db.Uuid
   /// Plain FK: users are global. The service only creates profiles with a staff membership.
-  userId    String   @map("user_id") @db.Uuid
-  name      String
-  nameBn    String?  @map("name_bn")
+  userId            String   @map("user_id") @db.Uuid
+  name              String
+  nameBn            String?  @map("name_bn")
   /// E.164, as typed (the person's own row is invisible to the institute while invited).
-  phone     String
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  phone             String
+  /// Staff attendance. NULL: the default rule (tracked unless the person's only staff role here
+  /// is OWNER), decided in code.
+  attendanceTracked Boolean? @map("attendance_tracked")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  devicePeople DevicePerson[]
+  devicePeople   DevicePerson[]
+  attendanceDays StaffAttendanceDay[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, userId])
@@ -1736,30 +1754,33 @@ model ExamMark {
 
 /// One register: a section on a date, for the whole day (period_no 0) or one period.
 model AttendanceSession {
-  id               String   @id @default(uuid(7)) @db.Uuid
-  tenantId         String   @map("tenant_id") @db.Uuid
-  sectionId        String   @map("section_id") @db.Uuid
-  date             DateTime @db.Date
+  id               String           @id @default(uuid(7)) @db.Uuid
+  tenantId         String           @map("tenant_id") @db.Uuid
+  sectionId        String           @map("section_id") @db.Uuid
+  date             DateTime         @db.Date
   /// 0 = the whole day (DAILY mode); 1.. = a period (PER_SESSION mode).
-  periodNo         Int      @default(0) @map("period_no") @db.SmallInt
-  subjectId        String?  @map("subject_id") @db.Uuid
-  takenById        String   @map("taken_by_id") @db.Uuid
-  updatedById      String   @map("updated_by_id") @db.Uuid
-  submittedAt      DateTime @map("submitted_at") @db.Timestamptz(3)
+  periodNo         Int              @default(0) @map("period_no") @db.SmallInt
+  subjectId        String?          @map("subject_id") @db.Uuid
+  /// DEVICE: written by the device job at the cutoff, with no taker.
+  source           AttendanceSource @default(MANUAL)
+  /// NULL only on a DEVICE register (CHECKs).
+  takenById        String?          @map("taken_by_id") @db.Uuid
+  updatedById      String?          @map("updated_by_id") @db.Uuid
+  submittedAt      DateTime         @map("submitted_at") @db.Timestamptz(3)
   /// Optimistic concurrency: a submit must name the version it was based on.
-  version          Int      @default(1)
+  version          Int              @default(1)
   /// The client's id for the last accepted submit, so a retried request is answered, not re-applied.
-  lastSubmissionId String   @map("last_submission_id") @db.Uuid
+  lastSubmissionId String           @map("last_submission_id") @db.Uuid
   /// Taken on a weekly off day or holiday (admin override).
-  onNonWorkingDay  Boolean  @default(false) @map("on_non_working_day")
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  onNonWorkingDay  Boolean          @default(false) @map("on_non_working_day")
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   section   Section            @relation(fields: [tenantId, sectionId], references: [tenantId, id], onDelete: Restrict)
   subject   Subject?           @relation(fields: [tenantId, subjectId], references: [tenantId, id], onDelete: Restrict)
-  takenBy   User               @relation("AttendanceTakenBy", fields: [takenById], references: [id], onDelete: Restrict)
-  updatedBy User               @relation("AttendanceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  takenBy   User?              @relation("AttendanceTakenBy", fields: [takenById], references: [id], onDelete: Restrict)
+  updatedBy User?              @relation("AttendanceUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   records   AttendanceRecord[]
 
   @@unique([tenantId, id])
@@ -1775,6 +1796,7 @@ model AttendanceRecord {
   studentId String           @map("student_id") @db.Uuid
   status    AttendanceStatus
   note      String?
+  source    AttendanceSource @default(MANUAL)
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -3035,4 +3057,52 @@ model DeviceSourceIp {
   @@unique([tenantId, id])
   @@unique([tenantId, deviceId, ip])
   @@map("device_source_ips")
+}
+
+// ───────────────────────────── Staff attendance (step 11) ─────────────────────────────
+
+enum StaffDayStatus {
+  PRESENT
+  ABSENT
+  LEAVE
+
+  @@map("staff_day_status")
+}
+
+/// One staff member's day: in and out times, minutes late and early, judged by that day's office
+/// hours. Written by the device job (DEVICE) or an admin with a reason (MANUAL); never deleted.
+model StaffAttendanceDay {
+  id           String           @id @default(uuid(7)) @db.Uuid
+  tenantId     String           @map("tenant_id") @db.Uuid
+  /// Composite to staff_profiles (tenant_id, user_id): only this institute's staff.
+  userId       String           @map("user_id") @db.Uuid
+  date         DateTime         @db.Date
+  status       StaffDayStatus
+  /// Only a PRESENT day has times, and always an in time; out is never before in (CHECKs).
+  inAt         DateTime?        @map("in_at") @db.Timestamptz(3)
+  outAt        DateTime?        @map("out_at") @db.Timestamptz(3)
+  /// The office hours the day was judged by, copied, so a later change keeps past days as judged.
+  officeStart  DateTime         @map("office_start") @db.Time(0)
+  officeEnd    DateTime         @map("office_end") @db.Time(0)
+  lateMinutes  Int              @default(0) @map("late_minutes") @db.SmallInt
+  earlyMinutes Int              @default(0) @map("early_minutes") @db.SmallInt
+  /// DEVICE writes PRESENT, or ABSENT once a review rejected every punch; never LEAVE (CHECK).
+  source       AttendanceSource
+  /// MANUAL: required, 3–200 characters, with updated_by_id (CHECK).
+  reason       String?
+  updatedById  String?          @map("updated_by_id") @db.Uuid
+  /// Optimistic concurrency: a manual change names the version it was based on.
+  version      Int              @default(1)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  staffProfile StaffProfile @relation(fields: [tenantId, userId], references: [tenantId, userId], onDelete: Restrict, onUpdate: Restrict)
+  updatedBy    User?        @relation("StaffAttendanceDayUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  /// One row per person per day.
+  @@unique([tenantId, userId, date])
+  @@index([tenantId, date])
+  @@map("staff_attendance_days")
 }

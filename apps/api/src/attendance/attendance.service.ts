@@ -531,7 +531,8 @@ export class AttendanceService implements OnModuleInit {
       },
     });
     if (!s) return null;
-    const names = await staffNames(this.db.tx, [s.updatedById]);
+    // A DEVICE register has no updater (NULL): staffRef returns it unnamed.
+    const names = await staffNames(this.db.tx, s.updatedById ? [s.updatedById] : []);
     return {
       id: s.id,
       version: s.version,

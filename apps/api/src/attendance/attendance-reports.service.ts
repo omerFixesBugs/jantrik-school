@@ -113,8 +113,9 @@ export class AttendanceReportsService {
     });
     const first = new Map<string, (typeof sessions)[number]>();
     for (const s of sessions) if (!first.has(s.sectionId)) first.set(s.sectionId, s);
+    // A DEVICE register has no updater (NULL): staffRef returns it unnamed.
     const updatedNames = await staffNames(this.db.tx, [
-      ...new Set([...first.values()].map((s) => s.updatedById)),
+      ...new Set([...first.values()].flatMap((s) => (s.updatedById ? [s.updatedById] : []))),
     ]);
     const streaks = await this.absenceStreaks(
       [...first.values()].flatMap((s) =>

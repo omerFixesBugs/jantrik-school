@@ -444,8 +444,31 @@ ZKTeco attendance devices. Five tenant tables (forced RLS, composite keys, every
   trusts. The device's answers (at most 200 `{id: seq, return_code}`): only this device's SENT or
   PENDING commands change, code 0 is DONE, anything else FAILED, with the code and `done_at`.
   Returns how many changed, so another device's `seq` changes nothing.
+- `sms_purpose` gained `ATTENDANCE_ENTRY` and `ATTENDANCE_EXIT` in their own migration
+  (`20261029010100_attendance_sms_purposes`).
 - Tests: `packages/db/test/devices-rls.test.ts`, `ingest-functions.test.ts`; the table list and
   the ingest checks in `schema-safety.test.ts`.
+
+### Staff attendance (step 11)
+
+`staff_attendance_days` (tenant table, forced RLS, migration `20261029020000_staff_attendance`):
+one row per staff member per day (unique `(tenant_id, user_id, date)`), composite →
+`staff_profiles (tenant_id, user_id)`, so only this institute's staff; every foreign key
+`ON UPDATE RESTRICT`.
+
+- Status `PRESENT` | `ABSENT` | `LEAVE`. Only a PRESENT day has times: always `in_at`, and
+  `out_at` never before it. Late and early minutes 0–1440.
+- `office_start` and `office_end` are copied onto each day: the hours it was judged by, so a later
+  change to the institute's office hours never re-judges past days.
+- `source`: the device job writes PRESENT days, and ABSENT when a review rejected every punch of
+  a device day; never LEAVE. A MANUAL day (an admin's) needs a `reason` of 3–200 characters
+  (trimmed) and `updated_by_id` (CHECK). `version` is for optimistic concurrency.
+- `jantrik_app`: SELECT, INSERT, UPDATE, **no DELETE** (history: a day is corrected, never
+  removed).
+- `staff_profiles.attendance_tracked`: NULL is the default rule (tracked unless the person's only
+  staff role here is OWNER), decided in code.
+- Tests: `packages/db/test/staff-attendance-rls.test.ts`; the table list in
+  `schema-safety.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
@@ -502,8 +525,15 @@ Without either helper, queries run with no tenant and return nothing. That is in
 - Phone numbers are E.164 Bangladeshi mobiles (`+8801XXXXXXXXX`), enforced by a CHECK constraint.
   Normalise input with `normalizeBdPhone` / `bdPhoneSchema` from `@jantrik/shared`.
 - Students are soft-deleted (`deleted_at`). Queries must filter `deletedAt: null` themselves.
-- **History tables have no DELETE grant:** `attendance_sessions`, `attendance_records` and
-  `sms_logs` (we bill from it) can be inserted and updated by the app, never deleted.
+- **History tables have no DELETE grant:** `attendance_sessions`, `attendance_records`,
+  `staff_attendance_days` and `sms_logs` (we bill from it) can be inserted and updated by the app,
+  never deleted.
+- **Register sources (step 11):** `attendance_sessions.source` and `attendance_records.source`
+  (`attendance_source`: `MANUAL` | `DEVICE`, default `MANUAL`). Only a DEVICE register (written by
+  the device job at the cutoff) may have no taker: `taken_by_id` and `updated_by_id` are nullable,
+  and the CHECKs `attendance_sessions_taker` and `attendance_sessions_updater` refuse NULL on a
+  MANUAL one. The API returns a NULL updater like a staff member without a profile (no name, and
+  an empty id).
 - **Don't backfill tenant rows in a migration.** Migrations run as `jantrik_owner`, and FORCE RLS
   hides every tenant row from it, so an `INSERT … SELECT FROM tenants` silently inserts nothing.
   Create per-tenant rows in `provisionTenant()`, and give existing tenants defaults in code
