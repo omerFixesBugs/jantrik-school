@@ -836,6 +836,7 @@ describe('device receiver limits', () => {
       env: {
         INGEST_PER_IP_PER_MIN: '5',
         INGEST_PER_DEVICE_PER_MIN: '3',
+        INGEST_PER_DEVICE_ALL_PER_MIN: '5',
         INGEST_REFUSED_PER_IP_PER_10MIN: '2',
         INGEST_MAX_DRAIN_BYTES: '65536',
       },
@@ -878,6 +879,21 @@ describe('device receiver limits', () => {
     expect(query).toHaveBeenCalledTimes(3);
     // The device itself, from its own address, still gets through.
     expect((await ping(dev.serialNo, randomIp())).text).toBe('OK');
+  });
+
+  it('429 for one serial from rotating addresses once all of them together reach the cap', async () => {
+    const dev = await addDevice((await institute()).id);
+    const query = vi.spyOn(h.ingestDb, '$queryRaw');
+    // One address uses its share of 3; what it is refused beyond that does not count for all.
+    const first = randomIp();
+    for (let i = 0; i < 3; i++) expect((await ping(dev.serialNo, first)).text).toBe('OK');
+    for (let i = 0; i < 2; i++) expectLimited(await ping(dev.serialNo, first));
+    // Fresh addresses (an IPv4 and an IPv6 /64) bring all of them to 5, then the cap holds.
+    expect((await ping(dev.serialNo, randomIp())).text).toBe('OK');
+    expect((await ping(dev.serialNo, `${prefix64()}::1`)).text).toBe('OK');
+    expectLimited(await ping(dev.serialNo, randomIp()));
+    expectLimited(await ping(dev.serialNo, `${prefix64()}::1`));
+    expect(query).toHaveBeenCalledTimes(5);
   });
 
   /** A random IPv6 /64 prefix (documentation range), as `2001:db8:x:y`. */

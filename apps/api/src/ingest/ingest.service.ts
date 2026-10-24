@@ -144,7 +144,12 @@ function ipv6Groups(ip: string): string[] {
 @Injectable()
 export class IngestService {
   private readonly logger = new Logger('DeviceReceiver');
-  private readonly limits: { perIp: number; perDevice: number; refusedPerIp: number };
+  private readonly limits: {
+    perIp: number;
+    perDevice: number;
+    perDeviceAll: number;
+    refusedPerIp: number;
+  };
 
   constructor(
     config: ConfigService<Env, true>,
@@ -157,6 +162,7 @@ export class IngestService {
     this.limits = {
       perIp: config.get('INGEST_PER_IP_PER_MIN', { infer: true }),
       perDevice: config.get('INGEST_PER_DEVICE_PER_MIN', { infer: true }),
+      perDeviceAll: config.get('INGEST_PER_DEVICE_ALL_PER_MIN', { infer: true }),
       refusedPerIp: config.get('INGEST_REFUSED_PER_IP_PER_10MIN', { infer: true }),
     };
   }
@@ -164,9 +170,11 @@ export class IngestService {
   /**
    * Every request starts here, in this order: the per-address limit, the brake on addresses that
    * keep sending refused serials (no database call), the serial number's form (no database call),
-   * the per-device limit, then ingest_resolve. The per-device limit counts per address too, so
-   * requests from elsewhere cannot use up the real device's share. `info` (getrequest) and
-   * `pushVersion` (handshake) are recorded on the device; ingest_resolve records the address.
+   * the per-device limits, then ingest_resolve. A serial number has a share per address (an IPv6
+   * /64), so requests from elsewhere cannot use up the real device's, and a larger one for all
+   * addresses together, counted only for requests within their address's share, so rotating
+   * addresses cannot multiply it either. `info` (getrequest) and `pushVersion` (handshake) are
+   * recorded on the device; ingest_resolve records the address.
    */
   async admit(input: {
     ip: string | null;
@@ -194,6 +202,12 @@ export class IngestService {
       windowSec: 60,
     });
     if (!perDevice.allowed) return { kind: 'limited', retryAfter: perDevice.retryAfter };
+    const allAddresses = await this.limiter.hit({
+      key: `ingest-sn:${sn}`,
+      limit: this.limits.perDeviceAll,
+      windowSec: 60,
+    });
+    if (!allAddresses.allowed) return { kind: 'limited', retryAfter: allAddresses.retryAfter };
 
     const now = this.clock.now();
     const { firmware, userCount } = parseInfo(input.info);

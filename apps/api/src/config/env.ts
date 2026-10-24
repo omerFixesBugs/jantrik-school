@@ -82,7 +82,10 @@ export const envSchema = z
     /** Express "trust proxy" for the receiver (same values as TRUST_PROXY). */
     INGEST_TRUST_PROXY: z.string().default('false'),
     INGEST_PER_IP_PER_MIN: positiveInt(1200),
+    /** Requests per minute for one serial number from one address (an IPv6 /64). */
     INGEST_PER_DEVICE_PER_MIN: positiveInt(300),
+    /** Requests per minute for one serial number from all addresses together. */
+    INGEST_PER_DEVICE_ALL_PER_MIN: positiveInt(1200),
     INGEST_REFUSED_PER_IP_PER_10MIN: positiveInt(30),
     INGEST_MAX_ATTLOG_BYTES: positiveInt(524288),
     INGEST_MAX_DRAIN_BYTES: positiveInt(2097152),
