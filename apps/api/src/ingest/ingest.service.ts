@@ -62,6 +62,8 @@ export interface IngestDevice {
   hoursStart: string;
   hoursEnd: string;
   previousSeenAt: Date | null;
+  /** The device trusts this address: only then does it get and answer commands. */
+  ipTrusted: boolean;
 }
 
 export type Admission =
@@ -82,6 +84,7 @@ interface ResolveRow {
   hours_start: string | null;
   hours_end: string | null;
   previous_seen_at: Date | null;
+  ip_trusted: boolean | null;
 }
 
 interface PunchRow {
@@ -105,6 +108,32 @@ export function clientAddress(ip: string | undefined): string | null {
   const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
   const address = mapped ? mapped[1]! : ip;
   return isIP(address) && !address.includes('%') ? address : null;
+}
+
+/**
+ * What the limits count by: an IPv4 address as it is, an IPv6 one by its /64 (a host or home
+ * network usually holds a whole /64, so counting single addresses would be trivial to dodge). The
+ * full address still goes to the database and the logs.
+ */
+export function addressBucket(ip: string | null): string {
+  if (ip === null) return 'unknown';
+  if (isIP(ip) !== 6) return ip;
+  return `${ipv6Groups(ip).slice(0, 4).join(':')}::/64`;
+}
+
+/** The eight 16-bit groups of a valid IPv6 address, lower-case hex without leading zeros. */
+function ipv6Groups(ip: string): string[] {
+  let text = ip.toLowerCase();
+  const v4 = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number) as [number, number, number, number];
+    text = `${text.slice(0, v4.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head = '', tail] = text.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const zeros = tail === undefined ? [] : Array<string>(8 - left.length - right.length).fill('0');
+  return [...left, ...zeros, ...right].map((g) => parseInt(g, 16).toString(16));
 }
 
 /**
@@ -135,8 +164,9 @@ export class IngestService {
   /**
    * Every request starts here, in this order: the per-address limit, the brake on addresses that
    * keep sending refused serials (no database call), the serial number's form (no database call),
-   * the per-device limit, then ingest_resolve. `info` (getrequest) and `pushVersion` (handshake)
-   * are recorded on the device.
+   * the per-device limit, then ingest_resolve. The per-device limit counts per address too, so
+   * requests from elsewhere cannot use up the real device's share. `info` (getrequest) and
+   * `pushVersion` (handshake) are recorded on the device; ingest_resolve records the address.
    */
   async admit(input: {
     ip: string | null;
@@ -145,21 +175,21 @@ export class IngestService {
     pushVersion?: string | undefined;
   }): Promise<Admission> {
     const ip = input.ip;
-    const ipKey = ip ?? 'unknown';
+    const bucket = addressBucket(ip);
     const perIp = await this.limiter.hit({
-      key: `ingest-ip:${ipKey}`,
+      key: `ingest-ip:${bucket}`,
       limit: this.limits.perIp,
       windowSec: 60,
     });
     if (!perIp.allowed) return { kind: 'limited', retryAfter: perIp.retryAfter };
-    const refusals = await this.limiter.peek(`ingest-refused-ip:${ipKey}`);
+    const refusals = await this.limiter.peek(`ingest-refused-ip:${bucket}`);
     if (refusals.count >= this.limits.refusedPerIp) {
       return { kind: 'limited', retryAfter: refusals.retryAfter };
     }
     if (input.sn === undefined || !SERIAL_RE.test(input.sn)) return { kind: 'bad-serial' };
     const sn = input.sn.toUpperCase();
     const perDevice = await this.limiter.hit({
-      key: `ingest-sn:${sn}`,
+      key: `ingest-sn:${sn}:${bucket}`,
       limit: this.limits.perDevice,
       windowSec: 60,
     });
@@ -175,7 +205,7 @@ export class IngestService {
       SELECT accepted, refusal, time_zone, direction::text AS direction, attlog_stamp,
              clock_offset_sec, clock_samples, registered_on::text AS registered_on,
              to_char(hours_start, 'HH24:MI') AS hours_start,
-             to_char(hours_end, 'HH24:MI') AS hours_end, previous_seen_at
+             to_char(hours_end, 'HH24:MI') AS hours_end, previous_seen_at, ip_trusted
       FROM ingest_resolve(${sn}::text, ${ip}::inet, ${now}::timestamptz, ${firmware}::text,
                           ${userCount}::int, ${pushVersion}::text)`;
     if (!row?.accepted) {
@@ -197,6 +227,7 @@ export class IngestService {
         hoursStart: row.hours_start!,
         hoursEnd: row.hours_end!,
         previousSeenAt: row.previous_seen_at,
+        ipTrusted: row.ip_trusted === true,
       },
     };
   }
@@ -207,7 +238,7 @@ export class IngestService {
    */
   private async recordRefusal(sn: string, reason: string, ip: string | null, now: Date) {
     await this.limiter.hit({
-      key: `ingest-refused-ip:${ip ?? 'unknown'}`,
+      key: `ingest-refused-ip:${addressBucket(ip)}`,
       limit: this.limits.refusedPerIp,
       windowSec: REFUSAL_WINDOW_SEC,
     });
@@ -320,18 +351,26 @@ export class IngestService {
     return { lines: parsed.lines };
   }
 
-  /** The answer to getrequest: the device's due commands, one per line, or `OK`. */
+  /**
+   * The answer to getrequest: the device's due commands, one per line, or `OK`. Only an address
+   * the device trusts gets them (the function checks it too); anyone else just gets `OK`.
+   */
   async takeCommands(device: IngestDevice): Promise<string> {
+    if (!device.ipTrusted) return 'OK';
     const rows = await this.db.client.$queryRaw<{ seq: bigint; payload: string }[]>`
       SELECT seq, payload
-      FROM ingest_take_commands(${device.sn}::text, ${device.now}::timestamptz,
+      FROM ingest_take_commands(${device.sn}::text, ${device.ip}::inet, ${device.now}::timestamptz,
                                 ${COMMANDS_PER_POLL}::int)`;
     if (rows.length === 0) return 'OK';
     return rows.map((r) => commandLine(r.seq, r.payload)).join('\n') + '\n';
   }
 
-  /** The device's `ID=<seq>&Return=<code>` answers; lines that do not fit are ignored. */
+  /**
+   * The device's `ID=<seq>&Return=<code>` answers; lines that do not fit are ignored. The
+   * controller passes only those from a trusted address (the function checks it too).
+   */
   async commandResults(device: IngestDevice, body: string): Promise<void> {
+    if (!device.ipTrusted) return;
     const results = parseDeviceCmdResults(body)
       .filter(
         (r) =>
@@ -344,7 +383,7 @@ export class IngestService {
       .map((r) => ({ id: r.id, return_code: r.returnCode }));
     if (results.length === 0) return;
     await this.db.client.$queryRaw`
-      SELECT ingest_command_results(${device.sn}::text, ${device.now}::timestamptz,
-                                    ${JSON.stringify(results)}::jsonb)`;
+      SELECT ingest_command_results(${device.sn}::text, ${device.ip}::inet,
+                                    ${device.now}::timestamptz, ${JSON.stringify(results)}::jsonb)`;
   }
 }

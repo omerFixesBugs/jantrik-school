@@ -3,6 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { createPrismaClient, type PrismaClient } from '@jantrik/db';
 import type { Env } from '../config/env.js';
 
+/** Driver errors that mean "not reachable (yet)": the start-up check tries again on these only. */
+const UNREACHABLE = new Set([
+  'DatabaseNotReachable',
+  'SocketTimeout',
+  'ConnectionClosed',
+  'TooManyConnections',
+]);
+
 /**
  * The device receiver's own database login (DATABASE_INGEST_URL, role jantrik_ingest_app). It may
  * run the four ingest_* functions and read no table, so a device request can never reach an
@@ -14,6 +22,8 @@ import type { Env } from '../config/env.js';
 export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('DeviceReceiver');
   readonly client: PrismaClient;
+  /** Waits between start-up checks while the database is not reachable (about 30 s in all). */
+  retryDelaysMs = [1000, 2000, 4000, 8000, 15000];
 
   constructor(config: ConfigService<Env, true>) {
     const url = config.get('DATABASE_INGEST_URL', { infer: true });
@@ -27,26 +37,38 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Refuse to start unless the login is the receiver's: it runs ingest_resolve and cannot read
-   * students or punches (e.g. DATABASE_URL pasted by mistake). An unreachable database only warns
-   * here; requests fail on their own then.
+   * Starts only when the check passes: the login runs ingest_resolve and reads neither students
+   * nor punches (e.g. not DATABASE_URL pasted by mistake). A database that is not reachable yet is
+   * asked again a few times; any other failure, or still no answer, stops the start.
    */
   async onModuleInit(): Promise<void> {
-    let row: { resolve: boolean; students: boolean; punches: boolean } | undefined;
-    try {
-      [row] = await this.client.$queryRaw<
-        { resolve: boolean; students: boolean; punches: boolean }[]
-      >`
-        SELECT has_function_privilege(
-                 'public.ingest_resolve(text, inet, timestamptz, text, integer, text)', 'EXECUTE'
-               ) AS resolve,
-               has_table_privilege('public.students', 'SELECT') AS students,
-               has_table_privilege('public.device_punches', 'SELECT') AS punches`;
-    } catch (error) {
-      this.logger.warn(`Could not check the database role: ${(error as Error).message}`);
-      return;
-    }
-    if (row?.resolve !== true || row.students !== false || row.punches !== false) {
+    for (let attempt = 0; ; attempt++) {
+      let row: { resolve: boolean; students: boolean; punches: boolean } | undefined;
+      try {
+        [row] = await this.client.$queryRaw<
+          { resolve: boolean; students: boolean; punches: boolean }[]
+        >`
+          SELECT has_function_privilege(
+                   'public.ingest_resolve(text, inet, timestamptz, text, integer, text)', 'EXECUTE'
+                 ) AS resolve,
+                 has_table_privilege('public.students', 'SELECT') AS students,
+                 has_table_privilege('public.device_punches', 'SELECT') AS punches`;
+      } catch (error) {
+        const raw = databaseError(error)?.kind;
+        const kind = typeof raw === 'string' && /^[A-Za-z]{1,60}$/.test(raw) ? raw : undefined;
+        const delay = this.retryDelaysMs[attempt];
+        if (kind === undefined || !UNREACHABLE.has(kind) || delay === undefined) {
+          throw new Error(
+            `Could not check the device receiver's database login (DATABASE_INGEST_URL): ` +
+              `${[errorLabel(error), kind].filter(Boolean).join(' ')}. ` +
+              'The receiver does not start unchecked.',
+          );
+        }
+        this.logger.warn(`Database not reachable (${kind}); checking again in ${delay / 1000} s`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      if (row?.resolve === true && row.students === false && row.punches === false) return;
       throw new Error(
         'DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): it runs ' +
           'the ingest_* functions and reads no table. See docs/database.md.',
@@ -59,12 +81,17 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-/** The database's error code of a failed query (e.g. P0001 for RAISE, 23514 for a CHECK). */
-function databaseError(error: unknown): { code?: unknown; message?: unknown } | undefined {
+/**
+ * What the driver says about a failed query: the database's error code (e.g. P0001 for RAISE,
+ * 23514 for a CHECK) and message, or the kind of failure (e.g. DatabaseNotReachable).
+ */
+function databaseError(
+  error: unknown,
+): { code?: unknown; message?: unknown; kind?: unknown } | undefined {
   const meta = (error as { meta?: { driverAdapterError?: { cause?: unknown } } } | null)?.meta;
   const cause = meta?.driverAdapterError?.cause as
-    { originalCode?: unknown; originalMessage?: unknown } | undefined;
-  return cause && { code: cause.originalCode, message: cause.originalMessage };
+    { originalCode?: unknown; originalMessage?: unknown; kind?: unknown } | undefined;
+  return cause && { code: cause.originalCode, message: cause.originalMessage, kind: cause.kind };
 }
 
 /**

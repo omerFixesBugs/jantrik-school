@@ -9,7 +9,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import type { Response } from 'express';
+import type { Server } from 'node:http';
+import type { NextFunction, Request, Response } from 'express';
 import { parseTrustProxy, type Env } from '../config/env.js';
 import { reply } from './ingest.controller.js';
 import { errorLabel, ingestRefusalStatus } from './ingest-prisma.service.js';
@@ -43,6 +44,20 @@ export class IngestErrorFilter implements ExceptionFilter {
   }
 }
 
+/**
+ * Limits of a server open to the internet without a login. A request's headers must arrive within
+ * 10 s and the whole request within 30 s (Node checks every 30 s, so a cut can take up to a minute):
+ * a full 512 KB upload needs about 17 KB/s, and storing the largest upload (10 000 lines) takes
+ * about 2 s after it arrived, which this timeout does not count. An idle connection closes after
+ * 5 s. At most 1000 connections at once: a device polls every 30 s, briefly, on one connection.
+ */
+export const INGEST_SERVER_LIMITS = {
+  requestTimeout: 30_000,
+  headersTimeout: 10_000,
+  keepAliveTimeout: 5_000,
+  maxConnections: 1000,
+} as const;
+
 /** HTTP settings of the receiver, shared by createIngestApp and the e2e tests. */
 export function configureIngestApp(app: INestApplication): void {
   const config = app.get<ConfigService<Env, true>>(ConfigService);
@@ -50,6 +65,13 @@ export function configureIngestApp(app: INestApplication): void {
   express.set('trust proxy', parseTrustProxy(config.get('INGEST_TRUST_PROXY', { infer: true })));
   express.disable('x-powered-by');
   express.set('etag', false);
+  Object.assign(app.getHttpServer() as Server, INGEST_SERVER_LIMITS);
+  // Only GET and POST reach the routes. Express would answer HEAD with a GET route without
+  // sending its body, so a HEAD on getrequest would mark commands sent that never left.
+  express.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.method === 'GET' || req.method === 'POST') return next();
+    reply(res, 404, 'Not Found');
+  });
   app.useGlobalFilters(new IngestErrorFilter());
   app.enableShutdownHooks();
 }

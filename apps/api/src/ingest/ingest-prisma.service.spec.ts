@@ -1,18 +1,29 @@
 import { IngestPrismaService, errorLabel, ingestRefusalStatus } from './ingest-prisma.service.js';
 
-/** The privilege check's answer for the configured login (or a failure to connect). */
-function service(answer: { resolve: boolean; students: boolean; punches: boolean } | Error) {
+type Check = { resolve: boolean; students: boolean; punches: boolean };
+const PASS: Check = { resolve: true, students: false, punches: false };
+
+/** The service with the privilege check answering each call in turn (a row, or a failure). */
+function service(...answers: (Check | Error)[]) {
   const warn = vi.fn();
+  const queryRaw = vi.fn();
+  for (const a of answers) {
+    queryRaw.mockImplementationOnce(() =>
+      a instanceof Error ? Promise.reject(a) : Promise.resolve([a]),
+    );
+  }
   const s = Object.create(IngestPrismaService.prototype) as IngestPrismaService;
-  Object.assign(s, {
-    client: {
-      $queryRaw: () =>
-        answer instanceof Error ? Promise.reject(answer) : Promise.resolve([answer]),
-    },
-    logger: { warn },
-  });
-  return { s, warn };
+  Object.assign(s, { client: { $queryRaw: queryRaw }, logger: { warn }, retryDelaysMs: [0, 0, 0] });
+  return { s, warn, queryRaw };
 }
+
+/** The database server not answering, as the driver adapter reports it. */
+const unreachable = () =>
+  Object.assign(new Error("Raw query failed. Message: Can't reach database server"), {
+    name: 'PrismaClientKnownRequestError',
+    code: 'P2010',
+    meta: { driverAdapterError: { cause: { kind: 'DatabaseNotReachable', port: 5432 } } },
+  });
 
 /** A failed raw query as Prisma reports it with the pg driver adapter. */
 const dbError = (code: string, message: string) =>
@@ -24,8 +35,7 @@ const dbError = (code: string, message: string) =>
 
 describe('IngestPrismaService startup check', () => {
   it('starts when the login runs ingest_resolve and reads neither students nor punches', async () => {
-    const { s } = service({ resolve: true, students: false, punches: false });
-    await expect(s.onModuleInit()).resolves.toBeUndefined();
+    await expect(service(PASS).s.onModuleInit()).resolves.toBeUndefined();
   });
 
   it.each([
@@ -39,10 +49,30 @@ describe('IngestPrismaService startup check', () => {
     );
   });
 
-  it('only warns when the database cannot be reached', async () => {
-    const { s, warn } = service(new Error('connect ECONNREFUSED'));
+  it('refuses to start when the check itself fails (e.g. the function is missing)', async () => {
+    const { s, queryRaw } = service(dbError('42883', 'function ingest_resolve does not exist'));
+    await expect(s.onModuleInit()).rejects.toThrow(/42883.*does not start unchecked/);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again while the database is not reachable, then checks as usual', async () => {
+    const { s, warn, queryRaw } = service(unreachable(), unreachable(), PASS);
     await expect(s.onModuleInit()).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ECONNREFUSED'));
+    expect(queryRaw).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('DatabaseNotReachable'));
+  });
+
+  it('refuses to start when the database stays unreachable', async () => {
+    const { s, queryRaw } = service(unreachable(), unreachable(), unreachable(), unreachable());
+    await expect(s.onModuleInit()).rejects.toThrow(/DatabaseNotReachable.*does not start/);
+    expect(queryRaw).toHaveBeenCalledTimes(4);
+  });
+
+  it('a wrong login is refused at once, never asked again', async () => {
+    const { s, queryRaw } = service({ resolve: false, students: true, punches: true }, PASS);
+    await expect(s.onModuleInit()).rejects.toThrow(/jantrik_ingest_app/);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('refuses to be built without DATABASE_INGEST_URL', () => {

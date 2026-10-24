@@ -1,9 +1,17 @@
 import { randomUUID } from 'node:crypto';
+import type { Server } from 'node:http';
+import { connect, type Socket } from 'node:net';
+import { formatWithOptions } from 'node:util';
 import { Logger } from '@nestjs/common';
 import { withTenant, type PrismaClient, type TenantTx } from '@jantrik/db';
 import { ZkDeviceSimulator, type SimulatorOptions } from '@jantrik/device-sim';
 import type { Redis } from 'ioredis';
 import { PROCESS_PUNCHES_JOB, processPunchesJobId } from '../src/devices/devices.constants.js';
+import { INGEST_SERVER_LIMITS } from '../src/ingest/ingest.bootstrap.js';
+import { IngestService } from '../src/ingest/ingest.service.js';
+import { PrismaService } from '../src/prisma/prisma.service.js';
+import { TenantJobRunner } from '../src/tenancy/tenant-job-runner.service.js';
+import { Db } from '../src/tenancy/db.service.js';
 import { FakeClock } from './support/clock.js';
 import { createTenant, randomIp } from './support/harness.js';
 import { createIngestHarness, ingestHttp, type IngestHarness } from './support/ingest.js';
@@ -137,6 +145,20 @@ describe('device receiver', () => {
       }
       expect(query).not.toHaveBeenCalled();
     });
+  });
+
+  it('runs with its own server limits and none of the API database access in its container', () => {
+    const server = h.app.getHttpServer() as Server;
+    expect({
+      requestTimeout: server.requestTimeout,
+      headersTimeout: server.headersTimeout,
+      keepAliveTimeout: server.keepAliveTimeout,
+      maxConnections: server.maxConnections,
+    }).toEqual(INGEST_SERVER_LIMITS);
+    // Not even through a module imported along the way.
+    for (const token of [PrismaService, Db, TenantJobRunner]) {
+      expect(() => h.app.get(token, { strict: false })).toThrow();
+    }
   });
 
   it('answers plain text with a Content-Length, no caching and a Date; 404 elsewhere', async () => {
@@ -489,41 +511,152 @@ describe('device receiver', () => {
       }
       return out;
     });
+    // The first address a device ever calls from is the one it trusts.
     const ip = randomIp();
-    const poll = async () =>
+    const stranger = randomIp();
+    const poll = async (from: string) =>
       (
         await ingestHttp(h)
           .get(`/iclock/getrequest?SN=${dev.serialNo}`)
-          .set('X-Forwarded-For', ip)
+          .set('X-Forwarded-For', from)
           .expect(200)
       ).text;
+    const answer = (from: string) =>
+      ingestHttp(h)
+        .post(`/iclock/devicecmd?SN=${dev.serialNo}`)
+        .set('X-Forwarded-For', from)
+        .set('Content-Type', 'text/plain')
+        .send(`ID=${c1!.seq}&Return=0&CMD=DATA\nID=${c2!.seq}&Return=-1002&CMD=DATA\n`)
+        .expect(200, 'OK');
+    const states = async () =>
+      (
+        await inTenant(t.id, (tx) =>
+          tx.deviceCommand.findMany({ where: { deviceId: dev.id }, orderBy: { seq: 'asc' } }),
+        )
+      ).map((c) => [c.status, c.returnCode, c.attempts]);
     const lines =
       `C:${c1!.seq}:DATA DELETE USERINFO PIN=801\n` + `C:${c2!.seq}:DATA DELETE USERINFO PIN=802\n`;
-    expect(await poll()).toBe(lines);
-    expect(await poll()).toBe('OK');
+    expect(await poll(ip)).toBe(lines);
+    expect(await poll(ip)).toBe('OK');
     clock.advance(5 * 60_000 + 1000);
-    expect(await poll()).toBe(lines);
+    // Another address knowing the serial gets nothing and cannot answer for the device.
+    expect(await poll(stranger)).toBe('OK');
+    await answer(stranger);
+    expect(await states()).toEqual([
+      ['SENT', null, 1],
+      ['SENT', null, 1],
+    ]);
+    expect(await poll(ip)).toBe(lines);
 
-    await ingestHttp(h)
-      .post(`/iclock/devicecmd?SN=${dev.serialNo}`)
-      .set('X-Forwarded-For', ip)
-      .set('Content-Type', 'text/plain')
-      .send(`ID=${c1!.seq}&Return=0&CMD=DATA\nID=${c2!.seq}&Return=-1002&CMD=DATA\n`)
-      .expect(200, 'OK');
-    const commands = await inTenant(t.id, (tx) =>
-      tx.deviceCommand.findMany({ where: { deviceId: dev.id }, orderBy: { seq: 'asc' } }),
-    );
-    expect(commands.map((c) => [c.status, c.returnCode, c.attempts])).toEqual([
+    await answer(ip);
+    expect(await states()).toEqual([
       ['DONE', 0, 2],
       ['FAILED', -1002, 2],
     ]);
-    expect(await poll()).toBe('OK');
+    expect(await poll(ip)).toBe('OK');
 
-    // From INFO only the firmware and the user count are kept.
-    await sim(dev.serialNo).poll(true);
+    // From INFO only the firmware and the user count are kept (from any address).
+    await sim(dev.serialNo, { forwardedFor: stranger }).poll(true);
     expect(await deviceRow(t.id, dev.id)).toMatchObject({
       firmware: 'Ver 8.0.4-sim',
       userCount: 0,
+    });
+  });
+
+  it('HEAD and other methods reach no route and no database (HEAD would take commands)', async () => {
+    const t = await institute();
+    const dev = await addDevice(t.id);
+    await inTenant(t.id, (tx) =>
+      tx.deviceCommand.create({
+        data: {
+          tenantId: t.id,
+          deviceId: dev.id,
+          kind: 'USER_DELETE',
+          deviceUserId: '901',
+          payload: 'DATA DELETE USERINFO PIN=901',
+        },
+      }),
+    );
+    const query = vi.spyOn(h.ingestDb, '$queryRaw');
+    const ip = randomIp();
+    for (const [method, path] of [
+      ['HEAD', '/iclock/getrequest'],
+      ['HEAD', '/iclock/cdata'],
+      ['HEAD', '/iclock/ping'],
+      ['OPTIONS', '/iclock/getrequest'],
+      ['PUT', '/iclock/cdata'],
+      ['DELETE', '/iclock/ping'],
+    ] as const) {
+      const res = await fetch(`${h.baseUrl}${path}?SN=${dev.serialNo}&options=all`, {
+        method,
+        headers: { 'X-Forwarded-For': ip },
+      });
+      expect([method, path, res.status]).toEqual([method, path, 404]);
+    }
+    expect(query).not.toHaveBeenCalled();
+    const [command] = await inTenant(t.id, (tx) =>
+      tx.deviceCommand.findMany({ where: { deviceId: dev.id } }),
+    );
+    expect(command).toMatchObject({ status: 'PENDING', attempts: 0 });
+    expect((await deviceRow(t.id, dev.id)).lastSeenAt).toBeNull();
+  });
+
+  describe('an answer before the body arrived closes the connection', () => {
+    /**
+     * Sends a POST announcing a 1 GiB body and keeps writing (up to 64 MB) until the server closes
+     * the connection. Returns whether it did, and how much of the body the server read.
+     */
+    async function hugePost(path: string) {
+      const server = h.app.getHttpServer() as Server;
+      // The port is read on arrival: a destroyed socket no longer has it.
+      const accepted: { socket: Socket; port: number | undefined }[] = [];
+      const onConnection = (s: Socket) => accepted.push({ socket: s, port: s.remotePort });
+      server.on('connection', onConnection);
+      const url = new URL(h.baseUrl);
+      const socket = connect(Number(url.port), url.hostname);
+      await new Promise((resolve) => socket.once('connect', resolve));
+      const localPort = socket.localPort;
+      let response = '';
+      let closed = false;
+      socket.on('data', (d: Buffer) => (response += d.toString('latin1')));
+      socket.on('error', () => undefined);
+      socket.on('close', () => (closed = true));
+      socket.write(
+        `POST ${path} HTTP/1.1\r\nHost: receiver\r\nX-Forwarded-For: ${randomIp()}\r\n` +
+          `Content-Type: text/plain\r\nContent-Length: ${2 ** 30}\r\n\r\n`,
+      );
+      const chunk = Buffer.alloc(64 * 1024, 'x');
+      let written = 0;
+      while (!closed && written < 64 * 2 ** 20) {
+        written += chunk.length;
+        if (!socket.write(chunk)) {
+          await new Promise((resolve) => {
+            socket.once('drain', resolve);
+            socket.once('close', resolve);
+          });
+        }
+      }
+      socket.destroy();
+      server.off('connection', onConnection);
+      const ours = accepted.find((a) => a.port === localPort);
+      return { closed, response, serverRead: ours?.socket.bytesRead ?? 0 };
+    }
+
+    it.each([
+      ['an invalid serial (400)', '/iclock/cdata?SN=bad&table=ATTLOG', 400],
+      ['an unknown serial (403)', `/iclock/cdata?SN=${newSerial()}&table=OPERLOG`, 403],
+      ['an unknown route (404)', '/iclock/registry?SN=ABCDEF12', 404],
+    ])('%s', async (_case, path, status) => {
+      const { closed, response, serverRead } = await hugePost(path);
+      expect(closed).toBe(true);
+      expect(serverRead).toBeGreaterThan(0);
+      // Far less than the 2 MB drain limit, let alone the gigabyte announced.
+      expect(serverRead).toBeLessThan(2 * 2 ** 20);
+      // When the answer arrives before the reset, it says so and closes.
+      if (response) {
+        expect(response).toMatch(new RegExp(`^HTTP/1\\.1 ${status} `));
+        expect(response.toLowerCase()).toContain('connection: close');
+      }
     });
   });
 
@@ -616,7 +749,10 @@ describe('device receiver', () => {
       const device = sim(dev.serialNo);
       const unknown = newSerial();
 
+      // Everything that could print: the streams, Nest's Logger and console (vitest replaces
+      // console with its own, which does not write to process.stdout). Objects are printed whole.
       const output: string[] = [];
+      const text = (args: unknown[]) => formatWithOptions({ depth: Infinity }, ...args);
       for (const stream of [process.stdout, process.stderr]) {
         vi.spyOn(stream, 'write').mockImplementation(((chunk: unknown) => {
           output.push(String(chunk));
@@ -629,10 +765,25 @@ describe('device receiver', () => {
           this: Logger,
           ...args: unknown[]
         ) {
-          output.push(args.map(String).join(' '));
+          output.push(text(args));
           return (original as (...a: unknown[]) => void).apply(this, args);
         });
       }
+      for (const method of ['log', 'info', 'warn', 'error', 'debug', 'trace'] as const) {
+        vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+          output.push(text(args));
+        });
+      }
+      // Controls: leaks planted inside a request, the way a debugging line would leak a body.
+      const planted = `PLANTED${randomUUID().replace(/-/g, '')}`;
+      const service = h.app.get(IngestService);
+      const handshake = service.handshake.bind(service);
+      vi.spyOn(service, 'handshake').mockImplementation((...args) => {
+        console.log({ body: { note: `${planted}-console` } });
+        console.error(`${planted}-console-error`);
+        new Logger('Planted').debug(`${planted}-logger`);
+        return handshake(...args);
+      });
 
       expect((await device.handshake()).status).toBe(200);
       const answers = await device.sendBiometricPayloads(SENTINEL);
@@ -668,6 +819,9 @@ describe('device receiver', () => {
       // The logs.
       const logs = output.join('\n');
       expect(logs).toContain(`device refused: ${unknown} (UNKNOWN)`);
+      for (const leak of ['console', 'console-error', 'logger']) {
+        expect(logs).toContain(`${planted}-${leak}`);
+      }
       for (const needle of needles) expect(logs).not.toContain(needle);
     });
   });
@@ -715,12 +869,52 @@ describe('device receiver limits', () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it('429 per device, from any address', async () => {
+  it('429 per device and address: requests from elsewhere cannot use up the device’s share', async () => {
     const dev = await addDevice((await institute()).id);
     const query = vi.spyOn(h.ingestDb, '$queryRaw');
-    for (let i = 0; i < 3; i++) expect((await ping(dev.serialNo, randomIp())).text).toBe('OK');
-    expectLimited(await ping(dev.serialNo, randomIp()));
+    const attacker = randomIp();
+    for (let i = 0; i < 3; i++) expect((await ping(dev.serialNo, attacker)).text).toBe('OK');
+    expectLimited(await ping(dev.serialNo, attacker));
     expect(query).toHaveBeenCalledTimes(3);
+    // The device itself, from its own address, still gets through.
+    expect((await ping(dev.serialNo, randomIp())).text).toBe('OK');
+  });
+
+  /** A random IPv6 /64 prefix (documentation range), as `2001:db8:x:y`. */
+  const prefix64 = () =>
+    `2001:db8:${Math.floor(Math.random() * 0xffff).toString(16)}:${Math.floor(Math.random() * 0xffff).toString(16)}`;
+
+  it('IPv6 addresses count per /64 for every limit; the full address reaches logs and the database', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn');
+    const query = vi.spyOn(h.ingestDb, '$queryRaw');
+    // Per address: five requests from five addresses of one /64, then the sixth is refused.
+    const a = prefix64();
+    for (let i = 1; i <= 5; i++) expect((await ping('bad', `${a}::${i}`)).status).toBe(400);
+    expectLimited(await ping('bad', `${a}::99`));
+    expect((await ping('bad', `${prefix64()}::1`)).status).toBe(400);
+
+    // The refused brake: two unknown serials from two addresses of one /64 stop the third.
+    const b = prefix64();
+    const sn = newSerial();
+    expect((await ping(sn, `${b}::a`)).status).toBe(403);
+    expect((await ping(newSerial(), `${b}::b`)).status).toBe(403);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      `device refused: ${sn} (UNKNOWN) from ${b}::a`,
+    );
+    query.mockClear();
+    expectLimited(await ping(newSerial(), `${b}::c`));
+    expect(query).not.toHaveBeenCalled();
+
+    // The per-device share: one /64 is one requester.
+    const t = await institute();
+    const dev = await addDevice(t.id);
+    const c = prefix64();
+    for (let i = 1; i <= 3; i++) expect((await ping(dev.serialNo, `${c}::${i}`)).text).toBe('OK');
+    expectLimited(await ping(dev.serialNo, `${c}::4`));
+    const row = await withTenant(h.prisma, t.id, (tx) =>
+      tx.attendanceDevice.findUniqueOrThrow({ where: { id: dev.id } }),
+    );
+    expect(row.lastIp).toBe(`${c}::3`);
   });
 
   it('429 for an address after too many refused serials, without a database call', async () => {

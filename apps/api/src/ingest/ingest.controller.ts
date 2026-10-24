@@ -9,7 +9,9 @@ const MAX_DEVICECMD_BYTES = 64 * 1024;
 
 /**
  * Every answer: plain text with a Content-Length (no chunking), never cached. Node adds the
- * `Date` header, which devices set their clocks from.
+ * `Date` header, which devices set their clocks from. An answer given before the request's body
+ * has fully arrived (a refusal, a limit, an unknown route) closes the connection: otherwise Node
+ * would go on reading the rest of the body, however large, to keep the connection alive.
  */
 export function reply(
   res: Response,
@@ -17,12 +19,16 @@ export function reply(
   text: string,
   headers: Record<string, string> = {},
 ): void {
+  const req = res.req;
+  const unread = !req.complete;
+  if (unread) res.on('finish', () => req.socket.destroy());
   res
     .status(status)
     .set({
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'no-store',
       Pragma: 'no-cache',
+      ...(unread ? { Connection: 'close' } : {}),
       ...headers,
     })
     .send(text);
@@ -133,6 +139,8 @@ export class IngestController {
   async commandResults(@Req() req: Request, @Res() res: Response): Promise<void> {
     const device = await this.admit(req, res);
     if (!device) return;
+    // Answers from an address the device does not trust are dropped unread.
+    if (!device.ipTrusted) return this.drain(req, res);
     const { ended, body } = await readBody(req, MAX_DEVICECMD_BYTES, this.drainBytes);
     if (!ended) return;
     if (body === null) return reply(res, 413, 'ERROR');
