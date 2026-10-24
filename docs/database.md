@@ -179,8 +179,12 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   never `jantrik_app`. Don't copy the `GRANT … TO jantrik_app` of an auth function;
   `schema-safety.test.ts` checks this by owner, so a new function is covered too.
 - **Ingest functions** (owned by `jantrik_ingest`): EXECUTE for `jantrik_ingest_app` only, the
-  same way. Their helpers (`ingest_uuid7`, `ingest_find_device`) are owned by `jantrik_ingest`
-  too, pinned, and nobody else may run them. `schema-safety.test.ts` checks by name and by owner.
+  same way. Their helpers (`ingest_uuid7`, `ingest_find_device`, `ingest_note_address`) are owned
+  by `jantrik_ingest` too, pinned, and nobody else may run them. `schema-safety.test.ts` checks by
+  name and by owner.
+- **No login role may CREATE in `public`** (`schema-safety.test.ts`). The definer bodies use
+  unqualified `pg_catalog` operators (enum `=`, `text[] || text`, …), and a more specific operator
+  created in `public` would win over them.
 - **Privileges on a definer function:** REVOKE/GRANT _before_ `ALTER FUNCTION … OWNER TO`, or
   `SET ROLE <owner>` first. Only a function's owner can change its privileges. A REVOKE run by
   anyone else is a silent no-op, which left PUBLIC with EXECUTE until migration
@@ -385,41 +389,52 @@ ZKTeco attendance devices. Five tenant tables (forced RLS, composite keys, every
   the receiver's columns, INSERT on punches and SELECT on the columns the dedupe and the
   per-minute cap need, the commands' delivery columns, and the source addresses' counters.
   `jantrik_ingest_app` has schema USAGE and EXECUTE on the four functions, nothing else.
-- **The `ingest_*` family** (migration `20261029000100_devices_ingest_functions`). Those policies
+- **The `ingest_*` family** (migrations `20261029000100_devices_ingest_functions` and
+  `20261029000200_devices_ingest_trust`). Those policies
   see every institute, so each function takes the device's serial number (never a tenant or
   device id), resolves it again itself and scopes every query by that device's
   `(tenant_id, id)`. Times come from the caller (`p_now`, the receiver's clock), never `now()`.
   A serial is refused as `UNKNOWN` (no such device, or not `^[A-Z0-9]{6,32}$` once upper-cased),
   `INACTIVE` (only deactivated copies), `INSTITUTE_INACTIVE` (not ACTIVE or TRIAL) or
   `MODULE_OFF` (ATTENDANCE missing or off); a refused serial gets nothing and writes nothing.
-  Helpers: `ingest_find_device` (that resolution) and `ingest_uuid7`, which makes UUIDv7 ids like
-  Prisma's `uuid(7)` from `p_now` (no table has an id default, and the live feed orders and pages
-  by id).
+  Helpers: `ingest_find_device` (that resolution), `ingest_note_address` (below) and
+  `ingest_uuid7`, which makes UUIDv7 ids like Prisma's `uuid(7)` from `p_now` (no table has an id
+  default, and the live feed orders and pages by id).
+- **Source addresses and trust.** Every resolve and upload records the address it came from
+  (`ingest_note_address`): a device's first address ever is trusted; any other is recorded
+  untrusted (at most 50 per device; later ones stay untrusted, just unrecorded) until an admin
+  trusts it (the app's UPDATE on `trusted_at`). Commands go only to a trusted address, and only a
+  trusted address may answer them, so knowing a serial number is not enough to take or complete a
+  device's commands. Punches from an untrusted address are still stored, with `NEW_IP`.
 - **`ingest_resolve(sn, ip, now, firmware, user_count, push_version)`:** always one row:
   `accepted` and the refusal code, or the device (id, institute, zone, direction, ATTLOG stamp,
   clock offset and samples, `registered_on` = its creation date in the institute's zone), the
-  institute's device hours and per-minute cap (05:00, 20:00, 60 without a settings row) and
-  `previous_seen_at`. It then records `last_seen_at` and `last_ip`, and the firmware, user count
-  and push version only when given.
+  institute's device hours and per-minute cap (05:00, 20:00, 60 without a settings row),
+  `previous_seen_at` and `ip_trusted` (false without an address). It then records `last_seen_at`,
+  `last_ip` and the address, and the firmware, user count and push version only when given.
 - **`ingest_store_punches(sn, ip, now, rows, stamp, clock_samples, clock_offset)`:** stores one
   upload (`rows`: at most 10000, as the receiver computed them with the shared rules; the CHECKs
   validate them) and returns `tenant_id, inserted, duplicates, held, dropped`, or no row when
-  refused. It locks the device row, so one upload per device runs at a time. A punch already
-  stored is a duplicate: counted, not stored again, not counted against the cap twice. Source
-  address: the device's first one is trusted; any address not trusted puts `NEW_IP` and
-  `source_ip` on its punches, and is recorded untrusted while the device has fewer than 50
-  untrusted ones. Per-minute cap N: with c the device's punches already stored in that minute
-  (this upload's included), c ≥ 5N drops the row and N ≤ c < 5N stores it with `BURST` (held).
-  It then writes the stamp (when it is 1–32 letters or digits and not `0`), the clock samples and
-  offset, `last_punch_at`, and `last_flood_at`/`last_flood_dropped` when something was dropped.
-- **`ingest_take_commands(sn, now, max)`:** the device's next commands in `seq` order, at most
-  `least(max, 50)`: PENDING ones and SENT ones unanswered for 5 minutes with fewer than 5
-  attempts (`FOR UPDATE SKIP LOCKED`); they become SENT with one more attempt. A command sent 5
-  times and unanswered for 5 minutes becomes FAILED first.
-- **`ingest_command_results(sn, now, results)`:** the device's answers (at most 200
-  `{id: seq, return_code}`). Only this device's SENT or PENDING commands change: code 0 is DONE,
-  anything else FAILED, with the code and `done_at`. Returns how many changed, so another
-  device's `seq` changes nothing.
+  refused. It locks the device row, so one upload per device runs at a time, and stops if the
+  device was deactivated meanwhile. A punch already stored is a duplicate: counted, not stored
+  again, not counted against the cap twice. Punches from an untrusted address get `NEW_IP` and
+  `source_ip`; the address's `punch_count` counts the stored punches. Per-minute cap N: with c the
+  device's punches already stored in that minute (the upload's earlier rows included), c ≥ 5N
+  drops the row and N ≤ c < 5N stores it with `BURST` (held). Every row's fate is decided in one
+  statement (one range scan of the device's punches, window functions for the upload's order),
+  not per row: with per-row queries one 10 000-row upload took minutes in the receiver's tests,
+  and a bad plan costs a scan per row. It then writes the stamp (when it is 1–32 letters or digits and not `0`), the
+  clock samples and offset, `last_punch_at`, and `last_flood_at`/`last_flood_dropped` when
+  something was dropped.
+- **`ingest_take_commands(sn, ip, now, max)`:** nothing unless `ip` is an address the device
+  trusts. Then the device's next commands in `seq` order, at most `least(max, 50)`: PENDING ones
+  and SENT ones unanswered for 5 minutes with fewer than 5 attempts (`FOR UPDATE SKIP LOCKED`);
+  they become SENT with one more attempt. A command sent 5 times and unanswered for 5 minutes
+  becomes FAILED first.
+- **`ingest_command_results(sn, ip, now, results)`:** 0 unless `ip` is an address the device
+  trusts. The device's answers (at most 200 `{id: seq, return_code}`): only this device's SENT or
+  PENDING commands change, code 0 is DONE, anything else FAILED, with the code and `done_at`.
+  Returns how many changed, so another device's `seq` changes nothing.
 - Tests: `packages/db/test/devices-rls.test.ts`, `ingest-functions.test.ts`; the table list and
   the ingest checks in `schema-safety.test.ts`.
 

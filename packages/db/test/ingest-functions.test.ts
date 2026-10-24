@@ -66,6 +66,7 @@ const refused = (refusal: string) => ({
   hours_end: null,
   max_per_minute: null,
   previous_seen_at: null,
+  ip_trusted: null,
 });
 
 describe('ingest functions', () => {
@@ -130,7 +131,7 @@ describe('ingest functions', () => {
     );
 
   const resolve = async (
-    sn: string,
+    sn: string | null,
     now = T0,
     info: {
       ip?: string | null;
@@ -143,7 +144,7 @@ describe('ingest functions', () => {
       SELECT accepted, refusal, device_id, tenant_id, time_zone, direction::text AS direction,
              attlog_stamp, clock_offset_sec, clock_samples, registered_on::text AS registered_on,
              hours_start::text AS hours_start, hours_end::text AS hours_end, max_per_minute,
-             previous_seen_at
+             previous_seen_at, ip_trusted
       FROM ingest_resolve(${sn}::text, ${info.ip === undefined ? IP : info.ip}::inet,
                           ${now}::timestamptz, ${info.firmware ?? null}::text,
                           ${info.userCount ?? null}::int, ${info.pushVersion ?? null}::text)`;
@@ -169,15 +170,34 @@ describe('ingest functions', () => {
         ${JSON.stringify(rows)}::jsonb, ${opts.stamp ?? null}::text, ${opts.samples ?? []}::int[],
         ${opts.offset ?? null}::int)`;
 
-  const take = (sn: string, now: Date, max = 10) =>
+  const take = (sn: string, now: Date, max: number | null = 10, ip: string | null = IP) =>
     ingest.$queryRaw<{ seq: bigint; payload: string }[]>`
-      SELECT * FROM ingest_take_commands(${sn}::text, ${now}::timestamptz, ${max}::int)`;
+      SELECT * FROM ingest_take_commands(${sn}::text, ${ip}::inet, ${now}::timestamptz,
+                                         ${max}::int)`;
 
-  const answer = async (sn: string, now: Date, results: { seq: bigint; code: number }[]) => {
+  const answer = async (
+    sn: string,
+    now: Date,
+    results: { seq: bigint; code: number }[],
+    ip: string | null = IP,
+  ) => {
     const body = JSON.stringify(results.map((r) => ({ id: Number(r.seq), return_code: r.code })));
     const [row] = await ingest.$queryRaw<{ n: number }[]>`
-      SELECT ingest_command_results(${sn}::text, ${now}::timestamptz, ${body}::jsonb) AS n`;
+      SELECT ingest_command_results(${sn}::text, ${ip}::inet, ${now}::timestamptz,
+                                    ${body}::jsonb) AS n`;
     return row!.n;
+  };
+
+  /** An institute whose per-minute cap is 10. */
+  const cappedInstitute = async () => {
+    const t = await createTenant(app, { status: 'ACTIVE', modules: ['ATTENDANCE'] });
+    await withTenant(app, t.id, (tx) =>
+      tx.attendanceSettings.update({
+        where: { tenantId: t.id },
+        data: { deviceMaxPunchesPerMinute: 10 },
+      }),
+    );
+    return t.id;
   };
 
   it('jantrik_ingest_app reads no table and cannot run the helpers', async () => {
@@ -189,6 +209,7 @@ describe('ingest functions', () => {
     for (const sql of [
       'SELECT ingest_uuid7(now())',
       "SELECT * FROM ingest_find_device('ABC123')",
+      "SELECT ingest_note_address('ABC123', '10.0.0.1', now())",
     ]) {
       await expect(ingest.$queryRawUnsafe(sql)).rejects.toThrow(/permission denied/i);
     }
@@ -198,15 +219,23 @@ describe('ingest functions', () => {
     for (const sql of [
       "SELECT * FROM ingest_resolve('ABC123', NULL, now(), NULL, NULL, NULL)",
       "SELECT * FROM ingest_store_punches('ABC123', NULL, now(), '[]', NULL, '{}', NULL)",
-      "SELECT * FROM ingest_take_commands('ABC123', now(), 10)",
-      "SELECT ingest_command_results('ABC123', now(), '[]')",
+      "SELECT * FROM ingest_take_commands('ABC123', NULL, now(), 10)",
+      "SELECT ingest_command_results('ABC123', NULL, now(), '[]')",
     ]) {
       await expect(app.$queryRawUnsafe(sql)).rejects.toThrow(/permission denied/i);
     }
   });
 
   it('refuses unknown, malformed, inactive, suspended and module-off serials', async () => {
-    for (const sn of [newSerial(), 'AB-12345', 'AB12', `A${'1'.repeat(32)}`, '', 'ÄBC12345']) {
+    for (const sn of [
+      newSerial(),
+      'AB-12345',
+      'AB12',
+      `A${'1'.repeat(32)}`,
+      '',
+      'ÄBC12345',
+      null,
+    ]) {
       expect(await resolve(sn)).toEqual(refused('UNKNOWN'));
     }
     const inactive = await addDevice(a, false);
@@ -288,6 +317,7 @@ describe('ingest functions', () => {
       hours_end: '20:00:00',
       max_per_minute: 60,
       previous_seen_at: null,
+      ip_trusted: true,
     });
     expect(await deviceRow(a, dev.id)).toMatchObject({
       lastSeenAt: T0,
@@ -299,7 +329,7 @@ describe('ingest functions', () => {
 
     // Missing device info keeps what was stored; the address is the latest one.
     const second = await resolve(dev.serialNo, after(MIN), { ip: '198.51.100.7' });
-    expect(second).toMatchObject({ accepted: true, previous_seen_at: T0 });
+    expect(second).toMatchObject({ accepted: true, previous_seen_at: T0, ip_trusted: false });
     expect(await deviceRow(a, dev.id)).toMatchObject({
       lastSeenAt: after(MIN),
       lastIp: '198.51.100.7',
@@ -535,19 +565,17 @@ describe('ingest functions', () => {
     expect(await punchesOf(a, dev.id)).toEqual([
       expect.objectContaining({ flags: ['NEW_IP'], sourceIp: '198.51.100.9' }),
     ]);
+    expect(await resolve(dev.serialNo, T0, { ip: '198.51.100.10' })).toMatchObject({
+      accepted: true,
+      ip_trusted: false,
+    });
     const addresses = await addressesOf(a, dev.id);
     expect(addresses).toHaveLength(51);
-    expect(addresses.filter((x) => x.ip === '198.51.100.9')).toEqual([]);
+    expect(addresses.filter((x) => x.ip.startsWith('198.51.100.'))).toEqual([]);
   });
 
   it('caps punches per device and minute: over N held as BURST, from 5 x N dropped', async () => {
-    const t = await createTenant(app, { status: 'ACTIVE', modules: ['ATTENDANCE'] });
-    await withTenant(app, t.id, (tx) =>
-      tx.attendanceSettings.update({
-        where: { tenantId: t.id },
-        data: { deviceMaxPunchesPerMinute: 10 },
-      }),
-    );
+    const t = { id: await cappedInstitute() };
     const dev = await addDevice(t.id);
     // 51 punches in 08:00, then one in 08:01 (a new minute starts again from zero).
     const rows = [...burst('08:00', 51), punch('2000', '2026-10-20 08:01:00')];
@@ -581,6 +609,47 @@ describe('ingest functions', () => {
     });
   });
 
+  it('applies the cap in the order of the upload, whatever the order of the times', async () => {
+    const t = await cappedInstitute();
+    const dev = await addDevice(t);
+    // 08:00 already has 8. Then, out of time order and interleaved with 08:01: four new rows in
+    // 08:00 (c = 8, 9, 10, 11 in the upload's order, so the last two are held, not the latest
+    // two), a copy of one of them and a punch stored before (both duplicates).
+    await store(dev.serialNo, burst('08:00', 8));
+    const rows = [
+      punch('2003', '2026-10-20 08:00:50'),
+      punch('3001', '2026-10-20 08:01:00'),
+      punch('2004', '2026-10-20 08:00:45'),
+      punch('2001', '2026-10-20 08:00:40'),
+      punch('2003', '2026-10-20 08:00:50'),
+      punch('2002', '2026-10-20 08:00:30'),
+      punch('1000', '2026-10-20 08:00:00'),
+    ];
+    expect(await store(dev.serialNo, rows, { now: after(MIN) })).toEqual([
+      { tenant_id: t, inserted: 5, duplicates: 2, held: 2, dropped: 0 },
+    ]);
+    const flags = new Map(
+      (await punchesOf(t, dev.id)).map((p) => [p.deviceUserId, p.flags] as const),
+    );
+    expect(['2003', '2004', '2001', '2002', '3001'].map((pin) => flags.get(pin))).toEqual([
+      [],
+      [],
+      ['BURST'],
+      ['BURST'],
+      [],
+    ]);
+
+    // A full minute drops a row and a later copy of it alike; nothing of a dropped row is stored.
+    await store(dev.serialNo, burst('08:02', 50, 4000), { now: after(2 * MIN) });
+    expect(
+      await store(
+        dev.serialNo,
+        [punch('5000', '2026-10-20 08:02:59'), punch('5000', '2026-10-20 08:02:59')],
+        { now: after(3 * MIN) },
+      ),
+    ).toEqual([{ tenant_id: t, inserted: 0, duplicates: 0, held: 0, dropped: 2 }]);
+  });
+
   it('records the stamp, the clock and the last punch on the device', async () => {
     const dev = await addDevice(a);
     await store(dev.serialNo, [punch('101', '2026-10-20 08:10:00')], {
@@ -606,7 +675,7 @@ describe('ingest functions', () => {
     });
   });
 
-  it("refuses more than 10000 rows, or rows that aren't an array", async () => {
+  it("refuses more than 10000 rows, or rows that aren't an array of objects", async () => {
     const dev = await addDevice(a);
     const many = Array.from({ length: 10_001 }, () => punch('101', '2026-10-20 08:00:00'));
     await expect(store(dev.serialNo, many)).rejects.toThrow(/INGEST_TOO_MANY_ROWS/);
@@ -614,37 +683,194 @@ describe('ingest functions', () => {
       ingest.$queryRaw`SELECT * FROM ingest_store_punches(${dev.serialNo}::text, NULL, now(),
         '{"device_user_id": "101"}'::jsonb, NULL, '{}', NULL)`,
     ).rejects.toThrow(/INGEST_BAD_ROWS/);
+    await expect(
+      ingest.$queryRaw`SELECT * FROM ingest_store_punches(${dev.serialNo}::text, NULL, now(),
+        '[5]'::jsonb, NULL, '{}', NULL)`,
+    ).rejects.toThrow(/on a scalar/);
     expect(await punchesOf(a, dev.id)).toEqual([]);
   });
 
-  it("institute B's serial only ever reads and writes B's rows", async () => {
-    const devA = await addDevice(a);
-    const devB = await addDevice(b);
-    const [commandA] = await queue(a, devA.id, ['101']);
-    const [commandB] = await queue(b, devB.id, ['101']);
-    const same = punch('101', '2026-10-20 08:00:00');
+  // Every function scopes by the device it resolved: (tenant_id, device id). The policies it runs
+  // under see every institute, so these would catch a lost scope, whole or only the device's.
+  it('a device touches only its own rows: not another device of its institute, nor another institute', async () => {
+    const x = await cappedInstitute();
+    const y = await cappedInstitute();
+    const x1 = await addDevice(x);
+    const x2 = await addDevice(x);
+    const y1 = await addDevice(y);
 
-    expect(await resolve(devB.serialNo)).toMatchObject({ tenant_id: b, device_id: devB.id });
-    expect(await store(devB.serialNo, [same])).toEqual([
-      { tenant_id: b, inserted: 1, duplicates: 0, held: 0, dropped: 0 },
-    ]);
-    // The same person and time on A's device is A's own punch, not a duplicate of B's.
-    expect(await store(devA.serialNo, [same])).toEqual([
-      { tenant_id: a, inserted: 1, duplicates: 0, held: 0, dropped: 0 },
-    ]);
-    expect((await take(devB.serialNo, T0)).map((c) => c.seq)).toEqual([commandB!.seq]);
+    // X1: seen, with a stamp, a clock, a flood, a sent and a pending command.
+    await resolve(x1.serialNo, T0, { firmware: 'X1', userCount: 1, pushVersion: '1.0' });
+    expect(
+      await store(x1.serialNo, burst('08:00', 51), { stamp: '111', samples: [1], offset: 1 }),
+    ).toEqual([{ tenant_id: x, inserted: 50, duplicates: 0, held: 40, dropped: 1 }]);
+    const x1Commands = await queue(x, x1.id, ['101', '103']);
+    expect((await take(x1.serialNo, T0, 1)).map((c) => c.seq)).toEqual([x1Commands[0]!.seq]);
+    const x1State = async () => ({
+      device: await deviceRow(x, x1.id),
+      punches: await punchesOf(x, x1.id),
+      addresses: await addressesOf(x, x1.id),
+      commands: await commandsOf(x, x1.id),
+    });
+    const before = await x1State();
+    expect(before.device).toMatchObject({ attlogStamp: '111', lastFloodDropped: 1 });
 
-    const punchesB = await withTenant(app, b, (tx) => tx.devicePunch.findMany());
-    expect(punchesB.map((p) => [p.tenantId, p.deviceId])).toEqual([[b, devB.id]]);
-    expect((await punchesOf(a, devA.id)).map((p) => p.tenantId)).toEqual([a]);
-    expect((await addressesOf(b, devB.id)).map((x) => x.tenantId)).toEqual([b]);
-    expect((await commandsOf(a, devA.id)).map((c) => [c.id, c.status])).toEqual([
-      [commandA!.id, 'PENDING'],
+    // X2 (the same institute) and Y1 (another) do all of it again, later, with other values and
+    // from X1's address (devices of one school share its public address).
+    for (const [tenantId, dev] of [
+      [x, x2],
+      [y, y1],
+    ] as const) {
+      const [own] = await queue(tenantId, dev.id, ['102']);
+      expect(
+        await resolve(dev.serialNo, after(MIN), {
+          ip: IP,
+          firmware: 'other',
+          userCount: 2,
+          pushVersion: '2.0',
+        }),
+      ).toMatchObject({ tenant_id: tenantId, device_id: dev.id, ip_trusted: true });
+      // X1's very punches, in X1's full minute: this device's own, none a duplicate.
+      expect(
+        await store(dev.serialNo, burst('08:00', 51), {
+          ip: IP,
+          now: after(MIN),
+          stamp: '222',
+          samples: [2, 2],
+          offset: 2,
+        }),
+      ).toEqual([{ tenant_id: tenantId, inserted: 50, duplicates: 0, held: 40, dropped: 1 }]);
+      // Neither X1's sent command nor its pending one.
+      expect((await take(dev.serialNo, after(MIN), 10, IP)).map((c) => c.seq)).toEqual([own!.seq]);
+      expect(
+        await answer(
+          dev.serialNo,
+          after(MIN),
+          x1Commands.map((c) => ({ seq: c.seq, code: 0 })),
+          IP,
+        ),
+      ).toBe(0);
+      expect(await answer(dev.serialNo, after(MIN), [{ seq: own!.seq, code: 0 }], IP)).toBe(1);
+      expect(await deviceRow(tenantId, dev.id)).toMatchObject({
+        lastSeenAt: after(MIN),
+        firmware: 'other',
+        attlogStamp: '222',
+        clockSamples: [2, 2],
+        lastFloodAt: after(MIN),
+      });
+      // Its own first address: trusted, with its own punches.
+      expect(
+        (await addressesOf(tenantId, dev.id)).map((r) => [r.ip, r.trustedAt, r.punchCount]),
+      ).toEqual([[IP, after(MIN), 50]]);
+    }
+
+    expect(await x1State()).toEqual(before);
+    expect(await withTenant(app, y, (tx) => tx.devicePunch.count())).toBe(50);
+  });
+
+  it('hands commands only to an address the device trusts, and takes answers only from one', async () => {
+    const dev = await addDevice(a);
+    const other = '198.51.100.7';
+    const [first, second] = await queue(a, dev.id, ['101', '102']);
+    const commands = async () =>
+      (await commandsOf(a, dev.id)).map((c) => [c.status, c.attempts, c.returnCode]);
+
+    // No address: nothing recorded, nothing trusted.
+    expect(await resolve(dev.serialNo, T0, { ip: null })).toMatchObject({
+      accepted: true,
+      ip_trusted: false,
+    });
+    expect(await addressesOf(a, dev.id)).toEqual([]);
+    // First contact trusts its address; a later one is recorded, untrusted.
+    expect(await resolve(dev.serialNo, T0)).toMatchObject({ ip_trusted: true });
+    expect(await resolve(dev.serialNo, after(MIN), { ip: other })).toMatchObject({
+      ip_trusted: false,
+    });
+    expect(await resolve(dev.serialNo, after(2 * MIN), { ip: other })).toMatchObject({
+      ip_trusted: false,
+    });
+    const addresses = async () =>
+      (await addressesOf(a, dev.id)).map((x) => [
+        x.ip,
+        x.trustedAt,
+        x.firstSeenAt,
+        x.lastSeenAt,
+        x.punchCount,
+      ]);
+    expect(await addresses()).toEqual([
+      [IP, T0, T0, T0, 0],
+      [other, null, after(MIN), after(2 * MIN), 0],
+    ]);
+
+    // From the untrusted address, no address, or one never seen: nothing taken or answered.
+    for (const ip of [other, null, '192.0.2.1']) {
+      expect(await take(dev.serialNo, after(2 * MIN), 10, ip)).toEqual([]);
+      expect(await answer(dev.serialNo, after(2 * MIN), [{ seq: first!.seq, code: 0 }], ip)).toBe(
+        0,
+      );
+    }
+    expect(await commands()).toEqual([
+      ['PENDING', 0, null],
+      ['PENDING', 0, null],
+    ]);
+    expect(await addresses()).toHaveLength(2);
+
+    // The trusted address takes them; the untrusted one still cannot answer.
+    expect((await take(dev.serialNo, after(2 * MIN), 1)).map((c) => c.seq)).toEqual([first!.seq]);
+    expect(await answer(dev.serialNo, after(3 * MIN), [{ seq: first!.seq, code: 0 }], other)).toBe(
+      0,
+    );
+    expect(await commands()).toEqual([
+      ['SENT', 1, null],
+      ['PENDING', 0, null],
+    ]);
+
+    // Punches from the address resolve recorded: the same row, counting punches only.
+    await store(dev.serialNo, [punch('101', '2026-10-20 08:10:00')], {
+      ip: other,
+      now: after(3 * MIN),
+    });
+    expect((await punchesOf(a, dev.id)).map((p) => [p.flags, p.sourceIp])).toEqual([
+      [['NEW_IP'], other],
+    ]);
+    expect(await addresses()).toEqual([
+      [IP, T0, T0, T0, 0],
+      [other, null, after(MIN), after(3 * MIN), 1],
+    ]);
+
+    // Once an admin trusts it (as the API does, as the app role), it works from there too.
+    await withTenant(app, a, (tx) =>
+      tx.deviceSourceIp.updateMany({
+        where: { deviceId: dev.id, ip: other },
+        data: { trustedAt: after(4 * MIN) },
+      }),
+    );
+    expect(await resolve(dev.serialNo, after(5 * MIN), { ip: other })).toMatchObject({
+      ip_trusted: true,
+    });
+    expect((await take(dev.serialNo, after(5 * MIN), 10, other)).map((c) => c.seq)).toEqual([
+      second!.seq,
+    ]);
+    expect(
+      await answer(
+        dev.serialNo,
+        after(5 * MIN),
+        [
+          { seq: first!.seq, code: 0 },
+          { seq: second!.seq, code: 0 },
+        ],
+        other,
+      ),
+    ).toBe(2);
+    expect(await commands()).toEqual([
+      ['DONE', 1, 0],
+      ['DONE', 1, 0],
     ]);
   });
 
   it('delivers commands in order, again after 5 minutes, and fails them after 5 attempts', async () => {
     const dev = await addDevice(a);
+    await resolve(dev.serialNo);
     const queued = await queue(a, dev.id, ['101', '102', '103', '104']);
     await withTenant(app, a, (tx) =>
       tx.deviceCommand.update({ where: { id: queued[3]!.id }, data: { status: 'CANCELLED' } }),
@@ -681,18 +907,23 @@ describe('ingest functions', () => {
 
   it('hands out at most 50 commands at a time', async () => {
     const dev = await addDevice(a);
+    await resolve(dev.serialNo);
     await queue(
       a,
       dev.id,
-      Array.from({ length: 52 }, (_, i) => String(200 + i)),
+      Array.from({ length: 53 }, (_, i) => String(200 + i)),
     );
+    expect(await take(dev.serialNo, T0, -1)).toEqual([]);
     expect(await take(dev.serialNo, T0, 100)).toHaveLength(50);
-    expect(await take(dev.serialNo, T0, 100)).toHaveLength(2);
+    expect(await take(dev.serialNo, T0, 1)).toHaveLength(1);
+    expect(await take(dev.serialNo, T0, null)).toHaveLength(2);
   });
 
   it("records a device's answers to its own commands only", async () => {
     const devA = await addDevice(a);
     const devB = await addDevice(b);
+    await resolve(devA.serialNo);
+    await resolve(devB.serialNo);
     const [ok, bad, pending] = await queue(a, devA.id, ['101', '102', '103']);
     const [commandB] = await queue(b, devB.id, ['101']);
     await take(devA.serialNo, T0, 2);
@@ -721,5 +952,9 @@ describe('ingest functions', () => {
 
     const tooMany = Array.from({ length: 201 }, () => ({ seq: ok!.seq, code: 0 }));
     await expect(answer(devA.serialNo, T0, tooMany)).rejects.toThrow(/INGEST_TOO_MANY_RESULTS/);
+    await expect(
+      ingest.$queryRaw`SELECT ingest_command_results(${devA.serialNo}::text, ${IP}::inet, now(),
+        '{"id": 1}'::jsonb)`,
+    ).rejects.toThrow(/INGEST_BAD_RESULTS/);
   });
 });

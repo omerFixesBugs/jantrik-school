@@ -234,6 +234,22 @@ describe('schema safety net', () => {
     expect(rows.filter((r) => r.app_exec || r.public_exec || !r.platform_exec)).toEqual([]);
   });
 
+  // The definer bodies use unqualified pg_catalog operators (enum =, text[] || text, …). A more
+  // specific operator or function created in public would win over them, so no login role may
+  // create anything there (only the NOLOGIN function owners may).
+  it('no login role can create objects in schema public', async () => {
+    const rows = await app.$queryRaw<{ role: string; can_create: boolean }[]>`
+      SELECT r.rolname AS role, has_schema_privilege(r.oid, 'public', 'CREATE') AS can_create
+      FROM pg_roles r
+      WHERE r.rolname IN ('jantrik_app', 'jantrik_ingest_app', 'jantrik_platform_app')
+      ORDER BY 1`;
+    expect(rows).toEqual([
+      { role: 'jantrik_app', can_create: false },
+      { role: 'jantrik_ingest_app', can_create: false },
+      { role: 'jantrik_platform_app', can_create: false },
+    ]);
+  });
+
   // The device receiver (jantrik_ingest_app) runs these four SECURITY DEFINER functions; any other
   // function owned by jantrik_ingest is a helper that only they call, running as its caller.
   const INGEST_ENTRY_POINTS = [
