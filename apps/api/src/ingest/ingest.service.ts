@@ -47,6 +47,13 @@ const INT32 = 2 ** 31;
 const REFUSED_LIST = 'ingest:refused';
 const REFUSED_LIST_MAX = 500;
 const REFUSAL_WINDOW_SEC = 600;
+/**
+ * How long an address (bucket) a device trusted is remembered, renewed on each of its requests.
+ * It only lets that address past the untrusted budget's early check; whether it is trusted is
+ * still the database's answer every time. Long, so a device back from a holiday is not refused
+ * while others flood its serial number (see `admit`).
+ */
+const TRUSTED_CACHE_SEC = 7 * 24 * 3600;
 
 /** An accepted device as ingest_resolve describes it, with the request's address and time. */
 export interface IngestDevice {
@@ -170,12 +177,17 @@ export class IngestService {
   /**
    * Every request starts here, in this order: the per-address limit, the brake on addresses that
    * keep sending refused serials (no database call), the serial number's form (no database call),
-   * the per-device limit, ingest_resolve, then the untrusted budget. A serial number has a share
-   * per address (an IPv6 /64), so requests from elsewhere cannot use up the real device's. The
-   * addresses the device does not trust also share one budget per serial number, so rotating
-   * addresses cannot multiply their shares; a trusted address is never charged to it, so they
-   * cannot starve the device either. `info` (getrequest) and `pushVersion` (handshake) are
-   * recorded on the device; ingest_resolve records the address and says whether it is trusted.
+   * the per-device limit, the untrusted budget's early check, ingest_resolve, then the untrusted
+   * budget. A serial number has a share per address (an IPv6 /64), so requests from elsewhere
+   * cannot use up the real device's. The addresses the device does not trust also share one budget
+   * per serial number, so rotating addresses cannot multiply their shares; a trusted address is
+   * never charged to it, so they cannot starve the device either. Once that budget is spent, an
+   * address not remembered as trusted (`ingest:trusted:<SN>:<bucket>`) is refused before any
+   * database call, so a flood records no addresses and touches no device. The one case this refuses
+   * a trusted device: it has not called for 7 days (the memory ran out) and comes back while
+   * others keep the budget spent; the first minute they pause lets it through and it is
+   * remembered again. `info` (getrequest) and `pushVersion` (handshake) are recorded on the
+   * device; ingest_resolve records the address and says whether it is trusted.
    */
   async admit(input: {
     ip: string | null;
@@ -203,6 +215,14 @@ export class IngestService {
       windowSec: 60,
     });
     if (!perDevice.allowed) return { kind: 'limited', retryAfter: perDevice.retryAfter };
+    const untrustedKey = `ingest-sn:${sn}:untrusted`;
+    const trustedKey = `ingest:trusted:${sn}:${bucket}`;
+    if ((await this.redis.exists(trustedKey)) === 0) {
+      const spent = await this.limiter.peek(untrustedKey);
+      if (spent.count >= this.limits.untrustedPerDevice) {
+        return { kind: 'limited', retryAfter: spent.retryAfter };
+      }
+    }
 
     const now = this.clock.now();
     const { firmware, userCount } = parseInfo(input.info);
@@ -221,9 +241,11 @@ export class IngestService {
       await this.recordRefusal(sn, row?.refusal ?? 'UNKNOWN', ip, now);
       return { kind: 'refused' };
     }
-    if (row.ip_trusted !== true) {
+    if (row.ip_trusted === true) {
+      await this.redis.set(trustedKey, '1', 'EX', TRUSTED_CACHE_SEC);
+    } else {
       const untrusted = await this.limiter.hit({
-        key: `ingest-sn:${sn}:untrusted`,
+        key: untrustedKey,
         limit: this.limits.untrustedPerDevice,
         windowSec: 60,
       });

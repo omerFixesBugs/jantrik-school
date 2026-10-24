@@ -1023,6 +1023,48 @@ describe('device receiver limits', () => {
     expect(row?.sourceIp).toBeNull();
   });
 
+  it('a spent untrusted budget refuses unknown addresses before the database; the trusted one goes on', async () => {
+    const t = await institute();
+    const dev = await addDevice(t.id);
+    const sn = dev.serialNo;
+    const own = randomIp();
+    const remembered = `ingest:trusted:${sn}:${own}`;
+    const addresses = async () =>
+      (
+        await withTenant(h.prisma, t.id, (tx) =>
+          tx.deviceSourceIp.findMany({ where: { deviceId: dev.id } }),
+        )
+      ).map((a) => a.ip);
+    // First contact: trusted, and remembered for 7 days.
+    expect((await ping(sn, own)).text).toBe('OK');
+    expect(await h.redis.ttl(remembered)).toBeGreaterThan(6 * 24 * 3600);
+    for (let i = 0; i < 5; i++) expect((await ping(sn, randomIp())).text).toBe('OK');
+    expect(await addresses()).toHaveLength(6);
+
+    // The budget is spent: new addresses are refused with no database call and leave no trace.
+    const query = vi.spyOn(h.ingestDb, '$queryRaw');
+    const late = randomIp();
+    expectLimited(await ping(sn, late));
+    expectLimited(await ping(sn, `${prefix64()}::1`));
+    expect(query).not.toHaveBeenCalled();
+    expect(await addresses()).toHaveLength(6);
+    expect(await addresses()).not.toContain(late);
+
+    // The trusted address is remembered, so it still reaches the database.
+    expect((await ping(sn, own)).text).toBe('OK');
+    expect(query).toHaveBeenCalledTimes(1);
+
+    // Forgotten (as after 7 days without a call) it is refused like an unknown address while the
+    // budget stays spent; the first minute the budget is free (here: its counter removed) it gets
+    // through and is remembered again.
+    await h.redis.del(remembered);
+    expectLimited(await ping(sn, own));
+    expect(query).toHaveBeenCalledTimes(1);
+    await h.redis.del(`rl:ingest-sn:${sn}:untrusted`, `rl:ingest-sn:${sn}:${own}`);
+    expect((await ping(sn, own)).text).toBe('OK');
+    expect(await h.redis.exists(remembered)).toBe(1);
+  });
+
   /** A random IPv6 /64 prefix (documentation range), as `2001:db8:x:y`. */
   const prefix64 = () =>
     `2001:db8:${Math.floor(Math.random() * 0xffff).toString(16)}:${Math.floor(Math.random() * 0xffff).toString(16)}`;
