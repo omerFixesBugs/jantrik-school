@@ -30,6 +30,7 @@ import {
 import { smsLength } from './sms.js';
 
 const T = '\t';
+const BOM = String.fromCharCode(0xfeff);
 
 describe('parseAttlog', () => {
   it('parses LF and CRLF lines, extra fields and trailing tabs', () => {
