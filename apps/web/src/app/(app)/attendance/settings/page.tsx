@@ -157,6 +157,9 @@ function SettingsForm({
   const describe = useErrorMessage();
   const { client } = useAuth();
   const [form, setForm] = useState<Form>(() => ({
+    // Everything as loaded, so the device and staff settings are saved back unchanged (the API
+    // ignores the derived values).
+    ...initial,
     mode: initial.mode,
     weeklyOffDays: initial.weeklyOffDays,
     editWindowDays: initial.editWindowDays,

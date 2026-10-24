@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEVICE_SETTINGS_DEFAULTS,
   attendancePercent,
   attendanceSettingsSchema,
   submitAttendanceSchema,
@@ -80,6 +81,7 @@ describe('SMS templates', () => {
       absentSmsEnabled: true,
       absentSmsDelayMinutes: 10,
       dailySmsCap: null,
+      ...DEVICE_SETTINGS_DEFAULTS,
     } as const;
     expect(attendanceSettingsSchema.safeParse({ ...base, absentSmsTemplate: '{x}' }).success).toBe(
       false,
@@ -88,6 +90,115 @@ describe('SMS templates', () => {
     expect(
       attendanceSettingsSchema.parse({ ...base, absentSmsTemplate: '  ' }).absentSmsTemplate,
     ).toBe(null);
+  });
+});
+
+describe('attendanceSettingsSchema: device and staff settings', () => {
+  const base = {
+    mode: 'DAILY',
+    weeklyOffDays: [5],
+    editWindowDays: 0,
+    leaveCountsAsAbsent: false,
+    absentSmsEnabled: false,
+    absentSmsTemplate: null,
+    absentSmsDelayMinutes: 10,
+    dailySmsCap: null,
+    ...DEVICE_SETTINGS_DEFAULTS,
+  } as const;
+  const problems = (patch: Record<string, unknown>) => {
+    const r = attendanceSettingsSchema.safeParse({ ...base, ...patch });
+    return r.success ? [] : r.error.issues.map((i) => i.path.join('.'));
+  };
+
+  it('the defaults are what the database defaults to', () => {
+    expect(DEVICE_SETTINGS_DEFAULTS).toEqual({
+      deviceAutoMark: false,
+      deviceGraceMinutes: 10,
+      deviceCutoffMinutes: 60,
+      deviceDefaultStart: '08:00',
+      entrySmsEnabled: false,
+      exitSmsEnabled: false,
+      staffOfficeStart: '08:00',
+      staffOfficeEnd: '16:00',
+      staffLateGraceMinutes: 10,
+      staffEarlyGraceMinutes: 10,
+      deviceHoursStart: '05:00',
+      deviceHoursEnd: '20:00',
+      deviceMaxPunchesPerMinute: 60,
+      staffDeviceIdStart: 9001,
+      punchRetentionDays: 730,
+    });
+    expect(attendanceSettingsSchema.parse(base)).toMatchObject(DEVICE_SETTINGS_DEFAULTS);
+  });
+
+  it('accepts Bangla digits in numbers and times', () => {
+    expect(
+      attendanceSettingsSchema.parse({
+        ...base,
+        deviceGraceMinutes: '১৫',
+        staffDeviceIdStart: ' ৯০০১ ',
+        punchRetentionDays: '৩৬৫',
+        deviceDefaultStart: '০৭:৩০',
+        staffOfficeEnd: '১৭:০০',
+      }),
+    ).toMatchObject({
+      deviceGraceMinutes: 15,
+      staffDeviceIdStart: 9001,
+      punchRetentionDays: 365,
+      deviceDefaultStart: '07:30',
+      staffOfficeEnd: '17:00',
+    });
+  });
+
+  it.each([
+    ['deviceGraceMinutes', -1],
+    ['deviceGraceMinutes', 121],
+    ['deviceCutoffMinutes', 14],
+    ['deviceCutoffMinutes', 301],
+    ['staffLateGraceMinutes', 121],
+    ['staffEarlyGraceMinutes', -1],
+    ['deviceMaxPunchesPerMinute', 9],
+    ['deviceMaxPunchesPerMinute', 241],
+    ['staffDeviceIdStart', 99],
+    ['staffDeviceIdStart', 1_000_000_000],
+    ['punchRetentionDays', 29],
+    ['punchRetentionDays', 3651],
+    ['deviceGraceMinutes', 2.5],
+    ['deviceGraceMinutes', ''],
+    ['deviceGraceMinutes', '1e1'],
+    ['deviceDefaultStart', '8:00'],
+    ['deviceHoursStart', '24:00'],
+    ['deviceAutoMark', 'yes'],
+  ])('rejects %s = %j', (field, value) => {
+    expect(problems({ [field]: value })).toContain(field);
+  });
+
+  it.each([
+    [{ deviceGraceMinutes: 0, deviceCutoffMinutes: 15, deviceMaxPunchesPerMinute: 10 }],
+    [{ deviceGraceMinutes: 120, deviceCutoffMinutes: 300, deviceMaxPunchesPerMinute: 240 }],
+    [{ staffDeviceIdStart: 100, punchRetentionDays: 30 }],
+    [{ staffDeviceIdStart: 999_999_999, punchRetentionDays: 3650 }],
+  ])('accepts the range ends %j', (patch) => {
+    expect(problems(patch)).toEqual([]);
+  });
+
+  it('office hours and device hours must end after they start', () => {
+    expect(problems({ staffOfficeStart: '16:00', staffOfficeEnd: '16:00' })).toEqual([
+      'staffOfficeEnd',
+    ]);
+    expect(problems({ deviceHoursStart: '20:00', deviceHoursEnd: '05:00' })).toEqual([
+      'deviceHoursEnd',
+    ]);
+    expect(problems({ staffOfficeStart: '07:59', staffOfficeEnd: '08:00' })).toEqual([]);
+  });
+
+  it('replaces the whole object: every new field is required', () => {
+    for (const field of Object.keys(DEVICE_SETTINGS_DEFAULTS)) {
+      const rest: Record<string, unknown> = { ...base };
+      delete rest[field];
+      const r = attendanceSettingsSchema.safeParse(rest);
+      expect(r.success, field).toBe(false);
+    }
   });
 });
 

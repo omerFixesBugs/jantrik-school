@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { getQueueToken } from '@nestjs/bullmq';
 import { createPrismaClient, withTenant, type PrismaClient } from '@jantrik/db';
 import {
+  DEVICE_SETTINGS_DEFAULTS,
   addDays,
   isoWeekday,
   todayIn,
@@ -495,6 +496,7 @@ describe('attendance', () => {
           absentSmsTemplate: '{name} আসেনি',
           absentSmsDelayMinutes: 10,
           dailySmsCap: null,
+          ...DEVICE_SETTINGS_DEFAULTS,
         })
         .expect(400);
       expect(JSON.stringify(bad.body)).toContain('absentSmsTemplate');
@@ -538,6 +540,7 @@ describe('attendance', () => {
           absentSmsTemplate: null,
           absentSmsDelayMinutes: 0,
           dailySmsCap: null,
+          ...DEVICE_SETTINGS_DEFAULTS,
         })
         .expect(200);
       expect((await summary(t.teacher)).body.percent).toBeCloseTo(100 / 3);
@@ -570,6 +573,130 @@ describe('attendance', () => {
         students: 3,
         counts: { present: 3, absent: 0 },
       });
+    });
+  });
+
+  describe('device and staff settings', () => {
+    const base = {
+      mode: 'DAILY',
+      weeklyOffDays: [5],
+      editWindowDays: 0,
+      leaveCountsAsAbsent: false,
+      absentSmsEnabled: false,
+      absentSmsTemplate: null,
+      absentSmsDelayMinutes: 10,
+      dailySmsCap: null,
+      ...DEVICE_SETTINGS_DEFAULTS,
+    };
+    const put = (token: string, body: object) =>
+      http(h).put('/attendance/settings').set(bearer(token)).send(body);
+    const adminOf = async (tenantId: string) =>
+      (await otpLogin(h, (await addMember(h, tenantId, { roles: ['ADMIN'] })).phone)).accessToken;
+
+    it('round trip: Bangla digits accepted, times as HH:MM, audited', async () => {
+      const t = await createTenant(h, { modules: ['ATTENDANCE'] });
+      const admin = await adminOf(t.id);
+      const changed = {
+        deviceAutoMark: true,
+        deviceGraceMinutes: 15,
+        deviceCutoffMinutes: 90,
+        deviceDefaultStart: '07:30',
+        entrySmsEnabled: true,
+        exitSmsEnabled: true,
+        staffOfficeStart: '07:45',
+        staffOfficeEnd: '15:30',
+        staffLateGraceMinutes: 5,
+        staffEarlyGraceMinutes: 20,
+        deviceHoursStart: '06:00',
+        deviceHoursEnd: '19:00',
+        deviceMaxPunchesPerMinute: 120,
+        staffDeviceIdStart: 8001,
+        punchRetentionDays: 365,
+      };
+      const saved = (
+        await put(admin, {
+          ...base,
+          ...changed,
+          deviceGraceMinutes: '১৫',
+          staffDeviceIdStart: '৮০০১',
+          deviceDefaultStart: '০৭:৩০',
+        }).expect(200)
+      ).body as AttendanceSettings;
+      expect(saved).toMatchObject(changed);
+      const read = (await http(h).get('/attendance/settings').set(bearer(admin)).expect(200))
+        .body as AttendanceSettings;
+      expect(read).toMatchObject(changed);
+      const row = await withTenant(h.prisma, t.id, (tx) =>
+        tx.attendanceSettings.findUniqueOrThrow({ where: { tenantId: t.id } }),
+      );
+      expect(row.deviceDefaultStart.toISOString()).toBe('1970-01-01T07:30:00.000Z');
+      expect(row.staffOfficeEnd.toISOString()).toBe('1970-01-01T15:30:00.000Z');
+      const [audit] = await auditRows(t.id, row.id);
+      expect(audit).toMatchObject({
+        entity: 'attendance_settings',
+        oldValues: DEVICE_SETTINGS_DEFAULTS,
+        newValues: changed,
+      });
+    });
+
+    it('validation: ranges, and office and device hours must end after they start', async () => {
+      const t = await createTenant(h, { modules: ['ATTENDANCE'] });
+      const admin = await adminOf(t.id);
+      const errors = async (change: object) =>
+        ((await put(admin, { ...base, ...change }).expect(400)).body.errors as { path: string }[])
+          .map((e) => e.path)
+          .sort();
+      expect(
+        await errors({
+          deviceGraceMinutes: 121,
+          deviceCutoffMinutes: 14,
+          deviceMaxPunchesPerMinute: 241,
+          staffDeviceIdStart: 99,
+          punchRetentionDays: 3651,
+        }),
+      ).toEqual([
+        'deviceCutoffMinutes',
+        'deviceGraceMinutes',
+        'deviceMaxPunchesPerMinute',
+        'punchRetentionDays',
+        'staffDeviceIdStart',
+      ]);
+      expect(await errors({ staffOfficeStart: '16:00', staffOfficeEnd: '16:00' })).toEqual([
+        'staffOfficeEnd',
+      ]);
+      expect(await errors({ deviceHoursStart: '20:00', deviceHoursEnd: '05:00' })).toEqual([
+        'deviceHoursEnd',
+      ]);
+      // The PUT replaces the whole object: a missing new field is an error.
+      const { deviceAutoMark: _, ...missing } = base;
+      expect(
+        ((await put(admin, missing).expect(400)).body.errors as { path: string }[]).map(
+          (e) => e.path,
+        ),
+      ).toEqual(['deviceAutoMark']);
+      // Nothing was saved.
+      expect(
+        (await http(h).get('/attendance/settings').set(bearer(admin)).expect(200)).body,
+      ).toMatchObject(DEVICE_SETTINGS_DEFAULTS);
+    });
+
+    it('defaults: the column defaults, and the same for an institute without a settings row', async () => {
+      const t = await createTenant(h, { modules: ['ATTENDANCE'] });
+      const admin = await adminOf(t.id);
+      const pick = (s: AttendanceSettings) =>
+        Object.fromEntries(
+          Object.keys(DEVICE_SETTINGS_DEFAULTS).map((k) => [k, s[k as keyof AttendanceSettings]]),
+        );
+      const settings = async () =>
+        (await http(h).get('/attendance/settings').set(bearer(admin)).expect(200))
+          .body as AttendanceSettings;
+      // A new institute's row has only the column defaults for these.
+      expect(pick(await settings())).toEqual(DEVICE_SETTINGS_DEFAULTS);
+      // Institutes from before the attendance module have no row: the code's defaults.
+      await withTenant(owner, t.id, (tx) =>
+        tx.attendanceSettings.delete({ where: { tenantId: t.id } }),
+      );
+      expect(pick(await settings())).toEqual(DEVICE_SETTINGS_DEFAULTS);
     });
   });
 

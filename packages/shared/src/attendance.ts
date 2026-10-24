@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { isoDateSchema, type IsoDate } from './dates.js';
+import { toAsciiDigits } from './digits.js';
+import { timeOfDaySchema } from './setup.js';
 import { validateSmsTemplate } from './sms.js';
 
 export const ATTENDANCE_STATUSES = ['PRESENT', 'ABSENT', 'LATE', 'LEAVE'] as const;
@@ -46,32 +48,115 @@ export const attendanceSheetQuerySchema = z.object({
 });
 export const mySectionsQuerySchema = z.object({ date: isoDateSchema.optional() });
 
-/** PUT /attendance/settings (OWNER/ADMIN). */
-export const attendanceSettingsSchema = z.object({
-  mode: z.enum(['DAILY', 'PER_SESSION']),
-  weeklyOffDays: z
-    .array(z.number().int().min(1).max(7))
-    .max(6)
-    .refine((d) => new Set(d).size === d.length, 'Duplicate day'),
-  editWindowDays: z.number().int().min(0).max(30),
-  leaveCountsAsAbsent: z.boolean(),
-  absentSmsEnabled: z.boolean(),
-  /** Null or empty = the built-in template. */
-  absentSmsTemplate: z
-    .string()
-    .trim()
-    .max(500)
-    .nullable()
-    .transform((t) => (t ? t : null))
-    .superRefine((t, ctx) => {
-      for (const message of t ? validateSmsTemplate(t) : [])
-        ctx.addIssue({ code: 'custom', message });
-    }),
-  absentSmsDelayMinutes: z.number().int().min(0).max(240),
-  /** Null = 2 × active students. */
-  dailySmsCap: z.number().int().min(0).max(1_000_000).nullable(),
-});
+/** A whole number in a range; Bangla digits accepted when it is sent as text. */
+const settingNumber = (min: number, max: number) =>
+  z
+    .union([z.number(), z.string()])
+    .transform((v) => {
+      if (typeof v === 'number') return v;
+      const digits = toAsciiDigits(v).trim();
+      return /^\d+$/.test(digits) ? Number(digits) : Number.NaN;
+    })
+    .pipe(z.number().int().min(min).max(max));
+
+/** Devices and staff attendance (step 11). Times are local wall-clock "HH:MM". */
+export interface DeviceAttendanceSettings {
+  /** Device punches write the register at the cutoff (DAILY mode). */
+  deviceAutoMark: boolean;
+  /** A first IN punch after shift start + grace is LATE. */
+  deviceGraceMinutes: number;
+  /** The register is written at shift start + cutoff. */
+  deviceCutoffMinutes: number;
+  /** "School starts at", for sections without a shift. */
+  deviceDefaultStart: string;
+  entrySmsEnabled: boolean;
+  exitSmsEnabled: boolean;
+  staffOfficeStart: string;
+  staffOfficeEnd: string;
+  staffLateGraceMinutes: number;
+  staffEarlyGraceMinutes: number;
+  /** Punches outside these hours are flagged OUTSIDE_HOURS. */
+  deviceHoursStart: string;
+  deviceHoursEnd: string;
+  /** Per device and minute: punches over it are held (BURST), beyond 5 × it dropped. */
+  deviceMaxPunchesPerMinute: number;
+  /** Staff default device IDs are taken from here up. */
+  staffDeviceIdStart: number;
+  /** Raw punches older than this are deleted. */
+  punchRetentionDays: number;
+}
+
+/** The database defaults (attendance_settings), also used for institutes without a row. */
+export const DEVICE_SETTINGS_DEFAULTS: DeviceAttendanceSettings = {
+  deviceAutoMark: false,
+  deviceGraceMinutes: 10,
+  deviceCutoffMinutes: 60,
+  deviceDefaultStart: '08:00',
+  entrySmsEnabled: false,
+  exitSmsEnabled: false,
+  staffOfficeStart: '08:00',
+  staffOfficeEnd: '16:00',
+  staffLateGraceMinutes: 10,
+  staffEarlyGraceMinutes: 10,
+  deviceHoursStart: '05:00',
+  deviceHoursEnd: '20:00',
+  deviceMaxPunchesPerMinute: 60,
+  staffDeviceIdStart: 9001,
+  punchRetentionDays: 730,
+};
+
+/** PUT /attendance/settings (OWNER/ADMIN): the whole object. */
+export const attendanceSettingsSchema = z
+  .object({
+    mode: z.enum(['DAILY', 'PER_SESSION']),
+    weeklyOffDays: z
+      .array(z.number().int().min(1).max(7))
+      .max(6)
+      .refine((d) => new Set(d).size === d.length, 'Duplicate day'),
+    editWindowDays: z.number().int().min(0).max(30),
+    leaveCountsAsAbsent: z.boolean(),
+    absentSmsEnabled: z.boolean(),
+    /** Null or empty = the built-in template. */
+    absentSmsTemplate: z
+      .string()
+      .trim()
+      .max(500)
+      .nullable()
+      .transform((t) => (t ? t : null))
+      .superRefine((t, ctx) => {
+        for (const message of t ? validateSmsTemplate(t) : [])
+          ctx.addIssue({ code: 'custom', message });
+      }),
+    absentSmsDelayMinutes: z.number().int().min(0).max(240),
+    /** Null = 2 × active students. */
+    dailySmsCap: z.number().int().min(0).max(1_000_000).nullable(),
+    deviceAutoMark: z.boolean(),
+    deviceGraceMinutes: settingNumber(0, 120),
+    deviceCutoffMinutes: settingNumber(15, 300),
+    deviceDefaultStart: timeOfDaySchema,
+    entrySmsEnabled: z.boolean(),
+    exitSmsEnabled: z.boolean(),
+    staffOfficeStart: timeOfDaySchema,
+    staffOfficeEnd: timeOfDaySchema,
+    staffLateGraceMinutes: settingNumber(0, 120),
+    staffEarlyGraceMinutes: settingNumber(0, 120),
+    deviceHoursStart: timeOfDaySchema,
+    deviceHoursEnd: timeOfDaySchema,
+    deviceMaxPunchesPerMinute: settingNumber(10, 240),
+    staffDeviceIdStart: settingNumber(100, 999_999_999),
+    punchRetentionDays: settingNumber(30, 3650),
+  })
+  .refine((s) => s.staffOfficeEnd > s.staffOfficeStart, {
+    message: 'End must be after start',
+    path: ['staffOfficeEnd'],
+  })
+  .refine((s) => s.deviceHoursEnd > s.deviceHoursStart, {
+    message: 'End must be after start',
+    path: ['deviceHoursEnd'],
+  });
 export type AttendanceSettingsInput = z.input<typeof attendanceSettingsSchema>;
+/** What the API gets after validation (numbers and times normalised). */
+export type AttendanceSettingsUpdate = z.output<typeof attendanceSettingsSchema>;
 
 /** POST/PUT /attendance/holidays (OWNER/ADMIN). */
 export const holidaySchema = z
@@ -94,7 +179,7 @@ export const sectionTeachersSchema = z.object({
 
 // ─────────────────────────── Responses ───────────────────────────
 
-export interface AttendanceSettings {
+export interface AttendanceSettings extends DeviceAttendanceSettings {
   mode: AttendanceMode;
   weeklyOffDays: number[];
   editWindowDays: number;
