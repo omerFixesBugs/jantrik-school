@@ -33,7 +33,7 @@ export const RETENTION_CHUNK = 5000;
  * one institute's new punches. While that job is waiting, running or kept as failed, the receiver
  * cannot queue another for the institute, so `devices-tick` visits every minute the institutes in
  * `devices:tenants` (with ATTENDANCE on) for leftovers, then writes the registers due at a shift's
- * cutoff (`DeviceRegistersService.cutoff`). `expire-punches` deletes, daily, what is past
+ * cutoff (`cutoff`, one section per transaction). `expire-punches` deletes, daily, what is past
  * retention for every institute in `devices:tenants` (`DeviceRetentionService`). Each institute is
  * processed in its own RLS transactions with no person acting; no query crosses institutes.
  */
@@ -96,7 +96,26 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
   /** One institute's minute: its leftover punches first, then the registers due at a cutoff. */
   async tick(tenantId: string): Promise<void> {
     await this.drain(tenantId);
-    await this.runner.run(tenantId, () => this.registers.cutoff());
+    await this.cutoff(tenantId);
+  }
+
+  /**
+   * The registers due at a shift's cutoff, one section per transaction, so a big section never
+   * holds up the others; one failing (logged by the error name) stops none of the rest and is
+   * tried again the next minute.
+   */
+  async cutoff(tenantId: string): Promise<void> {
+    const due = await this.runner.run(tenantId, () => this.registers.dueSections());
+    for (const sectionId of due) {
+      try {
+        await this.runner.run(tenantId, () => this.registers.closeAtCutoff(sectionId));
+      } catch (error) {
+        // Not the message: database errors can contain row values.
+        this.logger.error(
+          `Cutoff failed for ${tenantId}, section ${sectionId}: ${(error as Error).name}`,
+        );
+      }
+    }
   }
 
   /** All of the institute's unprocessed punches, `PUNCH_BATCH` per transaction. */

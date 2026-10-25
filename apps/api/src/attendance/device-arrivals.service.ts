@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   DEVICES_SEEN_WINDOW_MS,
   arrivalStatus,
+  autoCloseEnd,
   cutoffTime,
   dateToDb,
   firstCountingIn,
@@ -9,6 +10,7 @@ import {
   type IsoDate,
   type PunchFlag,
 } from '@jantrik/shared';
+import { idsOnDevices } from '../devices/device-users.js';
 import { Db } from '../tenancy/db.service.js';
 import { timeFromDb, type AttendanceTenant } from './attendance-settings.service.js';
 
@@ -24,10 +26,20 @@ export interface SectionDeviceDay {
   start: string;
   /** Start + cutoff minutes (HH:MM:SS). */
   cutoff: string;
+  /** An hour after the cutoff (HH:MM:SS): from then on it waits for a person. */
+  autoCloseEnd: string;
   /** The register's roster: the students a submit expects, by roll. */
   students: string[];
   /** Those of them with an arrival. */
   arrivals: Map<string, Arrival>;
+  /** How many of them cannot punch: no device ID, or not confirmed on any active device. */
+  notOnDevice: number;
+}
+
+/** A student's device ID now. */
+interface StudentId {
+  studentId: string;
+  deviceUserId: string;
 }
 
 /**
@@ -39,7 +51,10 @@ export interface SectionDeviceDay {
 export class DeviceArrivalsService {
   constructor(private readonly db: Db) {}
 
-  /** For sections of the current year: their shift's cutoff, roster and arrivals on `date`. */
+  /**
+   * For sections of the current year: their shift's cutoff, roster and arrivals on `date`, and how
+   * many of their students no device has (`idsOnDevices`, the rule the people screen uses).
+   */
   async sectionDays(
     sectionIds: string[],
     date: IsoDate,
@@ -60,24 +75,39 @@ export class DeviceArrivalsService {
       orderBy: [{ roll: { sort: 'asc', nulls: 'last' } }, { student: { studentCode: 'asc' } }],
       select: { sectionId: true, studentId: true },
     });
+    const { deviceCutoffMinutes } = tenant.settings;
     const days = new Map<string, SectionDeviceDay>();
     for (const s of sections) {
       const start = startOf(s.shift, tenant);
       days.set(s.id, {
         start,
-        cutoff: cutoffTime(start, tenant.settings.deviceCutoffMinutes),
+        cutoff: cutoffTime(start, deviceCutoffMinutes),
+        autoCloseEnd: autoCloseEnd(start, deviceCutoffMinutes),
         students: [],
         arrivals: new Map(),
+        notOnDevice: 0,
       });
     }
     for (const e of enrolments) if (e.sectionId) days.get(e.sectionId)?.students.push(e.studentId);
     const starts = new Map<string, string>();
     for (const day of days.values()) for (const id of day.students) starts.set(id, day.start);
-    const arrivals = await this.arrivals(starts, date, tenant);
+    const ids = await this.deviceIds([...starts.keys()]);
+    const onDevices =
+      ids.length > 0
+        ? await idsOnDevices(
+            tx,
+            ids.map((p) => p.deviceUserId),
+          )
+        : null;
+    const reachable = new Set(
+      ids.filter((p) => onDevices?.has(p.deviceUserId)).map((p) => p.studentId),
+    );
+    const arrivals = await this.arrivalsOf(ids, starts, date, tenant);
     for (const day of days.values()) {
       for (const id of day.students) {
         const arrival = arrivals.get(id);
         if (arrival) day.arrivals.set(id, arrival);
+        if (!reachable.has(id)) day.notOnDevice += 1;
       }
     }
     return days;
@@ -102,15 +132,41 @@ export class DeviceArrivalsService {
     date: IsoDate,
     tenant: AttendanceTenant,
   ): Promise<Map<string, Arrival>> {
-    const out = new Map<string, Arrival>();
-    if (starts.size === 0) return out;
-    const tx = this.db.tx;
-    const people = await tx.devicePerson.findMany({
-      where: { studentId: { in: [...starts.keys()] } },
+    return this.arrivalsOf(await this.deviceIds([...starts.keys()]), starts, date, tenant);
+  }
+
+  /** Whether an active device called in within the last 15 minutes (no lock is taken). */
+  async devicesSeenRecently(now: Date): Promise<boolean> {
+    const seen = await this.db.tx.attendanceDevice.findFirst({
+      where: {
+        isActive: true,
+        lastSeenAt: { gte: new Date(now.getTime() - DEVICES_SEEN_WINDOW_MS) },
+      },
+      select: { id: true },
+    });
+    return seen !== null;
+  }
+
+  private async deviceIds(studentIds: string[]): Promise<StudentId[]> {
+    if (studentIds.length === 0) return [];
+    const rows = await this.db.tx.devicePerson.findMany({
+      where: { studentId: { in: studentIds } },
       select: { deviceUserId: true, studentId: true },
     });
+    return rows.flatMap((r) =>
+      r.studentId ? [{ studentId: r.studentId, deviceUserId: r.deviceUserId }] : [],
+    );
+  }
+
+  private async arrivalsOf(
+    people: StudentId[],
+    starts: Map<string, string>,
+    date: IsoDate,
+    tenant: AttendanceTenant,
+  ): Promise<Map<string, Arrival>> {
+    const out = new Map<string, Arrival>();
     if (people.length === 0) return out;
-    const punches = await tx.devicePunch.findMany({
+    const punches = await this.db.tx.devicePunch.findMany({
       where: {
         deviceUserId: { in: people.map((p) => p.deviceUserId) },
         localDate: dateToDb(date),
@@ -138,7 +194,7 @@ export class DeviceArrivalsService {
           flags: p.flags as PunchFlag[],
         })),
       );
-      if (!first || !person.studentId) continue;
+      if (!first) continue;
       out.set(person.studentId, {
         at: first.punchedAt,
         status: arrivalStatus(
@@ -150,24 +206,12 @@ export class DeviceArrivalsService {
     }
     return out;
   }
-
-  /** Whether an active device called in within the last 15 minutes (no lock is taken). */
-  async devicesSeenRecently(now: Date): Promise<boolean> {
-    const seen = await this.db.tx.attendanceDevice.findFirst({
-      where: {
-        isActive: true,
-        lastSeenAt: { gte: new Date(now.getTime() - DEVICES_SEEN_WINDOW_MS) },
-      },
-      select: { id: true },
-    });
-    return seen !== null;
-  }
 }
 
 /** A section's start: its shift's, or the institute's "school starts at" (HH:MM). */
 export const startOf = (shift: { startTime: Date } | null, tenant: AttendanceTenant): string =>
   shift ? timeFromDb(shift.startTime) : tenant.settings.deviceDefaultStart;
 
-/** Whether the local time of `now` is at or past a cutoff (HH:MM:SS). */
+/** Whether the local time of `now` is at or past a time of day (HH:MM:SS). */
 export const cutoffPassed = (cutoff: string, now: Date, timeZone: string): boolean =>
   localTimeOf(now, timeZone) >= cutoff;

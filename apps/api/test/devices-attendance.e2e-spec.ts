@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getQueueToken } from '@nestjs/bullmq';
+import { Logger } from '@nestjs/common';
 import { withTenant } from '@jantrik/db';
 import type { ZkDeviceSimulator } from '@jantrik/device-sim';
 import {
@@ -13,6 +14,7 @@ import {
   type StudentAttendanceReport,
 } from '@jantrik/shared';
 import type { Queue } from 'bullmq';
+import { AbsentSmsService } from '../src/attendance/absent-sms.service.js';
 import { timeToDb } from '../src/attendance/attendance-settings.service.js';
 import { DeviceArrivalsService } from '../src/attendance/device-arrivals.service.js';
 import { DevicesProcessor, PUNCH_BATCH } from '../src/devices/devices.processor.js';
@@ -59,18 +61,77 @@ describe('device registers', () => {
   beforeEach(() => clock.set(at('07:00:00')));
   afterEach(() => vi.restoreAllMocks());
 
+  /** The device confirmed adding these IDs (a USER_UPSERT done), as after "send people". */
+  const confirmOnDevice = (s: Institute, ids: string[]) =>
+    f.inTenant(s.tenantId, (tx) =>
+      tx.deviceCommand.createMany({
+        data: ids.map((deviceUserId) => ({
+          tenantId: s.tenantId,
+          deviceId: s.device.id,
+          kind: 'USER_UPSERT' as const,
+          deviceUserId,
+          payload: `DATA UPDATE USERINFO PIN=${deviceUserId}\tName=Student`,
+          status: 'DONE' as const,
+          doneAt: at('06:00:00'),
+        })),
+      }),
+    );
+
   /**
-   * A school (section A: 3 students as 101–103, section B: 1 as 201) with auto-mark on, and its
-   * device seen from one trusted address.
+   * A school (section A: 3 students as 101–103, section B: 1 as 201) with auto-mark on, its
+   * students on the device (all of them unless `onDevice` says which IDs), and the device seen
+   * from one trusted address.
    */
-  const setup = async (settings: Partial<AttendanceSettings> = {}): Promise<Setup> => {
+  const setup = async (
+    settings: Partial<AttendanceSettings> = {},
+    onDevice = ['101', '102', '103', '201'],
+  ): Promise<Setup> => {
     const s = await f.institute({ deviceAutoMark: true, ...settings });
     await f.map(s.tenantId, [
       ...s.a.map((st, i) => ({ deviceUserId: String(101 + i), studentId: st.id })),
       { deviceUserId: '201', studentId: s.b[0]!.id },
     ]);
+    await confirmOnDevice(s, onDevice);
     return { ...s, reader: f.sim(s.device.serialNo) };
   };
+
+  /** One more student in section A (no device ID), with a primary guardian. */
+  const enrol = (s: Institute) =>
+    f.inTenant(s.tenantId, async (tx) => {
+      const section = await tx.section.findUniqueOrThrow({ where: { id: s.sectionA } });
+      const student = await tx.student.create({
+        data: {
+          tenantId: s.tenantId,
+          studentCode: `S-${randomUUID().slice(0, 8)}`,
+          nameBn: 'ছাত্র 4',
+          nameEn: 'Student 4',
+        },
+      });
+      await tx.enrolment.create({
+        data: {
+          tenantId: s.tenantId,
+          studentId: student.id,
+          academicYearId: section.academicYearId,
+          classLevelId: section.classLevelId,
+          sectionId: s.sectionA,
+          roll: 4,
+        },
+      });
+      const phone = randomPhone();
+      const guardian = await tx.guardian.create({
+        data: { tenantId: s.tenantId, nameEn: 'Parent', phone },
+      });
+      await tx.studentGuardian.create({
+        data: {
+          tenantId: s.tenantId,
+          studentId: student.id,
+          guardianId: guardian.id,
+          relation: 'FATHER',
+          isPrimary: true,
+        },
+      });
+      return { id: student.id, phone };
+    });
 
   /** Punches of [pin, time] uploaded at `now` and processed. */
   const punch = async (s: Setup, now: string, punches: [string, string][]) => {
@@ -176,6 +237,7 @@ describe('device registers', () => {
         arrived: 2,
         late: 1,
         enrolled: 3,
+        notOnDevice: 0,
         cutoffAt: '09:00',
         state: 'BEFORE_CUTOFF',
       });
@@ -268,6 +330,7 @@ describe('device registers', () => {
         arrived: 0,
         late: 0,
         enrolled: 1,
+        notOnDevice: 0,
         cutoffAt: '13:00',
         state: 'BEFORE_CUTOFF',
       });
@@ -341,7 +404,7 @@ describe('device registers', () => {
       const real = arrivals.sectionDays.bind(arrivals);
       let raced = false;
       vi.spyOn(arrivals, 'sectionDays').mockImplementation(async (...args) => {
-        if (!raced) {
+        if (!raced && args[0].includes(s.sectionA)) {
           raced = true;
           await submit(s.teacher, s, 0, ['PRESENT', 'ABSENT', 'PRESENT']).expect(200);
         }
@@ -358,6 +421,101 @@ describe('device registers', () => {
       ]);
       expect(await rows(s, s.sectionB)).toEqual([['PRESENT', 'DEVICE']]);
       expect(await sessionCount(s.tenantId)).toBe(2);
+    });
+
+    it("the cutoff's register first, a teacher's submit waiting on it: 409 with the device's register", async () => {
+      const s = await setup();
+      await punch(s, '07:51:00', [
+        ['101', '07:50:00'],
+        ['102', '07:50:30'],
+        ['201', '07:50:00'],
+      ]);
+      // A's register is inserted, not committed yet: the teacher's submit starts and waits on it.
+      const absentSms = h.app.get(AbsentSmsService);
+      const real = absentSms.queue.bind(absentSms);
+      let teacher: Promise<{ status: number; body: Record<string, unknown> }> | null = null;
+      vi.spyOn(absentSms, 'queue').mockImplementation(async (tenant, date, ids) => {
+        if (!teacher && ids.includes(s.a[2]!.id)) {
+          teacher = submit(s.teacher, s, 0, ['PRESENT', 'PRESENT', 'PRESENT']).then((r) => r);
+          await vi.waitFor(
+            async () => {
+              const [w] = await h.prisma.$queryRaw<{ n: number }[]>`
+                SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`;
+              if (w!.n === 0) throw new Error('the submit is not waiting yet');
+            },
+            { timeout: 5_000, interval: 25 },
+          );
+        }
+        return real(tenant, date, ids);
+      });
+
+      await tickAt(s, '09:00:00');
+      expect(teacher).not.toBeNull();
+      const res = await teacher!;
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        code: 'VERSION_CONFLICT',
+        session: { version: 1, source: 'DEVICE', updatedByDevice: true },
+      });
+      expect(await rows(s)).toEqual([
+        ['PRESENT', 'DEVICE'],
+        ['PRESENT', 'DEVICE'],
+        ['ABSENT', 'DEVICE'],
+      ]);
+    });
+
+    it('one section per transaction: a section that fails is logged by the error name and the others still close', async () => {
+      const s = await setup();
+      await punch(s, '07:51:00', [
+        ['101', '07:50:00'],
+        ['102', '07:50:30'],
+        ['201', '07:50:00'],
+      ]);
+      const arrivals = h.app.get(DeviceArrivalsService);
+      const real = arrivals.sectionDays.bind(arrivals);
+      vi.spyOn(arrivals, 'sectionDays').mockImplementation(async (...args) => {
+        if (args[0].includes(s.sectionA)) throw new Error('a row value');
+        return real(...args);
+      });
+      const errors = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      await tickAt(s, '09:00:00');
+      expect(await registerOf(s)).toBeNull();
+      expect(await rows(s, s.sectionB)).toEqual([['PRESENT', 'DEVICE']]);
+      const lines = errors.mock.calls.map((c) => String(c[0]));
+      expect(lines.filter((l) => l.startsWith('Cutoff failed'))).toEqual([
+        `Cutoff failed for ${s.tenantId}, section ${s.sectionA}: Error`,
+      ]);
+      expect(lines.join('\n')).not.toContain('a row value');
+
+      // The next minute A closes.
+      vi.restoreAllMocks();
+      await tickAt(s, '09:01:00');
+      expect((await registerOf(s))?.source).toBe('DEVICE');
+    });
+
+    it('a device seen 14:59 before the cutoff counts; 15:01 before, it is offline', async () => {
+      const seen = await setup();
+      const gone = await setup();
+      for (const s of [seen, gone]) {
+        await punch(s, '07:51:00', [
+          ['101', '07:50:00'],
+          ['102', '07:50:30'],
+          ['201', '07:50:00'],
+        ]);
+      }
+      clock.set(at('08:45:01'));
+      expect((await seen.reader.ping()).status).toBe(200);
+      clock.set(at('08:44:59'));
+      expect((await gone.reader.ping()).status).toBe(200);
+
+      clock.set(at('09:00:00'));
+      for (const s of [seen, gone]) await processor.tick(s.tenantId);
+      expect(await sessionCount(seen.tenantId)).toBe(2);
+      expect(await sessionCount(gone.tenantId)).toBe(0);
+      expect(sectionOf(await todayReport(gone.admin), gone.sectionA).device).toMatchObject({
+        state: 'DEVICE_OFFLINE',
+      });
     });
 
     it("institute B's tick never touches institute A", async () => {
@@ -431,6 +589,7 @@ describe('device registers', () => {
         arrived: 1,
         late: 0,
         enrolled: 3,
+        notOnDevice: 0,
         cutoffAt: '09:00',
         state: 'DEVICE_OFFLINE',
       });
@@ -484,6 +643,110 @@ describe('device registers', () => {
       expect((await close(s.admin, s.sectionA).expect(409)).body.code).toBe('REGISTER_EXISTS');
       expect(await sessionCount(s.tenantId)).toBe(2);
       expect(await absentSms(s.tenantId)).toHaveLength(2);
+    });
+
+    it('a student who cannot punch (no device ID, or not confirmed on a device) holds the section back; an admin may still close it', async () => {
+      // 103 has an ID the device has not confirmed yet; a fourth student has no ID at all.
+      const s = await setup({}, ['101', '102', '201']);
+      const fourth = await enrol(s);
+      await punch(s, '07:51:00', [
+        ['101', '07:50:00'],
+        ['102', '07:50:30'],
+        ['201', '07:50:00'],
+      ]);
+      clock.set(at('08:30:00'));
+      expect(sectionOf(await todayReport(s.admin), s.sectionA).device).toEqual({
+        arrived: 2,
+        late: 0,
+        enrolled: 4,
+        notOnDevice: 2,
+        cutoffAt: '09:00',
+        state: 'BEFORE_CUTOFF',
+      });
+
+      await tickAt(s, '09:00:00');
+      expect(await registerOf(s)).toBeNull();
+      expect(await rows(s, s.sectionB)).toEqual([['PRESENT', 'DEVICE']]);
+      expect(sectionOf(await todayReport(s.admin), s.sectionA).device).toMatchObject({
+        notOnDevice: 2,
+        state: 'NOT_ON_DEVICE',
+      });
+      expect(await f.smsLogs(s.tenantId)).toEqual([]);
+
+      // The admin confirms: those two are ABSENT, with the usual absent SMS.
+      const closed = (await close(s.admin, s.sectionA).expect(201)).body as CloseFromDeviceResult;
+      expect(closed.counts).toEqual({ present: 2, late: 0, absent: 2, leave: 0 });
+      await waitForSms(s.tenantId, 'SENT', 2);
+      expect((await absentSms(s.tenantId)).map(([id]) => id).sort()).toEqual(
+        [s.a[2]!.id, fourth.id].sort(),
+      );
+    });
+
+    it('a held-back section closes by itself only within an hour after its cutoff; later it waits for a person', async () => {
+      const s = await setup();
+      // A: one of three by the cutoff; B: nobody.
+      await punch(s, '07:51:00', [['101', '07:50:00']]);
+      await tickAt(s, '09:00:00');
+      expect(await sessionCount(s.tenantId)).toBe(0);
+
+      // Within the hour A's late arrivals let it close.
+      await punch(s, '09:30:30', [['102', '09:30:00']]);
+      await tickAt(s, '09:31:00');
+      expect(await rows(s)).toEqual([
+        ['PRESENT', 'DEVICE'],
+        ['LATE', 'DEVICE'],
+        ['ABSENT', 'DEVICE'],
+      ]);
+      const sent = (await f.smsLogs(s.tenantId)).length;
+
+      // B's student arrives after 10:00: no register, no surprise absent SMS.
+      await punch(s, '10:00:30', [['201', '10:00:00']]);
+      await tickAt(s, '10:01:00');
+      expect(await registerOf(s, s.sectionB)).toBeNull();
+      expect(sectionOf(await todayReport(s.admin), s.sectionB).device).toMatchObject({
+        arrived: 1,
+        state: 'AUTO_CLOSE_ENDED',
+      });
+      await tickAt(s, '12:00:00');
+      expect(await registerOf(s, s.sectionB)).toBeNull();
+      expect(await f.smsLogs(s.tenantId)).toHaveLength(sent);
+
+      // A person closes it.
+      await close(s.admin, s.sectionB).expect(201);
+      expect(await rows(s, s.sectionB)).toEqual([['LATE', 'DEVICE']]);
+    });
+
+    it('waiting more than 5 s for the punch lock answers 409 BUSY with Retry-After', async () => {
+      const s = await setup();
+      clock.set(at('09:05:00'));
+      // Another transaction holds the institute's punch lock (a long batch).
+      let release!: () => void;
+      const kept = new Promise<void>((resolve) => (release = resolve));
+      let lockTaken!: () => void;
+      const taken = new Promise<void>((resolve) => (lockTaken = resolve));
+      const holder = withTenant(
+        h.prisma,
+        s.tenantId,
+        async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('device-punches:' || app_current_tenant_id()::text, 0))`;
+          lockTaken();
+          await kept;
+        },
+        { timeout: 30_000 },
+      );
+      await taken;
+      // Should the wait not be limited, the holder still lets go after 9 s.
+      const failsafe = setTimeout(release, 9_000);
+      const started = Date.now();
+      const res = await close(s.admin, s.sectionA);
+      expect(Date.now() - started).toBeLessThan(9_000);
+      clearTimeout(failsafe);
+      release();
+      await holder;
+      expect(res.status).toBe(409);
+      expect(res.headers['retry-after']).toBe('2');
+      expect(res.body).toMatchObject({ code: 'BUSY' });
+      expect(await registerOf(s)).toBeNull();
     });
   });
 
@@ -588,6 +851,55 @@ describe('device registers', () => {
       expect((await report(s.a[2]!.id)).days).toEqual([
         { date: DAY, status: 'LATE', source: 'DEVICE', nonWorkingDay: null },
       ]);
+    });
+
+    it('a student enrolled after the register was written: the teacher’s submit adds their record (MANUAL)', async () => {
+      const s = await setup();
+      const teacher = await userWithRole(s.tenantId, 'TEACHER', s.sectionA);
+      await punch(s, '07:51:00', [
+        ['101', '07:50:00'],
+        ['102', '07:50:30'],
+        ['103', '07:51:00'],
+      ]);
+      await tickAt(s, '09:00:00');
+      const fourth = await enrol(s);
+
+      clock.set(at('09:20:00'));
+      const taking = await sheet(s.teacher, s.sectionA);
+      expect(taking.students).toHaveLength(4);
+      expect(taking.session!.records).toHaveLength(3);
+      const res = await http(h)
+        .put('/attendance/sessions')
+        .set(bearer(s.teacher))
+        .send({
+          sectionId: s.sectionA,
+          date: DAY,
+          baseVersion: 1,
+          submissionId: randomUUID(),
+          records: [
+            ...s.a.map((st) => ({ studentId: st.id, status: 'PRESENT' })),
+            { studentId: fourth.id, status: 'LATE' },
+          ],
+        })
+        .expect(200);
+      expect(res.body.session).toMatchObject({ version: 2, source: 'DEVICE' });
+      const register = await registerOf(s);
+      expect(register!.records.find((r) => r.studentId === fourth.id)).toEqual({
+        studentId: fourth.id,
+        status: 'LATE',
+        source: 'MANUAL',
+      });
+      expect(await rows(s)).toEqual([
+        ['PRESENT', 'DEVICE'],
+        ['PRESENT', 'DEVICE'],
+        ['PRESENT', 'DEVICE'],
+      ]);
+      expect((await f.audits(s.tenantId, 'attendance_session', register!.id)).at(-1)).toEqual({
+        action: 'UPDATE',
+        actorUserId: teacher,
+        oldValues: { [fourth.id]: null },
+        newValues: { [fourth.id]: { status: 'LATE', source: 'MANUAL' }, lateEdit: false },
+      });
     });
 
     it('a draft older than a change by the device gets a conflict that names the device', async () => {
@@ -733,7 +1045,8 @@ describe('device registers', () => {
       }),
     ).rejects.toBe(done);
     expect(elapsed).toBeGreaterThan(0);
-    expect(elapsed).toBeLessThan(7_500);
+    // 3.6–4.8 s on a development machine (see the T12 report); generous for slower ones.
+    expect(elapsed).toBeLessThan(12_000);
     expect(await f.smsLogs(s.tenantId)).toEqual([]);
   });
 });

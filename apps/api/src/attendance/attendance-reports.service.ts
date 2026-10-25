@@ -225,14 +225,17 @@ export class AttendanceReportsService {
       if (day.students.length === 0) continue;
       const decision = closeDecision({
         cutoffPassed: cutoffPassed(day.cutoff, now, tenant.timezone),
+        autoCloseEnded: cutoffPassed(day.autoCloseEnd, now, tenant.timezone),
         devicesSeenRecently: seen,
         enrolled: day.students.length,
         arrived: day.arrivals.size,
+        notOnDevice: day.notOnDevice,
       });
       out.set(sectionId, {
         arrived: day.arrivals.size,
         late: [...day.arrivals.values()].filter((a) => a.status === 'LATE').length,
         enrolled: day.students.length,
+        notOnDevice: day.notOnDevice,
         cutoffAt: day.cutoff.slice(0, 5),
         state: deviceRegisterState(withRegister.has(sectionId), decision),
       });

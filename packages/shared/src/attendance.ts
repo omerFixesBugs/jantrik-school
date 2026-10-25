@@ -329,7 +329,9 @@ export type AttendanceErrorCode =
   /** 409, close from device: the shift's cutoff has not passed; body has `cutoffAt` (HH:MM). */
   | 'BEFORE_CUTOFF'
   /** 422, close from device: nobody is enrolled in the section. */
-  | 'NO_STUDENTS';
+  | 'NO_STUDENTS'
+  /** 409 with Retry-After: device punches are being processed; try again in a moment. */
+  | 'BUSY';
 
 export interface Holiday {
   id: string;

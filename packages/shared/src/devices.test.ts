@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   arrivalStatus,
+  autoCloseEnd,
   closeDecision,
   commandLine,
   countsForAttendance,
@@ -523,23 +524,60 @@ describe('arrival, cutoff, close decision', () => {
     expect(cutoffTime('23:30', 120)).toBe('23:59:59');
   });
   it('closeDecision covers each outcome', () => {
-    const ok = { cutoffPassed: true, devicesSeenRecently: true, enrolled: 100, arrived: 80 };
+    const ok = {
+      cutoffPassed: true,
+      autoCloseEnded: false,
+      devicesSeenRecently: true,
+      enrolled: 100,
+      arrived: 80,
+      notOnDevice: 0,
+    };
     expect(closeDecision(ok)).toBe('CLOSE');
     expect(closeDecision({ ...ok, cutoffPassed: false })).toBe('WAIT');
     expect(closeDecision({ ...ok, enrolled: 0, arrived: 0 })).toBe('WAIT');
     expect(closeDecision({ ...ok, devicesSeenRecently: false })).toBe('DEVICE_OFFLINE');
     expect(closeDecision({ ...ok, arrived: 49 })).toBe('TOO_MANY_MISSING');
     expect(closeDecision({ ...ok, arrived: 50 })).toBe('CLOSE'); // exactly half missing
+    // One student who cannot punch (no ID, or not on any device yet) holds the section back.
+    expect(closeDecision({ ...ok, notOnDevice: 1 })).toBe('NOT_ON_DEVICE');
+    // Past the window it waits for a person, whatever else holds.
+    expect(closeDecision({ ...ok, autoCloseEnded: true })).toBe('AUTO_CLOSE_ENDED');
+  });
+  it('closeDecision: an offline device first, then students not on a device, then too many missing, then the window', () => {
+    const all = {
+      cutoffPassed: true,
+      autoCloseEnded: true,
+      devicesSeenRecently: false,
+      enrolled: 10,
+      arrived: 2,
+      notOnDevice: 3,
+    };
+    expect(closeDecision(all)).toBe('DEVICE_OFFLINE');
+    expect(closeDecision({ ...all, devicesSeenRecently: true })).toBe('NOT_ON_DEVICE');
+    expect(closeDecision({ ...all, devicesSeenRecently: true, notOnDevice: 0 })).toBe(
+      'TOO_MANY_MISSING',
+    );
+    expect(closeDecision({ ...all, devicesSeenRecently: true, notOnDevice: 0, arrived: 10 })).toBe(
+      'AUTO_CLOSE_ENDED',
+    );
+  });
+  it('autoCloseEnd: an hour after the cutoff, clamped at the end of the day', () => {
+    expect(autoCloseEnd('08:00', 60)).toBe('10:00:00');
+    expect(autoCloseEnd('12:00', 90)).toBe('14:30:00');
+    expect(autoCloseEnd('22:30', 60)).toBe('23:59:59');
   });
   it('deviceRegisterState: CLOSED once a register exists, else why it is not closed yet', () => {
     expect(deviceRegisterState(true, 'CLOSE')).toBe('CLOSED');
     expect(deviceRegisterState(true, 'WAIT')).toBe('CLOSED');
     expect(deviceRegisterState(true, 'DEVICE_OFFLINE')).toBe('CLOSED');
+    expect(deviceRegisterState(true, 'NOT_ON_DEVICE')).toBe('CLOSED');
     expect(deviceRegisterState(false, 'WAIT')).toBe('BEFORE_CUTOFF');
     // Due: the next minute's tick writes it.
     expect(deviceRegisterState(false, 'CLOSE')).toBe('BEFORE_CUTOFF');
     expect(deviceRegisterState(false, 'DEVICE_OFFLINE')).toBe('DEVICE_OFFLINE');
+    expect(deviceRegisterState(false, 'NOT_ON_DEVICE')).toBe('NOT_ON_DEVICE');
     expect(deviceRegisterState(false, 'TOO_MANY_MISSING')).toBe('TOO_MANY_MISSING');
+    expect(deviceRegisterState(false, 'AUTO_CLOSE_ENDED')).toBe('AUTO_CLOSE_ENDED');
   });
   it('deviceState', () => {
     const now = new Date('2026-10-24T02:00:00Z');

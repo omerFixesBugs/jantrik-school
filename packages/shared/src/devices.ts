@@ -527,17 +527,36 @@ export function cutoffTime(shiftStart: string, cutoffMin: number): string {
 /** A device counts as "seen recently" for closing a register when it called in this recently. */
 export const DEVICES_SEEN_WINDOW_MS = 15 * 60_000;
 
-export type CloseDecision = 'CLOSE' | 'WAIT' | 'DEVICE_OFFLINE' | 'TOO_MANY_MISSING';
+/** A register held back at its cutoff may still close by itself this long after it. */
+export const AUTO_CLOSE_WINDOW_MIN = 60;
 
+/** When a shift's register stops closing by itself: an hour after its cutoff, at most 23:59:59. */
+export function autoCloseEnd(shiftStart: string, cutoffMin: number): string {
+  return cutoffTime(shiftStart, cutoffMin + AUTO_CLOSE_WINDOW_MIN);
+}
+
+export type CloseDecision =
+  'CLOSE' | 'WAIT' | 'DEVICE_OFFLINE' | 'NOT_ON_DEVICE' | 'TOO_MANY_MISSING' | 'AUTO_CLOSE_ENDED';
+
+/**
+ * Whether the cutoff may write a section's register now. After the cutoff it is held back when
+ * no device was seen recently, when an enrolled student cannot punch (`notOnDevice`: no device ID,
+ * or not confirmed on any active device), or when more than half have not arrived; and once the
+ * auto-close window has ended it waits for a person, so no absent SMS comes as a surprise later.
+ */
 export function closeDecision(input: {
   cutoffPassed: boolean;
+  autoCloseEnded: boolean;
   devicesSeenRecently: boolean;
   enrolled: number;
   arrived: number;
+  notOnDevice: number;
 }): CloseDecision {
   if (!input.cutoffPassed || input.enrolled === 0) return 'WAIT';
   if (!input.devicesSeenRecently) return 'DEVICE_OFFLINE';
+  if (input.notOnDevice > 0) return 'NOT_ON_DEVICE';
   if ((input.enrolled - input.arrived) * 2 > input.enrolled) return 'TOO_MANY_MISSING';
+  if (input.autoCloseEnded) return 'AUTO_CLOSE_ENDED';
   return 'CLOSE';
 }
 
@@ -545,7 +564,9 @@ export const DEVICE_REGISTER_STATES = [
   'BEFORE_CUTOFF',
   'CLOSED',
   'DEVICE_OFFLINE',
+  'NOT_ON_DEVICE',
   'TOO_MANY_MISSING',
+  'AUTO_CLOSE_ENDED',
 ] as const;
 export type DeviceRegisterState = (typeof DEVICE_REGISTER_STATES)[number];
 
@@ -559,8 +580,8 @@ export function deviceRegisterState(
   decision: CloseDecision,
 ): DeviceRegisterState {
   if (hasRegister) return 'CLOSED';
-  if (decision === 'DEVICE_OFFLINE' || decision === 'TOO_MANY_MISSING') return decision;
-  return 'BEFORE_CUTOFF';
+  if (decision === 'WAIT' || decision === 'CLOSE') return 'BEFORE_CUTOFF';
+  return decision;
 }
 
 export const DEVICE_ONLINE_WINDOW_MS = 120_000;

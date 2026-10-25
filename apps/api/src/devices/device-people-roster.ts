@@ -12,7 +12,7 @@ import { AttendanceSettingsService } from '../attendance/attendance-settings.ser
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import { Db } from '../tenancy/db.service.js';
-import { activeDeviceIds, deviceUsers, queueUpserts } from './device-users.js';
+import { activeDeviceIds, deviceUsers, idsOnDevices, queueUpserts } from './device-users.js';
 
 /** Audit entities: one person's ID (PUT), and a batch (defaults, import, removal). */
 export const DEVICE_PERSON = 'device_person';
@@ -229,39 +229,15 @@ export class DevicePeopleRoster {
    */
   async onDevice(ids?: string[]): Promise<Map<string, OnDevice>> {
     const tx = this.db.tx;
-    const only = ids ? Prisma.sql`AND c.device_user_id = ANY(${ids}::text[])` : Prisma.empty;
-    const rows = await tx.$queryRaw<
-      { device_user_id: string; device_ids: string[]; last_sync_at: Date; removing: boolean }[]
-    >`
-      WITH latest AS (
-        SELECT DISTINCT ON (c.device_id, c.device_user_id)
-               c.device_id, c.device_user_id, c.kind, c.seq,
-               coalesce(c.done_at, c.updated_at) AS done_at
-        FROM device_commands c
-        JOIN attendance_devices d ON d.tenant_id = c.tenant_id AND d.id = c.device_id
-        WHERE d.is_active AND c.status = 'DONE' ${only}
-        ORDER BY c.device_id, c.device_user_id, c.seq DESC
-      ), still AS (
-        SELECT l.*, EXISTS (SELECT 1 FROM device_commands x
-                            WHERE x.device_id = l.device_id
-                              AND x.device_user_id = l.device_user_id
-                              AND x.kind = 'USER_DELETE' AND x.status IN ('PENDING', 'SENT')
-                              AND x.seq > l.seq) AS removing
-        FROM latest l
-        WHERE l.kind = 'USER_UPSERT'
-      )
-      SELECT device_user_id, array_agg(device_id::text ORDER BY device_id) AS device_ids,
-             max(done_at) AS last_sync_at, bool_or(removing) AS removing
-      FROM still
-      GROUP BY device_user_id`;
-    if (rows.length === 0) return new Map();
+    const found = await idsOnDevices(tx, ids);
+    if (found.size === 0) return new Map();
     const held = await tx.devicePerson.findMany({
-      where: { deviceUserId: { in: rows.map((r) => r.device_user_id) } },
+      where: { deviceUserId: { in: [...found.keys()] } },
       select: HOLDER_SELECT,
     });
     const keyOf = new Map(held.map((h) => [h.deviceUserId, holderKey(h)]));
     const refs = new Map(held.map((h) => [holderKey(h), holderRef(h)]));
-    const unheld = rows.map((r) => r.device_user_id).filter((id) => !keyOf.has(id));
+    const unheld = [...found.keys()].filter((id) => !keyOf.has(id));
     if (unheld.length > 0) {
       for (const [id, key] of await this.lastTakenFrom(unheld)) keyOf.set(id, key);
       const missing = [...new Set(keyOf.values())].filter((k) => !refs.has(k));
@@ -281,17 +257,11 @@ export class DevicePeopleRoster {
       }
     }
     const out = new Map<string, OnDevice>();
-    for (const r of rows) {
-      const key = keyOf.get(r.device_user_id);
+    for (const [deviceUserId, on] of found) {
+      const key = keyOf.get(deviceUserId);
       const person = key === undefined ? undefined : refs.get(key);
       if (key === undefined || person === undefined) continue;
-      out.set(r.device_user_id, {
-        key,
-        person,
-        deviceIds: r.device_ids,
-        lastSyncAt: r.last_sync_at,
-        removing: r.removing,
-      });
+      out.set(deviceUserId, { key, person, ...on });
     }
     return out;
   }

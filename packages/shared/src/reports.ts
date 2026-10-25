@@ -59,12 +59,16 @@ export type TrendQuery = z.input<typeof trendQuerySchema>;
 /**
  * A section's day by device, live: students arrived so far (late among them) of those enrolled,
  * the shift's cutoff, and where the register stands: CLOSED once the day's register exists, else
- * BEFORE_CUTOFF or why the cutoff held it back (an admin can close it from the device then).
+ * BEFORE_CUTOFF or why the cutoff held it back (an admin can close it from the device then):
+ * DEVICE_OFFLINE, NOT_ON_DEVICE, TOO_MANY_MISSING, or AUTO_CLOSE_ENDED (an hour after the cutoff
+ * it no longer closes by itself and waits for a person).
  */
 export interface SectionDeviceToday {
   arrived: number;
   late: number;
   enrolled: number;
+  /** Enrolled students who cannot punch: no device ID, or not confirmed on any active device. */
+  notOnDevice: number;
   /** HH:MM */
   cutoffAt: string;
   state: DeviceRegisterState;

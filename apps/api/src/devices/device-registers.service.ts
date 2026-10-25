@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  autoCloseEnd,
   closeDecision,
   cutoffTime,
   dateToDb,
@@ -34,9 +35,9 @@ interface WrittenRegister {
 
 /**
  * Registers written from device punches (DAILY mode, period 0): at each shift's cutoff by the
- * minute tick, or by an admin closing a held-back section. Both hold the institute's punch lock,
- * write every register first and queue the absent SMS last, so the SMS lock is never held while
- * waiting for a register a teacher's submit holds.
+ * minute tick, one section per transaction, or by an admin closing a held-back section. Each
+ * holds the institute's punch lock, writes the register, and queues its absent SMS last, so the
+ * SMS lock is never held while waiting for a register a teacher's submit holds.
  */
 @Injectable()
 export class DeviceRegistersService {
@@ -51,63 +52,71 @@ export class DeviceRegistersService {
   ) {}
 
   /**
-   * The cutoff, in the institute's job transaction. In DAILY mode with auto-mark on, on a working
-   * day, every current-year section with students and no register today whose shift's cutoff has
-   * passed is closed when `closeDecision` says CLOSE; one held back gets nothing (the today report
-   * says why, live). Returns how many registers were written.
+   * The sections the cutoff should look at now (a plain read, no lock): in DAILY mode with
+   * auto-mark on, on a working day, the current-year sections with no register today whose shift's
+   * cutoff has passed and whose auto-close hour has not. Each is then closed in its own
+   * transaction (`closeAtCutoff`), which checks again under the lock.
    */
-  async cutoff(): Promise<number> {
+  async dueSections(): Promise<string[]> {
     const tenant = await this.settings.load();
     const s = tenant.settings;
-    if (s.mode !== 'DAILY' || !s.deviceAutoMark) return 0;
-    if (await this.settings.nonWorkingDay(tenant.today, s)) return 0;
-    await this.deviceAttendance.lockPunches();
+    if (s.mode !== 'DAILY' || !s.deviceAutoMark) return [];
+    if (await this.settings.nonWorkingDay(tenant.today, s)) return [];
     const now = this.clock.now();
     const open = await this.db.tx.section.findMany({
       where: {
         academicYear: { isCurrent: true },
         attendanceSessions: { none: { date: dateToDb(tenant.today), periodNo: 0 } },
       },
+      orderBy: { id: 'asc' },
       select: { id: true, shift: { select: { startTime: true } } },
     });
-    // Punches are read only for sections whose cutoff has passed.
-    const due = open.filter((section) =>
-      cutoffPassed(
-        cutoffTime(startOf(section.shift, tenant), s.deviceCutoffMinutes),
-        now,
-        tenant.timezone,
-      ),
-    );
-    if (due.length === 0) return 0;
-    const days = await this.arrivals.sectionDays(
-      due.map((section) => section.id),
-      tenant.today,
-      tenant,
-    );
-    const seen = await this.arrivals.devicesSeenRecently(now);
-    const absent: string[] = [];
-    let written = 0;
-    for (const [sectionId, day] of days) {
-      const decision = closeDecision({
-        cutoffPassed: true,
-        devicesSeenRecently: seen,
-        enrolled: day.students.length,
-        arrived: day.arrivals.size,
-      });
-      if (decision !== 'CLOSE') continue;
-      const register = await this.write(tenant, sectionId, day, now);
-      if (!register) continue;
-      written += 1;
-      absent.push(...register.absent);
-    }
-    await this.absentSms.queue(tenant, tenant.today, absent);
-    return written;
+    return open
+      .filter((section) => {
+        const start = startOf(section.shift, tenant);
+        return (
+          cutoffPassed(cutoffTime(start, s.deviceCutoffMinutes), now, tenant.timezone) &&
+          !cutoffPassed(autoCloseEnd(start, s.deviceCutoffMinutes), now, tenant.timezone)
+        );
+      })
+      .map((section) => section.id);
+  }
+
+  /**
+   * The cutoff for one section, in its own job transaction: under the punch lock, the register is
+   * written when `closeDecision` says CLOSE (devices seen, every student on a device, at most half
+   * missing, within the auto-close hour); held back, nothing is written (the today report says
+   * why, live). Its absent SMS last. Returns whether a register was written.
+   */
+  async closeAtCutoff(sectionId: string): Promise<boolean> {
+    const tenant = await this.settings.load();
+    const s = tenant.settings;
+    if (s.mode !== 'DAILY' || !s.deviceAutoMark) return false;
+    if (await this.settings.nonWorkingDay(tenant.today, s)) return false;
+    await this.deviceAttendance.lockPunches();
+    const now = this.clock.now();
+    const day = (await this.arrivals.sectionDays([sectionId], tenant.today, tenant)).get(sectionId);
+    if (!day) return false;
+    const decision = closeDecision({
+      cutoffPassed: cutoffPassed(day.cutoff, now, tenant.timezone),
+      autoCloseEnded: cutoffPassed(day.autoCloseEnd, now, tenant.timezone),
+      devicesSeenRecently: await this.arrivals.devicesSeenRecently(now),
+      enrolled: day.students.length,
+      arrived: day.arrivals.size,
+      notOnDevice: day.notOnDevice,
+    });
+    if (decision !== 'CLOSE') return false;
+    const register = await this.write(tenant, sectionId, day, now);
+    if (!register) return false;
+    await this.absentSms.queue(tenant, tenant.today, register.absent);
+    return true;
   }
 
   /**
    * An admin closes a held-back section's register from the device, after a confirm: the safety
-   * rules of `closeDecision` do not apply, the cutoff does. Same register as the cutoff writes,
-   * with the admin as the audit's actor and still no taker.
+   * rules of `closeDecision` and the auto-close hour do not apply, the cutoff does. Same register
+   * as the cutoff writes (students no device has are ABSENT too), with the admin as the audit's
+   * actor and still no taker.
    */
   async closeFromDevice(sectionId: string): Promise<CloseFromDeviceResult> {
     const tenant = await this.settings.load();

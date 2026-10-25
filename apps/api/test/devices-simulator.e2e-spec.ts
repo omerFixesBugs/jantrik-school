@@ -152,8 +152,28 @@ describe('device simulator end to end', () => {
     const live = (await http(h).get('/attendance/reports/today').set(admin).expect(200))
       .body as AttendanceTodayReport;
     expect(live.sections.map((x) => [x.device, x.register])).toEqual([
-      [{ arrived: 2, late: 1, enrolled: 3, cutoffAt: '09:00', state: 'BEFORE_CUTOFF' }, null],
-      [{ arrived: 1, late: 0, enrolled: 1, cutoffAt: '09:00', state: 'BEFORE_CUTOFF' }, null],
+      [
+        {
+          arrived: 2,
+          late: 1,
+          enrolled: 3,
+          notOnDevice: 0,
+          cutoffAt: '09:00',
+          state: 'BEFORE_CUTOFF',
+        },
+        null,
+      ],
+      [
+        {
+          arrived: 1,
+          late: 0,
+          enrolled: 1,
+          notOnDevice: 0,
+          cutoffAt: '09:00',
+          state: 'BEFORE_CUTOFF',
+        },
+        null,
+      ],
     ]);
 
     // Past the cutoff: both devices call in and the minute tick runs.

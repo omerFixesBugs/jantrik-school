@@ -1,5 +1,4 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@jantrik/db';
 import {
   addDays,
   attendancePercent,
@@ -282,12 +281,24 @@ export class AttendanceService {
         return [[id, { ...n, source }] as const];
       });
       for (const [studentId, n] of changed) {
-        await tx.attendanceRecord.update({
-          where: {
-            tenantId_sessionId_studentId: { tenantId: tenant.id, sessionId: locked.id, studentId },
-          },
-          data: { status: n.status, note: n.note, source: n.source },
-        });
+        const data = { status: n.status, note: n.note, source: n.source };
+        if (before.has(studentId)) {
+          await tx.attendanceRecord.update({
+            where: {
+              tenantId_sessionId_studentId: {
+                tenantId: tenant.id,
+                sessionId: locked.id,
+                studentId,
+              },
+            },
+            data,
+          });
+        } else {
+          // Enrolled after this register was written: the submit (the whole roster) adds them.
+          await tx.attendanceRecord.create({
+            data: { tenantId: tenant.id, sessionId: locked.id, studentId, ...data },
+          });
+        }
       }
       await tx.attendanceSession.update({
         where: { id: locked.id },
@@ -311,10 +322,11 @@ export class AttendanceService {
         });
       }
     } else {
-      let sessionId: string;
-      try {
-        const created = await tx.attendanceSession.create({
-          data: {
+      // ON CONFLICT DO NOTHING: when another submit or the device's cutoff created this register a
+      // moment ago, this transaction stays usable and the conflict carries what they saved.
+      const [created] = await tx.attendanceSession.createManyAndReturn({
+        data: [
+          {
             tenantId: tenant.id,
             sectionId: section.id,
             date,
@@ -326,18 +338,16 @@ export class AttendanceService {
             lastSubmissionId: input.submissionId,
             onNonWorkingDay: nonWorkingDay !== null,
           },
-          select: { id: true },
+        ],
+        skipDuplicates: true,
+        select: { id: true },
+      });
+      if (!created) {
+        throw apiError(409, 'VERSION_CONFLICT', 'Someone else just took this attendance', {
+          session: await this.sessionState(section.id, input.date, input.periodNo),
         });
-        sessionId = created.id;
-      } catch (error) {
-        // Another submit created this register a moment ago: the client reloads and retries.
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-          throw apiError(409, 'VERSION_CONFLICT', 'Someone else just took this attendance', {
-            session: null,
-          });
-        }
-        throw error;
       }
+      const sessionId = created.id;
       await tx.attendanceRecord.createMany({
         data: [...next].map(([studentId, n]) => ({
           tenantId: tenant.id,
