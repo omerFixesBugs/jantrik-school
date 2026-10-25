@@ -169,11 +169,12 @@ export class RegisterController {
     // Opened by a direct link: name the section from the register itself.
     const sectionName =
       this.o.sectionName || `${sheet.section.classLevel.nameBn}, ${sheet.section.name}`;
+    const statuses = startingStatuses(sheet);
     const stored =
       readDraft(this.key(sheet)) ??
       (this.state.draft?.date === sheet.date ? this.state.draft : null);
     if (stored) {
-      const merged = mergeRoster(stored, sheet.students);
+      const merged = mergeRoster(stored, sheet.students, statuses);
       this.state.sheet = sheet;
       this.persist(
         { ...merged.draft, sectionName },
@@ -182,12 +183,6 @@ export class RegisterController {
       if (stored.state === 'pending') void this.send(); // a submit that never got its answer
       return;
     }
-    const statuses = Object.fromEntries(
-      sheet.students.map((st) => [
-        st.id,
-        sheet.session?.records.find((r) => r.studentId === st.id)?.status ?? 'PRESENT',
-      ]),
-    ) as Record<string, AttendanceStatus>;
     // In memory only: nothing to keep on the phone until the teacher changes something.
     this.set({
       sheet,
@@ -333,6 +328,11 @@ export class RegisterController {
         this.persist({ ...d, baseVersion: server.version, state: 'draft' });
         return this.send();
       }
+      if (server && conflictDiff(this.state.draft ?? d, server).length === 0) {
+        // Saved meanwhile exactly as on screen (a draft started from the device's suggestion,
+        // then the device wrote the register): nothing to choose, nothing lost.
+        return this.adopt(server);
+      }
       if (server) {
         this.persist({ ...d, state: 'draft' }, { kind: 'conflict', server });
         return;
@@ -364,35 +364,64 @@ export class RegisterController {
 
   /** Conflict: keep theirs (drop my draft, show what is saved). */
   keepTheirs() {
-    const { sync, draft, sheet } = this.state;
+    const { sync, draft } = this.state;
     if (sync.kind !== 'conflict' || !draft) return;
+    this.adopt(sync.server);
+  }
+
+  /** Show what is saved on the server and drop the phone's draft. */
+  private adopt(server: AttendanceSessionState) {
+    const { draft, sheet } = this.state;
+    if (!draft) return;
     removeDraft(this.key(draft));
     const statuses = Object.fromEntries(
       draft.roster.map((st) => [
         st.id,
-        sync.server.records.find((r) => r.studentId === st.id)?.status ?? 'PRESENT',
+        server.records.find((r) => r.studentId === st.id)?.status ?? 'PRESENT',
       ]),
     ) as Record<string, AttendanceStatus>;
     this.set({
-      sheet: sheet ? { ...sheet, session: sync.server } : sheet,
+      sheet: sheet ? { ...sheet, session: server } : sheet,
       draft: {
         ...draft,
         statuses,
-        baseVersion: sync.server.version,
+        baseVersion: server.version,
         submissionId: newId(),
         state: 'draft',
       },
-      sync: { kind: 'saved', submittedAt: sync.server.submittedAt },
+      sync: { kind: 'saved', submittedAt: server.submittedAt },
     });
   }
 }
 
-/** Keep the teacher's statuses for students still on the roster; new students start PRESENT. */
-export function mergeRoster(draft: AttendanceDraft, students: (RosterStudent | DraftStudent)[]) {
+/**
+ * Where the register starts: the saved statuses; before it is taken, the device's suggestion
+ * (arrived: present or late, the others absent) when the sheet has one, otherwise everyone
+ * present. Only the starting state: the teacher changes it like any other.
+ */
+export function startingStatuses(sheet: AttendanceSheet): Record<string, AttendanceStatus> {
+  const saved = new Map(sheet.session?.records.map((r) => [r.studentId, r.status]));
+  return Object.fromEntries(
+    sheet.students.map((st) => [
+      st.id,
+      (sheet.session ? saved.get(st.id) : st.suggested) ?? 'PRESENT',
+    ]),
+  );
+}
+
+/**
+ * Keep the teacher's statuses for students still on the roster; new students start from
+ * `start` (the register's starting state), else PRESENT.
+ */
+export function mergeRoster(
+  draft: AttendanceDraft,
+  students: (RosterStudent | DraftStudent)[],
+  start: Record<string, AttendanceStatus> = {},
+) {
   const before = new Set(draft.roster.map((s) => s.id));
   const after = new Set(students.map((s) => s.id));
   const statuses = Object.fromEntries(
-    students.map((s) => [s.id, draft.statuses[s.id] ?? 'PRESENT']),
+    students.map((s) => [s.id, draft.statuses[s.id] ?? start[s.id] ?? 'PRESENT']),
   ) as Record<string, AttendanceStatus>;
   return {
     draft: { ...draft, roster: students.map(toDraftStudent), statuses },

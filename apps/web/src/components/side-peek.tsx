@@ -18,8 +18,8 @@ export function SidePeek({
   testId,
 }: {
   title: string;
-  /** The full page. */
-  href: string;
+  /** The full page; none when the peek is all there is (a person's month in a report). */
+  href?: string;
   onClose: () => void;
   children: ReactNode;
   testId?: string;
@@ -72,10 +72,12 @@ export function SidePeek({
         >
           {title}
         </h2>
-        <ButtonLink size="sm" variant="outline" href={href} data-testid="peek-open">
-          <ExternalLinkIcon aria-hidden />
-          {t('openPage')}
-        </ButtonLink>
+        {href && (
+          <ButtonLink size="sm" variant="outline" href={href} data-testid="peek-open">
+            <ExternalLinkIcon aria-hidden />
+            {t('openPage')}
+          </ButtonLink>
+        )}
         <Button size="icon-sm" variant="ghost" onClick={onClose} aria-label={t('closePeek')}>
           <XIcon aria-hidden />
         </Button>

@@ -1,0 +1,41 @@
+{
+  "month": {
+    "month": "মাস",
+    "prev": "আগের মাস",
+    "next": "পরের মাস",
+    "print": "প্রিন্ট",
+    "csvGrid": "CSV: মাসের ছক",
+    "csvDays": "CSV: দিনভিত্তিক",
+    "csvFailed": "CSV ডাউনলোড করা যায়নি।",
+    "csvFileGrid": "কর্মীদের-হাজিরা-{month}.csv",
+    "csvFileDays": "কর্মীদের-হাজিরা-দিনভিত্তিক-{month}.csv",
+    "printHeading": "কর্মীদের হাজিরা, {month}",
+    "noData": "এই মাসে এখনো কোনো পাঞ্চ বা হাতে লেখা হাজিরা নেই।",
+    "legend": "সংকেত",
+    "cell": {
+      "PRESENT": "উপস্থিত",
+      "LATE": "দেরি",
+      "EARLY": "আগে প্রস্থান",
+      "LATE_EARLY": "দেরি ও আগে প্রস্থান",
+      "ABSENT": "অনুপস্থিত",
+      "LEAVE": "ছুটি"
+    },
+    "offDay": "ছুটির দিন",
+    "colName": "নাম",
+    "colPresent": "উপস্থিত",
+    "colLate": "দেরি",
+    "colEarly": "আগে প্রস্থান",
+    "colAbsent": "অনুপস্থিত",
+    "colLeave": "ছুটি",
+    "colLateMinutes": "দেরি (মিনিট)",
+    "colEarlyMinutes": "আগে প্রস্থান (মিনিট)",
+    "colLateMinutesShort": "দেরি মি.",
+    "colEarlyMinutesShort": "আগে মি.",
+    "openPerson": "{name}-এর এই মাস",
+    "peekTotals": "উপস্থিত {present} · দেরি {late} · আগে প্রস্থান {early} · অনুপস্থিত {absent} · ছুটি {leave}",
+    "peekMinutes": "মোট দেরি {late} মিনিট · আগে প্রস্থান {early} মিনিট",
+    "peekDays": "লেখা দিনগুলো",
+    "peekNone": "এই মাসে কোনো দিন লেখা নেই।",
+    "peekTimes": "{in} – {out}"
+  }
+}

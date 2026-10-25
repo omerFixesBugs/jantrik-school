@@ -14,6 +14,9 @@ const EXAM_AREAS = ['common', 'marks', 'setup', 'results', 'guardian'] as const;
 /** Attendance devices likewise: messages/devices/<area>.<locale>.json, merged into `devices`. */
 const DEVICE_AREAS = ['devices', 'people'] as const;
 
+/** Staff attendance likewise: messages/staff-attendance/<area>.<locale>.json, into `staffAttendance`. */
+const STAFF_ATTENDANCE_AREAS = ['common', 'day', 'month'] as const;
+
 export default getRequestConfig(async () => {
   const fromCookie = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(fromCookie) ? fromCookie : defaultLocale;
@@ -33,6 +36,12 @@ export default getRequestConfig(async () => {
       async (area) => (await import(`../../messages/devices/${area}.${locale}.json`)).default,
     ),
   );
+  const staffAttendance = await Promise.all(
+    STAFF_ATTENDANCE_AREAS.map(
+      async (area) =>
+        (await import(`../../messages/staff-attendance/${area}.${locale}.json`)).default,
+    ),
+  );
   return {
     locale,
     timeZone,
@@ -41,6 +50,7 @@ export default getRequestConfig(async () => {
       fees: Object.assign({}, ...fees),
       exams: Object.assign({}, ...exams),
       devices: Object.assign({}, ...devices),
+      staffAttendance: Object.assign({}, ...staffAttendance),
     },
   };
 });

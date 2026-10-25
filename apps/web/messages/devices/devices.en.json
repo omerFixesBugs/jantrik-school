@@ -27,7 +27,8 @@
       "ID_STILL_ON_DEVICE": "A device still has {name} under this ID; their finger would punch as the new person. Remove them from the devices first.",
       "ID_STILL_ON_DEVICE_UNKNOWN": "A device still has someone else under this ID. Remove them from the devices first.",
       "notFound": "Not found; it may have changed. Open the page again.",
-      "invalid": "Check the details and try again."
+      "invalid": "Check the details and try again.",
+      "BUSY": "The device punches are being processed right now. Try again in a moment."
     },
     "duration": {
       "minute": "{n, plural, one {{count} minute} other {{count} minutes}}",

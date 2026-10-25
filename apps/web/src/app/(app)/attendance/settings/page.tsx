@@ -21,9 +21,10 @@ import {
 } from '@jantrik/shared';
 import { LockIcon, PlusIcon, StarIcon, Trash2Icon, XIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { AttendanceTabs, isAdminRole } from '@/components/attendance/attendance-tabs';
+import { DeviceSettingsCards, SettingsCard as Card } from '@/components/attendance/device-settings';
 import { ChoiceChip } from '@/components/form-kit';
 import { PageGate } from '@/components/page-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -42,6 +43,12 @@ import { DateInput } from '@/components/date-input';
 import type { Locale } from '@/i18n/config';
 import { ApiError } from '@/lib/api/errors';
 import { useAuth } from '@/lib/auth/auth-provider';
+import {
+  deviceBody,
+  deviceFieldErrors,
+  deviceValues,
+  type DeviceValues,
+} from '@/lib/attendance/device-settings';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { displayName, displayUserName } from '@/lib/names';
 import { cn } from '@/lib/utils';
@@ -71,41 +78,16 @@ export default function AttendanceSettingsPage() {
   );
 }
 
-function Card({
-  title,
-  hint,
-  children,
-  id,
-}: {
-  title: string;
-  hint?: string;
-  children: ReactNode;
-  id: string;
-}) {
-  return (
-    <section
-      className="bg-card flex flex-col gap-4 rounded-xl border p-4 shadow-xs sm:p-5"
-      aria-labelledby={id}
-      data-testid={id}
-    >
-      <div className="flex flex-col gap-1">
-        <h3 id={id} className="text-lg font-semibold">
-          {title}
-        </h3>
-        {hint && <p className="text-muted-foreground text-sm">{hint}</p>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
 const textareaClass =
   'min-h-28 w-full min-w-0 rounded-lg border border-input bg-card px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive dark:bg-input/30';
 
 /** Saturday first, as on a Bangladeshi calendar. ISO numbers (1 = Monday). */
 const WEEK = [6, 7, 1, 2, 3, 4, 5] as const;
 
-type Form = Omit<AttendanceSettingsInput, 'absentSmsTemplate'> & { absentSmsTemplate: string };
+/** The device and staff fields as typed (strings), the rest as the API takes them. */
+type Form = Omit<AttendanceSettingsInput, 'absentSmsTemplate' | keyof DeviceValues> & {
+  absentSmsTemplate: string;
+} & DeviceValues;
 
 // ───────────────────────────── Rules + SMS ─────────────────────────────
 
@@ -132,12 +114,15 @@ function RulesAndSms() {
       initial={settings.data}
       onSaved={(next) => {
         queryClient.setQueryData(key, next);
-        // The leave rule, off days and the SMS cap change what the dashboard shows.
+        // The leave rule, off days and the SMS cap change what the dashboard shows; the device
+        // settings the today report, the office hours the staff day.
         for (const k of [
           'attendance-summary',
           'attendance-report-today',
           'attendance-trend',
           'sms-today',
+          'staff-attendance-day',
+          'staff-attendance-month',
         ])
           void queryClient.invalidateQueries({ queryKey: [k] });
       }}
@@ -157,8 +142,8 @@ function SettingsForm({
   const describe = useErrorMessage();
   const { client } = useAuth();
   const [form, setForm] = useState<Form>(() => ({
-    // Everything as loaded, so the device and staff settings are saved back unchanged (the API
-    // ignores the derived values).
+    // Everything as loaded (the API ignores the derived values); the device and staff numbers
+    // and times as the inputs show them.
     ...initial,
     mode: initial.mode,
     weeklyOffDays: initial.weeklyOffDays,
@@ -168,6 +153,7 @@ function SettingsForm({
     absentSmsTemplate: initial.effectiveAbsentSmsTemplate,
     absentSmsDelayMinutes: initial.absentSmsDelayMinutes,
     dailySmsCap: initial.dailySmsCap,
+    ...deviceValues(initial, locale),
   }));
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
   const autoCap = initial.automaticSmsCap;
@@ -178,6 +164,7 @@ function SettingsForm({
         method: 'PUT',
         json: {
           ...form,
+          ...deviceBody(form),
           // The standard text is stored as "no template of our own".
           absentSmsTemplate:
             form.absentSmsTemplate.trim() === DEFAULT_ABSENT_SMS_TEMPLATE
@@ -194,6 +181,8 @@ function SettingsForm({
   });
 
   const templateProblems = form.absentSmsEnabled ? validateSmsTemplate(form.absentSmsTemplate) : [];
+  // A refused save's problems stay on their fields until the next save.
+  const deviceErrors = deviceFieldErrors(save.error);
 
   return (
     <form
@@ -341,6 +330,13 @@ function SettingsForm({
           </fieldset>
         </fieldset>
       </Card>
+
+      <DeviceSettingsCards
+        mode={form.mode}
+        values={form}
+        onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+        errors={deviceErrors}
+      />
 
       <div className="bg-background/95 sticky bottom-0 z-10 -mx-1 flex justify-end border-t px-1 py-3 backdrop-blur">
         <Button

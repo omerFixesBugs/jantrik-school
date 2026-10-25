@@ -57,6 +57,8 @@ export function useDevicesError() {
           case 'FILE_EMPTY':
           case 'MISSING_COLUMNS':
           case 'NO_DATA_ROWS':
+          // 409 while the institute's punches are being processed: the same action again soon.
+          case 'BUSY':
             return t(error.code);
           case 'TOO_MANY_ROWS':
             return t('TOO_MANY_ROWS', { max: formatCount(DEVICE_IMPORT_MAX_ROWS, locale) });

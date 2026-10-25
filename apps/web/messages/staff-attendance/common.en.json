@@ -1,0 +1,37 @@
+{
+  "common": {
+    "title": "Staff attendance",
+    "subtitle": "Staff arrivals, departures, late arrivals and early leaving from the device punches; enter a day by hand when needed.",
+    "adminOnly": "Only the owner or an admin can see and enter staff attendance.",
+    "view": "Show",
+    "viewDay": "Day",
+    "viewMonth": "Month",
+    "status": {
+      "PRESENT": "Present",
+      "ABSENT": "Absent",
+      "LEAVE": "Leave"
+    },
+    "state": {
+      "ABSENT": "Absent",
+      "NOT_YET": "Not yet",
+      "OFF": "Day off",
+      "NONE": "Not counted"
+    },
+    "late": "Late {minutes} min",
+    "early": "Left {minutes} min early",
+    "lateLabel": "Arrived {minutes} minutes late",
+    "earlyLabel": "Left {minutes} minutes early",
+    "reason": "Reason: {reason}",
+    "noStaffTitle": "No staff yet",
+    "noStaffHint": "Add staff on the Staff page and their attendance shows here.",
+    "staffLink": "Staff",
+    "devicesLink": "See the devices",
+    "errors": {
+      "FUTURE_DATE": "Attendance can't be entered for a future day.",
+      "NOT_STAFF": "This person is not active staff here any more.",
+      "IN_TIME_REQUIRED": "A present day needs an in time.",
+      "OUT_BEFORE_IN": "The out time can't be before the in time.",
+      "BUSY": "The device punches are being processed right now. Try again in a moment."
+    }
+  }
+}
