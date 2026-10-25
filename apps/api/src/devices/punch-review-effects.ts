@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import type { IsoDate, PunchFlag, PunchReview } from '@jantrik/shared';
+import {
+  countsForAttendance,
+  type IsoDate,
+  type PunchFlag,
+  type PunchReview,
+} from '@jantrik/shared';
+import { PunchProcessingService } from './punch-processing.service.js';
 
 /** A punch an admin has just reviewed. */
 export interface ReviewedPunch {
@@ -13,11 +19,18 @@ export interface ReviewedPunch {
 }
 
 /**
- * What follows a punch review, inside the review's transaction. A review can change whether a
- * punch counts (`countsForAttendance`), so punch processing will rebuild the person's day here
- * (the student's DEVICE register record, the staff day). Until then it does nothing.
+ * What follows a punch review, inside the review's transaction (after the punch lock and the
+ * punch row). Only a review that changes whether the punch counts (`countsForAttendance`) does
+ * anything: an ACCEPT of a held punch, a REJECT, or an OK replacing either. The punch's outcome
+ * follows and the person's day is rebuilt; no entry or exit SMS is sent.
  */
 @Injectable()
 export class PunchReviewEffects {
-  async afterReview(_punch: ReviewedPunch): Promise<void> {}
+  constructor(private readonly processing: PunchProcessingService) {}
+
+  async afterReview(punch: ReviewedPunch): Promise<void> {
+    const counted = countsForAttendance({ flags: punch.flags, review: punch.previousReview });
+    const counts = countsForAttendance({ flags: punch.flags, review: punch.review });
+    if (counted !== counts) await this.processing.reviewed(punch.id);
+  }
 }

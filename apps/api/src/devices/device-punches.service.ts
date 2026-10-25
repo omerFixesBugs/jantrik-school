@@ -26,6 +26,7 @@ import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
 import { staffNames } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
+import { DeviceAttendanceService } from './device-attendance.service.js';
 import { REVIEW_WINDOW_MS } from './devices.constants.js';
 import { PunchReviewEffects } from './punch-review-effects.js';
 
@@ -82,6 +83,7 @@ export class DevicePunchesService {
     private readonly clock: Clock,
     private readonly settings: AttendanceSettingsService,
     private readonly effects: PunchReviewEffects,
+    private readonly deviceAttendance: DeviceAttendanceService,
   ) {}
 
   /**
@@ -137,6 +139,8 @@ export class DevicePunchesService {
    */
   async review(id: string, action: PunchReviewAction): Promise<FeedPunch> {
     const tx = this.db.tx;
+    // Lock order, as processing: the institute's punch lock, the punch row, then the person's day.
+    await this.deviceAttendance.lockPunches();
     const [locked] = await tx.$queryRaw<{ flags: string[]; review: PunchReview | null }[]>`
       SELECT flags, review::text AS review FROM device_punches WHERE id = ${id}::uuid
       FOR NO KEY UPDATE`;
@@ -169,7 +173,12 @@ export class DevicePunchesService {
       review,
       previousReview: locked.review,
     });
-    const [punch] = await this.toFeed([row], await this.settings.load());
+    // The hook may have changed the outcome.
+    const { outcome } = await tx.devicePunch.findUniqueOrThrow({
+      where: { id },
+      select: { outcome: true },
+    });
+    const [punch] = await this.toFeed([{ ...row, outcome }], await this.settings.load());
     return punch!;
   }
 

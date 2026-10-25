@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { getQueueToken } from '@nestjs/bullmq';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
@@ -13,11 +14,13 @@ import {
 } from '@jantrik/db';
 import type { AuthResponse } from '@jantrik/shared';
 import { hash } from '@node-rs/argon2';
+import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module.js';
 import { AttendanceModule } from '../../src/attendance/attendance.module.js';
 import { configureApp } from '../../src/app.setup.js';
+import { DEVICES_QUEUE, DEVICES_TICK_JOB } from '../../src/devices/devices.constants.js';
 import { DevicesModule } from '../../src/devices/devices.module.js';
 import { ExamsModule } from '../../src/exams/exams.module.js';
 import { FeesModule } from '../../src/fees/fees.module.js';
@@ -50,6 +53,9 @@ export async function createHarness(opts: { clock?: Clock } = {}): Promise<Harne
   const app = moduleRef.createNestApplication();
   configureApp(app);
   await app.init();
+  // No real-time devices tick in tests: every minute it would visit each institute listed for
+  // devices while other tests run. Tests run the sweep themselves (DevicesProcessor.tickAll).
+  await app.get<Queue>(getQueueToken(DEVICES_QUEUE)).removeJobScheduler(DEVICES_TICK_JOB);
   const prisma = createPrismaClient(process.env['DATABASE_URL']!);
   return {
     app,

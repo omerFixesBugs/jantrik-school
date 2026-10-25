@@ -1,3 +1,4 @@
+import { BullModule } from '@nestjs/bullmq';
 import {
   Body,
   Controller,
@@ -53,11 +54,15 @@ import { AttendanceModule } from '../attendance/attendance.module.js';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import { DeviceAlertsService } from './device-alerts.service.js';
+import { DeviceAttendanceService } from './device-attendance.service.js';
 import { DevicePeopleCsvService } from './device-people-csv.service.js';
 import { DevicePeopleRoster } from './device-people-roster.js';
 import { DevicePeopleService } from './device-people.service.js';
 import { DevicePunchesService } from './device-punches.service.js';
+import { DEVICES_QUEUE } from './devices.constants.js';
+import { DevicesProcessor } from './devices.processor.js';
 import { DevicesService } from './devices.service.js';
+import { PunchProcessingService } from './punch-processing.service.js';
 import { PunchReviewEffects } from './punch-review-effects.js';
 
 export class CreateDeviceDto extends zodDto(createDeviceSchema) {}
@@ -245,7 +250,9 @@ export class DevicePeopleController {
 
 @Module({
   // AttendanceSettingsService: the timezone, the device settings and working days.
-  imports: [AttendanceModule],
+  // AbsentSmsService: the absent SMS of device registers and the guardians' phones.
+  // DEVICES_QUEUE: the receiver's process-punches jobs and the devices-tick scheduler.
+  imports: [AttendanceModule, BullModule.registerQueue({ name: DEVICES_QUEUE })],
   controllers: [DevicesController, DevicePeopleController],
   providers: [
     DevicesService,
@@ -255,6 +262,9 @@ export class DevicePeopleController {
     DevicePeopleRoster,
     DevicePeopleService,
     DevicePeopleCsvService,
+    DeviceAttendanceService,
+    PunchProcessingService,
+    DevicesProcessor,
   ],
 })
 export class DevicesModule {}

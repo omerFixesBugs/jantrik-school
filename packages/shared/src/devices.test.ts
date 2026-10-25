@@ -4,6 +4,7 @@ import {
   closeDecision,
   commandLine,
   countsForAttendance,
+  countsOnDay,
   cutoffTime,
   defaultStudentDeviceId,
   deviceDisplayName,
@@ -12,9 +13,11 @@ import {
   deviceUserIdSchema,
   entrySmsText,
   exitSmsText,
+  firstCountingIn,
   handshakeOptions,
   interpretPunch,
   MAX_ATTLOG_LINES,
+  movementOf,
   nextClockOffset,
   nextStaffDeviceId,
   outsideHours,
@@ -22,6 +25,7 @@ import {
   parseDeviceCmdResults,
   parseInfo,
   punchDirection,
+  punchOutcome,
   sendsSms,
   userDeletePayload,
   userUpsertPayload,
@@ -410,6 +414,87 @@ describe('hours and punch rules', () => {
     }
     expect(sendsSms({ ...p, flags: ['CLOCK_CORRECTED'] })).toBe(true);
     expect(sendsSms({ ...p, review: 'REJECTED' })).toBe(false);
+  });
+  it('countsOnDay: counts for attendance and is not STALE', () => {
+    expect(countsOnDay({ flags: ['NEW_IP'], review: null })).toBe(true);
+    expect(countsOnDay({ flags: ['STALE'], review: null })).toBe(false);
+    expect(countsOnDay({ flags: ['STALE'], review: 'OK' })).toBe(false);
+    expect(countsOnDay({ flags: [], review: 'REJECTED' })).toBe(false);
+    expect(countsOnDay({ flags: ['BURST'], review: 'ACCEPTED' })).toBe(true);
+  });
+  it('punchOutcome: STALE, rejected, held, unmapped, inactive, then applied, in that order', () => {
+    const active = { active: true };
+    const inactive = { active: false };
+    expect(punchOutcome({ flags: ['STALE', 'BURST'], review: 'REJECTED' }, null)).toBe('STALE');
+    expect(punchOutcome({ flags: ['BURST'], review: 'REJECTED' }, active)).toBe('IGNORED');
+    expect(punchOutcome({ flags: ['BURST'], review: null }, null)).toBe('HELD');
+    expect(punchOutcome({ flags: ['BURST'], review: 'OK' }, active)).toBe('HELD');
+    expect(punchOutcome({ flags: ['BURST'], review: 'ACCEPTED' }, active)).toBe('APPLIED');
+    expect(punchOutcome({ flags: ['NEW_IP'], review: null }, null)).toBe('UNMAPPED');
+    expect(punchOutcome({ flags: [], review: null }, inactive)).toBe('IGNORED');
+    expect(punchOutcome({ flags: ['OUTSIDE_HOURS'], review: null }, active)).toBe('APPLIED');
+    expect(punchOutcome({ flags: [], review: 'OK' }, active)).toBe('APPLIED');
+  });
+});
+
+describe('a student day: arrival, entry and exit', () => {
+  type Flag = 'STALE' | 'BURST' | 'NEW_IP';
+  const p = (
+    id: string,
+    time: string,
+    direction: 'IN' | 'OUT',
+    extra: { flags?: Flag[]; review?: 'OK' | 'ACCEPTED' | 'REJECTED' } = {},
+  ) => ({
+    id,
+    punchedAt: new Date(`2026-10-24T${time}+06:00`),
+    direction,
+    flags: extra.flags ?? [],
+    review: extra.review ?? null,
+  });
+  const movements = (day: ReturnType<typeof p>[]) => day.map((x) => movementOf(x, day));
+
+  it('ENTRY for the first IN, EXIT for the first OUT after it, whatever the order given', () => {
+    const day = [
+      p('c', '13:00:00', 'OUT'),
+      p('a', '07:50:00', 'IN'),
+      p('d', '13:05:00', 'OUT'),
+      p('b', '07:55:00', 'IN'),
+    ];
+    expect(movements(day)).toEqual(['EXIT', 'ENTRY', null, null]);
+    expect(firstCountingIn(day)?.id).toBe('a');
+  });
+  it('an OUT before any IN is nothing; no IN means no arrival', () => {
+    const day = [p('a', '07:00:00', 'OUT'), p('b', '07:50:00', 'IN'), p('c', '13:00:00', 'OUT')];
+    expect(movements(day)).toEqual([null, 'ENTRY', 'EXIT']);
+    expect(movements([p('a', '07:00:00', 'OUT')])).toEqual([null]);
+    expect(firstCountingIn([p('a', '07:00:00', 'OUT')])).toBeNull();
+  });
+  it('punches that do not count are skipped: rejected, held BURST, STALE', () => {
+    const day = [
+      p('a', '07:40:00', 'IN', { review: 'REJECTED' }),
+      p('b', '07:45:00', 'IN', { flags: ['BURST'] }),
+      p('c', '07:47:00', 'IN', { flags: ['STALE'] }),
+      p('d', '07:50:00', 'IN'),
+      p('e', '13:00:00', 'OUT', { flags: ['BURST'] }),
+      p('f', '13:05:00', 'OUT'),
+    ];
+    expect(movements(day)).toEqual([null, null, null, 'ENTRY', null, 'EXIT']);
+    expect(firstCountingIn(day)?.id).toBe('d');
+  });
+  it('a flagged punch that counts still takes the place (no later SMS); an accepted BURST counts', () => {
+    const day = [
+      p('a', '07:40:00', 'IN', { flags: ['NEW_IP'] }),
+      p('b', '07:50:00', 'IN'),
+      p('c', '13:00:00', 'OUT', { flags: ['BURST'], review: 'ACCEPTED' }),
+      p('d', '13:05:00', 'OUT'),
+    ];
+    expect(movements(day)).toEqual(['ENTRY', null, 'EXIT', null]);
+  });
+  it('the same time is ordered by id; the punch itself need not be in the list', () => {
+    const day = [p('b', '07:50:00', 'IN'), p('a', '07:50:00', 'IN')];
+    expect(movements(day)).toEqual([null, 'ENTRY']);
+    expect(movementOf(p('0', '07:00:00', 'IN'), day)).toBe('ENTRY');
+    expect(movementOf(p('z', '13:00:00', 'OUT'), day)).toBe('EXIT');
   });
 });
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { staffDay, staffMonth, STAFF_CELL_CODES } from './staff-attendance.js';
+import {
+  staffAttendanceTracked,
+  staffDay,
+  staffMonth,
+  STAFF_CELL_CODES,
+} from './staff-attendance.js';
 
 const base = {
   timeZone: 'Asia/Dhaka',
@@ -54,6 +59,23 @@ describe('staffDay', () => {
   });
   it('no early leave without an out', () => {
     expect(staffDay({ ...base, punches: [at('03:00:00'), at('03:10:00')] }).earlyMinutes).toBe(0);
+  });
+});
+
+describe('staffAttendanceTracked', () => {
+  it('by default everyone with an active staff role except an owner with no other role', () => {
+    const tracked = (roles: ('OWNER' | 'ADMIN' | 'TEACHER' | 'STAFF')[]) =>
+      staffAttendanceTracked({ tracked: null, activeStaffRoles: roles });
+    expect(tracked(['TEACHER'])).toBe(true);
+    expect(tracked(['STAFF'])).toBe(true);
+    expect(tracked(['OWNER'])).toBe(false);
+    expect(tracked(['OWNER', 'TEACHER'])).toBe(true);
+    expect(tracked([])).toBe(false);
+  });
+  it("the person's own switch wins, but never without an active staff role", () => {
+    expect(staffAttendanceTracked({ tracked: true, activeStaffRoles: ['OWNER'] })).toBe(true);
+    expect(staffAttendanceTracked({ tracked: false, activeStaffRoles: ['TEACHER'] })).toBe(false);
+    expect(staffAttendanceTracked({ tracked: true, activeStaffRoles: [] })).toBe(false);
   });
 });
 

@@ -4,6 +4,9 @@ export const DEVICES_QUEUE = 'devices';
 /** Processes an institute's new punches. */
 export const PROCESS_PUNCHES_JOB = 'process-punches';
 
+/** Every minute (scheduler and job name): each institute's leftover punches, then its cutoff. */
+export const DEVICES_TICK_JOB = 'devices-tick';
+
 /** The whole job: the institute id comes from the database's answer, never from a device. */
 export interface ProcessPunchesJob {
   tenantId: string;

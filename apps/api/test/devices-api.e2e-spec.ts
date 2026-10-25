@@ -417,6 +417,16 @@ describe('devices API', () => {
     });
 
     it('people from students and staff profiles, unknown IDs unmapped, arrival on time or late', async () => {
+      // The devices worker processes the upload (its job waits a second): the outcome is settled.
+      await vi.waitFor(
+        async () => {
+          const left = await inTenant(s.tenantId, (tx) =>
+            tx.devicePunch.count({ where: { processedAt: null } }),
+          );
+          if (left > 0) throw new Error('not processed yet');
+        },
+        { timeout: 10_000, interval: 100 },
+      );
       const { punches } = await feed(s.admin);
       expect(
         punches.map((p) => [
@@ -454,7 +464,7 @@ describe('devices API', () => {
         verifyKind: 'FINGERPRINT',
         flags: [],
         review: null,
-        outcome: null,
+        outcome: 'APPLIED',
         person: {
           kind: 'STUDENT',
           id: s.a[0]!.id,

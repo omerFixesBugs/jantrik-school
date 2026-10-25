@@ -36,7 +36,7 @@ attempt deletes the code. A successful verify deletes it too (single use).
   text) for cost tracking. The app role can only insert there.
 
 Tenant SMS (e.g. absent alerts) go through **`TenantSmsService.queue()`** instead, inside the
-request transaction:
+request transaction (or a job's, which may act for no person, e.g. device punches):
 
 1. It takes a per-tenant advisory lock, so the dedupe check and the daily count can't race.
 2. A `dedupeKey` that already exists → `DUPLICATE`, nothing queued.
@@ -50,7 +50,8 @@ request transaction:
 
 `queue()` takes `overCap: 'HOLD' | 'SKIP'` (default `HOLD`, step 3's behaviour). With `SKIP` an
 SMS over the daily cap writes no row and returns `OVER_CAP`: result SMS use it, because a held
-message's dedupe key could never be sent again ([exams.md](exams.md)).
+message's dedupe key could never be sent again ([exams.md](exams.md)), and so do the device entry
+and exit SMS (with 90 % of the cap, leaving the rest for absent alerts).
 
 ## Rate limits (Redis, all configurable via env)
 

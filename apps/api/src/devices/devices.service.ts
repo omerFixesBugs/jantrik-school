@@ -23,6 +23,7 @@ import type { Env } from '../config/env.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { staffNames, staffRef } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
+import { DeviceAttendanceService } from './device-attendance.service.js';
 import { deviceUsers, queueUpserts } from './device-users.js';
 import { DEVICES_TENANTS_KEY } from './devices.constants.js';
 
@@ -58,6 +59,7 @@ export class DevicesService {
     private readonly clock: Clock,
     private readonly config: ConfigService<Env, true>,
     @Inject(REDIS) private readonly redis: Redis,
+    private readonly deviceAttendance: DeviceAttendanceService,
   ) {}
 
   async list(): Promise<DeviceList> {
@@ -258,6 +260,8 @@ export class DevicesService {
   async trust(id: string, ipId: string): Promise<TrustAddressResult> {
     const tx = this.db.tx;
     await this.lockDevice(id);
+    // Punch rows change below: the institute's punch lock first, as processing and reviews take it.
+    await this.deviceAttendance.lockPunches();
     const before = await this.findAddress(id, ipId);
     const me = this.context.requirePrincipal().userId;
     const now = this.clock.now();

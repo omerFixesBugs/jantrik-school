@@ -1,7 +1,21 @@
 import { localTimeOf } from './dates.js';
 import type { IsoDate } from './dates.js';
+import type { StaffRole } from './staff.js';
 
 /** Staff attendance from device punches: one day per person, and the month grid with totals. */
+
+/**
+ * Whether a person's attendance is kept as staff. Never without an active staff role; then their
+ * own switch (`staff_profiles.attendance_tracked`), or by default everyone except people whose
+ * only staff role is OWNER.
+ */
+export function staffAttendanceTracked(input: {
+  tracked: boolean | null;
+  activeStaffRoles: readonly StaffRole[];
+}): boolean {
+  if (input.activeStaffRoles.length === 0) return false;
+  return input.tracked ?? input.activeStaffRoles.some((r) => r !== 'OWNER');
+}
 
 const toSeconds = (hhmm: string): number => {
   const [h = 0, m = 0, s = 0] = hhmm.split(':').map(Number);

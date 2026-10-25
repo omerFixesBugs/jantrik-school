@@ -427,6 +427,72 @@ export function sendsSms(p: PunchStatus & { punchedAt: Date; receivedAt: Date })
 }
 
 // ---------------------------------------------------------------------------------------------
+// A student's day: arrival, entry and exit
+
+/** One of a student's punches on a local day. */
+export interface DayPunch extends PunchStatus {
+  id: string;
+  punchedAt: Date;
+  direction: PunchDirection;
+}
+
+/** Counts for a person's day: `countsForAttendance` and not STALE (only shown, never applied). */
+export function countsOnDay(p: PunchStatus): boolean {
+  return countsForAttendance(p) && !p.flags.includes('STALE');
+}
+
+/**
+ * What processing makes of a punch, by these rules in order. `person` is who its device ID belongs
+ * to now (null: nobody); `active` is false for a student deleted, not ACTIVE or not enrolled this
+ * year, and for staff not ACTIVE or whose attendance is not kept.
+ */
+export function punchOutcome(p: PunchStatus, person: { active: boolean } | null): PunchOutcome {
+  if (p.flags.includes('STALE')) return 'STALE';
+  if (p.review === 'REJECTED') return 'IGNORED';
+  if (p.flags.includes('BURST') && p.review !== 'ACCEPTED') return 'HELD';
+  if (person === null) return 'UNMAPPED';
+  return person.active ? 'APPLIED' : 'IGNORED';
+}
+
+/** Punch time order; the same time is ordered by id. */
+const isBefore = (a: DayPunch, b: DayPunch): boolean =>
+  a.punchedAt.getTime() < b.punchedAt.getTime() ||
+  (a.punchedAt.getTime() === b.punchedAt.getTime() && a.id < b.id);
+
+/** The arrival: the day's first IN that counts, or null. */
+export function firstCountingIn(day: readonly DayPunch[]): DayPunch | null {
+  let first: DayPunch | null = null;
+  for (const p of day) {
+    if (p.direction === 'IN' && countsOnDay(p) && (first === null || isBefore(p, first))) first = p;
+  }
+  return first;
+}
+
+/**
+ * The guardian SMS a student's punch stands for: ENTRY for the day's first IN that counts, EXIT
+ * for the first OUT that counts after it, otherwise null. `day` is the student's punches of that
+ * local day, processed or not, in any order. A flagged punch that counts still takes the place,
+ * so a later one sends nothing either (`sendsSms` decides whether the SMS goes).
+ */
+export function movementOf(punch: DayPunch, day: readonly DayPunch[]): 'ENTRY' | 'EXIT' | null {
+  if (!countsOnDay(punch)) return null;
+  const all = [...day.filter((p) => p.id !== punch.id), punch];
+  const arrival = firstCountingIn(all);
+  if (arrival === null) return null;
+  if (punch.direction === 'IN') return arrival.id === punch.id ? 'ENTRY' : null;
+  if (!isBefore(arrival, punch)) return null;
+  const earlierOut = all.some(
+    (p) =>
+      p.direction === 'OUT' &&
+      p.id !== punch.id &&
+      countsOnDay(p) &&
+      isBefore(arrival, p) &&
+      isBefore(p, punch),
+  );
+  return earlierOut ? null : 'EXIT';
+}
+
+// ---------------------------------------------------------------------------------------------
 // Student arrival and closing the register
 
 const toSeconds = (hhmm: string): number => {

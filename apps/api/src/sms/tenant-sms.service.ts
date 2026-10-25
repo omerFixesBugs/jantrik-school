@@ -87,7 +87,7 @@ export class TenantSmsService implements OnModuleInit {
     this.relevance.set(purpose, check);
   }
 
-  /** Call inside a request transaction. Rolled back with it; queued only after commit. */
+  /** Call inside a request or job transaction. Rolled back with it; queued only after commit. */
   async queue(input: QueueTenantSmsInput): Promise<QueueTenantSmsResult> {
     const tx = this.db.tx;
     // One SMS writer per tenant at a time, so the dedupe check and the daily count can't race.
@@ -105,7 +105,8 @@ export class TenantSmsService implements OnModuleInit {
     const overLimit = used >= input.dailyCap;
     if (overLimit && input.overCap === 'SKIP') return 'OVER_CAP';
 
-    const tenantId = this.context.requirePrincipal().tenantId!;
+    // The caller's tenant, or the job's when no person acts (device punches).
+    const tenantId = this.context.requireTenantId();
     const log = await tx.smsLog.create({
       data: {
         tenantId,
