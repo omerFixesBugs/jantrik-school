@@ -18,9 +18,9 @@ import { findLayoutProblems, findSmallTargets } from './layout-check';
 // the device: IDs first, then the device and its people, its feed and addresses, the phone, and
 // last the device going quiet.
 //
-// Later specs see the demo as seeded: the three students whose IDs change get their demo IDs back
-// before the device is added, and the device (a serial of its own per run) is switched off at the
-// end.
+// Later specs (and a retry) see the demo as seeded: the three students whose IDs change get their
+// demo IDs back before the device is added, and the device (a serial of its own per run) is
+// switched off at the end. When a test fails, `afterAll` does both through the API.
 //
 // Punches carry the device's own clock (now), not E2E_TODAY: a device keeps nothing dated before
 // the day it was added (`interpretPunch`), and this one is added on the real date, after
@@ -49,8 +49,6 @@ const demoId = (s: { code: string }) => defaultStudentDeviceId(s.code)!;
 
 /** Plays the device from the moment it is added. */
 let device: ZkDeviceSimulator;
-/** When the receiver last heard from the device: it stays online for 2 minutes after. */
-let lastContact = 0;
 
 const deviceRow = (page: Page) =>
   page.getByTestId('devices-table').getByRole('row', { name: DEVICE_NAME });
@@ -76,94 +74,110 @@ async function restoreDemoIds(token: string) {
   for (const m of moved) await put(m.id, demoId(m.s));
 }
 
+// After a failure too: the device off first (an ID on a switched-off device holds nobody back),
+// then the demo IDs. Both are no-ops when the tests got through.
+test.afterAll(async () => {
+  const owner = await apiLogin(DEMO.shaplaOwner);
+  const { devices } = await api<DeviceList>(owner, '/attendance/devices');
+  const left = devices.find((d) => d.serialNo === SERIAL && d.isActive);
+  if (left) {
+    await api(owner, `/attendance/devices/${left.id}`, {
+      method: 'PATCH',
+      json: { isActive: false },
+    });
+  }
+  await restoreDemoIds(owner);
+});
+
 test('device IDs: one set by hand, a CSV with one bad row, default IDs and a collision', async ({
   page,
 }) => {
+  test.slow();
   const owner = await apiLogin(DEMO.shaplaOwner);
-  try {
-    await passwordLogin(page, DEMO.shaplaOwner);
-    await expect(page).toHaveURL(/\/dashboard$/);
-    await page.goto('/attendance/devices/people');
-    const table = page.getByTestId('people-table');
-    const row = (s: { name: string }) => table.getByRole('row', { name: s.name });
-    await expect(row(FAHIM)).toContainText(demoId(FAHIM));
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.goto('/attendance/devices/people');
+  const table = page.getByTestId('people-table');
+  const row = (s: { name: string }) => table.getByRole('row', { name: s.name });
+  await expect(row(FAHIM)).toContainText(demoId(FAHIM));
 
-    // By hand, typed on a Bangla keyboard; Enter saves.
-    await row(FAHIM).getByTestId('device-id-edit').click();
-    const input = row(FAHIM).getByTestId('device-id-input');
-    await input.fill(toBanglaDigits('777001'));
-    await input.press('Enter');
-    await expect(row(FAHIM).getByTestId('device-id-form')).toHaveCount(0);
-    await expect(row(FAHIM)).toContainText('777001');
+  // By hand, typed on a Bangla keyboard; Enter saves.
+  await row(FAHIM).getByTestId('device-id-edit').click();
+  const input = row(FAHIM).getByTestId('device-id-input');
+  await input.fill(toBanglaDigits('777001'));
+  await input.press('Enter');
+  await expect(row(FAHIM).getByTestId('device-id-form')).toHaveCount(0);
+  await expect(row(FAHIM)).toContainText('777001');
 
-    // A CSV: Fahim's ID cleared, his old number to Umme, Priyanka's cleared, and a student code
-    // nobody has. The preview shows the bad row and why; the apply writes the other three.
-    await page.getByTestId('people-csv').click();
-    await page.getByTestId('csv-upload').click();
-    const upload = page.getByTestId('csv-import');
-    await upload.getByTestId('csv-file').setInputFiles({
-      name: 'device-ids.csv',
-      mimeType: 'text/csv',
-      buffer: Buffer.from(
-        [
-          'student_code,staff_phone,device_id',
-          `${FAHIM.code},,`,
-          `${UMME.code},,${demoId(FAHIM)}`,
-          `${PRIYANKA.code},,`,
-          'SHS-2026-9999,,777003',
-          '',
-        ].join('\r\n'),
-      ),
-    });
-    await upload.getByTestId('csv-check').click();
-    const preview = upload.getByTestId('csv-preview');
-    await expect(preview).toContainText('৩টি বদলাবে');
-    await expect(preview).toContainText('১টি ভুল');
-    const lines = preview.getByTestId('csv-preview-table').locator('tbody tr');
-    await expect(lines).toHaveCount(4);
-    await expect(lines.first()).toContainText('এই কোডের কোনো শিক্ষার্থী নেই');
-    await upload.getByTestId('csv-apply').click();
-    await expect(upload).toBeHidden();
-    await expect(page.getByText('৩ জনের আইডি বদলানো হলো; ১টি ভুল সারি বাদ পড়েছে')).toBeVisible();
-    await expect(row(UMME)).toContainText(demoId(FAHIM));
-    // Priyanka is offered her default; Fahim's is Umme's now, so he is offered none.
-    await expect(row(PRIYANKA)).toContainText(`প্রস্তাবিত ${demoId(PRIYANKA)}`);
-    await expect(row(FAHIM)).toContainText('আইডি নেই');
+  // A CSV: Fahim's ID cleared, his old number to Umme, Priyanka's cleared, and a student code
+  // nobody has. The preview shows the bad row and why; the apply writes the other three.
+  await page.getByTestId('people-csv').click();
+  await page.getByTestId('csv-upload').click();
+  const upload = page.getByTestId('csv-import');
+  await upload.getByTestId('csv-file').setInputFiles({
+    name: 'device-ids.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(
+      [
+        'student_code,staff_phone,device_id',
+        `${FAHIM.code},,`,
+        `${UMME.code},,${demoId(FAHIM)}`,
+        `${PRIYANKA.code},,`,
+        'SHS-2026-9999,,777003',
+        '',
+      ].join('\r\n'),
+    ),
+  });
+  await upload.getByTestId('csv-check').click();
+  const preview = upload.getByTestId('csv-preview');
+  await expect(preview).toContainText('৩টি বদলাবে');
+  await expect(preview).toContainText('১টি ভুল');
+  const lines = preview.getByTestId('csv-preview-table').locator('tbody tr');
+  await expect(lines).toHaveCount(4);
+  await expect(lines.first()).toContainText('এই কোডের কোনো শিক্ষার্থী নেই');
+  await upload.getByTestId('csv-apply').click();
+  await expect(upload).toBeHidden();
+  await expect(page.getByText('৩ জনের আইডি বদলানো হলো; ১টি ভুল সারি বাদ পড়েছে')).toBeVisible();
+  await expect(row(UMME)).toContainText(demoId(FAHIM));
+  // Priyanka is offered her default; Fahim's is Umme's now, so he is offered none.
+  await expect(row(PRIYANKA)).toContainText(`প্রস্তাবিত ${demoId(PRIYANKA)}`);
+  await expect(row(FAHIM)).toContainText('আইডি নেই');
 
-    // Default IDs: a dry run first (who gets which, who cannot and why), then the same for real.
-    await page.getByTestId('defaults-open').click();
-    const defaults = page.getByTestId('defaults-dialog');
-    await expect(defaults.getByTestId('defaults-count')).toHaveText(
-      '১ জন আইডি পাবেন (১ জন শিক্ষার্থী, ০ জন কর্মী)।',
-    );
-    await expect(defaults).toContainText(PRIYANKA.name);
-    await expect(defaults).toContainText(demoId(PRIYANKA));
-    await expect(defaults.getByTestId('defaults-conflicts')).toContainText(
-      `${FAHIM.name} (${FAHIM.code}): আইডি ${demoId(FAHIM)} আগে থেকেই ${UMME.name}-এর`,
-    );
-    await defaults.getByTestId('defaults-apply').click();
-    await expect(defaults).toBeHidden();
-    await expect(row(PRIYANKA)).not.toContainText('প্রস্তাবিত');
-    await expect(row(PRIYANKA)).toContainText(demoId(PRIYANKA));
+  // Default IDs: a dry run first (who gets which, who cannot and why), then the same for real.
+  await page.getByTestId('defaults-open').click();
+  const defaults = page.getByTestId('defaults-dialog');
+  await expect(defaults.getByTestId('defaults-count')).toHaveText(
+    '১ জন আইডি পাবেন (১ জন শিক্ষার্থী, ০ জন কর্মী)।',
+  );
+  await expect(defaults).toContainText(PRIYANKA.name);
+  await expect(defaults).toContainText(demoId(PRIYANKA));
+  await expect(defaults.getByTestId('defaults-conflicts')).toContainText(
+    `${FAHIM.name} (${FAHIM.code}): আইডি ${demoId(FAHIM)} আগে থেকেই ${UMME.name}-এর`,
+  );
+  await defaults.getByTestId('defaults-apply').click();
+  await expect(defaults).toBeHidden();
+  await expect(row(PRIYANKA)).not.toContainText('প্রস্তাবিত');
+  await expect(row(PRIYANKA)).toContainText(demoId(PRIYANKA));
 
-    // The collision: Fahim wants the number Umme holds. "Set an ID" shows him alone, editing.
-    const collision = page.getByTestId('collision');
-    await expect(collision).toHaveCount(1);
-    await expect(collision).toContainText(demoId(FAHIM));
-    await expect(collision).toContainText(`এখন আছে: ${UMME.name} (${UMME.code})`);
-    await expect(collision).toContainText(FAHIM.name);
-    await collision.getByTestId('collision-set').click();
-    await expect(table.locator('tbody tr')).toHaveCount(1);
-    const fahimId = row(FAHIM).getByTestId('device-id-input');
-    await expect(fahimId).toBeVisible();
-    await fahimId.fill(demoId(UMME));
-    await fahimId.press('Enter');
-    await expect(row(FAHIM).getByTestId('device-id-form')).toHaveCount(0);
-    await expect(row(FAHIM)).toContainText(demoId(UMME));
-    await expect(collision).toHaveCount(0);
-  } finally {
-    await restoreDemoIds(owner);
-  }
+  // The collision: Fahim wants the number Umme holds. "Set an ID" shows him alone, editing.
+  const collision = page.getByTestId('collision');
+  await expect(collision).toHaveCount(1);
+  await expect(collision).toContainText(demoId(FAHIM));
+  await expect(collision).toContainText(`এখন আছে: ${UMME.name} (${UMME.code})`);
+  await expect(collision).toContainText(FAHIM.name);
+  await collision.getByTestId('collision-set').click();
+  await expect(table.locator('tbody tr')).toHaveCount(1);
+  const fahimId = row(FAHIM).getByTestId('device-id-input');
+  await expect(fahimId).toBeVisible();
+  await fahimId.fill(demoId(UMME));
+  await fahimId.press('Enter');
+  await expect(row(FAHIM).getByTestId('device-id-form')).toHaveCount(0);
+  await expect(row(FAHIM)).toContainText(demoId(UMME));
+  await expect(collision).toHaveCount(0);
+
+  // Their demo IDs back before the device is added and gets everyone (Fahim and Umme swapped).
+  // A failure above leaves this to `afterAll`, so it never hides the first error.
+  await restoreDemoIds(owner);
 });
 
 test('a new device: the Bangla setup guide, its first call, and everyone sent to it', async ({
@@ -238,6 +252,8 @@ test('a new device: the Bangla setup guide, its first call, and everyone sent to
 test('the live feed: names within seconds, an unknown ID; a punch from a second address flagged, rejected, its address trusted', async ({
   page,
 }) => {
+  // Two waits for the 5 s feed poll and one for the alerts (up to 35 s) on top of the steps.
+  test.slow();
   const owner = await apiLogin(DEMO.shaplaOwner);
   const { people } = await api<DevicePeopleList>(owner, '/attendance/device-people');
   const idOf = (nameBn: string) => people.find((p) => p.nameBn === nameBn)!.deviceUserId!;
@@ -269,9 +285,8 @@ test('the live feed: names within seconds, an unknown ID; a punch from a second 
   // A punch from another address: flagged in the feed.
   await page.goto('/attendance/devices');
   const elsewhere = new ZkDeviceSimulator({ baseUrl: RECEIVER, sn: SERIAL, forwardedFor: NEW_IP });
+  // The device's last call: the last test waits for it to go offline.
   expect((await elsewhere.punch(idOf('নাফিসা ইসলাম'))).body).toBe('OK: 1');
-  // The device's last call: the last test waits for it to go offline from here.
-  lastContact = Date.now();
   const flagged = rows.filter({ hasText: 'নাফিসা ইসলাম' });
   await expect(flagged).toContainText('নতুন IP', { timeout: 15_000 });
 
@@ -338,20 +353,26 @@ test('the device goes quiet: offline two minutes after its last call, then switc
 }) => {
   test.setTimeout(DEVICE_ONLINE_WINDOW_MS + 90_000);
   const owner = await apiLogin(DEMO.shaplaOwner);
+  const mine = async () =>
+    (await api<DeviceList>(owner, '/attendance/devices')).devices.find(
+      (d) => d.serialNo === SERIAL,
+    )!;
+  // Online lasts 2 minutes from the last call (at the end of the feed test; the phone test ran
+  // meanwhile).
+  await expect
+    .poll(async () => (await mine()).state, {
+      timeout: DEVICE_ONLINE_WINDOW_MS + 30_000,
+      intervals: [5_000],
+    })
+    .toBe('OFFLINE');
+  const { lastSeenAt } = await mine();
   await passwordLogin(page, DEMO.shaplaOwner);
   await expect(page).toHaveURL(/\/dashboard$/);
-  // Online lasts 2 minutes from the last call (made at the end of the feed test).
-  await page.waitForTimeout(
-    Math.max(0, lastContact + DEVICE_ONLINE_WINDOW_MS + 5_000 - Date.now()),
-  );
   await page.goto('/attendance/devices');
   const row = deviceRow(page);
   await expect(row).toContainText('অফলাইন');
 
   // The guide says so too, with when it was last heard from.
-  const { lastSeenAt } = (await api<DeviceList>(owner, '/attendance/devices')).devices.find(
-    (d) => d.serialNo === SERIAL,
-  )!;
   await row.getByTestId('device-actions').click();
   await page.getByRole('menuitem', { name: 'সেটআপ নির্দেশিকা' }).click();
   const status = page.getByTestId('setup-guide').getByTestId('guide-status');

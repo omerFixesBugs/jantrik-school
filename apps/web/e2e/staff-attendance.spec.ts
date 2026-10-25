@@ -142,10 +142,12 @@ test.describe('at a desk', () => {
     await expect(peek).toBeHidden();
 
     // ── Print: the grid alone, on one A4 landscape page ──
+    // Chromium never adds pages sideways (a page too wide is shrunk or cut), so the page count
+    // alone cannot tell: the 31 days and the totals must fit the paper's width too, measured in
+    // print media at A4 landscape's printable width (297 − 2 × 10 mm margins, globals.css).
+    await page.setViewportSize({ width: Math.round((277 / 25.4) * 96), height: 718 });
     await page.emulateMedia({ media: 'print' });
     await expect(page.getByTestId('staff-print')).toBeHidden();
-    // Chromium never adds pages sideways (a page too wide is shrunk or cut), so the page count
-    // alone cannot tell: the 31 days and the totals must fit the print area's width too.
     const widths = await page.evaluate(() => ({
       area: document.querySelector('[data-testid="staff-month"]')!.getBoundingClientRect().width,
       grid: document
@@ -154,13 +156,15 @@ test.describe('at a desk', () => {
     }));
     expect(
       widths.grid,
-      `the grid is ${Math.round(widths.grid)} px wide in a ${Math.round(widths.area)} px print area`,
+      `the grid is ${Math.round(widths.grid)} px wide on a ${Math.round(widths.area)} px wide A4 landscape page`,
     ).toBeLessThanOrEqual(widths.area + 1);
     const pdf = (await page.pdf({ preferCSSPageSize: true })).toString('latin1');
-    expect(pdf.match(/\/Type\s*\/Page[^s]/g)?.length).toBe(1);
+    // Exactly one page: the app shell, hidden but still laid out, must not add a blank second one.
+    expect(pdf.match(/\/Type\s*\/Page[^s]/g)?.length, 'pages in the PDF').toBe(1);
     // A4 landscape: 842 × 595 pt.
     expect(pdf).toMatch(/\/MediaBox\s*\[\s*0\s+0\s+(841|842)(\.\d+)?\s+(594|595)(\.\d+)?\s*\]/);
     await page.emulateMedia({ media: 'screen' });
+    await page.setViewportSize({ width: 1366, height: 900 });
 
     // ── The two CSVs: a BOM for Excel, ASCII digits, CRLF line ends ──
     const csvLines = async (kind: 'grid' | 'days') => {
