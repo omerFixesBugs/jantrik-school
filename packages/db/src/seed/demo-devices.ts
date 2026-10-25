@@ -1,6 +1,5 @@
 import {
   addDays,
-  dateFromDb,
   dateToDb,
   defaultStudentDeviceId,
   isoWeekday,
@@ -271,17 +270,22 @@ export async function seedDemoDevices(
   await tx.devicePerson.createMany({ data: people });
 
   // The staff report counts a person's days from their profile's creation: date the profiles to
-  // the start of the demo year, as the students are, keeping their order.
-  const yearStart = wallClockToUtc(`${dateFromDb(year.startDate)} 00:00:00`, timezone).getTime();
+  // the first day of the history, keeping their order, so a day without a punch in it shows as
+  // absent and the days before it as empty.
+  const today = todayIn(timezone);
+  const since = wallClockToUtc(
+    `${addDays(today, -STAFF_HISTORY_DAYS)} 00:00:00`,
+    timezone,
+  ).getTime();
   const profiles = await tx.staffProfile.findMany({
     orderBy: { createdAt: 'asc' },
     select: { userId: true, createdAt: true },
   });
-  const first = profiles[0]?.createdAt.getTime() ?? yearStart;
+  const first = profiles[0]?.createdAt.getTime() ?? since;
   for (const p of profiles) {
     await tx.staffProfile.update({
       where: { tenantId_userId: { tenantId, userId: p.userId } },
-      data: { createdAt: new Date(yearStart + p.createdAt.getTime() - first) },
+      data: { createdAt: new Date(since + p.createdAt.getTime() - first) },
     });
   }
 
@@ -291,7 +295,7 @@ export async function seedDemoDevices(
     settings.weeklyOffDays.includes(isoWeekday(d)) ||
     holidays.some((h) => dateToDb(d) >= h.startDate && dateToDb(d) <= h.endDate);
   const plan = planStaffAttendance({
-    dates: workingDaysBefore(todayIn(timezone), STAFF_HISTORY_DAYS, isOff),
+    dates: workingDaysBefore(today, STAFF_HISTORY_DAYS, isOff),
     people: ctx.staff
       .filter((m) =>
         staffAttendanceTracked({ tracked: null, activeStaffRoles: m.roles.filter(isStaffRole) }),

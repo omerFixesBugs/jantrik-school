@@ -74,7 +74,7 @@ they owe from the start month and no admission fee; a student admitted now pays 
   and 12th working day back); Sharmin has a sick leave entered by Rafiqul (অসুস্থতার ছুটি, 8th);
   Shahana did not punch on the 4th (absent). With the e2e date 2026-10-21 those are 18 Oct,
   7 Oct, 12 Oct and 17 Oct. Abdul Karim's attendance is not kept (an owner's, by default). Staff
-  count from 1 January 2026, so the staff report shows the days before the month as absent.
+  count from the first day of that month, so the staff report shows earlier days empty.
 - No student punches and no device registers: **auto-mark and the entry/exit SMS are off**, so
   today's registers are still taken by hand. Switch auto-mark on in the attendance settings to
   watch the device close a register.

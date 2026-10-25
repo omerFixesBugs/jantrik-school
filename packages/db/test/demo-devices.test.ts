@@ -370,12 +370,15 @@ describe('the demo device seed in the database', () => {
     ]);
   });
 
-  it('dates the staff profiles to the start of the demo year, keeping their order', async () => {
+  it('dates the staff profiles to the first day of the history, keeping their order', async () => {
     const profiles = await withTenant(app, institute().tenantId, (tx) =>
       tx.staffProfile.findMany(),
     );
     expect(profiles).toHaveLength(SHAPLA_STAFF.length);
-    for (const p of profiles) expect(localDateOf(p.createdAt, TZ)).toBe('2026-01-01');
+    for (const p of profiles) {
+      expect(localDateOf(p.createdAt, TZ)).toBe('2026-09-21');
+      expect(localTimeOf(p.createdAt, TZ) < '00:01:00').toBe(true);
+    }
     expect(await profileOrder(institute().tenantId)).toEqual(institute().profileOrder);
   });
 
@@ -462,42 +465,58 @@ describe('the demo device seed in the database', () => {
     });
   });
 
-  it('reads as the staff report shows October: late and early days, the leave, the absent day', async () => {
+  it('reads as the staff report shows it: empty before the history, then late and early days, the leave and the absent day', async () => {
     const { profiles, rows } = await withTenant(app, institute().tenantId, async (tx) => ({
       profiles: await tx.staffProfile.findMany(),
       rows: await tx.staffAttendanceDay.findMany(),
     }));
-    const days = Array.from({ length: 31 }, (_, i) => {
-      const date = `2026-10-${String(i + 1).padStart(2, '0')}`;
-      return { date, off: isoWeekday(date) === 5 || date === HOLIDAY };
-    });
     const tracked = SHAPLA_STAFF.filter(([, , roles]) => roles.join() !== 'OWNER');
-    const month = staffMonth({
-      month: '2026-10',
-      days,
-      today: '2026-10-21',
-      people: tracked.map(([raw]) => ({
-        key: userIdOf(raw),
-        since: localDateOf(profiles.find((p) => p.userId === userIdOf(raw))!.createdAt, TZ),
-      })),
-      rows: rows.map((r) => ({
-        key: r.userId,
-        date: dateFromDb(r.date),
-        status: r.status,
-        lateMinutes: r.lateMinutes,
-        earlyMinutes: r.earlyMinutes,
-      })),
-      officeEndPassedToday: false,
-    });
-    const cell = (raw: string, date: string) =>
-      month.find((m) => m.key === userIdOf(raw))!.cells[Number(date.slice(8)) - 1];
-    expect(cell('01711000004', '2026-10-17')).toBe('ABSENT');
-    expect(cell('01911000999', '2026-10-12')).toBe('LEAVE');
-    expect(cell('01711000002', '2026-10-18')).toMatch(/EARLY/);
-    expect(cell('01711000003', '2026-10-07')).toMatch(/EARLY/);
-    const total = (k: 'absent' | 'leave' | 'early' | 'late') =>
-      month.reduce((n, m) => n + m.totals[k], 0);
-    expect([total('absent'), total('leave'), total('early')]).toEqual([1, 1, 2]);
-    expect(total('late')).toBeGreaterThan(0);
+    /** The staff month grid of 2026-`mm`, on the 2026-10-21 seed date before office end. */
+    const report = (mm: '09' | '10') => {
+      const grid = staffMonth({
+        month: `2026-${mm}`,
+        days: Array.from({ length: mm === '09' ? 30 : 31 }, (_, i) => {
+          const date = `2026-${mm}-${String(i + 1).padStart(2, '0')}`;
+          return { date, off: isoWeekday(date) === 5 || date === HOLIDAY };
+        }),
+        today: '2026-10-21',
+        people: tracked.map(([raw]) => ({
+          key: userIdOf(raw),
+          since: localDateOf(profiles.find((p) => p.userId === userIdOf(raw))!.createdAt, TZ),
+        })),
+        rows: rows.map((r) => ({
+          key: r.userId,
+          date: dateFromDb(r.date),
+          status: r.status,
+          lateMinutes: r.lateMinutes,
+          earlyMinutes: r.earlyMinutes,
+        })),
+        officeEndPassedToday: false,
+      });
+      return {
+        cell: (raw: string, date: string) =>
+          grid.find((m) => m.key === userIdOf(raw))!.cells[Number(date.slice(8)) - 1],
+        total: (k: 'absent' | 'leave' | 'early' | 'late') =>
+          grid.reduce((n, m) => n + m.totals[k], 0),
+      };
+    };
+
+    const october = report('10');
+    expect(october.cell('01711000004', '2026-10-17')).toBe('ABSENT');
+    expect(october.cell('01911000999', '2026-10-12')).toBe('LEAVE');
+    expect(october.cell('01711000002', '2026-10-18')).toMatch(/EARLY/);
+    expect(october.cell('01711000003', '2026-10-07')).toMatch(/EARLY/);
+    const totals = ['absent', 'leave', 'early'] as const;
+    expect(totals.map((k) => october.total(k))).toEqual([1, 1, 2]);
+    expect(october.total('late')).toBeGreaterThan(0);
+
+    // Before the history (2026-09-20, a Sunday, a working day) nobody was counted yet: empty,
+    // not absent; from its first day on, every day has a row.
+    const september = report('09');
+    for (const [raw] of tracked) {
+      expect(september.cell(raw, '2026-09-20')).toBe('NONE');
+      expect(september.cell(raw, '2026-09-21')).not.toBe('NONE');
+    }
+    expect(september.total('absent')).toBe(0);
   });
 });
