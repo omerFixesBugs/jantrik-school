@@ -1,6 +1,6 @@
 import type { DevicePersonRow } from '@jantrik/shared';
 import { describe, expect, it } from 'vitest';
-import { filterPeople, sectionChoices } from './people';
+import { filterPeople, peopleFilterFromUrl, peopleFilterUrl, sectionChoices } from './people';
 
 const student = (
   id: string,
@@ -79,5 +79,51 @@ describe('sectionChoices', () => {
       { value: 'b', label: 'ষষ্ঠ খ' },
     ]);
     expect(sectionChoices(ROWS, 'en')[0]).toEqual({ value: 'a', label: 'Six ক' });
+  });
+});
+
+describe('the filter in the URL', () => {
+  const SECTION = '01a16c54-85f8-724c-91ff-c2b68b7b2b31';
+
+  it('opens on the students without an ID of one section from a link', () => {
+    expect(peopleFilterFromUrl(new URLSearchParams(`unmapped=1&section=${SECTION}`), '')).toEqual({
+      kind: 'STUDENT',
+      unmappedOnly: true,
+      sectionId: SECTION,
+      query: '',
+    });
+  });
+
+  it('starts on every student, with a search when one is given', () => {
+    expect(peopleFilterFromUrl(new URLSearchParams(''), '4321')).toEqual({
+      kind: 'STUDENT',
+      unmappedOnly: false,
+      sectionId: '',
+      query: '4321',
+    });
+    // Anything else in the place of a section or a flag is ignored.
+    expect(peopleFilterFromUrl(new URLSearchParams('unmapped=yes&section=x'), '')).toMatchObject({
+      unmappedOnly: false,
+      sectionId: '',
+    });
+  });
+
+  it('keeps "without an ID" and the section in the URL, other parameters as they are', () => {
+    const base = new URLSearchParams('unknown=4321');
+    const on = peopleFilterUrl(base, {
+      kind: 'STUDENT',
+      unmappedOnly: true,
+      sectionId: SECTION,
+      query: 'x',
+    });
+    expect(Object.fromEntries(on)).toEqual({ unknown: '4321', unmapped: '1', section: SECTION });
+    const off = peopleFilterUrl(on, {
+      kind: 'STAFF',
+      unmappedOnly: false,
+      sectionId: SECTION,
+      query: '',
+    });
+    // Staff have no section: it leaves the URL with the flag.
+    expect(Object.fromEntries(off)).toEqual({ unknown: '4321' });
   });
 });

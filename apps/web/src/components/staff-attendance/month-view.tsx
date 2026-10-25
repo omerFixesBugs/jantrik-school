@@ -110,267 +110,270 @@ export function StaffMonthView({
   }
 
   return (
-    <div
-      className={cn(
-        'print-area flex flex-col gap-4',
-        // Beside the side peek, the grid makes room for it (it scrolls sideways anyway).
-        open && wide && 'xl:pe-[calc(min(26rem,40vw)+0.75rem)] print:pe-0',
-      )}
-      data-testid="staff-month"
-    >
-      <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:flex-wrap sm:items-center">
-        <div className="flex items-center gap-1" role="group" aria-label={t('month.month')}>
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label={t('month.prev')}
-            onClick={() => onMonth(addMonths(month, -1))}
-          >
-            <ChevronLeftIcon aria-hidden />
-          </Button>
-          <span
-            className="min-w-36 px-2 text-center font-medium"
-            aria-live="polite"
-            data-testid="staff-month-label"
-          >
-            {formatMonth(month, locale)}
-          </span>
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label={t('month.next')}
-            disabled={month >= thisMonth}
-            onClick={() => onMonth(addMonths(month, 1))}
-          >
-            <ChevronRightIcon aria-hidden />
-          </Button>
-        </div>
-        <div className="flex flex-wrap gap-2 sm:ms-auto">
-          {(['grid', 'days'] as const).map((kind) => (
+    <>
+      <div
+        className={cn(
+          'print-area flex flex-col gap-4',
+          // Beside the side peek, the grid makes room for it (it scrolls sideways anyway).
+          open && wide && 'xl:pe-[calc(min(26rem,40vw)+0.75rem)] print:pe-0',
+        )}
+        data-testid="staff-month"
+      >
+        <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="flex items-center gap-1" role="group" aria-label={t('month.month')}>
             <Button
-              key={kind}
               variant="outline"
-              onClick={() => void downloadCsv(kind)}
-              disabled={!r || downloading !== null}
-              data-testid={`staff-csv-${kind}`}
+              size="icon"
+              aria-label={t('month.prev')}
+              onClick={() => onMonth(addMonths(month, -1))}
             >
-              <DownloadIcon aria-hidden />
-              {t(kind === 'grid' ? 'month.csvGrid' : 'month.csvDays')}
+              <ChevronLeftIcon aria-hidden />
             </Button>
-          ))}
-          <Button
-            variant="outline"
-            onClick={() => window.print()}
-            disabled={!r}
-            data-testid="staff-print"
-          >
-            <PrinterIcon aria-hidden />
-            {t('month.print')}
-          </Button>
-        </div>
-      </div>
-      {csvError && (
-        <Alert variant="destructive" className="print:hidden">
-          <AlertDescription>{t('month.csvFailed')}</AlertDescription>
-        </Alert>
-      )}
-
-      {report.isPending ? (
-        <Skeleton className="rounded-card h-72" aria-busy="true" />
-      ) : report.isError ? (
-        <LoadError error={report.error} onRetry={() => void report.refetch()} />
-      ) : r!.people.length === 0 ? (
-        <EmptyState
-          icon={UsersIcon}
-          title={t('common.noStaffTitle')}
-          hint={t('common.noStaffHint')}
-          testId="staff-empty"
-          action={
-            <ButtonLink variant="outline" href="/staff">
-              {t('common.staffLink')}
-            </ButtonLink>
-          }
-        />
-      ) : (
-        <>
-          {/* Print heading: the paper register's title block. */}
-          <div className="hidden print:block">
-            <p className="text-lg font-semibold">{context?.tenant.name}</p>
-            <p>{t('month.printHeading', { month: formatMonth(r!.month, locale) })}</p>
+            <span
+              className="min-w-36 px-2 text-center font-medium"
+              aria-live="polite"
+              data-testid="staff-month-label"
+            >
+              {formatMonth(month, locale)}
+            </span>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label={t('month.next')}
+              disabled={month >= thisMonth}
+              onClick={() => onMonth(addMonths(month, 1))}
+            >
+              <ChevronRightIcon aria-hidden />
+            </Button>
           </div>
-
-          {r!.people.every((p) => p.details.length === 0) && (
-            <Alert className="print:hidden" data-testid="staff-month-empty">
-              <RouterIcon aria-hidden />
-              <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-                <span className="max-w-prose">{t('month.noData')}</span>
-                <ButtonLink size="sm" variant="outline" href="/attendance/devices">
-                  {t('common.devicesLink')}
-                </ButtonLink>
-              </AlertDescription>
-            </Alert>
-          )}
-
-          <ul
-            className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
-            aria-label={t('month.legend')}
-          >
-            {LEGEND.map((c) => (
-              <li key={c} className="flex items-center gap-1.5">
-                <span
-                  aria-hidden
-                  className={cn(
-                    'inline-flex h-6 min-w-6 items-center justify-center rounded px-0.5 text-xs font-semibold',
-                    CELL_TONE[c],
-                  )}
-                >
-                  {codes[c]}
-                </span>
-                {t(`month.cell.${c}`)}
-              </li>
+          <div className="flex flex-wrap gap-2 sm:ms-auto">
+            {(['grid', 'days'] as const).map((kind) => (
+              <Button
+                key={kind}
+                variant="outline"
+                onClick={() => void downloadCsv(kind)}
+                disabled={!r || downloading !== null}
+                data-testid={`staff-csv-${kind}`}
+              >
+                <DownloadIcon aria-hidden />
+                {t(kind === 'grid' ? 'month.csvGrid' : 'month.csvDays')}
+              </Button>
             ))}
-            <li className="flex items-center gap-1.5">
-              <span aria-hidden className="bg-muted register-off inline-block size-6 rounded" />
-              {t('month.offDay')}
-            </li>
-          </ul>
+            <Button
+              variant="outline"
+              onClick={() => window.print()}
+              disabled={!r}
+              data-testid="staff-print"
+            >
+              <PrinterIcon aria-hidden />
+              {t('month.print')}
+            </Button>
+          </div>
+        </div>
+        {csvError && (
+          <Alert variant="destructive" className="print:hidden">
+            <AlertDescription>{t('month.csvFailed')}</AlertDescription>
+          </Alert>
+        )}
 
-          <div
-            // relative: the headers' screen-reader labels stay inside the scrolling box.
-            className="bg-card relative overflow-x-auto rounded-xl border shadow-xs print:overflow-visible print:rounded-none print:border-0 print:shadow-none"
-            data-testid="staff-month-table"
-          >
-            <table className="register-table w-max min-w-full border-separate border-spacing-0 text-sm">
-              <thead>
-                <tr>
-                  <th
-                    scope="col"
-                    className="bg-card sticky left-0 z-10 border-r border-b px-3 py-2 text-left font-medium"
+        {report.isPending ? (
+          <Skeleton className="rounded-card h-72" aria-busy="true" />
+        ) : report.isError ? (
+          <LoadError error={report.error} onRetry={() => void report.refetch()} />
+        ) : r!.people.length === 0 ? (
+          <EmptyState
+            icon={UsersIcon}
+            title={t('common.noStaffTitle')}
+            hint={t('common.noStaffHint')}
+            testId="staff-empty"
+            action={
+              <ButtonLink variant="outline" href="/staff">
+                {t('common.staffLink')}
+              </ButtonLink>
+            }
+          />
+        ) : (
+          <>
+            {/* Print heading: the paper register's title block. */}
+            <div className="hidden print:block">
+              <p className="text-lg font-semibold">{context?.tenant.name}</p>
+              <p>{t('month.printHeading', { month: formatMonth(r!.month, locale) })}</p>
+            </div>
+
+            {r!.people.every((p) => p.details.length === 0) && (
+              <Alert className="print:hidden" data-testid="staff-month-empty">
+                <RouterIcon aria-hidden />
+                <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="max-w-prose">{t('month.noData')}</span>
+                  <ButtonLink size="sm" variant="outline" href="/attendance/devices">
+                    {t('common.devicesLink')}
+                  </ButtonLink>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <ul
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
+              aria-label={t('month.legend')}
+            >
+              {LEGEND.map((c) => (
+                <li key={c} className="flex items-center gap-1.5">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'inline-flex h-6 min-w-6 items-center justify-center rounded px-0.5 text-xs font-semibold',
+                      CELL_TONE[c],
+                    )}
                   >
-                    {t('month.colName')}
-                  </th>
-                  {r!.days.map((d) => (
+                    {codes[c]}
+                  </span>
+                  {t(`month.cell.${c}`)}
+                </li>
+              ))}
+              <li className="flex items-center gap-1.5">
+                <span aria-hidden className="bg-muted register-off inline-block size-6 rounded" />
+                {t('month.offDay')}
+              </li>
+            </ul>
+
+            <div
+              // relative: the headers' screen-reader labels stay inside the scrolling box.
+              className="bg-card relative overflow-x-auto rounded-xl border shadow-xs print:overflow-visible print:rounded-none print:border-0 print:shadow-none"
+              data-testid="staff-month-table"
+            >
+              <table className="register-table w-max min-w-full border-separate border-spacing-0 text-sm">
+                <thead>
+                  <tr>
                     <th
-                      key={d.date}
                       scope="col"
-                      title={d.holidayName ? d.holidayName[locale] : undefined}
-                      className={cn(
-                        'w-8 min-w-8 border-b px-0.5 py-1 text-center font-normal',
-                        d.off && 'bg-muted register-off',
-                      )}
+                      className="bg-card sticky left-0 z-10 border-r border-b px-3 py-2 text-left font-medium"
                     >
-                      <span className="font-numeric block font-medium">
-                        {formatCount(Number(d.date.slice(8)), locale)}
-                      </span>
-                      <span className="text-muted-foreground block text-[0.7rem] leading-tight">
-                        {weekdayShort(isoWeekday(d.date))}
-                      </span>
+                      {t('month.colName')}
                     </th>
-                  ))}
-                  {TOTALS.map((k) => (
-                    <th
-                      key={k}
-                      scope="col"
-                      title={t(`month.${TOTAL_LABEL[k]}`)}
-                      className="w-9 min-w-9 border-b border-l px-1 py-1 text-center font-medium"
-                    >
-                      <span aria-hidden>{codes[TOTAL_CODE[k]]}</span>
-                      <span className="sr-only">{t(`month.${TOTAL_LABEL[k]}`)}</span>
-                    </th>
-                  ))}
-                  <th
-                    scope="col"
-                    title={t('month.colLateMinutes')}
-                    className="border-b border-l px-1.5 py-1 text-center text-xs font-medium"
-                  >
-                    <span aria-hidden>{t('month.colLateMinutesShort')}</span>
-                    <span className="sr-only">{t('month.colLateMinutes')}</span>
-                  </th>
-                  <th
-                    scope="col"
-                    title={t('month.colEarlyMinutes')}
-                    className="border-b border-l px-1.5 py-1 text-center text-xs font-medium"
-                  >
-                    <span aria-hidden>{t('month.colEarlyMinutesShort')}</span>
-                    <span className="sr-only">{t('month.colEarlyMinutes')}</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {r!.people.map((p) => {
-                  const name = staffName(p, locale);
-                  return (
-                    <tr
-                      key={p.userId}
-                      className="group"
-                      data-testid="staff-month-row"
-                      data-user-id={p.userId}
-                    >
+                    {r!.days.map((d) => (
                       <th
-                        scope="row"
+                        key={d.date}
+                        scope="col"
+                        title={d.holidayName ? d.holidayName[locale] : undefined}
                         className={cn(
-                          'bg-card group-hover:bg-muted sticky left-0 z-10 w-40 max-w-40 min-w-40 border-r border-b px-2 py-1 text-left font-normal sm:w-56 sm:max-w-56 sm:min-w-56',
-                          openId === p.userId && 'bg-primary-soft',
+                          'w-8 min-w-8 border-b px-0.5 py-1 text-center font-normal',
+                          d.off && 'bg-muted register-off',
                         )}
                       >
-                        <button
-                          type="button"
-                          onClick={() => setOpenId(p.userId)}
-                          aria-label={t('month.openPerson', { name })}
-                          aria-expanded={openId === p.userId}
-                          className="flex min-h-(--control-h-xs) w-full items-center text-left hover:underline"
-                          data-testid="staff-month-person"
-                        >
-                          <span className="line-clamp-2 min-w-0 leading-snug break-words">
-                            {name}
-                          </span>
-                        </button>
+                        <span className="font-numeric block font-medium">
+                          {formatCount(Number(d.date.slice(8)), locale)}
+                        </span>
+                        <span className="text-muted-foreground block text-[0.7rem] leading-tight">
+                          {weekdayShort(isoWeekday(d.date))}
+                        </span>
                       </th>
-                      {p.cells.map((cell, i) => {
-                        const d = r!.days[i]!;
-                        const code = codes[cell];
-                        return (
-                          <td
-                            key={d.date}
-                            className={cn(
-                              'border-b p-0.5 text-center',
-                              d.off && 'bg-muted register-off',
-                            )}
+                    ))}
+                    {TOTALS.map((k) => (
+                      <th
+                        key={k}
+                        scope="col"
+                        title={t(`month.${TOTAL_LABEL[k]}`)}
+                        className="w-9 min-w-9 border-b border-l px-1 py-1 text-center font-medium"
+                      >
+                        <span aria-hidden>{codes[TOTAL_CODE[k]]}</span>
+                        <span className="sr-only">{t(`month.${TOTAL_LABEL[k]}`)}</span>
+                      </th>
+                    ))}
+                    <th
+                      scope="col"
+                      title={t('month.colLateMinutes')}
+                      className="border-b border-l px-1.5 py-1 text-center text-xs font-medium"
+                    >
+                      <span aria-hidden>{t('month.colLateMinutesShort')}</span>
+                      <span className="sr-only">{t('month.colLateMinutes')}</span>
+                    </th>
+                    <th
+                      scope="col"
+                      title={t('month.colEarlyMinutes')}
+                      className="border-b border-l px-1.5 py-1 text-center text-xs font-medium"
+                    >
+                      <span aria-hidden>{t('month.colEarlyMinutesShort')}</span>
+                      <span className="sr-only">{t('month.colEarlyMinutes')}</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r!.people.map((p) => {
+                    const name = staffName(p, locale);
+                    return (
+                      <tr
+                        key={p.userId}
+                        className="group"
+                        data-testid="staff-month-row"
+                        data-user-id={p.userId}
+                      >
+                        <th
+                          scope="row"
+                          className={cn(
+                            'bg-card group-hover:bg-muted sticky left-0 z-10 w-40 max-w-40 min-w-40 border-r border-b px-2 py-1 text-left font-normal sm:w-56 sm:max-w-56 sm:min-w-56',
+                            openId === p.userId && 'bg-primary-soft print:bg-card',
+                          )}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setOpenId(p.userId)}
+                            aria-label={t('month.openPerson', { name })}
+                            aria-expanded={openId === p.userId}
+                            className="flex min-h-(--control-h-xs) w-full items-center text-left hover:underline"
+                            data-testid="staff-month-person"
                           >
-                            {code ? (
-                              <span
-                                className={cn(
-                                  'inline-flex h-7 min-w-7 items-center justify-center rounded px-0.5 text-xs font-semibold',
-                                  CELL_TONE[cell],
-                                )}
-                                title={t(`month.cell.${cell as (typeof LEGEND)[number]}`)}
-                              >
-                                {code}
-                              </span>
-                            ) : null}
+                            <span className="line-clamp-2 min-w-0 leading-snug break-words">
+                              {name}
+                            </span>
+                          </button>
+                        </th>
+                        {p.cells.map((cell, i) => {
+                          const d = r!.days[i]!;
+                          const code = codes[cell];
+                          return (
+                            <td
+                              key={d.date}
+                              className={cn(
+                                'border-b p-0.5 text-center',
+                                d.off && 'bg-muted register-off',
+                              )}
+                            >
+                              {code ? (
+                                <span
+                                  className={cn(
+                                    'inline-flex h-7 min-w-7 items-center justify-center rounded px-0.5 text-xs font-semibold',
+                                    CELL_TONE[cell],
+                                  )}
+                                  title={t(`month.cell.${cell as (typeof LEGEND)[number]}`)}
+                                >
+                                  {code}
+                                </span>
+                              ) : null}
+                            </td>
+                          );
+                        })}
+                        {TOTALS.map((k) => (
+                          <td key={k} className="font-numeric border-b border-l px-1 text-center">
+                            {formatCount(p.totals[k], locale)}
                           </td>
-                        );
-                      })}
-                      {TOTALS.map((k) => (
-                        <td key={k} className="font-numeric border-b border-l px-1 text-center">
-                          {formatCount(p.totals[k], locale)}
+                        ))}
+                        <td className="font-numeric border-b border-l px-1.5 text-center">
+                          {formatCount(p.totals.lateMinutes, locale)}
                         </td>
-                      ))}
-                      <td className="font-numeric border-b border-l px-1.5 text-center">
-                        {formatCount(p.totals.lateMinutes, locale)}
-                      </td>
-                      <td className="font-numeric border-b border-l px-1.5 text-center">
-                        {formatCount(p.totals.earlyMinutes, locale)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+                        <td className="font-numeric border-b border-l px-1.5 text-center">
+                          {formatCount(p.totals.earlyMinutes, locale)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
 
+      {/* Outside the print area: the paper has the grid alone, never the open panel. */}
       {open &&
         (wide ? (
           <SidePeek
@@ -398,7 +401,7 @@ export function StaffMonthView({
             </SheetContent>
           </Sheet>
         ))}
-    </div>
+    </>
   );
 }
 

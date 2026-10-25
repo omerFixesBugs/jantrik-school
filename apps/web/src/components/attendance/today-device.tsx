@@ -57,15 +57,29 @@ export function DeviceProgress({ device }: { device: DeviceDay }) {
   );
 }
 
-/** Why the cutoff did not write the register; teachers take it by hand. */
-export function DeviceHeldBack({ device }: { device: DeviceDay }) {
+/**
+ * Why the cutoff did not write the register; teachers take it by hand. Owners and admins also get
+ * the way to the section's students without an ID (the people screen is theirs only).
+ */
+export function DeviceHeldBack({
+  device,
+  sectionId,
+  isAdmin,
+}: {
+  device: DeviceDay;
+  sectionId: string;
+  isAdmin: boolean;
+}) {
   const t = useTranslations('reports');
   const locale = useLocale() as Locale;
   const time = formatWallClock(device.cutoffAt, locale);
   const reason = (() => {
     switch (device.state) {
       case 'NOT_ON_DEVICE':
-        return t('deviceNotOnDevice', { count: formatCount(device.notOnDevice, locale) });
+        return t('deviceNotOnDevice', {
+          count: formatCount(device.notOnDevice, locale),
+          n: device.notOnDevice,
+        });
       case 'DEVICE_OFFLINE':
         return t('deviceOffline', { time });
       case 'TOO_MANY_MISSING':
@@ -87,9 +101,10 @@ export function DeviceHeldBack({ device }: { device: DeviceDay }) {
         <span className="min-w-0">{reason}</span>
       </p>
       <DeviceProgress device={device} />
-      {device.state === 'NOT_ON_DEVICE' && (
+      {device.state === 'NOT_ON_DEVICE' && isAdmin && (
         <Link
-          href="/attendance/devices/people?unmapped=1"
+          href={`/attendance/devices/people?${new URLSearchParams({ unmapped: '1', section: sectionId })}`}
+          data-testid="device-give-ids"
           className="text-link flex min-h-(--control-h-xs) w-fit items-center gap-1.5 font-medium hover:underline"
         >
           <UsersIcon aria-hidden className="size-4" />
@@ -193,7 +208,12 @@ export function CloseFromDevice({ section, device }: { section: SectionRef; devi
       sms,
     }),
     ...(device.notOnDevice
-      ? [t('closeNotOnDevice', { count: formatCount(device.notOnDevice, locale) })]
+      ? [
+          t('closeNotOnDevice', {
+            count: formatCount(device.notOnDevice, locale),
+            n: device.notOnDevice,
+          }),
+        ]
       : []),
   ].join(' ');
   return (

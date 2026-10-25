@@ -13,6 +13,32 @@ export interface PeopleFilter {
   query: string;
 }
 
+const SECTION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The filter a link opens with: `unmapped=1` (people without an ID) and `section=<id>` (the
+ * today page's "give IDs"), plus a search (an unknown ID from the feed). Students first.
+ */
+export function peopleFilterFromUrl(params: URLSearchParams, query: string): PeopleFilter {
+  const section = params.get('section') ?? '';
+  return {
+    kind: 'STUDENT',
+    unmappedOnly: params.get('unmapped') === '1',
+    sectionId: SECTION_ID.test(section) ? section : '',
+    query,
+  };
+}
+
+/** The URL's parameters for a filter: "without an ID" and the students' section stay in it. */
+export function peopleFilterUrl(params: URLSearchParams, f: PeopleFilter): URLSearchParams {
+  const next = new URLSearchParams(params);
+  if (f.unmappedOnly) next.set('unmapped', '1');
+  else next.delete('unmapped');
+  if (f.kind === 'STUDENT' && f.sectionId) next.set('section', f.sectionId);
+  else next.delete('section');
+  return next;
+}
+
 /** What a search looks in: both names, the student code, the ID and the suggested ID. */
 const haystack = (p: DevicePersonRow): string =>
   toAsciiDigits(

@@ -246,7 +246,9 @@ function TodayReport() {
                 ) : (
                   <>
                     {device?.state === 'BEFORE_CUTOFF' && <DeviceProgress device={device} />}
-                    {device && heldBack && <DeviceHeldBack device={device} />}
+                    {device && heldBack && (
+                      <DeviceHeldBack device={device} sectionId={s.id} isAdmin={isAdmin} />
+                    )}
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="bg-warning-soft text-warning inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-sm font-medium">
                         <span aria-hidden className="size-1.5 rounded-full bg-current" />

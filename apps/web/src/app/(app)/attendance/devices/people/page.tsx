@@ -8,7 +8,7 @@ import {
   type DevicePersonRef,
 } from '@jantrik/shared';
 import { ArrowLeftIcon, InfoIcon, LockIcon } from 'lucide-react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Suspense, useState } from 'react';
 import { AttendanceTabs, isAdminRole } from '@/components/attendance/attendance-tabs';
@@ -23,7 +23,7 @@ import { ButtonLink } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { deviceKeys } from '@/lib/devices/keys';
-import type { PeopleFilter } from '@/lib/devices/people';
+import { peopleFilterFromUrl, peopleFilterUrl, type PeopleFilter } from '@/lib/devices/people';
 import { useMeContext } from '@/lib/hooks';
 
 export default function DevicePeoplePage() {
@@ -60,12 +60,19 @@ function PeopleScreen() {
   // From the live feed: an ID that punched but belongs to nobody (searched for, and explained).
   const unknownParam = toAsciiDigits(params.get('unknown') ?? '').trim();
   const unknown = /^\d{1,9}$/.test(unknownParam) ? unknownParam : null;
-  const [filter, setFilter] = useState<PeopleFilter>(() => ({
-    kind: 'STUDENT',
-    unmappedOnly: false,
-    sectionId: '',
-    query: unknown ?? '',
-  }));
+  const router = useRouter();
+  const pathname = usePathname();
+  // From the today page's "give IDs": a section's students without an ID (`unmapped`, `section`).
+  const [filter, setFilterState] = useState<PeopleFilter>(() =>
+    peopleFilterFromUrl(params, unknown ?? ''),
+  );
+  /** "Without an ID" and the section stay in the URL, so the view can be linked and reloaded. */
+  const setFilter = (next: PeopleFilter) => {
+    setFilterState(next);
+    const q = peopleFilterUrl(params, next).toString();
+    if (q !== params.toString())
+      router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+  };
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const people = useQuery({
