@@ -686,16 +686,24 @@ describe('device registers', () => {
       );
     });
 
-    it('an inactive student still enrolled is never on a device and does not hold the section back', async () => {
-      const s = await setup();
-      const inactive = await enrol(s);
-      await f.inTenant(s.tenantId, (tx) =>
-        tx.student.update({ where: { id: inactive.id }, data: { status: 'INACTIVE' } }),
-      );
+    it('an inactive student still enrolled does not hold the section back, is written ABSENT and gets no absent SMS', async () => {
+      /** A setup with a fourth student in A who is INACTIVE (and has no device ID). */
+      const withInactive = async () => {
+        const s = await setup();
+        const inactive = await enrol(s);
+        await f.inTenant(s.tenantId, (tx) =>
+          tx.student.update({ where: { id: inactive.id }, data: { status: 'INACTIVE' } }),
+        );
+        return { s, inactive };
+      };
+      const recordOf = async (s: Setup, studentId: string) =>
+        (await registerOf(s))!.records.find((r) => r.studentId === studentId);
+
+      // At the cutoff: 2 of 4 arrived; 103 (active) and the inactive student are ABSENT.
+      const { s, inactive } = await withInactive();
       await punch(s, '07:51:00', [
         ['101', '07:50:00'],
         ['102', '07:50:30'],
-        ['103', '07:51:00'],
         ['201', '07:50:00'],
       ]);
       clock.set(at('08:30:00'));
@@ -704,19 +712,36 @@ describe('device registers', () => {
         notOnDevice: 0,
         state: 'BEFORE_CUTOFF',
       });
-
       await tickAt(s, '09:00:00');
       expect(await rows(s)).toEqual([
         ['PRESENT', 'DEVICE'],
         ['PRESENT', 'DEVICE'],
-        ['PRESENT', 'DEVICE'],
+        ['ABSENT', 'DEVICE'],
       ]);
-      // Still on the register's roster (a submit expects them too).
-      expect((await registerOf(s))!.records.find((r) => r.studentId === inactive.id)).toEqual({
+      // Still on the register's roster (a submit expects them too), but no SMS for them.
+      expect(await recordOf(s, inactive.id)).toEqual({
         studentId: inactive.id,
         status: 'ABSENT',
         source: 'DEVICE',
       });
+      await waitForSms(s.tenantId, 'SENT', 1);
+      expect(await absentSms(s.tenantId)).toEqual([[s.a[2]!.id, `absent:${s.a[2]!.id}:${DAY}`]]);
+      expect(h.sms.sentTo(inactive.phone)).toEqual([]);
+
+      // Closed from the device by an admin: the same.
+      const held = await withInactive();
+      await punch(held.s, '07:51:00', [['101', '07:50:00']]);
+      await tickAt(held.s, '09:00:00');
+      expect(await registerOf(held.s)).toBeNull();
+      const closed = (await close(held.s.admin, held.s.sectionA).expect(201))
+        .body as CloseFromDeviceResult;
+      expect(closed.counts).toEqual({ present: 1, late: 0, absent: 3, leave: 0 });
+      expect((await recordOf(held.s, held.inactive.id))?.status).toBe('ABSENT');
+      await waitForSms(held.s.tenantId, 'SENT', 2);
+      expect((await absentSms(held.s.tenantId)).map(([id]) => id).sort()).toEqual(
+        [held.s.a[1]!.id, held.s.a[2]!.id].sort(),
+      );
+      expect(h.sms.sentTo(held.inactive.phone)).toEqual([]);
     });
 
     it('a held-back section closes by itself only within an hour after its cutoff; later it waits for a person', async () => {

@@ -30,6 +30,8 @@ export interface SectionDeviceDay {
   autoCloseEnd: string;
   /** The register's roster: the students a submit expects, by roll. */
   students: string[];
+  /** Those of them who are ACTIVE (the others are never sent to a device). */
+  active: Set<string>;
   /** Those of them with an arrival. */
   arrivals: Map<string, Arrival>;
   /** How many ACTIVE ones cannot punch: no device ID, or not confirmed on any active device. */
@@ -88,6 +90,7 @@ export class DeviceArrivalsService {
         cutoff: cutoffTime(start, deviceCutoffMinutes),
         autoCloseEnd: autoCloseEnd(start, deviceCutoffMinutes),
         students: [],
+        active: new Set(),
         arrivals: new Map(),
         notOnDevice: 0,
       });
@@ -111,7 +114,9 @@ export class DeviceArrivalsService {
       for (const id of day.students) {
         const arrival = arrivals.get(id);
         if (arrival) day.arrivals.set(id, arrival);
-        if (active.has(id) && !reachable.has(id)) day.notOnDevice += 1;
+        if (!active.has(id)) continue;
+        day.active.add(id);
+        if (!reachable.has(id)) day.notOnDevice += 1;
       }
     }
     return days;

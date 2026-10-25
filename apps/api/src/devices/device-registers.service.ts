@@ -30,6 +30,10 @@ import { DeviceAttendanceService } from './device-attendance.service.js';
 interface WrittenRegister {
   sessionId: string;
   counts: AttendanceCounts;
+  /**
+   * Who gets the absent SMS: the ABSENT students who are ACTIVE. An inactive student still
+   * enrolled is written ABSENT (the roster), but the device sends their guardian nothing.
+   */
   absent: string[];
 }
 
@@ -223,7 +227,9 @@ export class DeviceRegistersService {
     return {
       sessionId: session.id,
       counts,
-      absent: statuses.filter(([, status]) => status === 'ABSENT').map(([id]) => id),
+      absent: statuses
+        .filter(([id, status]) => status === 'ABSENT' && day.active.has(id))
+        .map(([id]) => id),
     };
   }
 
