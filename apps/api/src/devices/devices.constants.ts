@@ -1,3 +1,5 @@
+import type { Redis } from 'ioredis';
+
 /** The queue the device receiver (src/ingest) feeds and the API's devices worker reads. */
 export const DEVICES_QUEUE = 'devices';
 
@@ -22,10 +24,18 @@ export interface ProcessPunchesJob {
 export const processPunchesJobId = (tenantId: string): string => `punches-${tenantId}`;
 
 /**
- * Institutes with devices (ZSET, score = when last added), for the daily jobs: each is visited in
- * its own TenantJobRunner transaction, never by a cross-tenant query.
+ * Institutes with devices (ZSET, score = when last added), for the minute tick and the daily
+ * retention: each is visited in its own TenantJobRunner transaction, never by a cross-tenant
+ * query. Nothing else knows which institutes have devices, so every path that needs them visited
+ * lists the institute again (`listDevicesTenant`): adding, changing or syncing a device, saving
+ * the settings with auto-mark on, and each process-punches job. A lost set or a fresh seed heals
+ * the same way.
  */
 export const DEVICES_TENANTS_KEY = 'devices:tenants';
+
+/** Lists the institute for the minute tick and retention (after its transaction committed). */
+export const listDevicesTenant = (redis: Redis, tenantId: string, at: Date): Promise<number> =>
+  redis.zadd(DEVICES_TENANTS_KEY, at.getTime(), tenantId);
 
 /**
  * Flagged punches are reviewed within this long of arriving: the flagged feed and the NEW_IP and

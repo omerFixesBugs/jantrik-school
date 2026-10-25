@@ -25,7 +25,8 @@ export type Institute = School & { device: { id: string; serialNo: string } };
  * Fixtures for punch processing. The API harness (with its devices worker) and the device receiver
  * share one FakeClock; punches come through the receiver, driven with @jantrik/device-sim.
  * Devices are added as rows, not through the API, so their institutes are not in
- * `devices:tenants` and the minute tick never visits them unless a test lists them.
+ * `devices:tenants` until their first process-punches job runs; tests that run the tick or
+ * retention over the whole set clear it first.
  */
 export function punchFixtures(h: () => Harness, ingest: () => IngestHarness, clock: FakeClock) {
   const inTenant = <T>(tenantId: string, fn: (tx: TenantTx) => Promise<T>) =>

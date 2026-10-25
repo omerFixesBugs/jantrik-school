@@ -22,6 +22,7 @@ import {
   DEVICES_TENANTS_KEY,
   DEVICES_TICK_JOB,
   EXPIRE_PUNCHES_JOB,
+  PROCESS_PUNCHES_JOB,
   processPunchesJobId,
 } from '../src/devices/devices.constants.js';
 import { DevicesProcessor } from '../src/devices/devices.processor.js';
@@ -566,6 +567,8 @@ describe('punch processing', () => {
       });
       const errors = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
       clock.set(at('07:52:00'));
+      // Only these three: the jobs of earlier tests listed their institutes too.
+      await h.redis.del(DEVICES_TENANTS_KEY);
       for (const id of [broken.tenantId, off.id, s.tenantId]) {
         await h.redis.zadd(DEVICES_TENANTS_KEY, Date.now(), id);
       }
@@ -578,6 +581,38 @@ describe('punch processing', () => {
       const lines = errors.mock.calls.map((c) => String(c[0]));
       expect(lines).toContain(`Devices tick failed for ${broken.tenantId}: Error`);
       expect(lines.join('\n')).not.toContain('a row value');
+    });
+
+    it('a process-punches job lists its institute for the tick and retention; with ATTENDANCE off it processes nothing', async () => {
+      const listed = (tenantId: string) => h.redis.zscore(DEVICES_TENANTS_KEY, tenantId);
+      // Its device was added as a row, as a seed adds them: not listed.
+      const s = await f.institute();
+      await f.map(s.tenantId, [{ deviceUserId: '101', studentId: s.a[0]!.id }]);
+      expect(await listed(s.tenantId)).toBeNull();
+      clock.set(at('07:51:00'));
+      await f.upload(f.sim(s.device.serialNo), DAY, [['101', '07:50:00']]);
+      await f.settled(s.tenantId);
+      expect(await listed(s.tenantId)).toBe(String(at('07:51:00').getTime()));
+      expect((await f.punches(s.tenantId)).map((p) => p.outcome)).toEqual(['APPLIED']);
+
+      // A punch stored just before ATTENDANCE was switched off: listed (retention still visits
+      // the institute), not processed.
+      const off = await f.institute();
+      await f.map(off.tenantId, [{ deviceUserId: '101', studentId: off.a[0]!.id }]);
+      await f.upload(f.sim(off.device.serialNo), DAY, [['101', '07:50:30']]);
+      await f.holdJob(off.tenantId);
+      const real = h.access.getEnabledModules.bind(h.access);
+      vi.spyOn(h.access, 'getEnabledModules').mockImplementation(async (tenantId) =>
+        tenantId === off.tenantId ? [] : real(tenantId),
+      );
+      await processor.process({
+        name: PROCESS_PUNCHES_JOB,
+        data: { tenantId: off.tenantId },
+      } as unknown as Job);
+      expect(await listed(off.tenantId)).not.toBeNull();
+      expect((await f.punches(off.tenantId)).map((p) => [p.outcome, p.processedAt])).toEqual([
+        [null, null],
+      ]);
     });
 
     it('a batch waits at most 5 s for a lock, then fails and is left for the next tick', async () => {

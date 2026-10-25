@@ -55,8 +55,11 @@ describe('device retention (expire-punches)', () => {
   afterEach(() => vi.restoreAllMocks());
 
   const runJob = () => processor.process({ name: EXPIRE_PUNCHES_JOB } as unknown as Job);
-  const list = (...tenantIds: string[]) =>
-    Promise.all(tenantIds.map((id) => h.redis.zadd(DEVICES_TENANTS_KEY, Date.now(), id)));
+  /** Only these institutes are listed for the job (process-punches jobs list theirs too). */
+  const list = async (...tenantIds: string[]) => {
+    await h.redis.del(DEVICES_TENANTS_KEY);
+    await Promise.all(tenantIds.map((id) => h.redis.zadd(DEVICES_TENANTS_KEY, Date.now(), id)));
+  };
   const punchDays = async (tenantId: string) =>
     (await f.punches(tenantId)).map((p) => dateFromDb(p.localDate));
   /** These days twice (the student's punch, then the teacher's), as `punchDays` lists them. */

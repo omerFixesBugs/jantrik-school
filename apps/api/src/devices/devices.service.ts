@@ -25,7 +25,7 @@ import { staffNames, staffRef } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
 import { DeviceAttendanceService } from './device-attendance.service.js';
 import { deviceUsers, queueUpserts } from './device-users.js';
-import { DEVICES_TENANTS_KEY } from './devices.constants.js';
+import { listDevicesTenant } from './devices.constants.js';
 
 interface DeviceCounts {
   pending: number;
@@ -136,10 +136,7 @@ export class DevicesService {
         isActive: row.isActive,
       },
     });
-    // The daily jobs visit only the institutes listed here.
-    await this.context.afterCommit(() =>
-      this.redis.zadd(DEVICES_TENANTS_KEY, now.getTime(), tenantId),
-    );
+    await this.listInstitute();
     return this.toView(row, NO_COUNTS, now);
   }
 
@@ -149,6 +146,7 @@ export class DevicesService {
    */
   async update(id: string, patch: DeviceChanges): Promise<DeviceView> {
     const before = await this.lockDevice(id);
+    await this.listInstitute();
     const next = {
       name: patch.name ?? before.name,
       gate: patch.gate === undefined ? before.gate : patch.gate,
@@ -195,6 +193,7 @@ export class DevicesService {
     const tx = this.db.tx;
     const device = await this.lockDevice(id);
     if (!device.isActive) throw apiError(409, 'DEVICE_INACTIVE', 'This device is switched off');
+    await this.listInstitute();
     const { queued, skipped } = await queueUpserts(tx, {
       tenantId: device.tenantId,
       deviceIds: [id],
@@ -317,6 +316,16 @@ export class DevicesService {
     });
     const [address] = await this.addressViews([row]);
     return address!;
+  }
+
+  /**
+   * Lists the institute for the minute tick and retention once the request commits (nothing when
+   * it fails). Each device change lists it again, so a lost set or a fresh seed heals.
+   */
+  private async listInstitute(): Promise<void> {
+    const tenantId = this.context.requirePrincipal().tenantId!;
+    const at = this.clock.now();
+    await this.context.afterCommit(() => listDevicesTenant(this.redis, tenantId, at));
   }
 
   /** The device (404 when it is not this institute's). */

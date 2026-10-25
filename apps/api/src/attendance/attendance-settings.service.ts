@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   DEFAULT_ABSENT_SMS_TEMPLATE,
   DEVICE_SETTINGS_DEFAULTS,
@@ -13,9 +13,12 @@ import {
   type IsoDate,
   type NonWorkingDay,
 } from '@jantrik/shared';
+import type { Redis } from 'ioredis';
 import { AuditService } from '../audit/audit.module.js';
 import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
+import { listDevicesTenant } from '../devices/devices.constants.js';
+import { REDIS } from '../redis/redis.constants.js';
 import { Db } from '../tenancy/db.service.js';
 
 /** "HH:MM" ⇄ a TIME column (Prisma maps it to a Date on 1970-01-01 UTC), as for shifts. */
@@ -50,6 +53,7 @@ export class AttendanceSettingsService {
     private readonly context: RequestContext,
     private readonly audit: AuditService,
     private readonly clock: Clock,
+    @Inject(REDIS) private readonly redis: Redis,
   ) {}
 
   /**
@@ -169,6 +173,11 @@ export class AttendanceSettingsService {
       oldValues: { ...before },
       newValues: { ...settings },
     });
+    if (settings.deviceAutoMark) {
+      // The minute tick writes the registers only for listed institutes (after commit).
+      const at = this.clock.now();
+      await this.context.afterCommit(() => listDevicesTenant(this.redis, tenantId, at));
+    }
     return this.toResponse(settings);
   }
 

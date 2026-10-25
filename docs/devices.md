@@ -466,12 +466,22 @@ Two settings, off by default (they cost the institute money), in any mode:
 
 - After storing new punches the receiver queues `process-punches {tenantId}` (job id
   `punches-<tenant>`, 1 s delay, so a burst of uploads is one job). The API's devices worker
-  processes that institute's unprocessed punches, 100 per transaction (the slowest kind takes
-  about 45 ms each; the job transaction's limit is 15 s).
+  lists the institute (below), then, while ATTENDANCE is on, processes its unprocessed punches,
+  100 per transaction (the slowest kind takes about 45 ms each; the job transaction's limit is
+  15 s).
 - While such a job waits, runs or is kept as failed, no new one can be queued for the institute,
   so `devices-tick` also processes every listed institute's leftovers each minute (institutes in
   the Redis set `devices:tenants`, with ATTENDANCE on). One institute failing stops none of the
   rest; it is logged by the error name only.
+- **How an institute gets listed.** The tick and retention visit only the institutes in
+  `devices:tenants`; no query crosses institutes to find them. An institute is listed again,
+  after commit, on every path that needs it visited: a device added, changed (switched off or on
+  too) or sent people ("Send people to this device"), the attendance settings saved with auto-mark
+  on, and each `process-punches` job (its punches are already stored). Nothing removes it. A
+  fresh seed (`pnpm db:seed` gives the demo institutes new ids and adds their devices as rows) or
+  a Redis that lost the set relies on these paths: until one of them runs, the institute gets no
+  cutoff, no leftover sweep and no retention. The demo walkthrough lists Shapla on its first step
+  ([demo-accounts.md](demo-accounts.md) → Devices).
 - **Each punch's outcome**, in this order: `STALE`; `IGNORED` (rejected); `HELD` (`BURST` not
   accepted); `UNMAPPED` (nobody has the ID); `IGNORED` (a student deleted, not ACTIVE or not
   enrolled this year; staff without an active staff role or whose attendance is not kept);

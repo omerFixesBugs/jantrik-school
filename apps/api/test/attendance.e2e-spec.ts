@@ -13,6 +13,7 @@ import {
   type SubmitAttendanceResponse,
 } from '@jantrik/shared';
 import type { Queue } from 'bullmq';
+import { DEVICES_TENANTS_KEY } from '../src/devices/devices.constants.js';
 import {
   addMember,
   bearer,
@@ -637,6 +638,24 @@ describe('attendance', () => {
         oldValues: DEVICE_SETTINGS_DEFAULTS,
         newValues: changed,
       });
+    });
+
+    it('saved with auto-mark on, the institute is listed for the minute tick; with it off, not', async () => {
+      const t = await createTenant(h, { modules: ['ATTENDANCE'] });
+      const admin = await adminOf(t.id);
+      const listed = () => h.redis.zscore(DEVICES_TENANTS_KEY, t.id);
+      await put(admin, { ...base, deviceAutoMark: false }).expect(200);
+      expect(await listed()).toBeNull();
+      await put(admin, { ...base, deviceAutoMark: true }).expect(200);
+      expect(await listed()).not.toBeNull();
+      // Saved again (e.g. after a fresh seed lost the set): listed again.
+      await h.redis.zrem(DEVICES_TENANTS_KEY, t.id);
+      await put(admin, { ...base, deviceAutoMark: true, deviceCutoffMinutes: 90 }).expect(200);
+      expect(await listed()).not.toBeNull();
+      // A save that fails lists nothing.
+      await h.redis.zrem(DEVICES_TENANTS_KEY, t.id);
+      await put(admin, { ...base, deviceAutoMark: true, deviceCutoffMinutes: 14 }).expect(400);
+      expect(await listed()).toBeNull();
     });
 
     it('validation: ranges, and office and device hours must end after they start', async () => {

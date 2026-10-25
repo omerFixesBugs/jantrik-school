@@ -109,7 +109,9 @@ on a device (`NOT_ON_DEVICE`), with the count. After a seed nothing is on the de
    ষষ্ঠ শ্রেণি ক (morning shift, starts 07:00; cutoff 08:00 by default) falls a few minutes from
    now. It can be at most 300 minutes after the start (12:00).
 
-The register is written within a minute of the cutoff; with the absent SMS switched on, they show
-in the `pnpm dev` console after the correction delay. The device closes a register by itself only
-until an hour after the cutoff (13:00 at the latest for this section); later, or while it is held
-back, an owner or admin can **Take from the device** on the today page.
+Sending people to the device, the first punch and saving the settings with auto-mark on each list
+Shapla for the minute job (after a seed it is not listed: [devices.md](devices.md) → Processing
+punches). The register is written within a minute of the cutoff; with the absent SMS switched
+on, they show in the `pnpm dev` console after the correction delay. The device closes a register
+by itself only until an hour after the cutoff (13:00 at the latest for this section); later, or
+while it is held back, an owner or admin can **Take from the device** on the today page.

@@ -2,6 +2,7 @@ import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger, type OnModuleInit } from '@nestjs/common';
 import type { Job, Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
+import { Clock } from '../common/clock.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
@@ -13,6 +14,7 @@ import {
   DEVICES_TICK_JOB,
   EXPIRE_PUNCHES_JOB,
   PROCESS_PUNCHES_JOB,
+  listDevicesTenant,
   type ProcessPunchesJob,
 } from './devices.constants.js';
 import { PunchProcessingService } from './punch-processing.service.js';
@@ -29,13 +31,14 @@ export const PUNCH_BATCH = 100;
 export const RETENTION_CHUNK = 5000;
 
 /**
- * The devices worker. `process-punches` (queued by the receiver after it stored punches) processes
- * one institute's new punches. While that job is waiting, running or kept as failed, the receiver
- * cannot queue another for the institute, so `devices-tick` visits every minute the institutes in
- * `devices:tenants` (with ATTENDANCE on) for leftovers, then writes the registers due at a shift's
- * cutoff (`cutoff`, one section per transaction). `expire-punches` deletes, daily, what is past
- * retention for every institute in `devices:tenants` (`DeviceRetentionService`). Each institute is
- * processed in its own RLS transactions with no person acting; no query crosses institutes.
+ * The devices worker. `process-punches` (queued by the receiver after it stored punches) lists the
+ * institute in `devices:tenants` and processes its new punches. While that job is waiting, running
+ * or kept as failed, the receiver cannot queue another for the institute, so `devices-tick` visits
+ * every minute the institutes in `devices:tenants` (with ATTENDANCE on) for leftovers, then writes
+ * the registers due at a shift's cutoff (`cutoff`, one section per transaction). `expire-punches`
+ * deletes, daily, what is past retention for every institute in `devices:tenants`
+ * (`DeviceRetentionService`). Each institute is processed in its own RLS transactions with no
+ * person acting; no query crosses institutes.
  */
 @Processor(DEVICES_QUEUE)
 export class DevicesProcessor extends WorkerHost implements OnModuleInit {
@@ -48,6 +51,7 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
     private readonly processing: PunchProcessingService,
     private readonly registers: DeviceRegistersService,
     private readonly retention: DeviceRetentionService,
+    private readonly clock: Clock,
     @Inject(REDIS) private readonly redis: Redis,
   ) {
     super();
@@ -69,16 +73,26 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
 
   async process(job: Job): Promise<void> {
     if (job.name === PROCESS_PUNCHES_JOB) {
-      const { tenantId } = job.data as ProcessPunchesJob;
-      try {
-        await this.drain(tenantId);
-      } catch (error) {
-        // Not the message: database errors can contain row values. The tick retries.
-        this.logger.error(`Punch processing failed for ${tenantId}: ${(error as Error).name}`);
-      }
+      await this.processPunches((job.data as ProcessPunchesJob).tenantId);
     }
     if (job.name === DEVICES_TICK_JOB) await this.tickAll();
     if (job.name === EXPIRE_PUNCHES_JOB) await this.expireAll();
+  }
+
+  /**
+   * The receiver's job for one institute. The institute is listed first (its punches are already
+   * committed): whatever happens next, the tick sweeps its leftovers and retention visits it. Then
+   * its new punches, only while ATTENDANCE is on, as the tick checks.
+   */
+  async processPunches(tenantId: string): Promise<void> {
+    try {
+      await listDevicesTenant(this.redis, tenantId, this.clock.now());
+      if (!(await this.access.getEnabledModules(tenantId)).includes('ATTENDANCE')) return;
+      await this.drain(tenantId);
+    } catch (error) {
+      // Not the message: database errors can contain row values. The tick retries.
+      this.logger.error(`Punch processing failed for ${tenantId}: ${(error as Error).name}`);
+    }
   }
 
   /** Every institute listed for devices, one after the other; one failing stops none of the rest. */

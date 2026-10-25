@@ -245,6 +245,35 @@ describe('devices API', () => {
       await patch(t.admin, randomUUID(), { name: 'x' }).expect(404);
     });
 
+    it('a change, switching off or on, and a sync list the institute again; a refused one does not', async () => {
+      const t = await institute();
+      const device = await addDevice(t.admin);
+      const listed = () => h.redis.zscore(DEVICES_TENANTS_KEY, t.tenantId);
+      // As after a fresh seed or a lost Redis set.
+      const forget = () => h.redis.zrem(DEVICES_TENANTS_KEY, t.tenantId);
+
+      await forget();
+      clock.set(at('08:01:00'));
+      await patch(t.admin, device.id, { name: 'Back gate' }).expect(200);
+      expect(await listed()).toBe(String(at('08:01:00').getTime()));
+      for (const isActive of [false, true]) {
+        await forget();
+        await patch(t.admin, device.id, { isActive }).expect(200);
+        expect(await listed()).not.toBeNull();
+      }
+      await forget();
+      await post(t.admin, `/attendance/devices/${device.id}/sync`).expect(200);
+      expect(await listed()).not.toBeNull();
+
+      // Nothing for a change that fails (its transaction rolls back).
+      await forget();
+      await patch(t.admin, randomUUID(), { name: 'x' }).expect(404);
+      await patch(t.admin, device.id, { isActive: false }).expect(200);
+      await forget();
+      await post(t.admin, `/attendance/devices/${device.id}/sync`).expect(409);
+      expect(await listed()).toBeNull();
+    });
+
     it('states by the clock (online up to 120 s), the setup address and the counts', async () => {
       const t = await institute();
       clock.set(at('07:59:58'));
