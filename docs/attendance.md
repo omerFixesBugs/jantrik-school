@@ -130,7 +130,8 @@ commands 90 days after their last change when they failed, were cancelled, or ar
 later done command for the same device and ID; each ID's latest done command on a device (what
 the device has) and commands still waiting are kept however old. Registers and their records,
 staff days, SMS logs and the audit log are never deleted: attendance made from deleted punches
-stays as it was. One institute failing is logged (error name only) and tried again the next day.
+stays as it was. What each institute lost is logged as counts; one institute failing is logged
+(error name only) and tried again the next day.
 
 ## Demo data
 

@@ -39,24 +39,33 @@ export class DeviceRetentionService {
   }
 
   /**
-   * Up to `limit` command rows unchanged for 90 days that FAILED, were CANCELLED, or are DONE with
-   * a later DONE for the same device and ID; how many were deleted. Each ID's latest DONE per
-   * device is never deleted: it is what the device has, and the freed-ID rule reads it
-   * (`DevicePeopleRoster.onDevice`). PENDING and SENT rows are still on their way. The last change
-   * is the latest of updated_at (the app's) and sent_at and done_at (the receiver's).
+   * Up to `limit` command rows older than 90 days that FAILED, were CANCELLED, or are DONE with a
+   * later DONE for the same device and ID; how many were deleted. Each ID's latest DONE per device
+   * (highest seq) is never deleted: it is what the device has, and the freed-ID rule reads it
+   * (`DevicePeopleRoster.onDevice`). PENDING and SENT rows are still on their way. A row's age
+   * counts from the latest of updated_at (the app's), sent_at and done_at (the receiver's; a
+   * command it gave up on after the 5th send has only sent_at).
+   *
+   * The DONE rows are ranked per device and ID in one sort. A correlated "later DONE exists" check
+   * read every DONE row of the device for each old one: 12 s a night for 5000 IDs on 4 devices,
+   * deleting nothing (this takes 50 ms).
    */
   async deleteCommands(limit: number): Promise<number> {
     const before = new Date(this.clock.now().getTime() - COMMAND_RETENTION_DAYS * 86_400_000);
     return this.db.tx.$executeRaw`
       DELETE FROM device_commands WHERE id IN (
         SELECT c.id FROM device_commands c
-        WHERE greatest(c.updated_at, c.sent_at, c.done_at) < ${before}::timestamptz
-          AND (c.status IN ('FAILED', 'CANCELLED')
-               OR (c.status = 'DONE'
-                   AND EXISTS (SELECT 1 FROM device_commands l
-                               WHERE l.device_id = c.device_id
-                                 AND l.device_user_id = c.device_user_id
-                                 AND l.status = 'DONE' AND l.seq > c.seq)))
+        WHERE c.status IN ('FAILED', 'CANCELLED')
+          AND greatest(c.updated_at, c.sent_at, c.done_at) < ${before}::timestamptz
+        UNION ALL
+        SELECT done.id FROM (
+          SELECT c.id, greatest(c.updated_at, c.sent_at, c.done_at) AS changed,
+                 row_number() OVER (PARTITION BY c.device_id, c.device_user_id
+                                    ORDER BY c.seq DESC) AS newest
+          FROM device_commands c
+          WHERE c.status = 'DONE'
+        ) done
+        WHERE done.newest > 1 AND done.changed < ${before}::timestamptz
         LIMIT ${limit})`;
   }
 }

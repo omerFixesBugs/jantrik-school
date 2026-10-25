@@ -237,12 +237,17 @@ describe('device retention (expire-punches)', () => {
       .mockResolvedValueOnce(RETENTION_CHUNK)
       .mockResolvedValueOnce(0);
     const runs = vi.spyOn(runner, 'run');
+    const info = vi.spyOn(Logger.prototype, 'log');
 
     await processor.expire(t.id);
     expect(punches.mock.calls).toEqual([[RETENTION_CHUNK], [RETENTION_CHUNK], [RETENTION_CHUNK]]);
     expect(commands.mock.calls).toEqual([[RETENTION_CHUNK], [RETENTION_CHUNK]]);
     // Each chunk in its own transaction, in the institute's context.
     expect(runs.mock.calls.map((c) => c[0])).toEqual(Array(5).fill(t.id));
+    // Counts only, added up over the chunks.
+    expect(info.mock.calls.map((c) => String(c[0]))).toContain(
+      `Retention deleted 10012 punches and 5000 device commands of tenant ${t.id}`,
+    );
   });
 
   it('visits every listed institute, ATTENDANCE on or not; one failing stops none of the rest, stays listed, and is logged by the error name only', async () => {
@@ -268,7 +273,7 @@ describe('device retention (expire-punches)', () => {
     expect(finished).toEqual(expect.arrayContaining([off.id, fine.id]));
     expect(finished).not.toContain(broken.id);
     const lines = errors.mock.calls.map((c) => String(c[0]));
-    expect(lines).toContain(`Punch retention failed for ${broken.id}: Error`);
+    expect(lines).toContain(`Device retention failed for ${broken.id}: Error`);
     expect(lines.join('\n')).not.toContain('a row value');
     expect(await h.redis.zscore(DEVICES_TENANTS_KEY, broken.id)).not.toBeNull();
   });

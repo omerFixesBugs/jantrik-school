@@ -136,21 +136,37 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
         await this.expire(tenantId);
       } catch (error) {
         // Not the message: database errors can contain row values.
-        this.logger.error(`Punch retention failed for ${tenantId}: ${(error as Error).name}`);
+        this.logger.error(`Device retention failed for ${tenantId}: ${(error as Error).name}`);
       }
     }
   }
 
-  /** One institute's old punches, then its old commands, `RETENTION_CHUNK` per transaction. */
+  /**
+   * One institute's old punches, then its old commands, `RETENTION_CHUNK` per transaction. What
+   * was deleted is logged as counts only.
+   */
   async expire(tenantId: string): Promise<void> {
-    for (const chunk of [
-      () => this.retention.deletePunches(RETENTION_CHUNK),
-      () => this.retention.deleteCommands(RETENTION_CHUNK),
-    ]) {
-      let deleted: number;
-      do {
-        deleted = await this.runner.run(tenantId, chunk);
-      } while (deleted >= RETENTION_CHUNK);
+    const punches = await this.inChunks(tenantId, () =>
+      this.retention.deletePunches(RETENTION_CHUNK),
+    );
+    const commands = await this.inChunks(tenantId, () =>
+      this.retention.deleteCommands(RETENTION_CHUNK),
+    );
+    if (punches + commands > 0) {
+      this.logger.log(
+        `Retention deleted ${punches} punches and ${commands} device commands of tenant ${tenantId}`,
+      );
     }
+  }
+
+  /** `chunk` in its own transaction, again while it deletes `RETENTION_CHUNK`; the total. */
+  private async inChunks(tenantId: string, chunk: () => Promise<number>): Promise<number> {
+    let total = 0;
+    let deleted: number;
+    do {
+      deleted = await this.runner.run(tenantId, chunk);
+      total += deleted;
+    } while (deleted >= RETENTION_CHUNK);
+    return total;
   }
 }
