@@ -3,6 +3,7 @@ import {
   localDateOf,
   localTimeOf,
   timeZoneOffsetMinutes,
+  todayAt,
   todayIn,
   wallClockToUtc,
 } from './dates.js';
@@ -24,6 +25,17 @@ describe('todayIn with a fixed test date (JANTRIK_TEST_TODAY)', () => {
     vi.stubEnv('JANTRIK_TEST_TODAY', '2020-01-01');
     vi.stubEnv('NODE_ENV', 'production');
     expect(todayIn('Asia/Dhaka')).not.toBe('2020-01-01');
+    expect(todayAt('Asia/Dhaka', new Date('2026-10-17T20:30:00Z'))).toBe('2026-10-18');
+  });
+
+  it("todayAt is the clock's date there, unless a fixed test date wins", () => {
+    const now = new Date('2026-10-17T20:30:00Z'); // 02:30 on the 18th in Dhaka
+    vi.stubEnv('JANTRIK_TEST_TODAY', '');
+    expect(todayAt('Asia/Dhaka', now)).toBe('2026-10-18');
+    expect(todayAt('UTC', now)).toBe('2026-10-17');
+    vi.stubEnv('JANTRIK_TEST_TODAY', '2026-10-21');
+    vi.stubEnv('NODE_ENV', 'test');
+    expect(todayAt('Asia/Dhaka', now)).toBe('2026-10-21');
   });
 
   it('refuses a value that is not a calendar date, instead of using the real one', () => {

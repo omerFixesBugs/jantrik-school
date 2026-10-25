@@ -1,12 +1,9 @@
-import { Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@jantrik/db';
 import {
   addDays,
   attendancePercent,
-  DEFAULT_ABSENT_SMS_TEMPLATE,
   dateToDb,
-  formatDate,
-  renderSmsTemplate,
   type AttendanceSessionState,
   type AttendanceSheet,
   type AttendanceStatus,
@@ -25,6 +22,7 @@ import { TenantSmsService } from '../sms/tenant-sms.service.js';
 import { staffNames, staffRef } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
+import { AbsentSmsService } from './absent-sms.service.js';
 import {
   AttendanceSettingsService,
   type AttendanceTenant,
@@ -57,7 +55,7 @@ interface DateAccess {
 }
 
 @Injectable()
-export class AttendanceService implements OnModuleInit {
+export class AttendanceService {
   constructor(
     private readonly db: Db,
     private readonly context: RequestContext,
@@ -65,18 +63,8 @@ export class AttendanceService implements OnModuleInit {
     private readonly settings: AttendanceSettingsService,
     private readonly audit: AuditService,
     private readonly sms: TenantSmsService,
+    private readonly absentSms: AbsentSmsService,
   ) {}
-
-  /** Just before an absent SMS goes out: is the student still absent in some register that day? */
-  onModuleInit(): void {
-    this.sms.registerRelevanceCheck('ATTENDANCE_ABSENT', async ({ relatedId, localDate }) => {
-      if (!relatedId) return false;
-      const absent = await this.db.tx.attendanceRecord.count({
-        where: { studentId: relatedId, status: 'ABSENT', session: { date: dateToDb(localDate) } },
-      });
-      return absent > 0;
-    });
-  }
 
   // ─────────────────────────── Reads ───────────────────────────
 
@@ -349,54 +337,10 @@ export class AttendanceService implements OnModuleInit {
     }
 
     const absent = [...next].filter(([, n]) => n.status === 'ABSENT').map(([id]) => id);
-    await this.queueAbsentSms(tenant, input.date, absent);
+    await this.absentSms.queue(tenant, input.date, absent);
 
     const session = (await this.sessionState(section.id, input.date, input.periodNo))!;
     return { today: tenant.today, session, replayed: false };
-  }
-
-  /**
-   * One SMS per absent student per day to the primary guardian (sms_logs dedupe key), only for
-   * today's registers, and only when the tenant has turned absent SMS on.
-   */
-  private async queueAbsentSms(tenant: AttendanceTenant, date: IsoDate, studentIds: string[]) {
-    const s = tenant.settings;
-    if (!s.absentSmsEnabled || date !== tenant.today || studentIds.length === 0) return;
-    const students = await this.db.tx.student.findMany({
-      where: { id: { in: studentIds } },
-      select: {
-        id: true,
-        nameBn: true,
-        nameEn: true,
-        guardians: {
-          where: { isPrimary: true },
-          take: 1,
-          select: { guardian: { select: { phone: true } } },
-        },
-      },
-    });
-    const template = s.absentSmsTemplate ?? DEFAULT_ABSENT_SMS_TEMPLATE;
-    const cap = await this.settings.effectiveDailySmsCap(s);
-    const dateText = formatDate(dateToDb(date), 'bn', 'long');
-    for (const st of students) {
-      const phone = st.guardians[0]?.guardian.phone;
-      if (!phone) continue;
-      await this.sms.queue({
-        purpose: 'ATTENDANCE_ABSENT',
-        phone,
-        body: renderSmsTemplate(template, {
-          student: st.nameBn ?? st.nameEn ?? '',
-          date: dateText,
-          institute: tenant.name,
-        }),
-        localDate: date,
-        dedupeKey: `absent:${st.id}:${date}`,
-        relatedEntity: 'student',
-        relatedId: st.id,
-        delayMs: s.absentSmsDelayMinutes * 60_000,
-        dailyCap: cap,
-      });
-    }
   }
 
   // ─────────────────────────── Rules ───────────────────────────

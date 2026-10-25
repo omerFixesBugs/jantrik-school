@@ -52,6 +52,14 @@ export function todayIn(timeZone: string, now?: Date): IsoDate {
   return format.format(now ?? new Date());
 }
 
+/**
+ * Today in a timezone at `now`, an injectable clock's time (the API's `Clock`, which tests move).
+ * A fixed test date (JANTRIK_TEST_TODAY) still wins, as for `todayIn`.
+ */
+export function todayAt(timeZone: string, now: Date): IsoDate {
+  return fixedToday() ?? todayIn(timeZone, now);
+}
+
 /** ISO weekday of a date: 1 = Monday … 7 = Sunday (Friday = 5). */
 export function isoWeekday(date: IsoDate): number {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();

@@ -5,7 +5,7 @@ import {
   addDays,
   dateToDb,
   isoWeekday,
-  todayIn,
+  todayAt,
   type AttendanceMode,
   type AttendanceSettings,
   type AttendanceSettingsUpdate,
@@ -14,6 +14,7 @@ import {
   type NonWorkingDay,
 } from '@jantrik/shared';
 import { AuditService } from '../audit/audit.module.js';
+import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
 import { Db } from '../tenancy/db.service.js';
 
@@ -37,7 +38,7 @@ export interface AttendanceTenant {
   id: string;
   name: string;
   timezone: string;
-  /** Today in the tenant's timezone, from the server clock. */
+  /** Today in the tenant's timezone, from the server clock (the Clock, which tests move). */
   today: IsoDate;
   settings: StoredSettings;
 }
@@ -48,6 +49,7 @@ export class AttendanceSettingsService {
     private readonly db: Db,
     private readonly context: RequestContext,
     private readonly audit: AuditService,
+    private readonly clock: Clock,
   ) {}
 
   /**
@@ -107,7 +109,7 @@ export class AttendanceSettingsService {
       id: tenant.id,
       name: tenant.name,
       timezone: tenant.timezone,
-      today: todayIn(tenant.timezone),
+      today: todayAt(tenant.timezone, this.clock.now()),
       settings,
     };
   }
