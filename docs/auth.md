@@ -271,7 +271,8 @@ HTTP. So they talk to a separate server, not the API ([devices.md](devices.md)):
 - **Its own database login** (`DATABASE_INGEST_URL`, role `jantrik_ingest_app`): no table grants,
   only the four `ingest_*` definer functions, which find the device and its institute from the
   serial number themselves. It never uses the API's `PrismaService` or `Db`
-  (`ingest-isolation.spec.ts`), and refuses to start if its login can read a table.
+  (`ingest-isolation.spec.ts`), and refuses to start if its login can read `students` or
+  `device_punches` or cannot run `ingest_resolve`.
 - **The institute in a queued job** comes from the database's answer, never from the request.
 - **Its own limits** (table above), keyed by address and by serial number, and server timeouts.
   `INGEST_TRUST_PROXY` works like `TRUST_PROXY` but must never be `true` behind a proxy that

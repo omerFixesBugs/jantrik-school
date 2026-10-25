@@ -117,14 +117,14 @@ default (#38).
 
 Rules: [devices.md](devices.md). Owner decisions of 2026-10-24, approved as recommended:
 
-| #   | Question                             | Decision                                                                                                                                                                                             |
-| --- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1  | Which module?                        | ATTENDANCE. A separate billable DEVICES module can be split out later ([backlog.md](backlog.md)).                                                                                                    |
-| Q2  | When do punches become the register? | At the cutoff, in one go. Before it the today page and the take screen show arrivals live; the register stays "not taken".                                                                           |
-| Q3  | Should the cutoff ever hold back?    | Yes: no device seen in the last 15 minutes, or more than half the section without a punch. An admin then closes it from the device after a confirm, or the teacher takes it (#42 adds a third case). |
-| Q4  | Coaching centres (PER_SESSION)?      | No automatic marking. Punches, the live feed, arrival times, entry and exit SMS and staff attendance work; registers stay manual.                                                                    |
-| Q5  | Which name goes onto the device?     | The English name, printable ASCII, at most 24 characters; the student code when there is none (devices cannot draw Bangla).                                                                          |
-| Q6  | The receiver: own process and role?  | Yes: its own Nest app, port and database login (`jantrik_ingest_app`, four `ingest_*` functions only); inside `pnpm dev`, its own process in production.                                             |
+| #   | Question                             | Decision                                                                                                                                                                                                      |
+| --- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | Which module?                        | ATTENDANCE. A separate billable DEVICES module can be split out later ([backlog.md](backlog.md)).                                                                                                             |
+| Q2  | When do punches become the register? | At the cutoff, in one go. Before it the today page and the take screen show arrivals live; the register stays "not taken".                                                                                    |
+| Q3  | Should the cutoff ever hold back?    | Yes: no device seen in the last 15 minutes, or more than half the section without a punch. An admin then closes it from the device after a confirm, or the teacher takes it (#42 and #43 add two more cases). |
+| Q4  | Coaching centres (PER_SESSION)?      | No automatic marking. Punches, the live feed, arrival times, entry and exit SMS and staff attendance work; registers stay manual.                                                                             |
+| Q5  | Which name goes onto the device?     | The English name, printable ASCII, at most 24 characters; the student code when there is none (devices cannot draw Bangla).                                                                                   |
+| Q6  | The receiver: own process and role?  | Yes: its own Nest app, port and database login (`jantrik_ingest_app`, four `ingest_*` functions only); inside `pnpm dev`, its own process in production.                                                      |
 
 Additions (owner, the same day):
 
@@ -141,7 +141,7 @@ Decided during the build (open to change):
 
 39. **Manual wins.** The device never changes a record or a staff day a person set (MANUAL). A teacher's change makes only the records they changed MANUAL; the others stay DEVICE. A student enrolled after the device wrote the register gets a MANUAL record from the teacher's submit.
     - To change: let the device overwrite (not advised: the next punch would undo a teacher's correction).
-40. **A punch after the cutoff** (today only) turns a still-DEVICE ABSENT into LATE. A pending absent SMS is cancelled; one already sent cannot be taken back (the entry SMS follows it).
+40. **A punch after the cutoff** (today only, with auto-mark on) turns a still-DEVICE ABSENT into LATE. A pending absent SMS is cancelled; one already sent cannot be taken back (the entry SMS follows it). With auto-mark off, punches never change a register, not even one written by close from device (#44).
     - To change: `DeviceAttendanceService.recomputeStudentDay` (e.g. leave registers alone after the cutoff).
 41. **LATE is strictly after start + grace** (grace 10: 08:10:00 is PRESENT, 08:10:01 LATE). A section without a shift uses "school starts at" (08:00). The cutoff is per shift: start + 60 minutes.
     - To change: the attendance settings (grace 0–120, cutoff 15–300, "school starts at").
@@ -179,9 +179,9 @@ Decided during the build (open to change):
     - To change: the window in `ingest_find_device_at` (a migration). Cost now: a device installed more than a day after it was registered needs one admin click before commands and entry SMS flow.
 58. **Commands and their results go only through a trusted address**, enforced in the database, so a sniffed serial number can neither read the names in a device's commands nor fake its answers. After an ISP changes the school's address, commands and entry SMS wait until an admin trusts the new one.
     - To change: `ingest_take_commands` and `ingest_command_results` (not advised).
-59. **At most 50 untrusted addresses per device; a new one evicts the least recently seen one**, so the school's real new address can always be recorded. Known limit: a sustained flood of 50 or more new addresses per poll interval (30 s) keeps it out; the escape is to switch the device off and register its serial number again. Protecting rows from eviction was rejected: an attacker could pin all 50.
+59. **At most 50 untrusted addresses per device; a new one evicts the least recently seen one**, so the school's real new address can always be recorded. Known limit: a sustained flood of 50 or more new addresses per poll interval (30 s) keeps it out; the escape is to switch the device off and register its serial number again, then check the address list and revoke anything that isn't the institute's (the new row trusts its first caller within 24 hours, which during a flood could be the attacker). Protecting rows from eviction was rejected: an attacker could pin all 50.
     - To change: `ingest_find_device_at` (a migration).
-60. **Receiver limits:** 1200 requests a minute per address (IPv6 by its /64); 300 per serial number and address, so others cannot use up the device's share; one budget of 1200 per serial number for all the addresses it does not trust, charged only to them (a trusted device is never starved) and checked before any database call (an address Redis remembers as trusted, for 7 days, skips that check); 30 refused serials per 10 minutes per address.
+60. **Receiver limits:** 1200 requests a minute per address (IPv6 by its /64); 300 per serial number and address, so others cannot use up the device's share; one budget of 1200 per serial number for all the addresses it does not trust, charged only to them (a trusted device is never starved) and checked before any database call (an address Redis remembers as trusted, for 7 days, skips that check; a revoke does not clear that mark, so a revoked address may skip it for up to 7 days, but is still charged and refused after the database answers and gets no commands); 30 refused serials per 10 minutes per address.
     - To change: the `INGEST_*` variables (`.env.example`).
 61. **The per-minute cap:** 60 punches per device per minute (setting, 10–240). Over it punches are held (`BURST`) until an admin accepts them; beyond 5 times it they are dropped and counted (a flood alert). A punch sent again is a duplicate and does not count against the cap.
     - To change: the setting; the factor 5 in `ingest_store_punches` (a migration).

@@ -69,11 +69,26 @@ API devices worker ── TenantJobRunner.run(tenantId) ◀───────
 ## The protocol
 
 The receiver speaks ZKTeco's push protocol (ADMS / iclock), version 2.x, over plain HTTP. It was
-written from ZKTeco's "Attendance PUSH Communication Protocol" (V3.7, 2020, push 2.4.1), the
-"PUSH SDK Communication Protocol" (2.0.1), ZKTeco's own iclock server and Java demo, and
-open-source servers tested on hardware (see [plans/step-11.md](plans/step-11.md)). The 3.x
-access-control firmware (`/iclock/registry`, `/iclock/push`, `rtlog`) is not supported; the
-handshake records the `pushver` a device sends, so we can see which one it speaks.
+written from ZKTeco's documents, ZKTeco's own iclock server and Java demo, and open-source servers
+tested on hardware (sources below). The 3.x access-control firmware (`/iclock/registry`,
+`/iclock/push`, `rtlog`) is not supported; the handshake records the `pushver` a device sends, so
+we can see which one it speaks.
+
+**Sources:**
+
+- ZKTeco, "Attendance PUSH Communication Protocol", Doc V3.7 (2020-03-25, push 2.4.1):
+  [archived copy](http://web.archive.org/web/20260211090505/https://www.scribd.com/document/604032067/Attendance-PUSH-Communication-Protocol-20200325).
+- ZKTeco, "PUSH SDK Communication Protocol" Ver 2.0.1 (2011):
+  [archived copy](http://web.archive.org/web/20260504083947/https://www.scribd.com/document/695654988/PUSH-SDK-Communication-Protocol-V2-0-1).
+- ZKTeco's early Django iclock/ADMS server:
+  [yongming/iclock-python](https://github.com/yongming/iclock-python) (`mysite/iclock/devview.py`,
+  `models.py`).
+- ZKTeco's PushSDK Java demo: [ftorino/attendance_java](https://github.com/ftorino/attendance_java)
+  (`pushsdk/process/UploadProcess.java`, `DownloadProcess.java`, `PushCommServlet.java`).
+- A transcription of the 2.x document:
+  [docs.nufaza.com, archived](http://web.archive.org/web/20240913213844/https://docs.nufaza.com/docs/devices/zkteco_attendance/push_protocol/).
+- Implementations tested on hardware: [s0x90/zkteco-adms](https://github.com/s0x90/zkteco-adms),
+  [misaalanshori/admsjs `PROTOCOL.md`](https://github.com/misaalanshori/admsjs/blob/main/PROTOCOL.md).
 
 | Request                                                                                                                        | Answer                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -196,7 +211,10 @@ body limits follow. Counts are per minute unless shown, kept in Redis, and confi
   and touches no device. The one case this refuses a trusted device: it has not called for 7 days
   and comes back while others keep the budget spent; it gets through in the first minute they
   pause. Whether an address is trusted is always the database's answer; the Redis mark only
-  skips the early check.
+  skips the early check. Revoking an address does not clear its mark, so for up to 7 days after
+  its last trusted request a revoked address (an IPv6 one: its whole /64) still skips the early
+  check; after `ingest_resolve` it is charged to the budget and refused like any untrusted one,
+  and it gets no commands.
 - **Behind a proxy**, `INGEST_TRUST_PROXY` decides which address is the client's (Express
   `trust proxy`). Use a hop count (`1`) or the proxy's address, never `true`, unless the proxy
   overwrites `X-Forwarded-For`: with `true` any client can claim any address, including a
@@ -214,7 +232,9 @@ Every request records the address it came from against the device (`device_sourc
   serial number connects before the real device.
 - **Trusting** an address (`POST /attendance/devices/:id/ips/:ipId/trust`, audited) lets commands
   go to it and marks its unreviewed `NEW_IP` punches OK. **Revoking** (`…/revoke`, audited) stops
-  commands and flags its new punches `NEW_IP` again; past punches keep their review. The list
+  commands and flags its new punches `NEW_IP` again; past punches keep their review. (The Redis
+  trusted mark is not cleared: it only skips the early budget check, see Limits; trust and
+  command delivery are decided by the database on every request.) The list
   shows each address with first and last seen, punch count, and who trusted it (or
   "automatically").
 - **Commands and their results go only through a trusted address**, enforced in the database:
@@ -229,8 +249,10 @@ Every request records the address it came from against the device (`device_sourc
   sustained flood of 50 or more new addresses per poll interval keeps it out of the list. While
   that lasts, the admin cannot trust the school's new address, and sees the NEW_IP alerts. The
   escape: switch the device off and register its serial number again (a new device row starts
-  with no addresses and a fresh 24-hour window). Protecting some rows from eviction was rejected:
-  an attacker could pin 50 rows and recreate the "can never be recorded" problem.
+  with no addresses and a fresh 24-hour window). The new row trusts its first caller
+  automatically, and while the flood lasts that could be the attacker: check the address list
+  afterwards and revoke anything that isn't the institute's. Protecting some rows from eviction
+  was rejected: an attacker could pin 50 rows and recreate the "can never be recorded" problem.
 
 ### Punch flags and review
 
@@ -253,10 +275,11 @@ Every request records the address it came from against the device (`device_sourc
   punch: it counts from now), **REJECT** (it stops counting). Any punch may be reviewed again;
   the last decision wins.
 - A review that changes whether a punch counts rebuilds that person's day at once: a staff day
-  unless it is MANUAL (no punch left: a DEVICE day becomes ABSENT); a student's DEVICE record on
-  today's DEVICE register (left ABSENT: the absent SMS through the usual pipeline, once by its
-  dedupe key). A review never sends an entry or exit SMS. Before the cutoff nothing is stored
-  yet: the arrivals are computed from the punches that count, so the review shows at once.
+  unless it is MANUAL (no punch left: a DEVICE day becomes ABSENT); with auto-mark on, a
+  student's DEVICE record on today's DEVICE register (left ABSENT: the absent SMS through the
+  usual pipeline, once by its dedupe key). A review never sends an entry or exit SMS. Before the
+  cutoff nothing is stored yet: the arrivals are computed from the punches that count, so the
+  review shows at once.
 - The "flagged" filter and the NEW_IP and HELD alerts look back **7 days**.
 
 ### Alerts
@@ -348,9 +371,11 @@ On the devices screen and the owner's and admin's dashboard, for active devices
   sending while one is waiting, not sent when one failed or never got it.
 - **CSV:** export everyone with their ID or suggested default (`student_code`, `staff_phone`,
   `device_id`, then name, class, section, role and status; UTF-8 with a BOM, ASCII digits).
-  Import reads the first three columns: a preview with an error per row, then apply, which
-  checks again under the institute's device-people lock and writes only the OK rows (swaps in one
-  file work). At most 5000 rows and 1 MB.
+  Import finds `student_code`, `staff_phone` and `device_id` by their header names, in any order
+  and case, and ignores other columns; it needs `device_id` and at least one of the other two
+  (422 `MISSING_COLUMNS`). A preview with an error per row, then apply, which checks again under
+  the institute's device-people lock and writes only the OK rows (swaps in one file work). At most
+  5000 rows and 1 MB.
 
 ## Students: registers from punches
 
@@ -382,12 +407,12 @@ hand.
   has passed, each in its own transaction, and writes the register (`closeDecision`) unless it
   holds it back:
 
-  | State              | Why                                                                                                                |
-  | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
-  | `DEVICE_OFFLINE`   | no active device called in the last 15 minutes                                                                     |
-  | `NOT_ON_DEVICE`    | an active student of the section cannot punch: no ID, or no add for their ID confirmed on any active device        |
-  | `TOO_MANY_MISSING` | more than half of the section's active students have no arrival                                                    |
-  | `AUTO_CLOSE_ENDED` | more than an hour has passed since the cutoff: from then on it waits for a person (no surprise absent SMS at noon) |
+  | State              | Why                                                                                                              |
+  | ------------------ | ---------------------------------------------------------------------------------------------------------------- |
+  | `DEVICE_OFFLINE`   | no active device called in the last 15 minutes                                                                   |
+  | `NOT_ON_DEVICE`    | an active student of the section cannot punch: no ID, or no add for their ID confirmed on any active device      |
+  | `TOO_MANY_MISSING` | more than half of the section's active students have no arrival                                                  |
+  | `AUTO_CLOSE_ENDED` | an hour or more has passed since the cutoff: from then on it waits for a person (no surprise absent SMS at noon) |
 
   While held back, the today page says why (with the count for `NOT_ON_DEVICE`); it rechecks
   every minute until an hour after the cutoff. Before the cutoff it shows `BEFORE_CUTOFF`, and
@@ -411,10 +436,12 @@ hand.
 - **Manual wins.** A teacher's change to a record makes it MANUAL; the device never changes a
   MANUAL record. Records the teacher did not touch stay DEVICE; the register stays DEVICE and
   gets the teacher as its updater.
-- **Late punches after the cutoff** (today only): a student still ABSENT on a DEVICE record who
-  punches in becomes LATE (or PRESENT, when a delayed upload shows they came on time): version
-  bump, no updater, audited with `source: DEVICE`. A pending absent SMS is then cancelled by the
-  relevance check; one already sent cannot be taken back (the entry SMS follows it).
+- **Late punches after the cutoff** (today only, with auto-mark on): a student still ABSENT on a
+  DEVICE record who punches in becomes LATE (or PRESENT, when a delayed upload shows they came on
+  time): version bump, no updater, audited with `source: DEVICE`. A pending absent SMS is then
+  cancelled by the relevance check; one already sent cannot be taken back (the entry SMS follows
+  it). With auto-mark off, punches and reviews never change a register, not even one an admin
+  wrote with "close from device".
 - **No marking** on weekly off days and holidays, in PER_SESSION mode or with auto-mark off.
 
 ### Entry and exit SMS
@@ -449,9 +476,9 @@ Two settings, off by default (they cost the institute money), in any mode:
   accepted); `UNMAPPED` (nobody has the ID); `IGNORED` (a student deleted, not ACTIVE or not
   enrolled this year; staff without an active staff role or whose attendance is not kept);
   otherwise `APPLIED`.
-- **Applied:** a student's DEVICE record on today's DEVICE register is rebuilt (registers
-  themselves are written only at the cutoff); a staff day up to 7 days back is rebuilt; entry and
-  exit SMS.
+- **Applied:** with auto-mark on (DAILY), a student's DEVICE record on today's DEVICE register is
+  rebuilt (registers themselves are written only at the cutoff); a staff day up to 7 days back is
+  rebuilt; entry and exit SMS.
 - **Locks.** Processing, reviews, the cutoff, close from device and manual staff days take the
   institute's advisory punch lock first (`device-punches:<tenant>`), then punch rows, then
   registers and staff days, then the SMS lock. Trusting an address locks the device row before
@@ -569,8 +596,9 @@ pnpm device:sim --help                                # every command and option
 - `--at` takes `HH:MM` (today) or `YYYY-MM-DD HH:MM:SS`; punches in the past are fine for
   arrivals but send no entry SMS (not real time).
 - `--skew <seconds>` runs the device's clock fast or slow; `--legacy` handshakes without
-  `pushver`; `--ip <address>` sends `X-Forwarded-For`, which the receiver believes only with
-  `INGEST_TRUST_PROXY=true` (development and tests only; see the limits above).
+  `pushver`; `--ip <address>` sends `X-Forwarded-For`, which the receiver believes only when
+  `INGEST_TRUST_PROXY` is set (a hop count, `loopback` or the proxy's address; the e2e tests use
+  `true`, safe only on this machine and never in production; see the limits above).
 - Demo devices and IDs: [demo-accounts.md](demo-accounts.md) → Devices.
 
 ### Tests
@@ -605,7 +633,8 @@ pnpm --filter @jantrik/api exec vitest run ingest devices- staff-attendance
 
 ## Verify on the real device
 
-Nothing here has met real hardware. When the first device arrives, check:
+Nothing here has met real hardware (the protocol comes from the sources under "The protocol").
+When the first device arrives, check:
 
 - the `pushver` it sends (2.x expected; the 3.x access-control firmware is not supported), and
   the menu path and fields for the server (the setup guide's steps);

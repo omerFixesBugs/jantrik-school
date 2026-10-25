@@ -80,9 +80,9 @@ period-0 register can be written from punches. Full rules: [devices.md](devices.
   students only.
 - **Held back** instead, with the reason on the today page: `DEVICE_OFFLINE` (no device seen in 15
   minutes), `NOT_ON_DEVICE` (an active student has no ID confirmed on a device; with the count),
-  `TOO_MANY_MISSING` (more than half of the active students without a punch), `AUTO_CLOSE_ENDED`
-  (an hour past the cutoff, it waits for a person). The teacher takes it by hand, or an
-  owner/admin uses **Take from the device** after a confirm
+  `TOO_MANY_MISSING` (more than half of the active students without an arrival),
+  `AUTO_CLOSE_ENDED` (an hour past the cutoff, it waits for a person). The teacher takes it by
+  hand, or an owner/admin uses **Take from the device** after a confirm
   (`POST /attendance/sections/:id/close-from-device`): the same register, written after the
   cutoff whatever the reason.
 - **A person's register wins.** A register submitted before the cutoff is never replaced. A
@@ -92,8 +92,9 @@ period-0 register can be written from punches. Full rules: [devices.md](devices.
   never changes it again. Records they leave alone keep their source; the register stays
   `DEVICE` and gets the teacher as its updater. A student enrolled after the device wrote the
   register gets a `MANUAL` record from the teacher's submit.
-- **A punch after the cutoff** (today) turns a still-DEVICE ABSENT into LATE; a pending absent
-  SMS is then cancelled by the relevance check.
+- **A punch after the cutoff** (today, with auto-mark on) turns a still-DEVICE ABSENT into LATE;
+  a pending absent SMS is then cancelled by the relevance check. With auto-mark off, punches never
+  change a register, not even one written by "take from the device".
 - Lock waits on these paths are limited to 5 s: a request that runs out answers 409 `BUSY` with
   `Retry-After` and changes nothing, and the screen says "the system is busy right now, try
   again".
@@ -128,7 +129,7 @@ Held SMS not released by the end of their day become `EXPIRED` and are never sen
 Next to the absent SMS, two more settings (off by default, any mode): "entered at 7:45" for a
 student's first IN punch of the day and "left at" for the first OUT after it. At most one of each
 per student per day (`entry:<student>:<date>`, `exit:<student>:<date>`), only on working days,
-only for punches received within 10 minutes of being made and without a spoofing flag, and
+only for punches received within 10 minutes of being made and without a flag, and
 **never over 90 % of the daily cap**: past it they are skipped (no row, never held), so the rest
 stays for absent alerts and receipts. Fixed Bangla text. Details: [devices.md](devices.md) →
 Entry and exit SMS.

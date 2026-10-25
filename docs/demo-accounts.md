@@ -103,7 +103,7 @@ on a device (`NOT_ON_DEVICE`), with the count. After a seed nothing is on the de
    count is 0 (the simulator prints "Users on device"; it takes 20 names per poll). One device is
    enough. The People page's "Send to devices" sends to শিক্ষকদের কক্ষ too, which never connects,
    so that list keeps showing "Sending".
-3. Send the morning's arrivals (above). More than half of the section's active students must have
+3. Send the morning's arrivals (above). At least half of the section's active students must have
    punched in, and the device must have called in within 15 minutes (`listen` does that).
 4. Switch auto-mark on in the attendance settings, and set the cutoff minutes so the cutoff of
    ষষ্ঠ শ্রেণি ক (morning shift, starts 07:00; cutoff 08:00 by default) falls a few minutes from
