@@ -10,6 +10,7 @@ import { hash } from '@node-rs/argon2';
 import { withContext, withTenant, type TenantTx } from '../tenancy/context.js';
 import { provisionTenant } from '../tenancy/provision.js';
 import { findOrCreateUser } from '../tenancy/users.js';
+import { seedDemoDevices } from './demo-devices.js';
 import { seedAloExams, seedShaplaExams, type ExamSeedContext } from './demo-exams.js';
 import { seedDemoFees } from './demo-fees.js';
 import { seedPastAttendance } from './past-attendance.js';
@@ -77,6 +78,8 @@ interface DemoTenant {
   fees?: boolean;
   /** Exams, marks and published results: docs/exams.md. */
   exams?: (tx: TenantTx, ctx: ExamSeedContext) => Promise<void>;
+  /** Two devices, device IDs and a month of staff attendance: docs/demo-accounts.md. */
+  devices?: boolean;
 }
 
 /** National holidays (same for every demo tenant). */
@@ -172,6 +175,7 @@ const DEMO_TENANTS: DemoTenant[] = [
     ],
     fees: true,
     exams: seedShaplaExams,
+    devices: true,
     sectionTeachers: [
       { phone: '01711000002', section: 'CLASS_6/ক', classTeacher: true },
       { phone: '01911000999', section: 'CLASS_9/ক', classTeacher: true },
@@ -337,6 +341,8 @@ interface SeededUsers {
   namesBn: Map<string, string>;
   /** Past attendance registers created. */
   sessions: number;
+  /** Device punches, inserted afterwards as the owner role (the app role never inserts them). */
+  punches: Prisma.DevicePunchCreateManyInput[];
 }
 
 async function seedTenantData(
@@ -503,11 +509,24 @@ async function seedTenantData(
     await seedDemoFees(tx, tenantId, staffUserIds[owner]!);
   }
   if (def.exams) await def.exams(tx, { tenantId, userIdByPhone });
-  return { staffUserIds, namesBn, sessions };
+  const punches = def.devices
+    ? await seedDemoDevices(tx, {
+        tenantId,
+        staff: [...userIdByPhone].map(([p, userId]) => ({
+          userId,
+          phone: p,
+          roles: def.staff.filter((m) => phone(m.phone) === p).map((m) => m.role),
+        })),
+      })
+    : [];
+  return { staffUserIds, namesBn, sessions, punches };
 }
 
-/** Create the demo tenants. Must run as the app role (RLS applies, as in production). */
-export async function seedDemo(app: PrismaClient): Promise<void> {
+/**
+ * Create the demo tenants. Must run as the app role (RLS applies, as in production); only the
+ * device punches, which the app role cannot insert, go in as the owner role.
+ */
+export async function seedDemo(app: PrismaClient, owner: PrismaClient): Promise<void> {
   for (const def of DEMO_TENANTS) {
     let tenantId: string;
     try {
@@ -531,12 +550,16 @@ export async function seedDemo(app: PrismaClient): Promise<void> {
       }
       throw error;
     }
-    const { staffUserIds, namesBn, sessions } = await withTenant(
+    const { staffUserIds, namesBn, sessions, punches } = await withTenant(
       app,
       tenantId,
       (tx) => seedTenantData(tx, tenantId, def),
       { timeout: 120_000 },
     );
+    // In the institute's context: forced RLS applies to the owner role too.
+    if (punches.length > 0) {
+      await withTenant(owner, tenantId, (tx) => tx.devicePunch.createMany({ data: punches }));
+    }
 
     // RLS lets a user update only their own row, so passwords and Bangla names are set as
     // that user.
@@ -552,8 +575,9 @@ export async function seedDemo(app: PrismaClient): Promise<void> {
         }),
       );
     }
+    const devices = def.devices ? `, 2 devices, ${punches.length} staff punches` : '';
     console.log(
-      `  ${def.slug}: created (${def.students.length} students, ${sessions} past registers)`,
+      `  ${def.slug}: created (${def.students.length} students, ${sessions} past registers${devices})`,
     );
   }
 }
