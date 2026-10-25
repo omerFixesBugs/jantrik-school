@@ -146,6 +146,15 @@ screen. Devices that support HTTPS can use a TLS proxy in front of the receiver'
 - **Own process.** `node apps/api/dist/ingest-main.js` in production; inside the API process in
   development (`INGEST_IN_PROCESS`, on by default outside production). Port `INGEST_PORT` (4080).
   No JSON body parser: the controller reads each body itself, within the limits below.
+- **Own variables.** The receiver validates only its own environment
+  ([`ingest-env.ts`](../apps/api/src/config/ingest-env.ts)): `NODE_ENV`, `DATABASE_INGEST_URL`
+  (required), `REDIS_URL`, `QUEUE_PREFIX`, `INGEST_PORT`, `INGEST_TRUST_PROXY` and the limits.
+  In production give it only these: never the API's logins or secrets (`DATABASE_URL`,
+  `DATABASE_PLATFORM_URL`, `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY`), so code run
+  in the receiver finds no login that can choose an institute and no key that signs sessions
+  ([decisions-pending.md](decisions-pending.md) → Deployment requirements). The setup guide's
+  `INGEST_PUBLIC_HOST` and `INGEST_PUBLIC_PORT` belong to the API, which refuses to start in
+  production without the host (or with localhost).
 - **Own login.** `DATABASE_INGEST_URL` logs in as `jantrik_ingest_app`, which can read no table
   and run only four `SECURITY DEFINER` functions owned by `jantrik_ingest`: `ingest_resolve`,
   `ingest_store_punches`, `ingest_take_commands` and `ingest_command_results`. None takes a
@@ -563,7 +572,7 @@ The devices screen's setup guide (Bangla, per device) walks the admin through it
 1. Connect the device to power and the internet (cable or Wi-Fi).
 2. Menu (`M/OK`) → **Comm.** → **Cloud Server Setting** (**ADMS** on some models).
 3. **Server Address** and **Server Port**: the receiver's public host and port
-   (`INGEST_PUBLIC_HOST`, `INGEST_PUBLIC_PORT`), with copy buttons.
+   (`INGEST_PUBLIC_HOST`, required in production, and `INGEST_PUBLIC_PORT`), with copy buttons.
 4. **Enable Domain Name** off for an IP address, on for a domain name.
 5. **HTTPS** off, **Proxy Server** off.
 6. **System → Date Time:** time zone GMT+6; check the date and time.
@@ -632,6 +641,7 @@ pnpm --filter @jantrik/api exec vitest run ingest devices- staff-attendance
 | Spec (`apps/api/test`)           | Covers                                                                                                                  |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `devices-ingest.e2e-spec.ts`     | the protocol, refusals, limits, addresses and trust, the per-minute cap, clock correction, commands, the biometric test |
+| `devices-ingest-env.e2e-spec.ts` | the stand-alone receiver starts in production from its own variables only, and refuses without `DATABASE_INGEST_URL`    |
 | `devices-api.e2e-spec.ts`        | devices, sync, the feed, reviews, trust and revoke, alerts, roles                                                       |
 | `devices-people.e2e-spec.ts`     | IDs, defaults, collisions, CSV, sync states, IDs still on a device, removal                                             |
 | `devices-processing.e2e-spec.ts` | outcomes, entry and exit SMS, the DEVICE register, staff days, the minute sweep                                         |

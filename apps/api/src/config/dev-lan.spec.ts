@@ -44,7 +44,12 @@ describe('env: loosened settings never leave development', () => {
   });
 
   it('COOKIE_SECURE=false is refused in production', () => {
-    const prod = { ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'k'.repeat(32) };
+    const prod = {
+      ...base,
+      NODE_ENV: 'production',
+      PLATFORM_TOTP_KEY: 'k'.repeat(32),
+      INGEST_PUBLIC_HOST: 'devices.example.com',
+    };
     const result = envSchema.safeParse({ ...prod, COOKIE_SECURE: 'false' });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error)).toContain('COOKIE_SECURE');
@@ -134,9 +139,30 @@ describe('env: device receiver', () => {
   });
 
   it('is its own process in production unless told otherwise', () => {
-    const prod = { ...withoutIngest, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'k'.repeat(40) };
+    const prod = {
+      ...withoutIngest,
+      NODE_ENV: 'production',
+      PLATFORM_TOTP_KEY: 'k'.repeat(40),
+      INGEST_PUBLIC_HOST: '203.0.113.7',
+    };
     expect(envSchema.parse(prod).INGEST_IN_PROCESS).toBe(false);
     expect(envSchema.safeParse({ ...prod, INGEST_IN_PROCESS: 'true' }).success).toBe(false);
+  });
+
+  it('the public host (the setup guide) must be set in production, and not to localhost', () => {
+    const prod = { ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'k'.repeat(40) };
+    for (const host of [undefined, 'localhost', 'LOCALHOST', '127.0.0.1', '::1', '[::1]']) {
+      const result = envSchema.safeParse({ ...prod, INGEST_PUBLIC_HOST: host });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.path.join('.'))).toEqual(['INGEST_PUBLIC_HOST']);
+    }
+    for (const host of ['devices.example.com', '203.0.113.7']) {
+      expect(envSchema.parse({ ...prod, INGEST_PUBLIC_HOST: host }).INGEST_PUBLIC_HOST).toBe(host);
+    }
+    // Elsewhere localhost unless set.
+    for (const NODE_ENV of ['development', 'test']) {
+      expect(envSchema.parse({ ...base, NODE_ENV }).INGEST_PUBLIC_HOST).toBe('localhost');
+    }
   });
 
   it('takes the public port from the listen port unless set, and has the documented limits', () => {

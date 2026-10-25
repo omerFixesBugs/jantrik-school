@@ -1,13 +1,18 @@
 import { isoDateSchema } from '@jantrik/shared';
 import { z } from 'zod';
-
-const positiveInt = (fallback: number) => z.coerce.number().int().positive().default(fallback);
+import { ingestReceiverFields, positiveInt } from './ingest-env.js';
 
 /** The receiver runs inside the API unless told otherwise; production runs it as its own process. */
 const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_ENV: string }) =>
   env.INGEST_IN_PROCESS ?? env.NODE_ENV !== 'production';
 
-/** Environment variables the API needs. Validated once at startup. */
+/** Hosts a device can never dial: the setup guide must not tell a school to use them. */
+const LOOPBACK_HOST = /^(localhost|127(\.\d{1,3}){3}|::1|\[::1\])$/i;
+
+/**
+ * Environment variables the API needs. Validated once at startup. The stand-alone device receiver
+ * has its own, smaller schema (ingest-env.ts).
+ */
 export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -33,7 +38,7 @@ export const envSchema = z
     /**
      * The device receiver's own login (role jantrik_ingest_app): the only role that may run the
      * ingest_* functions. Same database as DATABASE_URL. Required when the receiver runs in this
-     * process.
+     * process; the API itself never uses it.
      */
     DATABASE_INGEST_URL: z.string().min(1).optional(),
     REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
@@ -75,23 +80,14 @@ export const envSchema = z
     // Device receiver (ZKTeco attendance machines).
     /** Run the receiver inside the API process. Default: yes, except in production (own process). */
     INGEST_IN_PROCESS: z.stringbool().optional(),
-    INGEST_PORT: positiveInt(4080),
-    /** Host and port a device is told to connect to; shown to admins in the device setup guide. */
-    INGEST_PUBLIC_HOST: z.string().min(1).default('localhost'),
-    INGEST_PUBLIC_PORT: z.coerce.number().int().positive().optional(),
-    /** Express "trust proxy" for the receiver (same values as TRUST_PROXY). */
-    INGEST_TRUST_PROXY: z.string().default('false'),
-    INGEST_PER_IP_PER_MIN: positiveInt(1200),
-    /** Requests per minute for one serial number from one address (an IPv6 /64). */
-    INGEST_PER_DEVICE_PER_MIN: positiveInt(300),
     /**
-     * Requests per minute for one serial number from all the addresses it does not trust, together
-     * (a trusted address has only its own share above).
+     * Host and port a device is told to connect to; shown to admins in the device setup guide.
+     * The host is required in production (never localhost there); elsewhere it defaults to
+     * localhost.
      */
-    INGEST_PER_DEVICE_ALL_PER_MIN: positiveInt(1200),
-    INGEST_REFUSED_PER_IP_PER_10MIN: positiveInt(30),
-    INGEST_MAX_ATTLOG_BYTES: positiveInt(524288),
-    INGEST_MAX_DRAIN_BYTES: positiveInt(2097152),
+    INGEST_PUBLIC_HOST: z.string().trim().min(1).optional(),
+    INGEST_PUBLIC_PORT: z.coerce.number().int().positive().optional(),
+    ...ingestReceiverFields,
 
     // Rate limits. Per-phone / per-identifier limits are the real protection; per-IP limits are
     // generous because many Bangladeshi users share one IP (carrier CGNAT, school Wi-Fi).
@@ -137,6 +133,17 @@ export const envSchema = z
           'DATABASE_INGEST_URL is required when the device receiver runs in the API process (INGEST_IN_PROCESS)',
       });
     }
+    if (
+      env.NODE_ENV === 'production' &&
+      (!env.INGEST_PUBLIC_HOST || LOOPBACK_HOST.test(env.INGEST_PUBLIC_HOST))
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['INGEST_PUBLIC_HOST'],
+        message:
+          'INGEST_PUBLIC_HOST is required in production: the address or domain name devices dial (not localhost)',
+      });
+    }
     if (!env.COOKIE_SECURE && env.NODE_ENV === 'production') {
       ctx.addIssue({
         code: 'custom',
@@ -148,6 +155,7 @@ export const envSchema = z
   .transform((env) => ({
     ...env,
     INGEST_IN_PROCESS: ingestInProcess(env),
+    INGEST_PUBLIC_HOST: env.INGEST_PUBLIC_HOST ?? 'localhost',
     INGEST_PUBLIC_PORT: env.INGEST_PUBLIC_PORT ?? env.INGEST_PORT,
   }));
 

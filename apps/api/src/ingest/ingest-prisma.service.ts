@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createPrismaClient, type PrismaClient } from '@jantrik/db';
-import type { Env } from '../config/env.js';
+import type { IngestEnv } from '../config/ingest-env.js';
 
 /** Driver errors that mean "not reachable (yet)": the start-up check tries again on these only. */
 const UNREACHABLE = new Set([
@@ -25,7 +25,7 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
   /** Waits between start-up checks while the database is not reachable (about 30 s in all). */
   retryDelaysMs = [1000, 2000, 4000, 8000, 15000];
 
-  constructor(config: ConfigService<Env, true>) {
+  constructor(config: ConfigService<IngestEnv, true>) {
     const url = config.get('DATABASE_INGEST_URL', { infer: true });
     if (!url) {
       throw new Error(

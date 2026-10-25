@@ -11,7 +11,8 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { Server } from 'node:http';
 import type { NextFunction, Request, Response } from 'express';
-import { parseTrustProxy, type Env } from '../config/env.js';
+import { parseTrustProxy } from '../config/env.js';
+import type { IngestEnv } from '../config/ingest-env.js';
 import { reply } from './ingest.controller.js';
 import { errorLabel, ingestRefusalStatus } from './ingest-prisma.service.js';
 import { IngestAppModule } from './ingest.module.js';
@@ -60,7 +61,7 @@ export const INGEST_SERVER_LIMITS = {
 
 /** HTTP settings of the receiver, shared by createIngestApp and the e2e tests. */
 export function configureIngestApp(app: INestApplication): void {
-  const config = app.get<ConfigService<Env, true>>(ConfigService);
+  const config = app.get<ConfigService<IngestEnv, true>>(ConfigService);
   const express = app as NestExpressApplication;
   express.set('trust proxy', parseTrustProxy(config.get('INGEST_TRUST_PROXY', { infer: true })));
   express.disable('x-powered-by');
@@ -88,7 +89,9 @@ export async function createIngestApp(): Promise<NestExpressApplication> {
 /** Creates the receiver and listens on INGEST_PORT (ingest-main.ts, or main.ts in development). */
 export async function startIngestApp(): Promise<NestExpressApplication> {
   const app = await createIngestApp();
-  const port = app.get<ConfigService<Env, true>>(ConfigService).get('INGEST_PORT', { infer: true });
+  const port = app
+    .get<ConfigService<IngestEnv, true>>(ConfigService)
+    .get('INGEST_PORT', { infer: true });
   await app.listen(port);
   new Logger('DeviceReceiver').log(`device receiver listening on ${port}`);
   return app;

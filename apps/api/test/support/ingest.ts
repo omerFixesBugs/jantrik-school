@@ -8,7 +8,7 @@ import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import request from 'supertest';
 import { Clock } from '../../src/common/clock.js';
-import { validateEnv, type Env } from '../../src/config/env.js';
+import { validateIngestEnv, type IngestEnv } from '../../src/config/ingest-env.js';
 import { DEVICES_QUEUE } from '../../src/devices/devices.constants.js';
 import { configureIngestApp } from '../../src/ingest/ingest.bootstrap.js';
 import { IngestPrismaService } from '../../src/ingest/ingest-prisma.service.js';
@@ -39,8 +39,8 @@ export async function createIngestHarness(
   const builder = Test.createTestingModule({ imports: [IngestAppModule] });
   if (opts.clock) builder.overrideProvider(Clock).useValue(opts.clock);
   if (opts.env) {
-    const env = validateEnv({ ...process.env, ...opts.env });
-    builder.overrideProvider(ConfigService).useValue({ get: (key: keyof Env) => env[key] });
+    const env = validateIngestEnv({ ...process.env, ...opts.env });
+    builder.overrideProvider(ConfigService).useValue({ get: (key: keyof IngestEnv) => env[key] });
   }
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false });

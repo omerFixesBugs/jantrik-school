@@ -23,7 +23,7 @@ import {
 import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { Clock } from '../common/clock.js';
-import type { Env } from '../config/env.js';
+import type { IngestEnv } from '../config/ingest-env.js';
 import {
   DEVICES_QUEUE,
   PROCESS_PUNCHES_JOB,
@@ -159,7 +159,7 @@ export class IngestService {
   };
 
   constructor(
-    config: ConfigService<Env, true>,
+    config: ConfigService<IngestEnv, true>,
     private readonly db: IngestPrismaService,
     private readonly limiter: RateLimiter,
     private readonly clock: Clock,

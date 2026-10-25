@@ -230,13 +230,21 @@ Recorded during step 8; to be done when the production setup is built.
      injection would live on that pooled connection. Not done locally: the DB tests create
      temporary tables on purpose.
 4. **The device receiver** (step 11, [devices.md](devices.md)):
-   - **Its own process** next to the API: `node apps/api/dist/ingest-main.js` (from `pnpm build`),
-     with the same environment. Set `INGEST_IN_PROCESS=false` for the API (it is off by default
-     when `NODE_ENV=production`, so the API alone never listens for devices).
+   - **Its own process** next to the API: `node apps/api/dist/ingest-main.js` (from `pnpm build`).
+     Set `INGEST_IN_PROCESS=false` for the API (it is off by default when `NODE_ENV=production`,
+     so the API alone never listens for devices).
+   - **Only its own variables** (`apps/api/src/config/ingest-env.ts`): `NODE_ENV=production`,
+     `DATABASE_INGEST_URL` (required), `REDIS_URL`, `QUEUE_PREFIX`, `INGEST_PORT`,
+     `INGEST_TRUST_PROXY` and the limits below. **Never** give it `DATABASE_URL`,
+     `DATABASE_PLATFORM_URL`, `JWT_ACCESS_SECRET`, `OTP_PEPPER` or `PLATFORM_TOTP_KEY`, and no
+     `.env` holding them where it starts (it reads `../../.env` from its working directory). It is
+     the one internet-facing parser without a login: code run in it must find no login that can
+     choose an institute (`jantrik_app` can) and no key that signs sessions.
    - **Its port** (`INGEST_PORT`, 4080) must be reachable from schools over **plain HTTP**: open it
      in the firewall. Devices that support HTTPS can go through a TLS proxy in front of it
-     (optional). Set `INGEST_PUBLIC_HOST` and `INGEST_PUBLIC_PORT` to what devices dial (the setup
-     guide shows them): a fixed IP address or a domain name.
+     (optional). Set `INGEST_PUBLIC_HOST` and `INGEST_PUBLIC_PORT` **for the API** to what
+     devices dial (the setup guide shows them): a fixed IP address or a domain name. The API
+     refuses to start in production without `INGEST_PUBLIC_HOST`, or with it set to localhost.
    - **Database:** create `jantrik_ingest` (NOLOGIN) and `jantrik_ingest_app` (LOGIN, a strong
      `DB_INGEST_PASSWORD`) as in `docker/postgres/init/01-roles.sh`, **before the first
      `prisma migrate deploy`** (the migrations grant to them), and give the receiver
@@ -249,8 +257,8 @@ Recorded during step 8; to be done when the production setup is built.
    - **Redis:** the same Redis and `QUEUE_PREFIX` as the API (the `devices` queue, the limits,
      `ingest:refused`); item 2 applies.
    - **Deploy order** as in item 3: migrations first, then restart the API and the receiver.
-   - **New variables** (`.env.example`): `DATABASE_INGEST_URL`, `DB_INGEST_PASSWORD` (the init
-     script), `INGEST_IN_PROCESS`, `INGEST_PORT`, `INGEST_PUBLIC_HOST`, `INGEST_PUBLIC_PORT`,
-     `INGEST_TRUST_PROXY`, and the limits `INGEST_PER_IP_PER_MIN`, `INGEST_PER_DEVICE_PER_MIN`,
-     `INGEST_PER_DEVICE_ALL_PER_MIN`, `INGEST_REFUSED_PER_IP_PER_10MIN`,
-     `INGEST_MAX_ATTLOG_BYTES`, `INGEST_MAX_DRAIN_BYTES`.
+   - **New variables** (`.env.example`): `DB_INGEST_PASSWORD` (the init script). The API:
+     `INGEST_IN_PROCESS`, `INGEST_PUBLIC_HOST`, `INGEST_PUBLIC_PORT`. The receiver:
+     `DATABASE_INGEST_URL`, `INGEST_PORT`, `INGEST_TRUST_PROXY`, and the limits
+     `INGEST_PER_IP_PER_MIN`, `INGEST_PER_DEVICE_PER_MIN`, `INGEST_PER_DEVICE_ALL_PER_MIN`,
+     `INGEST_REFUSED_PER_IP_PER_10MIN`, `INGEST_MAX_ATTLOG_BYTES`, `INGEST_MAX_DRAIN_BYTES`.

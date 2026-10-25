@@ -173,7 +173,10 @@ A single root `.env` is used by every app and package (`.env.example` lists all 
 Never commit `.env`. `NEXT_PUBLIC_*` variables are inlined into the web build at build time.
 The device receiver's variables (`DATABASE_INGEST_URL`, `INGEST_*`) and what production needs
 for it are in [docs/devices.md](docs/devices.md) and
-[docs/decisions-pending.md](docs/decisions-pending.md) → Deployment requirements.
+[docs/decisions-pending.md](docs/decisions-pending.md) → Deployment requirements. In production
+the receiver is its own process and gets **only its own variables** (`NODE_ENV`,
+`DATABASE_INGEST_URL`, `REDIS_URL`, `QUEUE_PREFIX`, `INGEST_PORT`, `INGEST_TRUST_PROXY` and the
+limits), never the API's logins or secrets; the API needs `INGEST_PUBLIC_HOST` there.
 
 ## Notes
 

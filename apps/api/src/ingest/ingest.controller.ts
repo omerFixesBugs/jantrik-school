@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Req, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
-import type { Env } from '../config/env.js';
+import type { IngestEnv } from '../config/ingest-env.js';
 import { IngestService, clientAddress, type IngestDevice } from './ingest.service.js';
 
 /** devicecmd answers are a few short lines; 64 KB is generous. */
@@ -80,7 +80,7 @@ export class IngestController {
 
   constructor(
     private readonly ingest: IngestService,
-    config: ConfigService<Env, true>,
+    config: ConfigService<IngestEnv, true>,
   ) {
     this.attlogBytes = config.get('INGEST_MAX_ATTLOG_BYTES', { infer: true });
     this.drainBytes = config.get('INGEST_MAX_DRAIN_BYTES', { infer: true });
