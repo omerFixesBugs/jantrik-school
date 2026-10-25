@@ -6,10 +6,12 @@ import { REDIS } from '../redis/redis.constants.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
 import { DeviceRegistersService } from './device-registers.service.js';
+import { DeviceRetentionService } from './device-retention.service.js';
 import {
   DEVICES_QUEUE,
   DEVICES_TENANTS_KEY,
   DEVICES_TICK_JOB,
+  EXPIRE_PUNCHES_JOB,
   PROCESS_PUNCHES_JOB,
   type ProcessPunchesJob,
 } from './devices.constants.js';
@@ -23,13 +25,17 @@ import { PunchProcessingService } from './punch-processing.service.js';
  */
 export const PUNCH_BATCH = 100;
 
+/** Rows the retention job deletes per transaction. */
+export const RETENTION_CHUNK = 5000;
+
 /**
  * The devices worker. `process-punches` (queued by the receiver after it stored punches) processes
  * one institute's new punches. While that job is waiting, running or kept as failed, the receiver
  * cannot queue another for the institute, so `devices-tick` visits every minute the institutes in
  * `devices:tenants` (with ATTENDANCE on) for leftovers, then writes the registers due at a shift's
- * cutoff (`DeviceRegistersService.cutoff`). Each institute is processed in its own RLS
- * transactions with no person acting; no query crosses institutes.
+ * cutoff (`DeviceRegistersService.cutoff`). `expire-punches` deletes, daily, what is past
+ * retention for every institute in `devices:tenants` (`DeviceRetentionService`). Each institute is
+ * processed in its own RLS transactions with no person acting; no query crosses institutes.
  */
 @Processor(DEVICES_QUEUE)
 export class DevicesProcessor extends WorkerHost implements OnModuleInit {
@@ -41,17 +47,23 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
     private readonly access: TenantAccessService,
     private readonly processing: PunchProcessingService,
     private readonly registers: DeviceRegistersService,
+    private readonly retention: DeviceRetentionService,
     @Inject(REDIS) private readonly redis: Redis,
   ) {
     super();
   }
 
-  /** One scheduler for all API instances (BullMQ upserts it by id). */
+  /** One scheduler of each for all API instances (BullMQ upserts them by id). */
   async onModuleInit(): Promise<void> {
     await this.queue.upsertJobScheduler(
       DEVICES_TICK_JOB,
       { pattern: '* * * * *', tz: 'Asia/Dhaka' },
       { name: DEVICES_TICK_JOB, opts: { removeOnComplete: true, removeOnFail: 50 } },
+    );
+    await this.queue.upsertJobScheduler(
+      EXPIRE_PUNCHES_JOB,
+      { pattern: '40 0 * * *', tz: 'Asia/Dhaka' },
+      { name: EXPIRE_PUNCHES_JOB, opts: { removeOnComplete: true, removeOnFail: 50 } },
     );
   }
 
@@ -66,6 +78,7 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
       }
     }
     if (job.name === DEVICES_TICK_JOB) await this.tickAll();
+    if (job.name === EXPIRE_PUNCHES_JOB) await this.expireAll();
   }
 
   /** Every institute listed for devices, one after the other; one failing stops none of the rest. */
@@ -92,5 +105,33 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
     do {
       processed = await this.runner.run(tenantId, () => this.processing.processBatch(PUNCH_BATCH));
     } while (processed >= PUNCH_BATCH);
+  }
+
+  /**
+   * Retention for every institute listed for devices, ATTENDANCE on or not (data minimisation).
+   * One failing stops none of the rest; it stays listed and is visited again the next day.
+   */
+  async expireAll(): Promise<void> {
+    for (const tenantId of await this.redis.zrange(DEVICES_TENANTS_KEY, 0, -1)) {
+      try {
+        await this.expire(tenantId);
+      } catch (error) {
+        // Not the message: database errors can contain row values.
+        this.logger.error(`Punch retention failed for ${tenantId}: ${(error as Error).name}`);
+      }
+    }
+  }
+
+  /** One institute's old punches, then its old commands, `RETENTION_CHUNK` per transaction. */
+  async expire(tenantId: string): Promise<void> {
+    for (const chunk of [
+      () => this.retention.deletePunches(RETENTION_CHUNK),
+      () => this.retention.deleteCommands(RETENTION_CHUNK),
+    ]) {
+      let deleted: number;
+      do {
+        deleted = await this.runner.run(tenantId, chunk);
+      } while (deleted >= RETENTION_CHUNK);
+    }
   }
 }

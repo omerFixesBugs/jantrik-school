@@ -20,7 +20,11 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module.js';
 import { AttendanceModule } from '../../src/attendance/attendance.module.js';
 import { configureApp } from '../../src/app.setup.js';
-import { DEVICES_QUEUE, DEVICES_TICK_JOB } from '../../src/devices/devices.constants.js';
+import {
+  DEVICES_QUEUE,
+  DEVICES_TICK_JOB,
+  EXPIRE_PUNCHES_JOB,
+} from '../../src/devices/devices.constants.js';
 import { DevicesModule } from '../../src/devices/devices.module.js';
 import { ExamsModule } from '../../src/exams/exams.module.js';
 import { FeesModule } from '../../src/fees/fees.module.js';
@@ -53,9 +57,11 @@ export async function createHarness(opts: { clock?: Clock } = {}): Promise<Harne
   const app = moduleRef.createNestApplication();
   configureApp(app);
   await app.init();
-  // No real-time devices tick in tests: every minute it would visit each institute listed for
-  // devices while other tests run. Tests run the sweep themselves (DevicesProcessor.tickAll).
-  await app.get<Queue>(getQueueToken(DEVICES_QUEUE)).removeJobScheduler(DEVICES_TICK_JOB);
+  // No real-time devices tick or retention in tests: they would visit each institute listed for
+  // devices while other tests run. Tests run them themselves (DevicesProcessor.tickAll, expire).
+  const devicesQueue = app.get<Queue>(getQueueToken(DEVICES_QUEUE));
+  await devicesQueue.removeJobScheduler(DEVICES_TICK_JOB);
+  await devicesQueue.removeJobScheduler(EXPIRE_PUNCHES_JOB);
   const prisma = createPrismaClient(process.env['DATABASE_URL']!);
   return {
     app,

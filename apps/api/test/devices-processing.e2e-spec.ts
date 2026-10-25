@@ -21,6 +21,7 @@ import { RequestContext } from '../src/common/request-context.js';
 import {
   DEVICES_TENANTS_KEY,
   DEVICES_TICK_JOB,
+  EXPIRE_PUNCHES_JOB,
   processPunchesJobId,
 } from '../src/devices/devices.constants.js';
 import { DevicesProcessor } from '../src/devices/devices.processor.js';
@@ -543,6 +544,8 @@ describe('punch processing', () => {
         template: { opts: { removeOnComplete: true, removeOnFail: 50 } },
       });
       await ingest.queue.removeJobScheduler(DEVICES_TICK_JOB);
+      // onModuleInit also registered the retention scheduler (devices-retention tests it).
+      await ingest.queue.removeJobScheduler(EXPIRE_PUNCHES_JOB);
       const s = await f.institute();
       const broken = await f.institute();
       for (const t of [s, broken]) {

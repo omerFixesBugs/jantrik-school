@@ -7,6 +7,9 @@ export const PROCESS_PUNCHES_JOB = 'process-punches';
 /** Every minute (scheduler and job name): each institute's leftover punches, then its cutoff. */
 export const DEVICES_TICK_JOB = 'devices-tick';
 
+/** Daily (scheduler and job name): each institute's punches and commands past retention. */
+export const EXPIRE_PUNCHES_JOB = 'expire-punches';
+
 /** The whole job: the institute id comes from the database's answer, never from a device. */
 export interface ProcessPunchesJob {
   tenantId: string;

@@ -118,6 +118,20 @@ a number), holidays, and who takes attendance for each section (`GET /attendance
 active owners, admins and teachers). The dashboard checklist's last step, "turn on absent SMS",
 links here.
 
+## Retention
+
+Raw device punches (`device_punches`) are kept for the institute's `punch_retention_days`
+(attendance setting, default 730, 30–3650). The daily `expire-punches` job (00:40 Asia/Dhaka,
+devices worker) visits every institute listed for devices (Redis set `devices:tenants`), whether
+attendance is on or not, each in its own transactions, and deletes the punches whose day is before
+today − that setting, 5000 per transaction. The database never lets the app delete a punch from
+the last 30 days (policy `retention_only`, [database.md](database.md)). The same job deletes device
+commands 90 days after their last change when they failed, were cancelled, or are done with a
+later done command for the same device and ID; each ID's latest done command on a device (what
+the device has) and commands still waiting are kept however old. Registers and their records,
+staff days, SMS logs and the audit log are never deleted: attendance made from deleted punches
+stays as it was. One institute failing is logged (error name only) and tried again the next day.
+
 ## Demo data
 
 `pnpm db:seed` adds about 30 working days of past attendance before the seed date for every

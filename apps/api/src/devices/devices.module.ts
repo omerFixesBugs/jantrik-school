@@ -61,6 +61,7 @@ import { DevicePeopleRoster } from './device-people-roster.js';
 import { DevicePeopleService } from './device-people.service.js';
 import { DevicePunchesService } from './device-punches.service.js';
 import { DeviceRegistersService } from './device-registers.service.js';
+import { DeviceRetentionService } from './device-retention.service.js';
 import { DEVICES_QUEUE } from './devices.constants.js';
 import { DevicesProcessor } from './devices.processor.js';
 import { DevicesService } from './devices.service.js';
@@ -267,7 +268,8 @@ export class DevicePeopleController {
 @Module({
   // AttendanceSettingsService: the timezone, the device settings and working days.
   // AbsentSmsService: the absent SMS of device registers and the guardians' phones.
-  // DEVICES_QUEUE: the receiver's process-punches jobs and the devices-tick scheduler.
+  // DEVICES_QUEUE: the receiver's process-punches jobs, the devices-tick and expire-punches
+  // schedulers.
   imports: [AttendanceModule, BullModule.registerQueue({ name: DEVICES_QUEUE })],
   controllers: [DevicesController, DeviceRegistersController, DevicePeopleController],
   providers: [
@@ -280,6 +282,7 @@ export class DevicePeopleController {
     DevicePeopleCsvService,
     DeviceAttendanceService,
     DeviceRegistersService,
+    DeviceRetentionService,
     PunchProcessingService,
     DevicesProcessor,
   ],
