@@ -3,7 +3,8 @@
 Module `ATTENDANCE`. API: [`apps/api/src/attendance`](../apps/api/src/attendance). Web:
 [`apps/web/src/app/(app)/attendance`](<../apps/web/src/app/(app)/attendance>) and
 [`apps/web/src/lib/attendance`](../apps/web/src/lib/attendance). Tables and RLS:
-[database.md](database.md).
+[database.md](database.md). Attendance devices (ZKTeco), registers from punches and staff
+attendance: [devices.md](devices.md).
 
 ## Rules
 
@@ -23,6 +24,9 @@ Module `ATTENDANCE`. API: [`apps/api/src/attendance`](../apps/api/src/attendance
   current list.
 - **Audit:** every submit writes `audit_logs` (entity `attendance_session`), with only the
   students that changed.
+- **Source:** every register and every record is `MANUAL` (a person's) or `DEVICE` (written from
+  punches, see below). The take screen tags device records and says "from the device, 9:30" when
+  the device changed the register last; the student report shows who set each day.
 - **Present %:** `(PRESENT + LATE) / (total − LEAVE)`; with `leave_counts_as_absent`, LEAVE stays
   in the total. One function: `attendancePercent()` in `@jantrik/shared`.
 
@@ -48,16 +52,59 @@ renders its state.
 - Network errors and 5xx retry with backoff (2 s … 60 s), on `online`, and when the tab becomes
   visible. A `pending` draft found when the register opens is sent again automatically.
 - A conflict with the teacher's own earlier submit (its answer was lost) is resolved silently.
-  Someone else's change opens a dialog: "X changed this at 10:30", only the students that
-  differ, and two buttons, keep mine / keep theirs.
+  So is one where the saved register and the draft agree on every student (e.g. a draft started
+  from the device's suggestion, then the device wrote the same register at the cutoff): the
+  screen takes the saved one. Any other change opens a dialog: "X changed this at 10:30" (or
+  "The device changed this…"), only the students that differ, and two buttons, keep mine / keep
+  theirs.
 - More than half absent asks for confirmation before sending.
 - The screen always says where the work is: kept on this phone / sending / couldn't send,
   trying again in N s / submitted at 10:42.
 
+## Registers from devices
+
+With attendance devices and **auto-mark** on (DAILY mode only; off by default), the day's
+period-0 register can be written from punches. Full rules: [devices.md](devices.md) → Students.
+
+- **Only ACTIVE students count** for the device: only they are sent to the devices. Arrivals,
+  the counts and the reasons below are about a section's active students; a section with none
+  gets no device view and no register from the device (take it by hand).
+- **Before the cutoff** nothing is written. The take screen shows each active student's punch-in
+  time (late marked; in any mode) and, with auto-mark on, starts an untaken register from the
+  device's view (arrived PRESENT or LATE, the others ABSENT), saying so. The today page shows the
+  arrivals per section ("punched in 28/35", late count, cutoff).
+- **At the cutoff** (each shift's start + `device_cutoff_minutes`, default 60) the minute job
+  writes the register: `source = DEVICE`, **no taker** (`taken_by_id` and `updated_by_id` NULL;
+  the API returns `updatedByDevice: true`), every enrolled student PRESENT, LATE or ABSENT (an
+  inactive one still enrolled always ABSENT), audited. Its absent SMS go to the ACTIVE absent
+  students only.
+- **Held back** instead, with the reason on the today page: `DEVICE_OFFLINE` (no device seen in 15
+  minutes), `NOT_ON_DEVICE` (an active student has no ID confirmed on a device; with the count),
+  `TOO_MANY_MISSING` (more than half of the active students without a punch), `AUTO_CLOSE_ENDED`
+  (an hour past the cutoff, it waits for a person). The teacher takes it by hand, or an
+  owner/admin uses **Take from the device** after a confirm
+  (`POST /attendance/sections/:id/close-from-device`): the same register, written after the
+  cutoff whatever the reason.
+- **A person's register wins.** A register submitted before the cutoff is never replaced. A
+  submit that loses the race to the cutoff gets `VERSION_CONFLICT` naming the device (settled
+  silently when nothing differs, see above).
+- **A teacher's edit:** each record whose status they change becomes `MANUAL`, and the device
+  never changes it again. Records they leave alone keep their source; the register stays
+  `DEVICE` and gets the teacher as its updater. A student enrolled after the device wrote the
+  register gets a `MANUAL` record from the teacher's submit.
+- **A punch after the cutoff** (today) turns a still-DEVICE ABSENT into LATE; a pending absent
+  SMS is then cancelled by the relevance check.
+- Lock waits on these paths are limited to 5 s: a request that runs out answers 409 `BUSY` with
+  `Retry-After` and changes nothing, and the screen says "the system is busy right now, try
+  again".
+
 ## Absent SMS
 
 Off by default (it costs the institute money). When on, after a submit **commits**, one SMS per
-absent student per day goes to the primary guardian, only for today's registers. See
+absent student per day goes to the primary guardian, only for today's registers. A register
+written from the device (at the cutoff, or by "take from the device") queues them the same way
+(`AbsentSmsService`), but only for ACTIVE students: an inactive student still enrolled is written
+ABSENT and gets no SMS from the device. See
 [auth.md](auth.md) → `TenantSmsService` for dedupe (`absent:<student>:<date>`), the daily cap
 (`HELD_OVER_LIMIT`) and the correction delay (`absent_sms_delay_minutes`, default 10): just
 before sending, the worker checks the student is still absent, otherwise the SMS is `CANCELLED`.
@@ -75,6 +122,16 @@ Held SMS not released by the end of their day become `EXPIRED` and are never sen
   Redis set `sms:held-tenants:<date>` (added after commit when an SMS is held, 3-day TTL), each
   inside its own RLS context via `TenantJobRunner`. No cross-tenant query.
 - as a fallback, the tenant's next SMS queue or `GET /attendance/sms/today` expires them too.
+
+### Entry and exit SMS (devices)
+
+Next to the absent SMS, two more settings (off by default, any mode): "entered at 7:45" for a
+student's first IN punch of the day and "left at" for the first OUT after it. At most one of each
+per student per day (`entry:<student>:<date>`, `exit:<student>:<date>`), only on working days,
+only for punches received within 10 minutes of being made and without a spoofing flag, and
+**never over 90 % of the daily cap**: past it they are skipped (no row, never held), so the rest
+stays for absent alerts and receipts. Fixed Bangla text. Details: [devices.md](devices.md) →
+Entry and exit SMS.
 
 ## Reports
 
@@ -98,6 +155,12 @@ the dashboard. Present % = (PRESENT + LATE) / (all − LEAVE), or with LEAVE as 
 - **Print:** only the register is printed (`.print-area`), A4 landscape, with the institute,
   section and month as a heading; off days are hatched so they show without colour.
 - **Calendar:** Saturday first; weekly off days and holidays greyed; future days dimmed.
+- **Today, with devices:** in DAILY mode with auto-mark on, on a working day, each section with
+  active students also has `device`: enrolled, arrived and late so far (active students only),
+  how many cannot punch (`notOnDevice`), its cutoff and its state (`BEFORE_CUTOFF`, `CLOSED` once
+  any register exists, or the reason it was held back). A register written by the device says
+  "taken from the device" (and who changed it since).
+- **Student report:** each day's status comes with its `source` (MANUAL or DEVICE).
 - **Absence streak:** each absent student on the today report has `streak`, the school days
   absent in a row up to today (`absenceStreak`). Days without a register are skipped, so a
   holiday never breaks it; PRESENT or LATE ends it, and so does LEAVE unless leave counts as
@@ -118,6 +181,14 @@ a number), holidays, and who takes attendance for each section (`GET /attendance
 active owners, admins and teachers). The dashboard checklist's last step, "turn on absent SMS",
 links here.
 
+Device cards on the same page ([devices.md](devices.md)): **device attendance** (auto-mark,
+grace minutes 0–120, cutoff minutes 15–300, "school starts at" for sections without a shift),
+**punch checks** (the institute's hours, default 05:00–20:00; punches per device per minute,
+10–240, default 60; punch retention in days, 30–3650, default 730), **entry and exit SMS** (with
+the text preview and the cost note) and **staff** (office hours, late and early grace, the staff
+ID range start with how many student codes fall in its next 1000 numbers). Bangla digits are
+accepted.
+
 ## Retention
 
 Raw device punches (`device_punches`) are kept for the institute's `punch_retention_days`
@@ -126,11 +197,12 @@ devices worker) visits every institute listed for devices (Redis set `devices:te
 attendance is on or not, each in its own transactions, and deletes the punches whose day is before
 today − that setting, 5000 per transaction. The database never lets the app delete a punch from
 the last 30 days (policy `retention_only`, [database.md](database.md)). The same job deletes device
-commands 90 days after their last change when they failed, were cancelled, or are done with a
-later done command for the same device and ID; each ID's latest done command on a device (what
-the device has) and commands still waiting are kept however old. Registers and their records,
-staff days, SMS logs and the audit log are never deleted: attendance made from deleted punches
-stays as it was. What each institute lost is logged as counts; one institute failing is logged
+commands that failed, were cancelled, or are done with a later done command for the same device
+and ID, once 90 days have passed since the latest of their `updated_at`, `sent_at` and `done_at`
+(the receiver sets the last two, never `updated_at`). Each ID's latest done command on a device
+(what the device has) and commands still waiting are kept however old. Registers and their
+records, staff days, SMS logs and the audit log are never deleted: attendance made from deleted
+punches stays as it was. What each institute lost is logged as counts; one institute failing is logged
 (error name only) and tried again the next day.
 
 ## Demo data

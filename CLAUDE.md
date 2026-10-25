@@ -79,7 +79,7 @@ Do NOT build hostel, transport, AI tutor, virtual labs yet.
 ## Commands
 Run from the repo root (see README.md for first-time setup).
 - `docker compose up -d --wait` — start Postgres 16 + Redis
-- `pnpm dev` — run web (:3000) + api (:4000, `GET /health`) in watch mode
+- `pnpm dev` — run web (:3000) + api (:4000, `GET /health`; the device receiver on :4080) in watch mode
 - `pnpm build` — build everything
 - `pnpm test` — Vitest; packages/db integration tests need Docker (jantrik_test DB)
 - `pnpm lint` / `pnpm typecheck` / `pnpm format:check` — must pass before a task is done
@@ -96,6 +96,7 @@ Run from the repo root (see README.md for first-time setup).
   `JANTRIK_TEST_TODAY`, read by `todayIn`; the API accepts it only with NODE_ENV=test), so it never
   depends on the real date or weekday. Specs take dates from `todayIn`, never `Date.now()`
 - Attendance rules, drafts/offline sync, absent SMS: docs/attendance.md
+- Devices, the receiver, staff attendance, `pnpm device:sim`: docs/devices.md
 - Fees: setup, dues, fines, receipts, voids, bKash/Nagad, reminders: docs/fees.md
 - Exams rules (grading as data, marks entry, publish, report cards, result SMS): docs/exams.md
 - Single package: `pnpm --filter @jantrik/api <script>`

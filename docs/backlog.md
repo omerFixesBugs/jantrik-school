@@ -85,6 +85,39 @@ Agreed in the step 10 plan, not built yet. Rules today: [exams.md](exams.md).
 - **Term timeline with real exams:** the dashboard timeline still shows the usual exam months; the
   exams tile shows the real ones.
 
+## Devices and staff attendance: later work (from step 11)
+
+Agreed in the step 11 plan or deferred during the build, not built yet. Rules today:
+[devices.md](devices.md).
+
+- **A separate billable DEVICES module**, if the owner chooses that later (devices sit under
+  ATTENDANCE today: a new module needs a `module_key` value, a `tenant_modules` row for every
+  institute and a platform switch).
+- **Marking coaching batches (PER_SESSION) from punches.** Needs a batch timetable (which period
+  a punch belongs to); registers stay manual in that mode.
+- **Addresses:**
+  - a hard "accept this device only from IP x" lock;
+  - "trust a network range", if `NEW_IP` alerts prove noisy for schools whose ISP changes their
+    address often;
+  - a platform screen of refused serial numbers (today: `LRANGE ingest:refused 0 -1` in Redis),
+    and a platform tool to settle a squatted serial number.
+- **Re-fetch a time range from the device** (`DATA QUERY ATTLOG`): punches dropped in a flood are
+  gone from our side (the device still has them).
+- **Entry and exit SMS:** editable texts (fixed Bangla today), and entry/exit notifications in the
+  guardian app.
+- **Staff:** per-person or per-shift office hours, half days, a leave register, staff seeing their
+  own attendance. Switching someone's tracking on should re-apply the punches already ignored for
+  them (it does not today).
+- **Staff roles in the live feed:** staff punches show as "staff" (the feed API has no roles).
+- **Devices switched off and on again:** the "still on a device" rule counts active devices only,
+  so a device switched off while an ID was given to someone else keeps the old person's
+  fingerprints under it when switched back on. Count inactive devices too, or send the pending
+  removals when a device is switched on.
+- **Other brands.** The receiver is ZKTeco push 2.x only, behind the `brand` column; the 3.x
+  access-control firmware (`/iclock/registry`, `rtlog`) is not supported either.
+- **HTTPS and `pushcommkey`** directly in the receiver, once a real device shows how they work
+  (a TLS proxy in front works today).
+
 ## Performance: reach the 3-second budget (from step 9)
 
 Recorded at the owner's request on 2026-10-23, when step 9 was ready to merge. The budget and the

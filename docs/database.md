@@ -351,8 +351,8 @@ Rules: [exams.md](exams.md). Fourteen tenant tables (forced RLS, composite keys,
 
 ### Devices (step 11)
 
-ZKTeco attendance devices. Five tenant tables (forced RLS, composite keys, every foreign key
-`ON UPDATE RESTRICT`), migration `20261029000000_devices`:
+Rules: [devices.md](devices.md). ZKTeco attendance devices. Five tenant tables (forced RLS,
+composite keys, every foreign key `ON UPDATE RESTRICT`), migration `20261029000000_devices`:
 
 - **`attendance_devices`:** serial number (`^[A-Z0-9]{6,32}$`), name, gate, direction
   (`IN` | `OUT` | `BOTH`), `is_active`, and columns only the receiver writes (last seen, last IP,
@@ -370,15 +370,19 @@ ZKTeco attendance devices. Five tenant tables (forced RLS, composite keys, every
 - **`device_commands`:** commands queued for one device (`seq`, from one sequence for all
   institutes, is the id on the wire). `payload` is printable ASCII and tabs only (CHECK), so a name
   can never add a line, i.e. a second command. The app inserts, cancels (UPDATE on `status`
-  only) and deletes (the retention job).
+  only) and deletes (the retention job: FAILED, CANCELLED and superseded DONE rows after 90 days;
+  each ID's latest DONE per device and waiting rows are kept, see
+  [attendance.md](attendance.md) → Retention).
 - **`device_punches`:** raw punches, **immutable**. `jantrik_app` has no INSERT (only the receiver
   stores punches) and may UPDATE only the processing and review columns (`processed_at`,
   `outcome`, `review`, `reviewed_by_id`, `reviewed_at`). Its DELETE is limited by the restrictive
-  policy `retention_only` to punches whose `local_date` is more than 30 days old, so no bug can
-  delete recent punches. `flags` is a subset of `PUNCH_FLAGS` (CHECK); the unique
-  `(tenant_id, device_id, device_user_id, device_time)` is the dedupe.
-- **`device_source_ips`:** the addresses a device uploads from; the app may only trust one
-  (UPDATE on `trusted_at`, `trusted_by_id`).
+  policy `retention_only` to punches whose `local_date` is more than 30 days before the
+  database's `current_date`, so no bug can delete recent punches (the `expire-punches` job deletes
+  by the institute's `punch_retention_days`, at least 30). `flags` is a subset of `PUNCH_FLAGS`
+  (CHECK); the unique `(tenant_id, device_id, device_user_id, device_time)` is the dedupe.
+- **`device_source_ips`:** the addresses a device calls from; the app may only trust one or
+  revoke its trust (UPDATE on `trusted_at`, `trusted_by_id`). `trusted_by_id` NULL with
+  `trusted_at` set means trusted automatically (the first address, below).
 - **`attendance_settings`** gained the device and staff columns (auto mark, grace, cutoff, office
   hours, device hours, per-minute cap, staff ID start, punch retention), NOT NULL with DDL
   defaults and range CHECKs (no backfill).
@@ -408,9 +412,10 @@ ZKTeco attendance devices. Five tenant tables (forced RLS, composite keys, every
 - **Source addresses and trust.** Every resolve and upload records the address it came from,
   against the device it locked (`ingest_find_device_at`). A new address is trusted automatically
   only on the device's first contact (never seen before), within 24 hours of its registration
-  (`created_at`), while it has no trusted address; any other is recorded untrusted (`NEW_IP`, an
-  alert) until an admin trusts it (the app's UPDATE on `trusted_at`). A device keeps at most 50
-  untrusted addresses: a new one evicts the least recently seen untrusted ones, so rotating
+  (`created_at`; registering a serial number again makes a new row and a new window), while it
+  has no trusted address; any other is recorded untrusted (`NEW_IP`, an alert) until an admin
+  trusts it (the app's UPDATE on `trusted_at`). A device keeps at most 50 untrusted
+  addresses: a new one evicts the least recently seen untrusted ones, so rotating
   addresses cannot keep the school's real new one from being recorded and trusted; trusted
   addresses are never deleted. Commands go only to an address the calling device itself trusts,
   and only such an address may answer them, so knowing a serial number is not enough to take or
@@ -533,7 +538,8 @@ Without either helper, queries run with no tenant and return nothing. That is in
   the device job at the cutoff) may have no taker: `taken_by_id` and `updated_by_id` are nullable,
   and the CHECKs `attendance_sessions_taker` and `attendance_sessions_updater` refuse NULL on a
   MANUAL one. The API returns a NULL updater like a staff member without a profile (no name, and
-  an empty id).
+  an empty id), with `updatedByDevice: true`. A person's change to a record makes that record
+  MANUAL; a DEVICE register they edit stays DEVICE and gets them as its updater.
 - **Don't backfill tenant rows in a migration.** Migrations run as `jantrik_owner`, and FORCE RLS
   hides every tenant row from it, so an `INSERT … SELECT FROM tenants` silently inserts nothing.
   Create per-tenant rows in `provisionTenant()`, and give existing tenants defaults in code

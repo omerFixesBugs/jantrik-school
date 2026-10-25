@@ -113,6 +113,91 @@ default (#38).
 
     - To change: Exams → Setup → Grading (rules and rounding) and Subject marks (parts, pass rule, combined marks); the template in `packages/db/src/reference-data/templates.ts` for new institutes.
 
+## Devices and staff attendance (step 11)
+
+Rules: [devices.md](devices.md). Owner decisions of 2026-10-24, approved as recommended:
+
+| #   | Question                             | Decision                                                                                                                                                                                             |
+| --- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | Which module?                        | ATTENDANCE. A separate billable DEVICES module can be split out later ([backlog.md](backlog.md)).                                                                                                    |
+| Q2  | When do punches become the register? | At the cutoff, in one go. Before it the today page and the take screen show arrivals live; the register stays "not taken".                                                                           |
+| Q3  | Should the cutoff ever hold back?    | Yes: no device seen in the last 15 minutes, or more than half the section without a punch. An admin then closes it from the device after a confirm, or the teacher takes it (#42 adds a third case). |
+| Q4  | Coaching centres (PER_SESSION)?      | No automatic marking. Punches, the live feed, arrival times, entry and exit SMS and staff attendance work; registers stay manual.                                                                    |
+| Q5  | Which name goes onto the device?     | The English name, printable ASCII, at most 24 characters; the student code when there is none (devices cannot draw Bangla).                                                                          |
+| Q6  | The receiver: own process and role?  | Yes: its own Nest app, port and database login (`jantrik_ingest_app`, four `ingest_*` functions only); inside `pnpm dev`, its own process in production.                                             |
+
+Additions (owner, the same day):
+
+1. **Spoofing defence:** punches from a new address (`NEW_IP`), outside the institute's hours
+   (`OUTSIDE_HOURS`) or over the per-minute cap (`BURST`, held until accepted) are flagged and
+   reviewed in the live feed (looks right, accept, reject); everything else counts unless
+   rejected, and a flagged punch sends no entry or exit SMS.
+2. **Device IDs unique across students and staff, in the database:** one unique index on
+   `(tenant_id, device_user_id)` for both.
+3. **Raw punch retention:** `punch_retention_days` (default 730, 30–3650), a daily job, and a
+   database floor that never lets the app delete a punch from the last 30 days.
+
+Decided during the build (open to change):
+
+39. **Manual wins.** The device never changes a record or a staff day a person set (MANUAL). A teacher's change makes only the records they changed MANUAL; the others stay DEVICE. A student enrolled after the device wrote the register gets a MANUAL record from the teacher's submit.
+    - To change: let the device overwrite (not advised: the next punch would undo a teacher's correction).
+40. **A punch after the cutoff** (today only) turns a still-DEVICE ABSENT into LATE. A pending absent SMS is cancelled; one already sent cannot be taken back (the entry SMS follows it).
+    - To change: `DeviceAttendanceService.recomputeStudentDay` (e.g. leave registers alone after the cutoff).
+41. **LATE is strictly after start + grace** (grace 10: 08:10:00 is PRESENT, 08:10:01 LATE). A section without a shift uses "school starts at" (08:00). The cutoff is per shift: start + 60 minutes.
+    - To change: the attendance settings (grace 0–120, cutoff 15–300, "school starts at").
+42. **A third reason to hold back, `NOT_ON_DEVICE`:** a section is not closed while an active student cannot punch (no ID, or no add for their ID confirmed on an active device). Otherwise a student without an ID would be marked absent, with an SMS, every day. Inactive students still enrolled never hold a section back (#45).
+    - To change: `closeDecision` in `packages/shared/src/devices.ts`. Cost now: more held-back sections until everyone's ID is on a device.
+43. **The device closes a register by itself only within an hour of the cutoff.** After that the today page shows `AUTO_CLOSE_ENDED` and it waits for a person, so no absent SMS arrives as a surprise at noon.
+    - To change: `AUTO_CLOSE_WINDOW_MIN` in `devices.ts`.
+44. **Close from device** is OWNER/ADMIN, after a confirm with the counts, the students not on a device (marked absent too) and the SMS rule. It skips the safety checks and the hour, never the cutoff; DAILY mode is required, auto-mark is not.
+    - To change: `DeviceRegistersService.closeFromDevice`.
+45. **The device counts only ACTIVE students** (only they are sent to the devices): a section's arrivals, the "more than half missing" check, `NOT_ON_DEVICE` and the today page's counts leave out inactive students still enrolled, and their punches give them no arrival. They are still written on a device register, ABSENT, but get no absent SMS from the device; a teacher's submit follows the usual absent SMS rule for everyone on it. A section with no active student gets no device view and no register from the device.
+    - To change: `DeviceArrivalsService.sectionDays` (who counts) and `WrittenRegister.absent` in `device-registers.service.ts` (who gets the SMS).
+46. **Entry and exit SMS:** off by default; at most one per student per day and direction; working days only; only for punches received within 10 minutes; none for a punch flagged `NEW_IP`, `OUTSIDE_HOURS`, `STALE`, `CLOCK_FUTURE` or `BURST` (an accepted burst punch counts, but sends none); skipped, never held, once the day's SMS reach **90 % of the cap**; fixed Bangla text.
+    - To change: `sendsSms` and `REALTIME_WINDOW_MS` in `devices.ts`, `MOVEMENT_SMS_CAP_SHARE` in `punch-processing.service.ts`. Editable texts: [backlog.md](backlog.md).
+47. **In and out on a BOTH device** follow the state code it sends (0, 3, 4, 9 → IN; 1, 2, 5, 8 → OUT; anything else IN); the setup guide asks for the automatic state by time. A student's arrival is the first IN, the exit the first OUT after it.
+    - To change: `punchDirection`; check on the real device ([devices.md](devices.md) → Verify).
+48. **Staff days:** direction ignored; the first punch is the in, the last the out if it is at least 30 minutes later; late after office start + grace, early before office end − grace (counted from the start and to the end); each day keeps the office hours it was judged by. A manual entry keeps typed times as typed (no 30-minute rule); an out before the in is refused.
+    - To change: `staffDay` in `staff-attendance.ts`; the hours and graces in the settings.
+49. **Who counts as staff:** everyone with an active staff role except people whose only role is OWNER, with a per-person switch (active staff only). Untracked people show nothing, not absent. A day without a row is computed as absent on past working days since the person's staff profile was made.
+    - To change: `staffAttendanceTracked`, `staffDayState`.
+50. **Device IDs:** digits only, 3 to 9, no leading zero; one per person on every device. Defaults: a student's code digits; staff from 9001 in the order added, skipping every number a current student's code gives. Taken or clashing defaults are reported, never guessed. Punches are matched by the ID a person has now, so after a change, punches under the old ID count for nobody.
+    - To change: `staff_device_id_start` in the settings; `defaultStudentDeviceId`, `nextStaffDeviceId`.
+51. **Any student who exists, inactive too, may be given an ID** (one at a time or by CSV), so IDs can be prepared ahead. Lists, defaults and the export cover this year's active students and active staff.
+    - To change: limit `DevicePeopleService.set` and the import lookup to active students.
+52. **Nobody is removed from a device automatically** (it deletes their fingerprints). "IDs still on the devices" lists people no longer active and IDs taken from someone; "Remove from devices" is explicit, refuses active people, and also takes IDs nobody holds (e.g. enrolled on the device outside Jantrik).
+    - To change: `DevicePeopleService.removeFromDevices`.
+53. **An ID still on a device goes to nobody else** (`ID_STILL_ON_DEVICE`, also in defaults and the CSV) until every active device that had it confirms removing it; otherwise the old person's finger would punch as the new holder. Giving it back to the same person is fine.
+    - To change: `DevicePeopleRoster.onDevice` (not advised).
+54. **Serial numbers:** active in one institute only; a taken one answers "can't be added; contact Jantrik" without saying where; devices are switched off, never deleted; a device that has connected keeps its serial number.
+    - To change: `DevicesService`.
+55. **Unknown or refused serial numbers** get 403 and nothing in the database; one log line per serial per 10 minutes, and the latest 500 in the Redis list `ingest:refused` for support.
+    - To change: `IngestService.recordRefusal`. A platform screen is in the backlog.
+56. **Punch age:** a punch dated before the device's registration day is not stored; one more than 7 days old is stored as `STALE` and only shown. Staff days are rebuilt for punches up to 7 days old, student registers only today.
+    - To change: `interpretPunch` (`staleDays`) and `STAFF_DAYS_BACK` in `punch-processing.service.ts`.
+57. **A device's first address is trusted automatically only within 24 hours of its registration** (revised during the build; the plan trusted the first address ever). The first contact within 24 hours of `created_at`, while no address is trusted, trusts its address; any other first address waits for an admin (alert, setup guide). Every trusted address is listed (automatically, or by whom) with "revoke".
+    - To change: the window in `ingest_find_device_at` (a migration). Cost now: a device installed more than a day after it was registered needs one admin click before commands and entry SMS flow.
+58. **Commands and their results go only through a trusted address**, enforced in the database, so a sniffed serial number can neither read the names in a device's commands nor fake its answers. After an ISP changes the school's address, commands and entry SMS wait until an admin trusts the new one.
+    - To change: `ingest_take_commands` and `ingest_command_results` (not advised).
+59. **At most 50 untrusted addresses per device; a new one evicts the least recently seen one**, so the school's real new address can always be recorded. Known limit: a sustained flood of 50 or more new addresses per poll interval (30 s) keeps it out; the escape is to switch the device off and register its serial number again. Protecting rows from eviction was rejected: an attacker could pin all 50.
+    - To change: `ingest_find_device_at` (a migration).
+60. **Receiver limits:** 1200 requests a minute per address (IPv6 by its /64); 300 per serial number and address, so others cannot use up the device's share; one budget of 1200 per serial number for all the addresses it does not trust, charged only to them (a trusted device is never starved) and checked before any database call (an address Redis remembers as trusted, for 7 days, skips that check); 30 refused serials per 10 minutes per address.
+    - To change: the `INGEST_*` variables (`.env.example`).
+61. **The per-minute cap:** 60 punches per device per minute (setting, 10–240). Over it punches are held (`BURST`) until an admin accepts them; beyond 5 times it they are dropped and counted (a flood alert). A punch sent again is a duplicate and does not count against the cap.
+    - To change: the setting; the factor 5 in `ingest_store_punches` (a migration).
+62. **Reviews look back 7 days:** the flagged feed and the new-address and held-punch alerts cover punches received in the last 7 days (older ones stay in the normal feed). The 5-second feed poll asks from 60 s before its newest row, so punches committed out of order are not missed.
+    - To change: `REVIEW_WINDOW_MS` in `devices.constants.ts`.
+63. **Batches:** punches are processed 100 per transaction (500 passed the 15 s job limit on the slowest kind), and the cutoff writes one section per transaction, so one failing section never stops the others.
+    - To change: `PUNCH_BATCH` in `devices.processor.ts`.
+64. **A lock wait over 5 s answers 409 `BUSY`** with `Retry-After: 2` (review, trust, manual staff day, close from device): nothing was changed, and the screen says "the system is busy right now, try again". Only a lock timeout (Postgres 55P03) does: a transaction past its own time limit stays a logged 500.
+    - To change: `lockPunches` (`lock_timeout`) and `PrismaErrorFilter`.
+65. **Retention details:** the 30-day database floor uses the database's date, so it can be a day behind the institute's. Commands: FAILED, CANCELLED and superseded DONE rows go 90 days after the latest of their `updated_at`, `sent_at` and `done_at`; each ID's latest DONE per device and waiting commands stay however old; an old FAILED add that was the latest goes too (the person's sync state then shows "not sent").
+    - To change: `COMMAND_RETENTION_DAYS` in `device-retention.service.ts`.
+66. **The take screen settles a conflict silently when nothing differs** (e.g. a draft started from the device's suggestion, then the device wrote the same register at the cutoff).
+    - To change: `RegisterController` in `apps/web/src/lib/attendance/register-controller.ts`.
+67. **The today report** says `CLOSED` whenever the day has a register (a teacher's too) and `BEFORE_CUTOFF` until the minute job writes it; it shows no device view on off days or for sections without students.
+68. **Staff punches in the live feed say "staff"**, without their roles (the feed has none). Roles in the feed: [backlog.md](backlog.md).
+
 ## Deployment requirements (step 11)
 
 Recorded during step 8; to be done when the production setup is built.
@@ -144,3 +229,28 @@ Recorded during step 8; to be done when the production setup is built.
      per-request tenant check) does not name its schema; a temporary table created through an SQL
      injection would live on that pooled connection. Not done locally: the DB tests create
      temporary tables on purpose.
+4. **The device receiver** (step 11, [devices.md](devices.md)):
+   - **Its own process** next to the API: `node apps/api/dist/ingest-main.js` (from `pnpm build`),
+     with the same environment. Set `INGEST_IN_PROCESS=false` for the API (it is off by default
+     when `NODE_ENV=production`, so the API alone never listens for devices).
+   - **Its port** (`INGEST_PORT`, 4080) must be reachable from schools over **plain HTTP**: open it
+     in the firewall. Devices that support HTTPS can go through a TLS proxy in front of it
+     (optional). Set `INGEST_PUBLIC_HOST` and `INGEST_PUBLIC_PORT` to what devices dial (the setup
+     guide shows them): a fixed IP address or a domain name.
+   - **Database:** create `jantrik_ingest` (NOLOGIN) and `jantrik_ingest_app` (LOGIN, a strong
+     `DB_INGEST_PASSWORD`) as in `docker/postgres/init/01-roles.sh`, **before the first
+     `prisma migrate deploy`** (the migrations grant to them), and give the receiver
+     `DATABASE_INGEST_URL`. It refuses to start if that login can read a table.
+   - **`INGEST_TRUST_PROXY`:** `false` when devices connect directly. Behind a proxy or load
+     balancer: a hop count (`1`) or the proxy's address, **never `true`** unless the proxy
+     overwrites `X-Forwarded-For`. With `true`, Express believes the left-most
+     `X-Forwarded-For`, which any client writes: an attacker could claim a school's trusted address
+     (and receive its commands, with names) or slip past every per-address limit.
+   - **Redis:** the same Redis and `QUEUE_PREFIX` as the API (the `devices` queue, the limits,
+     `ingest:refused`); item 2 applies.
+   - **Deploy order** as in item 3: migrations first, then restart the API and the receiver.
+   - **New variables** (`.env.example`): `DATABASE_INGEST_URL`, `DB_INGEST_PASSWORD` (the init
+     script), `INGEST_IN_PROCESS`, `INGEST_PORT`, `INGEST_PUBLIC_HOST`, `INGEST_PUBLIC_PORT`,
+     `INGEST_TRUST_PROXY`, and the limits `INGEST_PER_IP_PER_MIN`, `INGEST_PER_DEVICE_PER_MIN`,
+     `INGEST_PER_DEVICE_ALL_PER_MIN`, `INGEST_REFUSED_PER_IP_PER_10MIN`,
+     `INGEST_MAX_ATTLOG_BYTES`, `INGEST_MAX_DRAIN_BYTES`.
