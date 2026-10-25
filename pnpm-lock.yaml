@@ -339,6 +339,9 @@ importers:
         specifier: 1.4.0
         version: 1.4.0
     devDependencies:
+      '@jantrik/device-sim':
+        specifier: workspace:*
+        version: link:../../packages/device-sim
       '@jantrik/eslint-config':
         specifier: workspace:*
         version: link:../../packages/eslint-config
