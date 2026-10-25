@@ -439,8 +439,12 @@ describe('device registers', () => {
           teacher = submit(s.teacher, s, 0, ['PRESENT', 'PRESENT', 'PRESENT']).then((r) => r);
           await vi.waitFor(
             async () => {
+              // A backend of this database waiting on another transaction (the insert's key).
               const [w] = await h.prisma.$queryRaw<{ n: number }[]>`
-                SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`;
+                SELECT count(*)::int AS n
+                FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+                WHERE NOT l.granted AND l.locktype = 'transactionid'
+                  AND a.datname = current_database()`;
               if (w!.n === 0) throw new Error('the submit is not waiting yet');
             },
             { timeout: 5_000, interval: 25 },
@@ -680,6 +684,39 @@ describe('device registers', () => {
       expect((await absentSms(s.tenantId)).map(([id]) => id).sort()).toEqual(
         [s.a[2]!.id, fourth.id].sort(),
       );
+    });
+
+    it('an inactive student still enrolled is never on a device and does not hold the section back', async () => {
+      const s = await setup();
+      const inactive = await enrol(s);
+      await f.inTenant(s.tenantId, (tx) =>
+        tx.student.update({ where: { id: inactive.id }, data: { status: 'INACTIVE' } }),
+      );
+      await punch(s, '07:51:00', [
+        ['101', '07:50:00'],
+        ['102', '07:50:30'],
+        ['103', '07:51:00'],
+        ['201', '07:50:00'],
+      ]);
+      clock.set(at('08:30:00'));
+      expect(sectionOf(await todayReport(s.admin), s.sectionA).device).toMatchObject({
+        enrolled: 4,
+        notOnDevice: 0,
+        state: 'BEFORE_CUTOFF',
+      });
+
+      await tickAt(s, '09:00:00');
+      expect(await rows(s)).toEqual([
+        ['PRESENT', 'DEVICE'],
+        ['PRESENT', 'DEVICE'],
+        ['PRESENT', 'DEVICE'],
+      ]);
+      // Still on the register's roster (a submit expects them too).
+      expect((await registerOf(s))!.records.find((r) => r.studentId === inactive.id)).toEqual({
+        studentId: inactive.id,
+        status: 'ABSENT',
+        source: 'DEVICE',
+      });
     });
 
     it('a held-back section closes by itself only within an hour after its cutoff; later it waits for a person', async () => {

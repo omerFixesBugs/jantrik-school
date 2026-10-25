@@ -32,7 +32,7 @@ export interface SectionDeviceDay {
   students: string[];
   /** Those of them with an arrival. */
   arrivals: Map<string, Arrival>;
-  /** How many of them cannot punch: no device ID, or not confirmed on any active device. */
+  /** How many ACTIVE ones cannot punch: no device ID, or not confirmed on any active device. */
   notOnDevice: number;
 }
 
@@ -73,8 +73,12 @@ export class DeviceArrivalsService {
         student: { deletedAt: null },
       },
       orderBy: [{ roll: { sort: 'asc', nulls: 'last' } }, { student: { studentCode: 'asc' } }],
-      select: { sectionId: true, studentId: true },
+      select: { sectionId: true, studentId: true, student: { select: { status: true } } },
     });
+    // Only ACTIVE students are sent to devices: one who is not cannot hold a section back.
+    const active = new Set(
+      enrolments.filter((e) => e.student.status === 'ACTIVE').map((e) => e.studentId),
+    );
     const { deviceCutoffMinutes } = tenant.settings;
     const days = new Map<string, SectionDeviceDay>();
     for (const s of sections) {
@@ -107,7 +111,7 @@ export class DeviceArrivalsService {
       for (const id of day.students) {
         const arrival = arrivals.get(id);
         if (arrival) day.arrivals.set(id, arrival);
-        if (!reachable.has(id)) day.notOnDevice += 1;
+        if (active.has(id) && !reachable.has(id)) day.notOnDevice += 1;
       }
     }
     return days;

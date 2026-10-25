@@ -67,7 +67,10 @@ export interface SectionDeviceToday {
   arrived: number;
   late: number;
   enrolled: number;
-  /** Enrolled students who cannot punch: no device ID, or not confirmed on any active device. */
+  /**
+   * ACTIVE enrolled students who cannot punch: no device ID, or not confirmed on any active device
+   * (inactive ones are never sent to a device, so they are not counted).
+   */
   notOnDevice: number;
   /** HH:MM */
   cutoffAt: string;
