@@ -241,12 +241,12 @@ export function StaffMonthView({
               className="bg-card relative overflow-x-auto rounded-xl border shadow-xs print:overflow-visible print:rounded-none print:border-0 print:shadow-none"
               data-testid="staff-month-table"
             >
-              <table className="register-table w-max min-w-full border-separate border-spacing-0 text-sm">
+              <table className="register-table staff-month-table w-max min-w-full border-separate border-spacing-0 text-sm">
                 <thead>
                   <tr>
                     <th
                       scope="col"
-                      className="bg-card sticky left-0 z-10 border-r border-b px-3 py-2 text-left font-medium"
+                      className="staff-name bg-card sticky left-0 z-10 border-r border-b px-3 py-2 text-left font-medium"
                     >
                       {t('month.colName')}
                     </th>
@@ -256,14 +256,14 @@ export function StaffMonthView({
                         scope="col"
                         title={d.holidayName ? d.holidayName[locale] : undefined}
                         className={cn(
-                          'w-8 min-w-8 border-b px-0.5 py-1 text-center font-normal',
+                          'staff-day w-8 min-w-8 border-b px-0.5 py-1 text-center font-normal',
                           d.off && 'bg-muted register-off',
                         )}
                       >
                         <span className="font-numeric block font-medium">
                           {formatCount(Number(d.date.slice(8)), locale)}
                         </span>
-                        <span className="text-muted-foreground block text-[0.7rem] leading-tight">
+                        <span className="staff-weekday text-muted-foreground block text-[0.7rem] leading-tight">
                           {weekdayShort(isoWeekday(d.date))}
                         </span>
                       </th>
@@ -273,7 +273,7 @@ export function StaffMonthView({
                         key={k}
                         scope="col"
                         title={t(`month.${TOTAL_LABEL[k]}`)}
-                        className="w-9 min-w-9 border-b border-l px-1 py-1 text-center font-medium"
+                        className="staff-total w-9 min-w-9 border-b border-l px-1 py-1 text-center font-medium"
                       >
                         <span aria-hidden>{codes[TOTAL_CODE[k]]}</span>
                         <span className="sr-only">{t(`month.${TOTAL_LABEL[k]}`)}</span>
@@ -282,7 +282,7 @@ export function StaffMonthView({
                     <th
                       scope="col"
                       title={t('month.colLateMinutes')}
-                      className="border-b border-l px-1.5 py-1 text-center text-xs font-medium"
+                      className="staff-minutes border-b border-l px-1.5 py-1 text-center text-xs font-medium"
                     >
                       <span aria-hidden>{t('month.colLateMinutesShort')}</span>
                       <span className="sr-only">{t('month.colLateMinutes')}</span>
@@ -290,7 +290,7 @@ export function StaffMonthView({
                     <th
                       scope="col"
                       title={t('month.colEarlyMinutes')}
-                      className="border-b border-l px-1.5 py-1 text-center text-xs font-medium"
+                      className="staff-minutes border-b border-l px-1.5 py-1 text-center text-xs font-medium"
                     >
                       <span aria-hidden>{t('month.colEarlyMinutesShort')}</span>
                       <span className="sr-only">{t('month.colEarlyMinutes')}</span>
@@ -310,7 +310,7 @@ export function StaffMonthView({
                         <th
                           scope="row"
                           className={cn(
-                            'bg-card group-hover:bg-muted sticky left-0 z-10 w-40 max-w-40 min-w-40 border-r border-b px-2 py-1 text-left font-normal sm:w-56 sm:max-w-56 sm:min-w-56',
+                            'staff-name bg-card group-hover:bg-muted sticky left-0 z-10 w-40 max-w-40 min-w-40 border-r border-b px-2 py-1 text-left font-normal sm:w-56 sm:max-w-56 sm:min-w-56',
                             openId === p.userId && 'bg-primary-soft print:bg-card',
                           )}
                         >
@@ -334,14 +334,14 @@ export function StaffMonthView({
                             <td
                               key={d.date}
                               className={cn(
-                                'border-b p-0.5 text-center',
+                                'staff-day border-b p-0.5 text-center',
                                 d.off && 'bg-muted register-off',
                               )}
                             >
                               {code ? (
                                 <span
                                   className={cn(
-                                    'inline-flex h-7 min-w-7 items-center justify-center rounded px-0.5 text-xs font-semibold',
+                                    'staff-code inline-flex h-7 min-w-7 items-center justify-center rounded px-0.5 text-xs font-semibold',
                                     CELL_TONE[cell],
                                   )}
                                   title={t(`month.cell.${cell as (typeof LEGEND)[number]}`)}
@@ -353,14 +353,17 @@ export function StaffMonthView({
                           );
                         })}
                         {TOTALS.map((k) => (
-                          <td key={k} className="font-numeric border-b border-l px-1 text-center">
+                          <td
+                            key={k}
+                            className="staff-total font-numeric border-b border-l px-1 text-center"
+                          >
                             {formatCount(p.totals[k], locale)}
                           </td>
                         ))}
-                        <td className="font-numeric border-b border-l px-1.5 text-center">
+                        <td className="staff-minutes font-numeric border-b border-l px-1.5 text-center">
                           {formatCount(p.totals.lateMinutes, locale)}
                         </td>
-                        <td className="font-numeric border-b border-l px-1.5 text-center">
+                        <td className="staff-minutes font-numeric border-b border-l px-1.5 text-center">
                           {formatCount(p.totals.earlyMinutes, locale)}
                         </td>
                       </tr>

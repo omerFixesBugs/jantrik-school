@@ -329,6 +329,8 @@ function PersonRow({ person: p, onEnter }: { person: StaffDayPerson; onEnter: ()
             <Button
               variant="outline"
               size="sm"
+              // Icon only on a phone: as wide as it is tall there (44 px on touch).
+              className="min-w-(--control-h-sm)"
               onClick={onEnter}
               aria-label={t('day.enterFor', { name })}
               data-testid="staff-enter"

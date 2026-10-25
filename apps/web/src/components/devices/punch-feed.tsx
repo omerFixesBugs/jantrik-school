@@ -193,13 +193,17 @@ function useFeedParts() {
       return (
         <Link
           href={`/attendance/devices/people?unknown=${encodeURIComponent(p.deviceUserId)}`}
-          className="text-link font-medium underline-offset-4 hover:underline"
+          // 44 px tall on touch screens (--touch-min), the text's own height on a desk.
+          className="text-link inline-flex min-h-(--touch-min) items-center font-medium underline-offset-4 hover:underline"
           data-testid="feed-unknown"
         >
-          {t.rich('feed.unknownId', {
-            id: p.deviceUserId,
-            v: () => <Ascii value={p.deviceUserId} />,
-          })}
+          {/* One flex item, so the space before the ID stays. */}
+          <span>
+            {t.rich('feed.unknownId', {
+              id: p.deviceUserId,
+              v: () => <Ascii value={p.deviceUserId} />,
+            })}
+          </span>
         </Link>
       );
     }
