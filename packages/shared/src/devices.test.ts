@@ -9,6 +9,7 @@ import {
   defaultStudentDeviceId,
   deviceDisplayName,
   deviceIdCollisions,
+  deviceRegisterState,
   deviceState,
   deviceUserIdSchema,
   entrySmsText,
@@ -415,6 +416,17 @@ describe('hours and punch rules', () => {
     expect(sendsSms({ ...p, flags: ['CLOCK_CORRECTED'] })).toBe(true);
     expect(sendsSms({ ...p, review: 'REJECTED' })).toBe(false);
   });
+  it('sendsSms: never for a BURST punch, not even an accepted one (it still counts)', () => {
+    const burst = {
+      flags: ['BURST'] as const,
+      punchedAt: new Date('2026-10-24T02:00:00Z'),
+      receivedAt: new Date('2026-10-24T02:00:05Z'),
+    };
+    expect(countsForAttendance({ ...burst, review: 'ACCEPTED' })).toBe(true);
+    for (const review of [null, 'OK', 'ACCEPTED', 'REJECTED'] as const) {
+      expect(sendsSms({ ...burst, review })).toBe(false);
+    }
+  });
   it('countsOnDay: counts for attendance and is not STALE', () => {
     expect(countsOnDay({ flags: ['NEW_IP'], review: null })).toBe(true);
     expect(countsOnDay({ flags: ['STALE'], review: null })).toBe(false);
@@ -518,6 +530,16 @@ describe('arrival, cutoff, close decision', () => {
     expect(closeDecision({ ...ok, devicesSeenRecently: false })).toBe('DEVICE_OFFLINE');
     expect(closeDecision({ ...ok, arrived: 49 })).toBe('TOO_MANY_MISSING');
     expect(closeDecision({ ...ok, arrived: 50 })).toBe('CLOSE'); // exactly half missing
+  });
+  it('deviceRegisterState: CLOSED once a register exists, else why it is not closed yet', () => {
+    expect(deviceRegisterState(true, 'CLOSE')).toBe('CLOSED');
+    expect(deviceRegisterState(true, 'WAIT')).toBe('CLOSED');
+    expect(deviceRegisterState(true, 'DEVICE_OFFLINE')).toBe('CLOSED');
+    expect(deviceRegisterState(false, 'WAIT')).toBe('BEFORE_CUTOFF');
+    // Due: the next minute's tick writes it.
+    expect(deviceRegisterState(false, 'CLOSE')).toBe('BEFORE_CUTOFF');
+    expect(deviceRegisterState(false, 'DEVICE_OFFLINE')).toBe('DEVICE_OFFLINE');
+    expect(deviceRegisterState(false, 'TOO_MANY_MISSING')).toBe('TOO_MANY_MISSING');
   });
   it('deviceState', () => {
     const now = new Date('2026-10-24T02:00:00Z');

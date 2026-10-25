@@ -8,6 +8,10 @@ export const ATTENDANCE_STATUSES = ['PRESENT', 'ABSENT', 'LATE', 'LEAVE'] as con
 export type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
 export type AttendanceMode = 'DAILY' | 'PER_SESSION';
 
+/** Who set a register or a record: a person (MANUAL) or the device job at the cutoff (DEVICE). */
+export const ATTENDANCE_SOURCES = ['MANUAL', 'DEVICE'] as const;
+export type AttendanceSource = (typeof ATTENDANCE_SOURCES)[number];
+
 /** 0 = the whole day (DAILY mode); 1..MAX_PERIOD = a period (PER_SESSION mode). */
 export const MAX_PERIOD = 20;
 const periodSchema = z.coerce.number().int().min(0).max(MAX_PERIOD);
@@ -242,8 +246,37 @@ export interface AttendanceSessionState {
   id: string;
   version: number;
   submittedAt: string;
+  /** DEVICE: written at the cutoff; it stays DEVICE when a person edits it. */
+  source: AttendanceSource;
+  /** Unnamed (empty id and name) when the device changed it last. */
   updatedBy: PersonRef;
-  records: { studentId: string; status: AttendanceStatus; note: string | null }[];
+  /** True when the device changed it last ("ডিভাইস changed this at 09:30"). */
+  updatedByDevice: boolean;
+  records: {
+    studentId: string;
+    status: AttendanceStatus;
+    note: string | null;
+    /** MANUAL once a person changed the status; the device never changes it then. */
+    source: AttendanceSource;
+  }[];
+}
+
+/** A student's first IN punch of the day that counts, judged by the shift start and the grace. */
+export interface StudentArrival {
+  /** The punch time (ISO). */
+  at: string;
+  status: 'PRESENT' | 'LATE';
+}
+
+/** One student on the take-attendance screen. */
+export interface SheetStudent extends RosterStudent {
+  /** From the device punches of that date; null when none counts. */
+  arrival: StudentArrival | null;
+  /**
+   * Only while no register exists, in DAILY mode with device auto-mark on: the device's view to
+   * start the register from (arrived: PRESENT or LATE; others ABSENT). Null otherwise.
+   */
+  suggested: AttendanceStatus | null;
 }
 
 /** GET /attendance/sessions: everything needed to take or edit one register. */
@@ -258,9 +291,16 @@ export interface AttendanceSheet {
   canSubmit: boolean;
   /** Why not, when canSubmit is false. */
   blockedReason: 'FUTURE_DATE' | 'EDIT_WINDOW_CLOSED' | 'NON_WORKING_DAY' | null;
-  students: RosterStudent[];
+  students: SheetStudent[];
   /** Null when attendance has not been taken yet. */
   session: AttendanceSessionState | null;
+}
+
+/** POST /attendance/sections/:id/close-from-device (OWNER/ADMIN): the register written. */
+export interface CloseFromDeviceResult {
+  sessionId: string;
+  submittedAt: string;
+  counts: AttendanceCounts;
 }
 
 export interface SubmitAttendanceResponse {
@@ -283,7 +323,13 @@ export type AttendanceErrorCode =
   /** 409: the roster changed since the draft; body has `students` (the current roster). */
   | 'ROSTER_CHANGED'
   /** 409: someone else saved first; body has `session` (the current state). */
-  | 'VERSION_CONFLICT';
+  | 'VERSION_CONFLICT'
+  /** 409, close from device: the day's register exists already. */
+  | 'REGISTER_EXISTS'
+  /** 409, close from device: the shift's cutoff has not passed; body has `cutoffAt` (HH:MM). */
+  | 'BEFORE_CUTOFF'
+  /** 422, close from device: nobody is enrolled in the section. */
+  | 'NO_STUDENTS';
 
 export interface Holiday {
   id: string;

@@ -4,6 +4,7 @@ import {
   MAX_PERIOD,
   type AttendanceCounts,
   type AttendanceMode,
+  type AttendanceSource,
   type AttendanceStatus,
   type NonWorkingDay,
   type PersonRef,
@@ -11,6 +12,7 @@ import {
   type SectionRef,
 } from './attendance.js';
 import { addDays, isoDateSchema, type IsoDate } from './dates.js';
+import type { DeviceRegisterState } from './devices.js';
 import type { MonthRegister } from './register.js';
 
 // ─────────────────────────── Requests ───────────────────────────
@@ -54,6 +56,20 @@ export type TrendQuery = z.input<typeof trendQuerySchema>;
 
 // ─────────────────────────── Responses ───────────────────────────
 
+/**
+ * A section's day by device, live: students arrived so far (late among them) of those enrolled,
+ * the shift's cutoff, and where the register stands: CLOSED once the day's register exists, else
+ * BEFORE_CUTOFF or why the cutoff held it back (an admin can close it from the device then).
+ */
+export interface SectionDeviceToday {
+  arrived: number;
+  late: number;
+  enrolled: number;
+  /** HH:MM */
+  cutoffAt: string;
+  state: DeviceRegisterState;
+}
+
 /** GET /attendance/reports/today: every section's roll call today (teachers: their own). */
 export interface AttendanceTodayReport {
   today: IsoDate;
@@ -63,11 +79,16 @@ export interface AttendanceTodayReport {
   sections: {
     section: SectionRef;
     studentCount: number;
+    /** DAILY mode with device auto-mark on; null otherwise and for a section with no students. */
+    device: SectionDeviceToday | null;
     /** Null until the day's first register is submitted. */
     register: {
       periodNo: number;
       submittedAt: string;
+      source: AttendanceSource;
+      /** Unnamed when the device changed it last (`updatedByDevice`). */
       updatedBy: PersonRef;
+      updatedByDevice: boolean;
       counts: AttendanceCounts;
       percent: number | null;
       /**
@@ -113,8 +134,8 @@ export interface StudentAttendanceReport {
   daysTaken: number;
   counts: AttendanceCounts;
   percent: number | null;
-  /** Only days with a record, newest first. */
-  days: (StudentDay & { status: AttendanceStatus })[];
+  /** Only days with a record, newest first; `source` says who set it (a person or the device). */
+  days: (StudentDay & { status: AttendanceStatus; source: AttendanceSource })[];
 }
 
 /** GET /me/children/:id/attendance: the guardian's month calendar. */

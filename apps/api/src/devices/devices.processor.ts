@@ -5,6 +5,7 @@ import type { Redis } from 'ioredis';
 import { REDIS } from '../redis/redis.constants.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
+import { DeviceRegistersService } from './device-registers.service.js';
 import {
   DEVICES_QUEUE,
   DEVICES_TENANTS_KEY,
@@ -14,14 +15,20 @@ import {
 } from './devices.constants.js';
 import { PunchProcessingService } from './punch-processing.service.js';
 
-/** Punches per transaction, so each stays well inside the job transaction's time limit. */
-const BATCH = 500;
+/**
+ * Punches per transaction, so each stays well inside the job transaction's 15 s limit (and near
+ * the 5 s a punch review waits for the punch lock). The slowest kind, a student's entry SMS plus
+ * a change on a DEVICE register, takes about 45 ms a punch on a development machine: 500 of them
+ * passed 15 s, 100 take about 5 s.
+ */
+export const PUNCH_BATCH = 100;
 
 /**
  * The devices worker. `process-punches` (queued by the receiver after it stored punches) processes
  * one institute's new punches. While that job is waiting, running or kept as failed, the receiver
  * cannot queue another for the institute, so `devices-tick` visits every minute the institutes in
- * `devices:tenants` (with ATTENDANCE on) for leftovers. Each institute is processed in its own RLS
+ * `devices:tenants` (with ATTENDANCE on) for leftovers, then writes the registers due at a shift's
+ * cutoff (`DeviceRegistersService.cutoff`). Each institute is processed in its own RLS
  * transactions with no person acting; no query crosses institutes.
  */
 @Processor(DEVICES_QUEUE)
@@ -33,6 +40,7 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
     private readonly runner: TenantJobRunner,
     private readonly access: TenantAccessService,
     private readonly processing: PunchProcessingService,
+    private readonly registers: DeviceRegistersService,
     @Inject(REDIS) private readonly redis: Redis,
   ) {
     super();
@@ -72,17 +80,17 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
     }
   }
 
-  /** One institute's minute: its leftover punches first, then its cutoff. */
+  /** One institute's minute: its leftover punches first, then the registers due at a cutoff. */
   async tick(tenantId: string): Promise<void> {
     await this.drain(tenantId);
-    // The cutoff step (registers written at each shift's cutoff) is still to come here.
+    await this.runner.run(tenantId, () => this.registers.cutoff());
   }
 
-  /** All of the institute's unprocessed punches, `BATCH` per transaction. */
+  /** All of the institute's unprocessed punches, `PUNCH_BATCH` per transaction. */
   async drain(tenantId: string): Promise<void> {
     let processed: number;
     do {
-      processed = await this.runner.run(tenantId, () => this.processing.processBatch(BATCH));
-    } while (processed >= BATCH);
+      processed = await this.runner.run(tenantId, () => this.processing.processBatch(PUNCH_BATCH));
+    } while (processed >= PUNCH_BATCH);
   }
 }

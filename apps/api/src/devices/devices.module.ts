@@ -30,6 +30,7 @@ import {
   setDeviceUserIdSchema,
   staffRangeCheckQuerySchema,
   updateDeviceSchema,
+  type CloseFromDeviceResult,
   type DeviceAddress,
   type DeviceAlert,
   type DeviceCommandView,
@@ -59,6 +60,7 @@ import { DevicePeopleCsvService } from './device-people-csv.service.js';
 import { DevicePeopleRoster } from './device-people-roster.js';
 import { DevicePeopleService } from './device-people.service.js';
 import { DevicePunchesService } from './device-punches.service.js';
+import { DeviceRegistersService } from './device-registers.service.js';
 import { DEVICES_QUEUE } from './devices.constants.js';
 import { DevicesProcessor } from './devices.processor.js';
 import { DevicesService } from './devices.service.js';
@@ -169,6 +171,20 @@ export class DevicesController {
   }
 }
 
+/** Registers from device punches: OWNER/ADMIN, module ATTENDANCE. */
+@Controller('attendance/sections')
+@RequireModule('ATTENDANCE')
+@Roles('OWNER', 'ADMIN')
+export class DeviceRegistersController {
+  constructor(private readonly registers: DeviceRegistersService) {}
+
+  /** Today's register of a section the cutoff held back, from its punches (after a confirm). */
+  @Post(':id/close-from-device')
+  closeFromDevice(@Param('id', ParseUUIDPipe) id: string): Promise<CloseFromDeviceResult> {
+    return this.registers.closeFromDevice(id);
+  }
+}
+
 /** People ↔ device IDs: OWNER/ADMIN, module ATTENDANCE. */
 @Controller('attendance/device-people')
 @RequireModule('ATTENDANCE')
@@ -253,7 +269,7 @@ export class DevicePeopleController {
   // AbsentSmsService: the absent SMS of device registers and the guardians' phones.
   // DEVICES_QUEUE: the receiver's process-punches jobs and the devices-tick scheduler.
   imports: [AttendanceModule, BullModule.registerQueue({ name: DEVICES_QUEUE })],
-  controllers: [DevicesController, DevicePeopleController],
+  controllers: [DevicesController, DeviceRegistersController, DevicePeopleController],
   providers: [
     DevicesService,
     DevicePunchesService,
@@ -263,6 +279,7 @@ export class DevicePeopleController {
     DevicePeopleService,
     DevicePeopleCsvService,
     DeviceAttendanceService,
+    DeviceRegistersService,
     PunchProcessingService,
     DevicesProcessor,
   ],

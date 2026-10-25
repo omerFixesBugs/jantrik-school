@@ -6,6 +6,7 @@ import {
   dateToDb,
   type AttendanceSessionState,
   type AttendanceSheet,
+  type AttendanceSource,
   type AttendanceStatus,
   type AttendanceTodaySummary,
   type IsoDate,
@@ -28,6 +29,7 @@ import {
   type AttendanceTenant,
   type StoredSettings,
 } from './attendance-settings.service.js';
+import { DeviceArrivalsService } from './device-arrivals.service.js';
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -64,6 +66,7 @@ export class AttendanceService {
     private readonly audit: AuditService,
     private readonly sms: TenantSmsService,
     private readonly absentSms: AbsentSmsService,
+    private readonly deviceArrivals: DeviceArrivalsService,
   ) {}
 
   // ─────────────────────────── Reads ───────────────────────────
@@ -131,6 +134,18 @@ export class AttendanceService {
     const nonWorkingDay = await this.settings.nonWorkingDay(date, tenant.settings);
     const blockedReason =
       dateAccess.blockedReason ?? (nonWorkingDay && !caller.isAdmin ? 'NON_WORKING_DAY' : null);
+    const roster = await this.roster(section.id, section.academicYearId);
+    const session = await this.sessionState(section.id, date, query.periodNo);
+    // Each student's arrival by device; a register not taken yet starts from the device's view
+    // when the device marks attendance (DAILY mode, auto-mark on).
+    const start = await this.deviceArrivals.sectionStart(section.id, tenant);
+    const arrivals = await this.deviceArrivals.arrivals(
+      new Map(roster.map((st) => [st.id, start])),
+      date,
+      tenant,
+    );
+    const suggest =
+      session === null && tenant.settings.mode === 'DAILY' && tenant.settings.deviceAutoMark;
     return {
       today: tenant.today,
       date,
@@ -140,8 +155,15 @@ export class AttendanceService {
       nonWorkingDay,
       canSubmit: blockedReason === null,
       blockedReason,
-      students: await this.roster(section.id, section.academicYearId),
-      session: await this.sessionState(section.id, date, query.periodNo),
+      students: roster.map((st) => {
+        const arrival = arrivals.get(st.id) ?? null;
+        return {
+          ...st,
+          arrival: arrival && { at: arrival.at.toISOString(), status: arrival.status },
+          suggested: suggest ? (arrival?.status ?? 'ABSENT') : null,
+        };
+      }),
+      session,
     };
   }
 
@@ -251,16 +273,20 @@ export class AttendanceService {
         });
       }
       const before = new Map(current.records.map((r) => [r.studentId, r]));
-      const changed = [...next].filter(([id, n]) => {
+      // A status a person changed is theirs (MANUAL): the device never changes it again. A record
+      // whose status stays keeps its source; a DEVICE register stays DEVICE, now with an updater.
+      const changed = [...next].flatMap(([id, n]) => {
         const b = before.get(id);
-        return !b || b.status !== n.status || b.note !== n.note;
+        if (b && b.status === n.status && b.note === n.note) return [];
+        const source: AttendanceSource = b && b.status === n.status ? b.source : 'MANUAL';
+        return [[id, { ...n, source }] as const];
       });
       for (const [studentId, n] of changed) {
         await tx.attendanceRecord.update({
           where: {
             tenantId_sessionId_studentId: { tenantId: tenant.id, sessionId: locked.id, studentId },
           },
-          data: { status: n.status, note: n.note },
+          data: { status: n.status, note: n.note, source: n.source },
         });
       }
       await tx.attendanceSession.update({
@@ -277,9 +303,9 @@ export class AttendanceService {
           entity: 'attendance_session',
           entityId: locked.id,
           action: 'UPDATE',
-          oldValues: Object.fromEntries(changed.map(([id]) => [id, statusJson(before.get(id))])),
+          oldValues: Object.fromEntries(changed.map(([id]) => [id, recordJson(before.get(id))])),
           newValues: {
-            ...Object.fromEntries(changed.map(([id, n]) => [id, statusJson(n)])),
+            ...Object.fromEntries(changed.map(([id, n]) => [id, recordJson(n)])),
             lateEdit: dateAccess.lateEdit,
           },
         });
@@ -470,18 +496,21 @@ export class AttendanceService {
         id: true,
         version: true,
         submittedAt: true,
+        source: true,
         updatedById: true,
-        records: { select: { studentId: true, status: true, note: true } },
+        records: { select: { studentId: true, status: true, note: true, source: true } },
       },
     });
     if (!s) return null;
-    // A DEVICE register has no updater (NULL): staffRef returns it unnamed.
+    // The device changed it last when there is no updater (NULL): staffRef returns it unnamed.
     const names = await staffNames(this.db.tx, s.updatedById ? [s.updatedById] : []);
     return {
       id: s.id,
       version: s.version,
       submittedAt: s.submittedAt.toISOString(),
+      source: s.source,
       updatedBy: staffRef(names, s.updatedById),
+      updatedByDevice: s.updatedById === null,
       records: s.records,
     };
   }
@@ -504,3 +533,8 @@ const STATUS_KEY = {
 
 const statusJson = (r: { status: AttendanceStatus; note: string | null } | undefined) =>
   r ? (r.note ? { status: r.status, note: r.note } : r.status) : null;
+
+/** A changed record in an UPDATE audit: its status, note and who set it. */
+const recordJson = (
+  r: { status: AttendanceStatus; note: string | null; source: AttendanceSource } | undefined,
+) => (r ? { status: r.status, ...(r.note ? { note: r.note } : {}), source: r.source } : null);

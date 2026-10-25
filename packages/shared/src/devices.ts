@@ -418,7 +418,14 @@ export function countsForAttendance(p: PunchStatus): boolean {
 /** Punches received within this long of being made count as real time (no backlog SMS). */
 export const REALTIME_WINDOW_MS = 10 * 60_000;
 
-const NO_SMS_FLAGS: readonly PunchFlag[] = ['NEW_IP', 'OUTSIDE_HOURS', 'STALE', 'CLOCK_FUTURE'];
+/** Flagged punches send no SMS; a BURST punch an admin accepted counts, but sends none either. */
+const NO_SMS_FLAGS: readonly PunchFlag[] = [
+  'NEW_IP',
+  'OUTSIDE_HOURS',
+  'STALE',
+  'CLOCK_FUTURE',
+  'BURST',
+];
 
 export function sendsSms(p: PunchStatus & { punchedAt: Date; receivedAt: Date }): boolean {
   if (!countsForAttendance(p)) return false;
@@ -532,6 +539,28 @@ export function closeDecision(input: {
   if (!input.devicesSeenRecently) return 'DEVICE_OFFLINE';
   if ((input.enrolled - input.arrived) * 2 > input.enrolled) return 'TOO_MANY_MISSING';
   return 'CLOSE';
+}
+
+export const DEVICE_REGISTER_STATES = [
+  'BEFORE_CUTOFF',
+  'CLOSED',
+  'DEVICE_OFFLINE',
+  'TOO_MANY_MISSING',
+] as const;
+export type DeviceRegisterState = (typeof DEVICE_REGISTER_STATES)[number];
+
+/**
+ * Where a section's register stands on the today report: CLOSED once the day's register exists
+ * (the device's or a person's), the reason the cutoff holds it back, otherwise BEFORE_CUTOFF (also
+ * in the minute between the cutoff and the tick that writes it).
+ */
+export function deviceRegisterState(
+  hasRegister: boolean,
+  decision: CloseDecision,
+): DeviceRegisterState {
+  if (hasRegister) return 'CLOSED';
+  if (decision === 'DEVICE_OFFLINE' || decision === 'TOO_MANY_MISSING') return decision;
+  return 'BEFORE_CUTOFF';
 }
 
 export const DEVICE_ONLINE_WINDOW_MS = 120_000;
