@@ -28,11 +28,14 @@ export interface SectionDeviceDay {
   cutoff: string;
   /** An hour after the cutoff (HH:MM:SS): from then on it waits for a person. */
   autoCloseEnd: string;
-  /** The register's roster: the students a submit expects, by roll. */
+  /** The register's roster: the students a submit expects, by roll (all written on it). */
   students: string[];
-  /** Those of them who are ACTIVE (the others are never sent to a device). */
+  /**
+   * Those of them who are ACTIVE. Only they are sent to a device, so only they count when deciding
+   * whether to close (enrolled, arrived, missing, not on a device) and only they get absent SMS.
+   */
   active: Set<string>;
-  /** Those of them with an arrival. */
+  /** The ACTIVE ones with an arrival. */
   arrivals: Map<string, Arrival>;
   /** How many ACTIVE ones cannot punch: no device ID, or not confirmed on any active device. */
   notOnDevice: number;
@@ -77,7 +80,7 @@ export class DeviceArrivalsService {
       orderBy: [{ roll: { sort: 'asc', nulls: 'last' } }, { student: { studentCode: 'asc' } }],
       select: { sectionId: true, studentId: true, student: { select: { status: true } } },
     });
-    // Only ACTIVE students are sent to devices: one who is not cannot hold a section back.
+    // Only ACTIVE students are sent to devices, so only they count for closing (`active`).
     const active = new Set(
       enrolments.filter((e) => e.student.status === 'ACTIVE').map((e) => e.studentId),
     );
@@ -112,10 +115,10 @@ export class DeviceArrivalsService {
     const arrivals = await this.arrivalsOf(ids, starts, date, tenant);
     for (const day of days.values()) {
       for (const id of day.students) {
-        const arrival = arrivals.get(id);
-        if (arrival) day.arrivals.set(id, arrival);
         if (!active.has(id)) continue;
         day.active.add(id);
+        const arrival = arrivals.get(id);
+        if (arrival) day.arrivals.set(id, arrival);
         if (!reachable.has(id)) day.notOnDevice += 1;
       }
     }
@@ -132,9 +135,10 @@ export class DeviceArrivalsService {
   }
 
   /**
-   * Each student's first IN punch of `date` that counts (not rejected, not a held BURST, not
-   * STALE), under their device ID now, judged by their start (student id → HH:MM) and the grace.
-   * Students without one are left out.
+   * Each ACTIVE student's first IN punch of `date` that counts (not rejected, not a held BURST,
+   * not STALE), under their device ID now, judged by their start (student id → HH:MM) and the
+   * grace. Students without one, and students not ACTIVE (processing ignores their punches), are
+   * left out.
    */
   async arrivals(
     starts: Map<string, string>,
@@ -156,10 +160,14 @@ export class DeviceArrivalsService {
     return seen !== null;
   }
 
+  /** The device IDs of those of these students who are ACTIVE and not deleted. */
   private async deviceIds(studentIds: string[]): Promise<StudentId[]> {
     if (studentIds.length === 0) return [];
     const rows = await this.db.tx.devicePerson.findMany({
-      where: { studentId: { in: studentIds } },
+      where: {
+        studentId: { in: studentIds },
+        student: { status: 'ACTIVE', deletedAt: null },
+      },
       select: { deviceUserId: true, studentId: true },
     });
     return rows.flatMap((r) =>

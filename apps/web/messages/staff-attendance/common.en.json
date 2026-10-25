@@ -31,7 +31,7 @@
       "NOT_STAFF": "This person is not active staff here any more.",
       "IN_TIME_REQUIRED": "A present day needs an in time.",
       "OUT_BEFORE_IN": "The out time can't be before the in time.",
-      "BUSY": "The device punches are being processed right now. Try again in a moment."
+      "BUSY": "The system is busy right now. Try again in a moment."
     }
   }
 }

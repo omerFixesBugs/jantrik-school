@@ -208,7 +208,8 @@ export class AttendanceReportsService {
   /**
    * In DAILY mode with device auto-mark on, each working day section's device view of today,
    * computed live: arrivals so far, the cutoff, and the state (`closeDecision` gives why it is held
-   * back). Sections with no students get none; nothing at all in other modes.
+   * back), counting ACTIVE students only (only they are on the devices). Sections with no ACTIVE
+   * student get none; nothing at all in other modes.
    */
   private async deviceDays(
     tenant: AttendanceTenant,
@@ -222,19 +223,19 @@ export class AttendanceReportsService {
     const days = await this.deviceArrivals.sectionDays(sectionIds, tenant.today, tenant);
     const seen = await this.deviceArrivals.devicesSeenRecently(now);
     for (const [sectionId, day] of days) {
-      if (day.students.length === 0) continue;
+      if (day.active.size === 0) continue;
       const decision = closeDecision({
         cutoffPassed: cutoffPassed(day.cutoff, now, tenant.timezone),
         autoCloseEnded: cutoffPassed(day.autoCloseEnd, now, tenant.timezone),
         devicesSeenRecently: seen,
-        enrolled: day.students.length,
+        enrolled: day.active.size,
         arrived: day.arrivals.size,
         notOnDevice: day.notOnDevice,
       });
       out.set(sectionId, {
         arrived: day.arrivals.size,
         late: [...day.arrivals.values()].filter((a) => a.status === 'LATE').length,
-        enrolled: day.students.length,
+        enrolled: day.active.size,
         notOnDevice: day.notOnDevice,
         cutoffAt: day.cutoff.slice(0, 5),
         state: deviceRegisterState(withRegister.has(sectionId), decision),

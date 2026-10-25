@@ -61,7 +61,8 @@ export type TrendQuery = z.input<typeof trendQuerySchema>;
  * the shift's cutoff, and where the register stands: CLOSED once the day's register exists, else
  * BEFORE_CUTOFF or why the cutoff held it back (an admin can close it from the device then):
  * DEVICE_OFFLINE, NOT_ON_DEVICE, TOO_MANY_MISSING, or AUTO_CLOSE_ENDED (an hour after the cutoff
- * it no longer closes by itself and waits for a person).
+ * it no longer closes by itself and waits for a person). The counts are of ACTIVE enrolled
+ * students only (inactive ones are never sent to a device; the register still lists them).
  */
 export interface SectionDeviceToday {
   arrived: number;

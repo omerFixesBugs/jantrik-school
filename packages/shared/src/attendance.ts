@@ -330,7 +330,7 @@ export type AttendanceErrorCode =
   | 'BEFORE_CUTOFF'
   /** 422, close from device: nobody is enrolled in the section. */
   | 'NO_STUDENTS'
-  /** 409 with Retry-After: device punches are being processed; try again in a moment. */
+  /** 409 with Retry-After: a lock wait ran out; nothing was changed, try again in a moment. */
   | 'BUSY';
 
 export interface Holiday {

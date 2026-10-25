@@ -492,7 +492,7 @@
     "closeNON_WORKING_DAY": "No attendance today.",
     "closeWRONG_PERIOD_FOR_MODE": "Attendance is taken from the device only when it is taken once a day.",
     "closeNO_STUDENTS": "Nobody is enrolled here.",
-    "busy": "The device punches are being processed right now. Try again in a moment."
+    "busy": "The system is busy right now. Try again in a moment."
   },
   "attendanceSettings": {
     "title": "Attendance settings",

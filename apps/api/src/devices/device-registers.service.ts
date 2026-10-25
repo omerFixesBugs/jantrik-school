@@ -105,7 +105,7 @@ export class DeviceRegistersService {
       cutoffPassed: cutoffPassed(day.cutoff, now, tenant.timezone),
       autoCloseEnded: cutoffPassed(day.autoCloseEnd, now, tenant.timezone),
       devicesSeenRecently: await this.arrivals.devicesSeenRecently(now),
-      enrolled: day.students.length,
+      enrolled: day.active.size,
       arrived: day.arrivals.size,
       notOnDevice: day.notOnDevice,
     });

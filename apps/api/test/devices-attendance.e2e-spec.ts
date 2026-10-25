@@ -95,16 +95,24 @@ describe('device registers', () => {
     return { ...s, reader: f.sim(s.device.serialNo) };
   };
 
-  /** One more student in section A (no device ID), with a primary guardian. */
-  const enrol = (s: Institute) =>
-    f.inTenant(s.tenantId, async (tx) => {
+  /**
+   * One more student in section A with a primary guardian: by default roll 4, ACTIVE, no device
+   * ID. `deviceUserId` maps them and puts that ID on the device (a confirmed add).
+   */
+  const enrol = async (
+    s: Institute,
+    opts: { roll?: number; inactive?: boolean; deviceUserId?: string } = {},
+  ) => {
+    const roll = opts.roll ?? 4;
+    const added = await f.inTenant(s.tenantId, async (tx) => {
       const section = await tx.section.findUniqueOrThrow({ where: { id: s.sectionA } });
       const student = await tx.student.create({
         data: {
           tenantId: s.tenantId,
           studentCode: `S-${randomUUID().slice(0, 8)}`,
-          nameBn: 'ছাত্র 4',
-          nameEn: 'Student 4',
+          nameBn: `ছাত্র ${roll}`,
+          nameEn: `Student ${roll}`,
+          ...(opts.inactive ? { status: 'INACTIVE' as const } : {}),
         },
       });
       await tx.enrolment.create({
@@ -114,7 +122,7 @@ describe('device registers', () => {
           academicYearId: section.academicYearId,
           classLevelId: section.classLevelId,
           sectionId: s.sectionA,
-          roll: 4,
+          roll,
         },
       });
       const phone = randomPhone();
@@ -132,6 +140,12 @@ describe('device registers', () => {
       });
       return { id: student.id, phone };
     });
+    if (opts.deviceUserId) {
+      await f.map(s.tenantId, [{ deviceUserId: opts.deviceUserId, studentId: added.id }]);
+      await confirmOnDevice(s, [opts.deviceUserId]);
+    }
+    return added;
+  };
 
   /** Punches of [pin, time] uploaded at `now` and processed. */
   const punch = async (s: Setup, now: string, punches: [string, string][]) => {
@@ -708,7 +722,7 @@ describe('device registers', () => {
       ]);
       clock.set(at('08:30:00'));
       expect(sectionOf(await todayReport(s.admin), s.sectionA).device).toMatchObject({
-        enrolled: 4,
+        enrolled: 3,
         notOnDevice: 0,
         state: 'BEFORE_CUTOFF',
       });
@@ -742,6 +756,73 @@ describe('device registers', () => {
         [held.s.a[1]!.id, held.s.a[2]!.id].sort(),
       );
       expect(h.sms.sentTo(held.inactive.phone)).toEqual([]);
+    });
+
+    it('only ACTIVE students count: 10 enrolled, 4 inactive, 2 active absent closes; an inactive punch counts for nobody', async () => {
+      const s = await setup();
+      // Section A: 101–103 plus 104–106 (ACTIVE, on the device) and four INACTIVE students, one
+      // of them (107) still on the device, as people are never removed from devices by themselves.
+      const active = [
+        await enrol(s, { roll: 4, deviceUserId: '104' }),
+        await enrol(s, { roll: 5, deviceUserId: '105' }),
+        await enrol(s, { roll: 6, deviceUserId: '106' }),
+      ];
+      const inactive = [
+        await enrol(s, { roll: 7, inactive: true, deviceUserId: '107' }),
+        await enrol(s, { roll: 8, inactive: true }),
+        await enrol(s, { roll: 9, inactive: true }),
+        await enrol(s, { roll: 10, inactive: true }),
+      ];
+      // 4 of the 6 ACTIVE arrive (103 and 106 do not); the inactive 107 punches too.
+      await punch(s, '07:51:00', [
+        ['101', '07:50:00'],
+        ['102', '07:50:10'],
+        ['104', '07:50:20'],
+        ['105', '07:50:30'],
+        ['107', '07:50:40'],
+        ['201', '07:50:50'],
+      ]);
+      clock.set(at('08:30:00'));
+      expect(sectionOf(await todayReport(s.admin), s.sectionA).device).toEqual({
+        arrived: 4,
+        late: 0,
+        enrolled: 6,
+        notOnDevice: 0,
+        cutoffAt: '09:00',
+        state: 'BEFORE_CUTOFF',
+      });
+      const taking = await sheet(s.teacher, s.sectionA);
+      expect(taking.students.find((st) => st.id === inactive[0]!.id)).toMatchObject({
+        arrival: null,
+        suggested: 'ABSENT',
+      });
+
+      // Counted over the whole roster (6 of 10 missing) it would be held back; over the ACTIVE
+      // students only 2 of 6 are missing, so it closes.
+      await tickAt(s, '09:00:00');
+      const register = await registerOf(s);
+      expect(register).toMatchObject({ source: 'DEVICE' });
+      const statusOf = new Map(register!.records.map((r) => [r.studentId, r.status]));
+      expect(register!.records).toHaveLength(10);
+      expect([...s.a, ...active].map((st) => statusOf.get(st.id))).toEqual([
+        'PRESENT',
+        'PRESENT',
+        'ABSENT',
+        'PRESENT',
+        'PRESENT',
+        'ABSENT',
+      ]);
+      // Every inactive student is ABSENT, 107's punch included, and none gets an SMS.
+      expect(inactive.map((st) => statusOf.get(st.id))).toEqual([
+        'ABSENT',
+        'ABSENT',
+        'ABSENT',
+        'ABSENT',
+      ]);
+      await waitForSms(s.tenantId, 'SENT', 2);
+      expect((await absentSms(s.tenantId)).map(([id]) => id).sort()).toEqual(
+        [s.a[2]!.id, active[2]!.id].sort(),
+      );
     });
 
     it('a held-back section closes by itself only within an hour after its cutoff; later it waits for a person', async () => {
