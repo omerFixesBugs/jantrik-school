@@ -66,6 +66,28 @@ export function staffDay(input: {
   return { inAt, outAt, lateMinutes, earlyMinutes };
 }
 
+/** A day without a row, as the day view shows it. */
+export type StaffDayState = 'ABSENT' | 'NOT_YET' | 'OFF' | 'NONE';
+
+/**
+ * One person's day without a row: OFF on a non-working day; NONE when their attendance is not
+ * kept, before `since` (they were not staff yet) or after today; NOT_YET today before office end;
+ * otherwise ABSENT. Computed, never stored.
+ */
+export function staffDayState(input: {
+  date: IsoDate;
+  today: IsoDate;
+  since: IsoDate;
+  off: boolean;
+  tracked: boolean;
+  officeEndPassedToday: boolean;
+}): StaffDayState {
+  if (input.off) return 'OFF';
+  if (!input.tracked || input.date < input.since || input.date > input.today) return 'NONE';
+  if (input.date === input.today && !input.officeEndPassedToday) return 'NOT_YET';
+  return 'ABSENT';
+}
+
 export type StaffCell =
   'PRESENT' | 'LATE' | 'EARLY' | 'LATE_EARLY' | 'ABSENT' | 'LEAVE' | 'OFF' | 'NONE';
 
@@ -96,7 +118,8 @@ export function staffMonth(input: {
   month: string;
   days: { date: IsoDate; off: boolean }[];
   today: IsoDate;
-  people: { key: string; since: IsoDate }[];
+  /** `tracked` false (listed for their rows only): days without a row are NONE. Default true. */
+  people: { key: string; since: IsoDate; tracked?: boolean }[];
   rows: {
     key: string;
     date: IsoDate;
@@ -139,11 +162,20 @@ export function staffMonth(input: {
         if (row.lateMinutes > 0) return 'LATE';
         return row.earlyMinutes > 0 ? 'EARLY' : 'PRESENT';
       }
-      if (day.off) return 'OFF';
-      if (day.date < person.since || day.date > input.today) return 'NONE';
-      if (day.date === input.today && !input.officeEndPassedToday) return 'NONE';
-      totals.absent += 1;
-      return 'ABSENT';
+      const state = staffDayState({
+        date: day.date,
+        today: input.today,
+        since: person.since,
+        off: day.off,
+        tracked: person.tracked ?? true,
+        officeEndPassedToday: input.officeEndPassedToday,
+      });
+      if (state === 'ABSENT') {
+        totals.absent += 1;
+        return 'ABSENT';
+      }
+      // Today before office end is NOT_YET in the day view, an empty cell here.
+      return state === 'OFF' ? 'OFF' : 'NONE';
     });
     return { key: person.key, cells, totals };
   });

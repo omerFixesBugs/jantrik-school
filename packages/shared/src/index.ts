@@ -34,3 +34,4 @@ export * from './devices.js';
 export * from './devices-api.js';
 export * from './device-people.js';
 export * from './staff-attendance.js';
+export * from './staff-attendance-api.js';

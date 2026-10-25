@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   staffAttendanceTracked,
   staffDay,
+  staffDayState,
   staffMonth,
   STAFF_CELL_CODES,
 } from './staff-attendance.js';
@@ -79,6 +80,39 @@ describe('staffAttendanceTracked', () => {
   });
 });
 
+describe('staffDayState', () => {
+  const day = {
+    date: '2026-10-05',
+    today: '2026-10-06',
+    since: '2026-09-01',
+    off: false,
+    tracked: true,
+    officeEndPassedToday: false,
+  };
+
+  it('a past working day on or after since is ABSENT', () => {
+    expect(staffDayState(day)).toBe('ABSENT');
+    expect(staffDayState({ ...day, since: day.date })).toBe('ABSENT');
+  });
+
+  it('today is NOT_YET before office end and ABSENT after it', () => {
+    expect(staffDayState({ ...day, date: day.today })).toBe('NOT_YET');
+    expect(staffDayState({ ...day, date: day.today, officeEndPassedToday: true })).toBe('ABSENT');
+  });
+
+  it('a non-working day is OFF, also before since', () => {
+    expect(staffDayState({ ...day, off: true })).toBe('OFF');
+    expect(staffDayState({ ...day, off: true, since: day.today })).toBe('OFF');
+  });
+
+  it('NONE before since, after today, or when their attendance is not kept', () => {
+    expect(staffDayState({ ...day, since: day.today })).toBe('NONE');
+    expect(staffDayState({ ...day, date: '2026-10-07' })).toBe('NONE');
+    expect(staffDayState({ ...day, tracked: false })).toBe('NONE');
+    expect(staffDayState({ ...day, date: day.today, tracked: false })).toBe('NONE');
+  });
+});
+
 describe('staffMonth', () => {
   const days = [
     { date: '2026-10-01', off: false },
@@ -146,6 +180,19 @@ describe('staffMonth', () => {
     expect(after.cells[5]).toBe('ABSENT');
     expect(after.cells[6]).toBe('NONE');
     expect(after.totals.absent).toBe(5);
+  });
+
+  it('someone whose attendance is not kept (listed for their rows) is never absent', () => {
+    const r = staffMonth({
+      month: '2026-10',
+      days,
+      today: '2026-10-06',
+      officeEndPassedToday: true,
+      people: [{ key: 'owner', since: '2026-09-01', tracked: false }],
+      rows: [row('owner', '2026-10-03', 'LEAVE')],
+    })[0]!;
+    expect(r.cells).toEqual(['NONE', 'OFF', 'LEAVE', 'NONE', 'NONE', 'NONE', 'NONE']);
+    expect(r.totals).toMatchObject({ absent: 0, leave: 1 });
   });
 
   it('has bn and en cell codes', () => {

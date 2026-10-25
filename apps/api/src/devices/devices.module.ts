@@ -266,5 +266,7 @@ export class DevicePeopleController {
     PunchProcessingService,
     DevicesProcessor,
   ],
+  // For staff attendance: the punch lock a manual day takes, and who is active staff.
+  exports: [DeviceAttendanceService, DevicePeopleRoster],
 })
 export class DevicesModule {}

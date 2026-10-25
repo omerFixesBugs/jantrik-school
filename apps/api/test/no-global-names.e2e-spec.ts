@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { findOrCreateUser, withContext, withTenant } from '@jantrik/db';
 import { ZkDeviceSimulator } from '@jantrik/device-sim';
-import { todayIn, toCsv, type StudentImportSummary } from '@jantrik/shared';
+import { addDays, todayIn, toCsv, type StudentImportSummary } from '@jantrik/shared';
 import {
   bearer,
   createHarness,
@@ -261,6 +261,16 @@ describe('global names never leave the API', () => {
         .send({ action: 'OK' })
         .expect(200),
     );
+
+    // An admin sets the teacher's day before by hand.
+    keep(
+      'PUT staff day',
+      await http(h)
+        .put(`/staff-attendance/${userId}/${addDays(TODAY(), -1)}`)
+        .set(bearer(s.admin))
+        .send({ status: 'LEAVE', reason: 'Typed reason', baseVersion: 0 })
+        .expect(200),
+    );
   });
   let importId: string;
   let ingest: IngestHarness;
@@ -273,7 +283,7 @@ describe('global names never leave the API', () => {
   });
 
   it('the writes made while setting up return no global names either', () => {
-    expect(writes.length).toBe(7);
+    expect(writes.length).toBe(8);
     for (const [what, body] of writes) expect(leaks(body), what).toEqual([]);
   });
 
@@ -327,6 +337,13 @@ describe('global names never leave the API', () => {
       ['/attendance/device-people/csv', { locale: 'en' }],
       ['/attendance/device-people/csv', { locale: 'bn' }],
       ['/attendance/device-people/stale'],
+      ['/staff-attendance/day'],
+      ['/staff-attendance/day', { date: addDays(TODAY(), -1) }],
+      ['/staff-attendance/month', { month }],
+      ['/staff-attendance/month/csv', { month, locale: 'en', kind: 'grid' }],
+      ['/staff-attendance/month/csv', { month, locale: 'bn', kind: 'grid' }],
+      ['/staff-attendance/month/csv', { month, locale: 'en', kind: 'days' }],
+      ['/staff-attendance/month/csv', { month, locale: 'bn', kind: 'days' }],
     ];
     for (const [path, query] of paths) {
       expect(leaks(await text(s.admin, path, query)), path).toEqual([]);
@@ -407,5 +424,13 @@ describe('global names never leave the API', () => {
     expect(await text(s.admin, '/attendance/device-people/csv', { locale: 'en' })).toContain(
       'Typed Teacher',
     );
+    // Staff attendance: the day view and the month's CSV.
+    expect(await text(s.admin, '/staff-attendance/day')).toContain('Typed Teacher');
+    expect(
+      await text(s.admin, '/staff-attendance/month/csv', {
+        month: TODAY().slice(0, 7),
+        locale: 'bn',
+      }),
+    ).toContain('টাইপ করা শিক্ষক');
   });
 });
