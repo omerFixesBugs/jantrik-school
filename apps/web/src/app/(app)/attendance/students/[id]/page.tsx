@@ -16,6 +16,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { Suspense } from 'react';
 import { AttendanceTabs, STATUS_TONE, statusCode } from '@/components/attendance/attendance-tabs';
 import { CountChips } from '@/components/attendance/count-chips';
+import { SourceTag } from '@/components/attendance/source-tag';
 import { PageGate } from '@/components/page-gate';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -208,19 +209,25 @@ function StudentReport() {
                   {r.days.map((d) => (
                     <li
                       key={d.date}
-                      className="flex min-h-11 items-center justify-between gap-3 px-4 py-1.5"
+                      className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-1.5"
+                      data-testid="student-day"
+                      data-source={d.source}
                     >
                       <span className="min-w-0">
                         {formatDate(dateToDb(d.date), locale, 'full')}
                       </span>
-                      <span
-                        className={cn(
-                          'inline-flex min-h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium whitespace-nowrap',
-                          STATUS_TONE[d.status],
-                        )}
-                      >
-                        <span aria-hidden>{statusCode(d.status, locale)}</span>
-                        {tAtt(`status${d.status}`)}
+                      <span className="flex shrink-0 items-center gap-2">
+                        {/* Who set it: the device's punches or a person (ডিভাইস / হাতে). */}
+                        <SourceTag source={d.source} />
+                        <span
+                          className={cn(
+                            'inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-sm font-medium whitespace-nowrap',
+                            STATUS_TONE[d.status],
+                          )}
+                        >
+                          <span aria-hidden>{statusCode(d.status, locale)}</span>
+                          {tAtt(`status${d.status}`)}
+                        </span>
                       </span>
                     </li>
                   ))}

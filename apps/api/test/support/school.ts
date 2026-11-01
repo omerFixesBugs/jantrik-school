@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { provisionTenant, withTenant } from '@jantrik/db';
-import type { AttendanceSettings } from '@jantrik/shared';
+import { DEVICE_SETTINGS_DEFAULTS, type AttendanceSettings } from '@jantrik/shared';
 import {
   addMember,
   bearer,
@@ -114,6 +114,7 @@ export async function school(
       absentSmsTemplate: null,
       absentSmsDelayMinutes: 0,
       dailySmsCap: null,
+      ...DEVICE_SETTINGS_DEFAULTS,
       ...opts.settings,
     })
     .expect(200);

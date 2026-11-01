@@ -1,11 +1,13 @@
 import { expect, test, type Browser, type Page, type Response } from '@playwright/test';
 import {
   accentOverrideVars,
+  addDays,
   themeTokens,
   type ColorScheme,
   type StudentsPage,
   type ThemePreset,
 } from '@jantrik/shared';
+import { E2E_TODAY } from '../playwright.config';
 import { ACCENT_STYLE_ID, THEME_LAST_KEY } from '../src/lib/theme-script';
 import {
   api,
@@ -272,7 +274,8 @@ test('signing out leaves the next person the default look', async ({ page }) => 
 });
 
 test('every screen holds up in dark', async ({ browser }) => {
-  test.setTimeout(150_000);
+  // 21 screens for each of two institutes.
+  test.setTimeout(210_000);
   // School at Shapla, Coaching at Alo (its type's default, and long batch names): one person per
   // preset, which also keeps each inside the API's per-person request limit.
   for (const [identifier, theme] of [
@@ -295,6 +298,11 @@ test('every screen holds up in dark', async ({ browser }) => {
       '/attendance/register',
       '/attendance/settings',
       `/attendance/students/${student}`,
+      // A seeded day: today's own staff state follows the real clock.
+      `/attendance/staff?date=${addDays(E2E_TODAY, -1)}`,
+      '/attendance/staff?view=month',
+      '/attendance/devices',
+      '/attendance/devices/people',
       '/staff',
       '/setup',
       '/setup/classes',

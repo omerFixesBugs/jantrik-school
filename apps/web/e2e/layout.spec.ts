@@ -1,4 +1,6 @@
+import { addDays } from '@jantrik/shared';
 import { expect, test, type Page } from '@playwright/test';
+import { E2E_TODAY } from '../playwright.config';
 import { API_URL, DEMO, otpLoginWithBanglaDigits, otpPhoneInput, passwordLogin } from './helpers';
 import { findLayoutProblems, findSmallTargets } from './layout-check';
 
@@ -101,6 +103,30 @@ test('staff screens: dashboard, drawer, students, attendance picker', async ({ p
   await expectClean(page, 'dashboard en 320');
   // Back to Bangla for the shared demo user's later tests.
   await page.context().addCookies([{ name: 'NEXT_LOCALE', value: 'bn', url: page.url() }]);
+});
+
+test('devices, device IDs and staff attendance at 360 and 390 px', async ({ page }) => {
+  // Four screens at two widths, each scrolled through and checked.
+  test.setTimeout(60_000);
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  for (const width of [360, 390]) {
+    await page.setViewportSize({ width, height: 780 });
+    await page.goto('/attendance/devices');
+    await expect(page.getByTestId('devices-cards')).toBeVisible();
+    await expect(page.getByTestId('feed-cards')).toBeVisible();
+    await expectClean(page, `devices ${width}`);
+    await page.goto('/attendance/devices/people');
+    await expect(page.getByTestId('people-cards')).toBeVisible();
+    await expectClean(page, `device people ${width}`);
+    // A seeded day (today's own state follows the real clock), then the month.
+    await page.goto(`/attendance/staff?date=${addDays(E2E_TODAY, -1)}`);
+    await expect(page.getByTestId('staff-day-row').first()).toBeVisible();
+    await expectClean(page, `staff day ${width}`);
+    await page.goto('/attendance/staff?view=month');
+    await expect(page.getByTestId('staff-month-row').first()).toBeVisible();
+    await expectClean(page, `staff month ${width}`);
+  }
 });
 
 test('register: draft, submitted, more-than-half dialog, conflict dialog', async ({ page }) => {

@@ -24,12 +24,21 @@ pnpm dev                        # start web + api (and watch shared packages)
 
 Then open:
 
-| What       | URL                                                                              |
-| ---------- | -------------------------------------------------------------------------------- |
-| Web app    | http://localhost:3000                                                            |
-| API health | http://localhost:4000/health                                                     |
-| Postgres   | `localhost:5432`, db `jantrik` (roles: see [docs/database.md](docs/database.md)) |
-| Redis      | `localhost:6379`                                                                 |
+| What            | URL                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------ |
+| Web app         | http://localhost:3000                                                                                  |
+| API health      | http://localhost:4000/health                                                                           |
+| Device receiver | `localhost:4080` (ZKTeco attendance devices and `pnpm device:sim`; [docs/devices.md](docs/devices.md)) |
+| Postgres        | `localhost:5432`, db `jantrik` (roles: see [docs/database.md](docs/database.md))                       |
+| Redis           | `localhost:6379`                                                                                       |
+
+**The device receiver** runs inside the API in `pnpm dev` (`INGEST_IN_PROCESS`, on by default
+outside production) and logs in to Postgres as its own role, `jantrik_ingest_app`: `.env` needs
+`DB_INGEST_PASSWORD` (the init script sets that role's password from it) and
+`DATABASE_INGEST_URL`, both already in `.env.example`. Without `DATABASE_INGEST_URL` the API does
+not start. A Postgres volume created before step 11 lacks the roles `jantrik_ingest` and
+`jantrik_ingest_app`: add them once with the one-off commands in
+[docs/database.md](docs/database.md) → Database roles.
 
 `GET /health` returns `{"status":"ok","db":"up","timestamp":"..."}`, or HTTP 503 with
 `"db":"down"` if Postgres is unreachable.
@@ -54,6 +63,7 @@ All commands run from the repo root.
 | `pnpm db:seed`           | Seed templates + demo tenants (idempotent)                                                                   |
 | `pnpm db:reset`          | Drop the local dev database, re-migrate and re-seed (see below)                                              |
 | `pnpm db:studio`         | Open Prisma Studio                                                                                           |
+| `pnpm device:sim`        | A simulated ZKTeco device against the receiver on :4080 (`--help`; [docs/devices.md](docs/devices.md))       |
 | `docker compose up -d`   | Start Postgres + Redis                                                                                       |
 | `docker compose down`    | Stop them (data is kept in named volumes)                                                                    |
 | `docker compose down -v` | Stop and **delete all local data**                                                                           |
@@ -107,6 +117,7 @@ apps/
 packages/
   db/                  Prisma 7 schema + client (PostgreSQL via @prisma/adapter-pg)
   shared/              zod schemas + types shared by web and api
+  device-sim/          a simulated ZKTeco attendance device (`pnpm device:sim`, API tests)
   eslint-config/       shared ESLint flat configs (base, nest, next)
   typescript-config/   shared tsconfig bases
 docker-compose.yml     Postgres 16 + Redis 7 for local development
@@ -128,9 +139,10 @@ including the platform admin (`/platform`, password + authenticator app), are li
 Read [docs/database.md](docs/database.md) before touching the schema: roles, Row-Level Security,
 `withTenant` vs `tenantClient`, and the checklist for adding a tenant table.
 
-> Upgrading an existing local database? The Postgres roles changed. Either run
+> Upgrading an existing local database? The Postgres roles changed (most recently in step 11:
+> `jantrik_ingest` and `jantrik_ingest_app` for the device receiver). Either run
 > `docker compose down -v` once (deletes local DB data) and follow the setup steps above, or
-> create the new `jantrik_auth` role with the one-liner in [docs/database.md](docs/database.md).
+> create the missing roles with the one-off commands in [docs/database.md](docs/database.md).
 
 ## CI
 
@@ -159,6 +171,12 @@ the same commands locally with `docker compose up -d` running.
 
 A single root `.env` is used by every app and package (`.env.example` lists all variables).
 Never commit `.env`. `NEXT_PUBLIC_*` variables are inlined into the web build at build time.
+The device receiver's variables (`DATABASE_INGEST_URL`, `INGEST_*`) and what production needs
+for it are in [docs/devices.md](docs/devices.md) and
+[docs/decisions-pending.md](docs/decisions-pending.md) → Deployment requirements. In production
+the receiver is its own process and gets **only its own variables** (`NODE_ENV`,
+`DATABASE_INGEST_URL`, `REDIS_URL`, `QUEUE_PREFIX`, `INGEST_PORT`, `INGEST_TRUST_PROXY` and the
+limits), never the API's logins or secrets; the API needs `INGEST_PUBLIC_HOST` there.
 
 ## Notes
 

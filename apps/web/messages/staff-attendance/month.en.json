@@ -1,0 +1,41 @@
+{
+  "month": {
+    "month": "Month",
+    "prev": "Previous month",
+    "next": "Next month",
+    "print": "Print",
+    "csvGrid": "CSV: month grid",
+    "csvDays": "CSV: by day",
+    "csvFailed": "The CSV could not be downloaded.",
+    "csvFileGrid": "staff-attendance-{month}.csv",
+    "csvFileDays": "staff-attendance-days-{month}.csv",
+    "printHeading": "Staff attendance, {month}",
+    "noData": "No punches or days entered by hand this month yet.",
+    "legend": "Key",
+    "cell": {
+      "PRESENT": "Present",
+      "LATE": "Late",
+      "EARLY": "Left early",
+      "LATE_EARLY": "Late and left early",
+      "ABSENT": "Absent",
+      "LEAVE": "Leave"
+    },
+    "offDay": "Day off",
+    "colName": "Name",
+    "colPresent": "Present",
+    "colLate": "Late",
+    "colEarly": "Left early",
+    "colAbsent": "Absent",
+    "colLeave": "Leave",
+    "colLateMinutes": "Late (minutes)",
+    "colEarlyMinutes": "Left early (minutes)",
+    "colLateMinutesShort": "Late min",
+    "colEarlyMinutesShort": "Early min",
+    "openPerson": "{name}'s month",
+    "peekTotals": "Present {present} · late {late} · left early {early} · absent {absent} · leave {leave}",
+    "peekMinutes": "Late {late} minutes in all · left early {early} minutes",
+    "peekDays": "Days recorded",
+    "peekNone": "No days recorded this month.",
+    "peekTimes": "{in} – {out}"
+  }
+}

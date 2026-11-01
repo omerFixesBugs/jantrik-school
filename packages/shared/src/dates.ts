@@ -52,6 +52,14 @@ export function todayIn(timeZone: string, now?: Date): IsoDate {
   return format.format(now ?? new Date());
 }
 
+/**
+ * Today in a timezone at `now`, an injectable clock's time (the API's `Clock`, which tests move).
+ * A fixed test date (JANTRIK_TEST_TODAY) still wins, as for `todayIn`.
+ */
+export function todayAt(timeZone: string, now: Date): IsoDate {
+  return fixedToday() ?? todayIn(timeZone, now);
+}
+
 /** ISO weekday of a date: 1 = Monday … 7 = Sunday (Friday = 5). */
 export function isoWeekday(date: IsoDate): number {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();
@@ -70,3 +78,85 @@ export const dateToDb = (date: IsoDate): Date => new Date(`${date}T00:00:00Z`);
 
 /** A `@db.Date` value from Prisma back to `YYYY-MM-DD`. */
 export const dateFromDb = (value: Date): IsoDate => value.toISOString().slice(0, 10);
+
+const clockFormats = new Map<string, Intl.DateTimeFormat>();
+
+function clockFormat(timeZone: string): Intl.DateTimeFormat {
+  let format = clockFormats.get(timeZone);
+  if (!format) {
+    format = new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    clockFormats.set(timeZone, format);
+  }
+  return format;
+}
+
+function clockParts(timeZone: string, at: Date): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const p of clockFormat(timeZone).formatToParts(at)) {
+    if (p.type !== 'literal') out[p.type] = Number(p.value);
+  }
+  return out;
+}
+
+/** The zone's offset from UTC at an instant, in minutes (Dhaka 360, Kolkata 330). */
+export function timeZoneOffsetMinutes(timeZone: string, at: Date): number {
+  const p = clockParts(timeZone, at);
+  const local = Date.UTC(
+    p['year']!,
+    p['month']! - 1,
+    p['day']!,
+    p['hour']!,
+    p['minute']!,
+    p['second']!,
+  );
+  return Math.round((local - Math.floor(at.getTime() / 1000) * 1000) / 60000);
+}
+
+/**
+ * A wall-clock `YYYY-MM-DD HH:MM:SS` read in a timezone, as the real instant. Devices send local
+ * time with no zone. Around a DST change a time that happens twice takes the first, one that
+ * never happens is moved forward.
+ */
+export function wallClockToUtc(wallClock: string, timeZone: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(wallClock);
+  if (!m) throw new Error(`Not a wall-clock time: "${wallClock}"`);
+  const [y, mo, d, h, mi, s] = m.slice(1).map(Number) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const asUtc = Date.UTC(y, mo - 1, d, h, mi, s);
+  // The offsets a day either side bracket any single change; keep the readings that are
+  // self-consistent and take the earliest (the first of a repeated hour). In a gap neither is
+  // consistent, so the earlier offset moves the time forward.
+  const before = timeZoneOffsetMinutes(timeZone, new Date(asUtc - 86_400_000));
+  const after = timeZoneOffsetMinutes(timeZone, new Date(asUtc + 86_400_000));
+  const valid = [before, after]
+    .map((offset) => asUtc - offset * 60000)
+    .filter((t) => asUtc - t === timeZoneOffsetMinutes(timeZone, new Date(t)) * 60000);
+  return new Date(valid.length ? Math.min(...valid) : asUtc - before * 60000);
+}
+
+/** The calendar date of an instant in a timezone. */
+export function localDateOf(instant: Date, timeZone: string): IsoDate {
+  return todayIn(timeZone, instant);
+}
+
+/** The wall-clock time of an instant in a timezone, `HH:MM:SS`. */
+export function localTimeOf(instant: Date, timeZone: string): string {
+  const p = clockParts(timeZone, instant);
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${two(p['hour']!)}:${two(p['minute']!)}:${two(p['second']!)}`;
+}

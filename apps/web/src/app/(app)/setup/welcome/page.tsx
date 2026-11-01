@@ -693,6 +693,8 @@ function AttendanceStep(actions: StepActionsProps) {
       client.api<AttendanceSettings>('/attendance/settings', {
         method: 'PUT',
         json: {
+          // The device and staff settings are sent back as loaded (the API ignores derived values).
+          ...s,
           mode: mode ?? s.mode,
           weeklyOffDays: s.weeklyOffDays,
           editWindowDays: s.editWindowDays,

@@ -36,7 +36,7 @@ attempt deletes the code. A successful verify deletes it too (single use).
   text) for cost tracking. The app role can only insert there.
 
 Tenant SMS (e.g. absent alerts) go through **`TenantSmsService.queue()`** instead, inside the
-request transaction:
+request transaction (or a job's, which may act for no person, e.g. device punches):
 
 1. It takes a per-tenant advisory lock, so the dedupe check and the daily count can't race.
 2. A `dedupeKey` that already exists → `DUPLICATE`, nothing queued.
@@ -50,7 +50,8 @@ request transaction:
 
 `queue()` takes `overCap: 'HOLD' | 'SKIP'` (default `HOLD`, step 3's behaviour). With `SKIP` an
 SMS over the daily cap writes no row and returns `OVER_CAP`: result SMS use it, because a held
-message's dedupe key could never be sent again ([exams.md](exams.md)).
+message's dedupe key could never be sent again ([exams.md](exams.md)), and so do the device entry
+and exit SMS (with 90 % of the cap, leaving the rest for absent alerts).
 
 ## Rate limits (Redis, all configurable via env)
 
@@ -65,8 +66,12 @@ Wi-Fi). The per-phone and per-account limits are the real protection.
 | Failed password attempts per account | 5 / 15 min; a successful login resets it (counted before the check, cleared on success, so parallel guesses can't slip through) |
 | Authenticated requests               | 300 / min **per user**                                                                                                          |
 | Unauthenticated requests             | 600 / min per IP                                                                                                                |
+| Device receiver, per address         | 1200 / min (an IPv6 address counts by its /64)                                                                                  |
+| Device receiver, refused serials     | 30 / 10 min per address, then 429 without a database call                                                                       |
+| Device receiver, one serial number   | 300 / min from each address; 1200 / min from all the addresses it does not trust, together                                      |
 
-Exceeding a limit returns `429` with `Retry-After`.
+Exceeding a limit returns `429` with `Retry-After`. The device receiver's limits and why they are
+shaped this way: [devices.md](devices.md) → Limits.
 
 ## Tokens and sessions
 
@@ -235,6 +240,11 @@ the same request transaction:
   tabulation and report cards; only its class teacher writes remarks. OWNER/ADMIN: any.
 - **Guardians:** `/me/children/:id/…` (fees, results) answer only for the caller's own children,
   and results only once published; anything else is 404, never 403, so an id reveals nothing.
+- **Devices and staff attendance** (step 11, module ATTENDANCE): `/attendance/devices/…`,
+  `/attendance/device-people/…`, `POST /attendance/sections/:id/close-from-device` and
+  `/staff-attendance/…` are OWNER/ADMIN only (teachers, accountants and guardians get 403).
+  Teachers see device arrival times only through the take screen and the today report of their
+  own sections. Every change there is audited.
 
 ## Tenant-switch safety: `X-Jantrik-Tenant`
 
@@ -246,6 +256,28 @@ session was switched to another institute in another tab and this tab's token ha
 - **Requests without the header** (mobile apps) are not checked.
 - **`@UserScoped` account routes** (`/auth/*`, `/me/preferences`) are not checked either, so
   logout always works.
+
+## The device receiver (no login)
+
+ZKTeco attendance devices cannot log in: the protocol sends only a serial number, over plain
+HTTP. So they talk to a separate server, not the API ([devices.md](devices.md)):
+
+- **Its own Nest application** ([`apps/api/src/ingest`](../apps/api/src/ingest)), port
+  `INGEST_PORT` (4080). Its own process in production (`node apps/api/dist/ingest-main.js`);
+  inside the API process in development (`INGEST_IN_PROCESS`, on by default outside production).
+- **No JWT, guards, CORS, cookies or sessions**, and no tenant context. Only `GET` and `POST`
+  under `/iclock` reach a route; everything else is 404. Bodies are read by the controller within
+  fixed limits (no body parser), and nothing is ever logged from a body or a query string.
+- **Its own database login** (`DATABASE_INGEST_URL`, role `jantrik_ingest_app`): no table grants,
+  only the four `ingest_*` definer functions, which find the device and its institute from the
+  serial number themselves. It never uses the API's `PrismaService` or `Db`
+  (`ingest-isolation.spec.ts`), and refuses to start if its login can read `students` or
+  `device_punches` or cannot run `ingest_resolve`.
+- **The institute in a queued job** comes from the database's answer, never from the request.
+- **Its own limits** (table above), keyed by address and by serial number, and server timeouts.
+  `INGEST_TRUST_PROXY` works like `TRUST_PROXY` but must never be `true` behind a proxy that
+  passes on a client's `X-Forwarded-For` ([decisions-pending.md](decisions-pending.md) →
+  Deployment requirements).
 
 ## Web client (apps/web)
 
@@ -294,6 +326,7 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
 | `CORS_ORIGINS`       | comma-separated allowlist                                                                                                             |
 | `COOKIE_SECURE`      | Secure flag on the refresh cookie                                                                                                     |
 | `TRUST_PROXY`        | Express `trust proxy`; set it behind a load balancer so client IPs are right                                                          |
+| `INGEST_*`           | the device receiver: port, public host and port for the setup guide, `INGEST_TRUST_PROXY`, limits ([devices.md](devices.md))          |
 | `SMS_PROVIDER`       | `console` in development, `memory` in API tests, `outbox` (Redis list `sms:outbox:<phone>`) for Playwright; all refused in production |
 | rate-limit variables | see `.env.example`                                                                                                                    |
 

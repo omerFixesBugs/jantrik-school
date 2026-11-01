@@ -260,6 +260,97 @@ describe('attendance tables: tenant isolation', () => {
       ),
     ).rejects.toThrow(/holidays_date_order/);
   });
+
+  it('a DEVICE register may have no taker; a MANUAL one must name both', async () => {
+    const register = (
+      date: string,
+      data: {
+        source?: 'MANUAL' | 'DEVICE';
+        takenById: string | null;
+        updatedById: string | null;
+      },
+    ) =>
+      withTenant(app, a.tenantId, (tx) =>
+        tx.attendanceSession.create({
+          data: {
+            tenantId: a.tenantId,
+            sectionId: a.sectionId,
+            date: new Date(date),
+            submittedAt: new Date(),
+            lastSubmissionId: randomUUID(),
+            ...data,
+          },
+        }),
+      );
+    const device = await register('2026-10-20', {
+      source: 'DEVICE',
+      takenById: null,
+      updatedById: null,
+    });
+    expect(device).toMatchObject({ source: 'DEVICE', takenById: null, updatedById: null });
+    // Its records are the device's; the app may mark one MANUAL (a teacher's correction).
+    await withTenant(app, a.tenantId, async (tx) => {
+      const record = await tx.attendanceRecord.create({
+        data: {
+          tenantId: a.tenantId,
+          sessionId: device.id,
+          studentId: a.studentId,
+          status: 'PRESENT',
+          source: 'DEVICE',
+        },
+      });
+      const updated = await tx.attendanceRecord.update({
+        where: { id: record.id },
+        data: { status: 'ABSENT', source: 'MANUAL' },
+      });
+      expect(updated.source).toBe('MANUAL');
+    });
+
+    await expect(
+      register('2026-10-21', { takenById: null, updatedById: a.teacherId }),
+    ).rejects.toThrow(/attendance_sessions_taker/);
+    await expect(
+      register('2026-10-21', { takenById: a.teacherId, updatedById: null }),
+    ).rejects.toThrow(/attendance_sessions_updater/);
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.attendanceSession.update({ where: { id: a.sessionId }, data: { updatedById: null } }),
+      ),
+    ).rejects.toThrow(/attendance_sessions_updater/);
+    // A register with no taker cannot become MANUAL without one.
+    await expect(
+      withTenant(app, a.tenantId, (tx) =>
+        tx.attendanceSession.update({ where: { id: device.id }, data: { source: 'MANUAL' } }),
+      ),
+    ).rejects.toThrow(/attendance_sessions_taker/);
+  });
+
+  it('registers and records default to MANUAL', async () => {
+    const session = await withTenant(app, a.tenantId, (tx) =>
+      tx.attendanceSession.findUniqueOrThrow({
+        where: { id: a.sessionId },
+        include: { records: true },
+      }),
+    );
+    expect(session.source).toBe('MANUAL');
+    expect(session.records.map((r) => r.source)).toEqual(['MANUAL']);
+  });
+
+  it('entry and exit SMS purposes exist', async () => {
+    const result = await withTenant(app, a.tenantId, (tx) =>
+      tx.smsLog.createMany({
+        data: (['ATTENDANCE_ENTRY', 'ATTENDANCE_EXIT'] as const).map((purpose) => ({
+          tenantId: a.tenantId,
+          phone: randomPhone(),
+          purpose,
+          segments: 1,
+          body: 'x',
+          localDate: new Date('2026-10-18'),
+        })),
+      }),
+    );
+    expect(result.count).toBe(2);
+  });
 });
 
 describe('platform_sms_logs: insert-only for the app role', () => {

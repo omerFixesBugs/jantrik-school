@@ -64,11 +64,16 @@ export async function staffNames(
   return out;
 }
 
-/** A staff member as shown to others: id plus the institute's name for them. */
+/**
+ * A staff member as shown to others: id plus the institute's name for them. `null` (nobody: a
+ * register the device wrote) gives the same unnamed ref as someone without a profile, with an
+ * empty id.
+ */
 export function staffRef(
   names: Map<string, { name: string; nameBn: string | null }>,
-  id: string,
+  id: string | null,
 ): PersonRef {
+  if (id === null) return { id: '', name: '', nameBn: null };
   return { id, name: names.get(id)?.name ?? '', nameBn: names.get(id)?.nameBn ?? null };
 }
 

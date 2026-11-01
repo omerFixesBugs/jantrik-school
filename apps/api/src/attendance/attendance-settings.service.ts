@@ -1,22 +1,32 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   DEFAULT_ABSENT_SMS_TEMPLATE,
+  DEVICE_SETTINGS_DEFAULTS,
   addDays,
   dateToDb,
   isoWeekday,
-  todayIn,
+  todayAt,
   type AttendanceMode,
   type AttendanceSettings,
-  type AttendanceSettingsInput,
+  type AttendanceSettingsUpdate,
+  type DeviceAttendanceSettings,
   type IsoDate,
   type NonWorkingDay,
 } from '@jantrik/shared';
+import type { Redis } from 'ioredis';
 import { AuditService } from '../audit/audit.module.js';
+import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
+import { listDevicesTenant } from '../devices/devices.constants.js';
+import { REDIS } from '../redis/redis.constants.js';
 import { Db } from '../tenancy/db.service.js';
 
+/** "HH:MM" ⇄ a TIME column (Prisma maps it to a Date on 1970-01-01 UTC), as for shifts. */
+export const timeToDb = (t: string): Date => new Date(`1970-01-01T${t}:00Z`);
+export const timeFromDb = (d: Date): string => d.toISOString().slice(11, 16);
+
 /** The stored settings (or the institute type's defaults) without derived values. */
-export interface StoredSettings {
+export interface StoredSettings extends DeviceAttendanceSettings {
   mode: AttendanceMode;
   weeklyOffDays: number[];
   editWindowDays: number;
@@ -31,7 +41,7 @@ export interface AttendanceTenant {
   id: string;
   name: string;
   timezone: string;
-  /** Today in the tenant's timezone, from the server clock. */
+  /** Today in the tenant's timezone, from the server clock (the Clock, which tests move). */
   today: IsoDate;
   settings: StoredSettings;
 }
@@ -42,6 +52,8 @@ export class AttendanceSettingsService {
     private readonly db: Db,
     private readonly context: RequestContext,
     private readonly audit: AuditService,
+    private readonly clock: Clock,
+    @Inject(REDIS) private readonly redis: Redis,
   ) {}
 
   /**
@@ -70,6 +82,21 @@ export class AttendanceSettingsService {
           absentSmsTemplate: row.absentSmsTemplate,
           absentSmsDelayMinutes: row.absentSmsDelayMinutes,
           dailySmsCap: row.dailySmsCap,
+          deviceAutoMark: row.deviceAutoMark,
+          deviceGraceMinutes: row.deviceGraceMinutes,
+          deviceCutoffMinutes: row.deviceCutoffMinutes,
+          deviceDefaultStart: timeFromDb(row.deviceDefaultStart),
+          entrySmsEnabled: row.entrySmsEnabled,
+          exitSmsEnabled: row.exitSmsEnabled,
+          staffOfficeStart: timeFromDb(row.staffOfficeStart),
+          staffOfficeEnd: timeFromDb(row.staffOfficeEnd),
+          staffLateGraceMinutes: row.staffLateGraceMinutes,
+          staffEarlyGraceMinutes: row.staffEarlyGraceMinutes,
+          deviceHoursStart: timeFromDb(row.deviceHoursStart),
+          deviceHoursEnd: timeFromDb(row.deviceHoursEnd),
+          deviceMaxPunchesPerMinute: row.deviceMaxPunchesPerMinute,
+          staffDeviceIdStart: row.staffDeviceIdStart,
+          punchRetentionDays: row.punchRetentionDays,
         }
       : {
           mode: tenant.instituteType.attendanceMode,
@@ -80,12 +107,13 @@ export class AttendanceSettingsService {
           absentSmsTemplate: null,
           absentSmsDelayMinutes: 10,
           dailySmsCap: null,
+          ...DEVICE_SETTINGS_DEFAULTS,
         };
     return {
       id: tenant.id,
       name: tenant.name,
       timezone: tenant.timezone,
-      today: todayIn(tenant.timezone),
+      today: todayAt(tenant.timezone, this.clock.now()),
       settings,
     };
   }
@@ -95,11 +123,11 @@ export class AttendanceSettingsService {
     return this.toResponse(settings);
   }
 
-  async update(input: AttendanceSettingsInput & { absentSmsTemplate: string | null }) {
+  async update(input: AttendanceSettingsUpdate) {
     const tx = this.db.tx;
     const before = (await this.load()).settings;
     const tenantId = this.context.requirePrincipal().tenantId!;
-    const data = {
+    const settings: StoredSettings = {
       mode: input.mode,
       weeklyOffDays: [...new Set(input.weeklyOffDays)].sort(),
       editWindowDays: input.editWindowDays,
@@ -108,6 +136,29 @@ export class AttendanceSettingsService {
       absentSmsTemplate: input.absentSmsTemplate,
       absentSmsDelayMinutes: input.absentSmsDelayMinutes,
       dailySmsCap: input.dailySmsCap,
+      deviceAutoMark: input.deviceAutoMark,
+      deviceGraceMinutes: input.deviceGraceMinutes,
+      deviceCutoffMinutes: input.deviceCutoffMinutes,
+      deviceDefaultStart: input.deviceDefaultStart,
+      entrySmsEnabled: input.entrySmsEnabled,
+      exitSmsEnabled: input.exitSmsEnabled,
+      staffOfficeStart: input.staffOfficeStart,
+      staffOfficeEnd: input.staffOfficeEnd,
+      staffLateGraceMinutes: input.staffLateGraceMinutes,
+      staffEarlyGraceMinutes: input.staffEarlyGraceMinutes,
+      deviceHoursStart: input.deviceHoursStart,
+      deviceHoursEnd: input.deviceHoursEnd,
+      deviceMaxPunchesPerMinute: input.deviceMaxPunchesPerMinute,
+      staffDeviceIdStart: input.staffDeviceIdStart,
+      punchRetentionDays: input.punchRetentionDays,
+    };
+    const data = {
+      ...settings,
+      deviceDefaultStart: timeToDb(settings.deviceDefaultStart),
+      staffOfficeStart: timeToDb(settings.staffOfficeStart),
+      staffOfficeEnd: timeToDb(settings.staffOfficeEnd),
+      deviceHoursStart: timeToDb(settings.deviceHoursStart),
+      deviceHoursEnd: timeToDb(settings.deviceHoursEnd),
     };
     const row = await tx.attendanceSettings.upsert({
       where: { tenantId },
@@ -120,9 +171,14 @@ export class AttendanceSettingsService {
       entityId: row.id,
       action: 'UPDATE',
       oldValues: { ...before },
-      newValues: { ...data },
+      newValues: { ...settings },
     });
-    return this.toResponse(data);
+    if (settings.deviceAutoMark) {
+      // The minute tick writes the registers only for listed institutes (after commit).
+      const at = this.clock.now();
+      await this.context.afterCommit(() => listDevicesTenant(this.redis, tenantId, at));
+    }
+    return this.toResponse(settings);
   }
 
   /**

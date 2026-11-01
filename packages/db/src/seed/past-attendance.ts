@@ -7,7 +7,7 @@ import type { TenantTx } from '../tenancy/context.js';
 export const PAST_ATTENDANCE_DAYS = 30;
 
 /** Deterministic 0–1 from a string (FNV-1a), so every seed gives the same demo history. */
-function unit(key: string): number {
+export function unit(key: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < key.length; i++) {
     h ^= key.charCodeAt(i);

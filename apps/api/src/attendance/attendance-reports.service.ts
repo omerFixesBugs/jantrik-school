@@ -5,8 +5,10 @@ import {
   attendancePercent,
   buildRegister,
   buildTrend,
+  closeDecision,
   dateFromDb,
   dateToDb,
+  deviceRegisterState,
   monthDates,
   registerCsv,
   STREAK_CAP,
@@ -14,25 +16,29 @@ import {
   trendFrom,
   type AttendanceCounts,
   type AttendanceRegisterReport,
+  type AttendanceSource,
   type AttendanceStaffMember,
   type AttendanceStatus,
   type AttendanceTodayReport,
   type AttendanceTrendReport,
   type ChildAttendanceMonth,
   type IsoDate,
+  type SectionDeviceToday,
   type SectionRef,
   type SendHeldSmsResult,
   type StudentAttendanceReport,
 } from '@jantrik/shared';
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
+import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
 import { TenantSmsService } from '../sms/tenant-sms.service.js';
 import { StudentAccess } from '../students/student-access.service.js';
 import { staffNames, staffRef } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
-import { AttendanceSettingsService } from './attendance-settings.service.js';
+import { AttendanceSettingsService, type AttendanceTenant } from './attendance-settings.service.js';
 import { AttendanceService } from './attendance.service.js';
+import { cutoffPassed, DeviceArrivalsService } from './device-arrivals.service.js';
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -91,6 +97,8 @@ export class AttendanceReportsService {
     private readonly audit: AuditService,
     private readonly sms: TenantSmsService,
     private readonly studentAccess: StudentAccess,
+    private readonly deviceArrivals: DeviceArrivalsService,
+    private readonly clock: Clock,
   ) {}
 
   // ─────────────────────────── Today ───────────────────────────
@@ -107,14 +115,25 @@ export class AttendanceReportsService {
         sectionId: true,
         periodNo: true,
         submittedAt: true,
+        source: true,
         updatedById: true,
         records: { select: { studentId: true, status: true } },
       },
     });
     const first = new Map<string, (typeof sessions)[number]>();
     for (const s of sessions) if (!first.has(s.sectionId)) first.set(s.sectionId, s);
+    // No cutoff runs on an off day or holiday: nothing to show for the device then.
+    const device = mine.nonWorkingDay
+      ? new Map<string, SectionDeviceToday>()
+      : await this.deviceDays(
+          tenant,
+          mine.sections.map((s) => s.id),
+          new Set(first.keys()),
+        );
+    // No person has changed it when there is no updater (NULL): staffRef returns it unnamed. A
+    // person who edited a DEVICE register stays named after the device changes a record again.
     const updatedNames = await staffNames(this.db.tx, [
-      ...new Set([...first.values()].map((s) => s.updatedById)),
+      ...new Set([...first.values()].flatMap((s) => (s.updatedById ? [s.updatedById] : []))),
     ]);
     const streaks = await this.absenceStreaks(
       [...first.values()].flatMap((s) =>
@@ -129,8 +148,14 @@ export class AttendanceReportsService {
     for (const section of mine.sections) {
       const s = first.get(section.id);
       const ref = { id: section.id, name: section.name, classLevel: section.classLevel };
+      const deviceDay = device.get(section.id) ?? null;
       if (!s) {
-        sections.push({ section: ref, studentCount: section.studentCount, register: null });
+        sections.push({
+          section: ref,
+          studentCount: section.studentCount,
+          device: deviceDay,
+          register: null,
+        });
         continue;
       }
       const counts = countStatuses(s.records.map((r) => r.status));
@@ -153,10 +178,13 @@ export class AttendanceReportsService {
       sections.push({
         section: ref,
         studentCount: section.studentCount,
+        device: deviceDay,
         register: {
           periodNo: s.periodNo,
           submittedAt: s.submittedAt.toISOString(),
+          source: s.source,
           updatedBy: staffRef(updatedNames, s.updatedById),
+          updatedByDevice: s.updatedById === null,
           counts,
           percent: attendancePercent(counts, tenant.settings.leaveCountsAsAbsent),
           absent,
@@ -176,6 +204,45 @@ export class AttendanceReportsService {
         percent: attendancePercent(totals, tenant.settings.leaveCountsAsAbsent),
       },
     };
+  }
+
+  /**
+   * In DAILY mode with device auto-mark on, each working day section's device view of today,
+   * computed live: arrivals so far, the cutoff, and the state (`closeDecision` gives why it is held
+   * back), counting ACTIVE students only (only they are on the devices). Sections with no ACTIVE
+   * student get none; nothing at all in other modes.
+   */
+  private async deviceDays(
+    tenant: AttendanceTenant,
+    sectionIds: string[],
+    withRegister: Set<string>,
+  ): Promise<Map<string, SectionDeviceToday>> {
+    const out = new Map<string, SectionDeviceToday>();
+    const s = tenant.settings;
+    if (s.mode !== 'DAILY' || !s.deviceAutoMark || sectionIds.length === 0) return out;
+    const now = this.clock.now();
+    const days = await this.deviceArrivals.sectionDays(sectionIds, tenant.today, tenant);
+    const seen = await this.deviceArrivals.devicesSeenRecently(now);
+    for (const [sectionId, day] of days) {
+      if (day.active.size === 0) continue;
+      const decision = closeDecision({
+        cutoffPassed: cutoffPassed(day.cutoff, now, tenant.timezone),
+        autoCloseEnded: cutoffPassed(day.autoCloseEnd, now, tenant.timezone),
+        devicesSeenRecently: seen,
+        enrolled: day.active.size,
+        arrived: day.arrivals.size,
+        notOnDevice: day.notOnDevice,
+      });
+      out.set(sectionId, {
+        arrived: day.arrivals.size,
+        late: [...day.arrivals.values()].filter((a) => a.status === 'LATE').length,
+        enrolled: day.active.size,
+        notOnDevice: day.notOnDevice,
+        cutoffAt: day.cutoff.slice(0, 5),
+        state: deviceRegisterState(withRegister.has(sectionId), decision),
+      });
+    }
+    return out;
   }
 
   /**
@@ -528,21 +595,21 @@ export class AttendanceReportsService {
 
   // ─────────────────────────── Data ───────────────────────────
 
-  /** The student's status on each day's first register, oldest first. */
+  /** The student's status (and who set it) on each day's first register, oldest first. */
   private async studentDays(
     studentId: string,
     from: IsoDate,
     to: IsoDate,
-  ): Promise<{ date: IsoDate; status: AttendanceStatus }[]> {
+  ): Promise<{ date: IsoDate; status: AttendanceStatus; source: AttendanceSource }[]> {
     const rows = await this.db.tx.attendanceRecord.findMany({
       where: { studentId, session: { date: { gte: dateToDb(from), lte: dateToDb(to) } } },
       orderBy: [{ session: { date: 'asc' } }, { session: { periodNo: 'asc' } }],
-      select: { status: true, session: { select: { date: true } } },
+      select: { status: true, source: true, session: { select: { date: true } } },
     });
-    const out: { date: IsoDate; status: AttendanceStatus }[] = [];
+    const out: { date: IsoDate; status: AttendanceStatus; source: AttendanceSource }[] = [];
     for (const r of rows) {
       const date = dateFromDb(r.session.date);
-      if (out.at(-1)?.date !== date) out.push({ date, status: r.status });
+      if (out.at(-1)?.date !== date) out.push({ date, status: r.status, source: r.source });
     }
     return out;
   }

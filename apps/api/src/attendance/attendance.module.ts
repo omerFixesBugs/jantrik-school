@@ -43,11 +43,13 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
+import { AbsentSmsService } from './absent-sms.service.js';
 import { AttendanceAdminService } from './attendance-admin.service.js';
 import { AttendanceReportsService } from './attendance-reports.service.js';
 import { AttendanceSettingsService } from './attendance-settings.service.js';
 import { AttendanceStatsService } from './attendance-stats.service.js';
 import { AttendanceService } from './attendance.service.js';
+import { DeviceArrivalsService } from './device-arrivals.service.js';
 import { StudentsModule } from '../students/students.module.js';
 
 export class SubmitAttendanceDto extends zodDto(submitAttendanceSchema) {}
@@ -238,12 +240,22 @@ export class ChildAttendanceController {
   providers: [
     AttendanceService,
     AttendanceSettingsService,
+    AbsentSmsService,
     AttendanceAdminService,
     AttendanceReportsService,
     AttendanceStatsService,
+    DeviceArrivalsService,
   ],
   // AttendanceSettingsService: the shared daily SMS cap (smsDailyCap) for the fees module.
   // AttendanceStatsService: present % per student for exam report cards.
-  exports: [AttendanceService, AttendanceSettingsService, AttendanceStatsService],
+  // AbsentSmsService: registers written from device punches send the same absent SMS.
+  // DeviceArrivalsService: the cutoff reads arrivals the way the take screen shows them.
+  exports: [
+    AttendanceService,
+    AttendanceSettingsService,
+    AttendanceStatsService,
+    AbsentSmsService,
+    DeviceArrivalsService,
+  ],
 })
 export class AttendanceModule {}

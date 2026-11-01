@@ -24,15 +24,17 @@ the template.
 
 ## Database roles
 
-| Role                   | Used by                                                    | Notes                                                                                                                                                                                                                                                                              |
-| ---------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `postgres`             | Docker admin only                                          | Superuser. Only the init script uses it.                                                                                                                                                                                                                                           |
-| `jantrik_owner`        | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`) | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                |
-| `jantrik_app`          | API runtime, demo seed (`DATABASE_URL`)                    | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                               |
-| `jantrik_auth`         | Owner of the auth `SECURITY DEFINER` functions             | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything). |
-| `jantrik_search`       | Owner of `search_student_ids()`                            | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                 |
-| `jantrik_platform`     | Owner of the `platform_*` functions (Jantrik's own admins) | Same rules as `jantrik_auth`. Grants on the platform tables and explicit `TO jantrik_platform` policies for institute metadata only, never student/guardian/attendance rows. See [platform.md](platform.md).                                                                       |
-| `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)        | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                               |
+| Role                   | Used by                                                        | Notes                                                                                                                                                                                                                                                                              |
+| ---------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres`             | Docker admin only                                              | Superuser. Only the init script uses it.                                                                                                                                                                                                                                           |
+| `jantrik_owner`        | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`)     | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                |
+| `jantrik_app`          | API runtime, demo seed (`DATABASE_URL`)                        | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                               |
+| `jantrik_auth`         | Owner of the auth `SECURITY DEFINER` functions                 | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything). |
+| `jantrik_search`       | Owner of `search_student_ids()`                                | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                 |
+| `jantrik_platform`     | Owner of the `platform_*` functions (Jantrik's own admins)     | Same rules as `jantrik_auth`. Grants on the platform tables and explicit `TO jantrik_platform` policies for institute metadata only, never student/guardian/attendance rows. See [platform.md](platform.md).                                                                       |
+| `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)            | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                               |
+| `jantrik_ingest`       | Owner of the `ingest_*` functions (the ZKTeco device receiver) | Same rules as `jantrik_auth`, with `TO jantrik_ingest` policies on the device tables and by column on tenants, modules and attendance settings. See "Devices (step 11)" below.                                                                                                     |
+| `jantrik_ingest_app`   | The device receiver (`DATABASE_INGEST_URL`)                    | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the four `ingest_*` functions (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants.                                                         |
 
 The roles and databases (`jantrik`, `jantrik_test`) are created by
 [`docker/postgres/init/01-roles.sh`](../docker/postgres/init/01-roles.sh). That script only runs
@@ -51,6 +53,9 @@ docker compose exec postgres psql -U postgres \
   -c "CREATE ROLE jantrik_platform NOLOGIN NOSUPERUSER NOBYPASSRLS" \
   -c "GRANT jantrik_platform TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
   -c "CREATE ROLE jantrik_platform_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'platform_dev_password'" \
+  -c "CREATE ROLE jantrik_ingest NOLOGIN NOSUPERUSER NOBYPASSRLS" \
+  -c "GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
+  -c "CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'ingest_dev_password'" \
   -c "CREATE DATABASE jantrik_e2e OWNER jantrik_owner"
 # A volume that already granted jantrik_app to jantrik_platform_app (early step 8): take it back.
 docker compose exec postgres psql -U postgres -c "REVOKE jantrik_app FROM jantrik_platform_app"
@@ -164,13 +169,22 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   / `app_current_user_id()`, so a missing context returns nothing. The only exceptions are the
   three pre-context login lookups and the `platform_*` functions (`docs/platform.md`): those
   belong to `jantrik_platform`, need a live platform session instead, and may take an institute
-  id. `test/schema-safety.test.ts` fails on any other definer function that takes a tenant/uuid
+  id. The `ingest_*` functions (step 11) have no context either: they take a device's serial
+  number, never a tenant or device id, and scope every query by the device it names.
+  `test/schema-safety.test.ts` fails on any other definer function that takes a tenant/uuid
   argument or isn't scoped by context.
 - **Every definer function** pins exactly `search_path = pg_catalog, public, pg_temp`, and PUBLIC
   may not run it (`schema-safety.test.ts` checks every one).
 - **Platform functions** (owned by `jantrik_platform`): EXECUTE for `jantrik_platform_app` only,
   never `jantrik_app`. Don't copy the `GRANT … TO jantrik_app` of an auth function;
   `schema-safety.test.ts` checks this by owner, so a new function is covered too.
+- **Ingest functions** (owned by `jantrik_ingest`): EXECUTE for `jantrik_ingest_app` only, the
+  same way. Their helpers (`ingest_uuid7`, `ingest_find_device`, `ingest_find_device_at`) are owned
+  by `jantrik_ingest` too, pinned, and nobody else may run them. `schema-safety.test.ts` checks by
+  name and by owner.
+- **No login role may CREATE in `public`** (`schema-safety.test.ts`). The definer bodies use
+  unqualified `pg_catalog` operators (enum `=`, `text[] || text`, …), and a more specific operator
+  created in `public` would win over them.
 - **Privileges on a definer function:** REVOKE/GRANT _before_ `ALTER FUNCTION … OWNER TO`, or
   `SET ROLE <owner>` first. Only a function's owner can change its privileges. A REVOKE run by
   anyone else is a silent no-op, which left PUBLIC with EXECUTE until migration
@@ -335,6 +349,132 @@ Rules: [exams.md](exams.md). Fourteen tenant tables (forced RLS, composite keys,
   transaction that adds it).
 - Tests: `packages/db/test/exams-*-rls.test.ts`; the table list in `schema-safety.test.ts`.
 
+### Devices (step 11)
+
+Rules: [devices.md](devices.md). ZKTeco attendance devices. Five tenant tables (forced RLS,
+composite keys, every foreign key `ON UPDATE RESTRICT`), migration `20261029000000_devices`:
+
+- **`attendance_devices`:** serial number (`^[A-Z0-9]{6,32}$`), name, gate, direction
+  (`IN` | `OUT` | `BOTH`), `is_active`, and columns only the receiver writes (last seen, last IP,
+  firmware, ATTLOG stamp, clock offset and samples, the last flood). A serial number is active in
+  one institute at most: a partial unique index on `serial_no WHERE is_active` across all
+  institutes (inactive copies are allowed). `jantrik_app` may add devices and UPDATE only name,
+  gate, direction, `is_active` and `serial_no`; no DELETE (a device is deactivated, its punches
+  stay).
+- **`device_people`:** a person's device ID (`^[1-9][0-9]{2,8}$`), for a student
+  (composite → students) or a staff member (composite → `staff_profiles (tenant_id, user_id)`, so
+  only this institute's staff), exactly one of the two. **One unique index on
+  `(tenant_id, device_user_id)` covers students and staff together**, so the database, not the UI,
+  keeps an ID to one person; partial uniques keep one ID per student and per staff member. The
+  app may insert, change and delete mappings.
+- **`device_commands`:** commands queued for one device (`seq`, from one sequence for all
+  institutes, is the id on the wire). `payload` is printable ASCII and tabs only (CHECK), so a name
+  can never add a line, i.e. a second command. The app inserts, cancels (UPDATE on `status`
+  only) and deletes (the retention job: FAILED, CANCELLED and superseded DONE rows after 90 days;
+  each ID's latest DONE per device and waiting rows are kept, see
+  [attendance.md](attendance.md) → Retention).
+- **`device_punches`:** raw punches, **immutable**. `jantrik_app` has no INSERT (only the receiver
+  stores punches) and may UPDATE only the processing and review columns (`processed_at`,
+  `outcome`, `review`, `reviewed_by_id`, `reviewed_at`). Its DELETE is limited by the restrictive
+  policy `retention_only` to punches whose `local_date` is more than 30 days before the
+  database's `current_date`, so no bug can delete recent punches (the `expire-punches` job deletes
+  by the institute's `punch_retention_days`, at least 30). `flags` is a subset of `PUNCH_FLAGS`
+  (CHECK); the unique `(tenant_id, device_id, device_user_id, device_time)` is the dedupe.
+- **`device_source_ips`:** the addresses a device calls from; the app may only trust one or
+  revoke its trust (UPDATE on `trusted_at`, `trusted_by_id`). `trusted_by_id` NULL with
+  `trusted_at` set means trusted automatically (the first address, below).
+- **`attendance_settings`** gained the device and staff columns (auto mark, grace, cutoff, office
+  hours, device hours, per-minute cap, staff ID start, punch retention), NOT NULL with DDL
+  defaults and range CHECKs (no backfill).
+- **The receiver's roles.** `jantrik_ingest` (owner of the `ingest_*` functions) has no tenant
+  context and sees rows only through its own `TO jantrik_ingest` policies, by column:
+  `tenants (id, status, timezone)`, `tenant_modules (tenant_id, module_key, enabled)`,
+  `attendance_settings` (the device hours and the cap), all of `attendance_devices` and UPDATE on
+  the receiver's columns, INSERT on punches and SELECT on the columns the dedupe and the
+  per-minute cap need, the commands' delivery columns, the source addresses' counters, and DELETE
+  on untrusted source addresses only (policy `ingest_delete`, to make room for new ones).
+  `jantrik_ingest_app` has schema USAGE and EXECUTE on the four functions, nothing else.
+- **The `ingest_*` family** (migrations `20261029000100_devices_ingest_functions`,
+  `20261029000200_devices_ingest_trust` and `20261029000300_devices_ingest_trust_hardening`).
+  Those policies see every institute, so each function takes the device's serial number (never a
+  tenant or device id), resolves it again itself and scopes every query by that device's
+  `(tenant_id, id)`. Times come from the caller (`p_now`, the receiver's clock), never `now()`.
+  A serial is refused as `UNKNOWN` (no such device, or not `^[A-Z0-9]{6,32}$` once upper-cased),
+  `INACTIVE` (only deactivated copies), `INSTITUTE_INACTIVE` (not ACTIVE or TRIAL) or
+  `MODULE_OFF` (ATTENDANCE missing or off); a refused serial gets nothing and writes nothing. The
+  resolution locks the device row it finds (`FOR NO KEY UPDATE` in the lookup itself, so the
+  serial and `is_active` are checked again on the locked row, and the institute checks come
+  after): until the call ends the device cannot be deactivated, nor its serial number given to
+  another device, and one device's calls run one at a time. Helpers: `ingest_find_device` (that
+  resolution), `ingest_find_device_at` (the same, plus the caller's address, below) and
+  `ingest_uuid7`, which makes UUIDv7 ids like Prisma's `uuid(7)` from `p_now` (no table has an id
+  default, and the live feed orders and pages by id).
+- **Source addresses and trust.** Every resolve and upload records the address it came from,
+  against the device it locked (`ingest_find_device_at`). A new address is trusted automatically
+  only on the device's first contact (never seen before), within 24 hours of its registration
+  (`created_at`; registering a serial number again makes a new row and a new window), while it
+  has no trusted address; any other is recorded untrusted (`NEW_IP`, an alert) until an admin
+  trusts it (the app's UPDATE on `trusted_at`). A device keeps at most 50 untrusted
+  addresses: a new one evicts the least recently seen untrusted ones, so rotating
+  addresses cannot keep the school's real new one from being recorded and trusted; trusted
+  addresses are never deleted. Commands go only to an address the calling device itself trusts,
+  and only such an address may answer them, so knowing a serial number is not enough to take or
+  complete a device's commands. Punches from an untrusted address are still stored, with
+  `NEW_IP`.
+- **`ingest_resolve(sn, ip, now, firmware, user_count, push_version)`:** always one row:
+  `accepted` and the refusal code, or the device (id, institute, zone, direction, ATTLOG stamp,
+  clock offset and samples, `registered_on` = its creation date in the institute's zone), the
+  institute's device hours and per-minute cap (05:00, 20:00, 60 without a settings row),
+  `previous_seen_at` and `ip_trusted` (false without an address). It then records `last_seen_at`,
+  `last_ip` and the address, and the firmware, user count and push version only when given.
+- **`ingest_store_punches(sn, ip, now, rows, stamp, clock_samples, clock_offset)`:** stores one
+  upload (`rows`: at most 10000, as the receiver computed them with the shared rules; the CHECKs
+  validate them) and returns `tenant_id, inserted, duplicates, held, dropped`, or no row when
+  refused. A punch already stored is a duplicate: counted, not stored
+  again, not counted against the cap twice. Punches from an untrusted address get `NEW_IP` and
+  `source_ip`; the address's `punch_count` counts the stored punches. Per-minute cap N: with c the
+  device's punches already stored in that minute (the upload's earlier rows included), c ≥ 5N
+  drops the row and N ≤ c < 5N stores it with `BURST` (held). Every row's fate is decided in one
+  statement (one range scan of the device's punches, window functions for the upload's order),
+  not per row: with per-row queries one 10 000-row upload took minutes in the receiver's tests,
+  and a bad plan costs a scan per row. It then writes the stamp (when it is 1–32 letters or digits and not `0`), the
+  clock samples and offset, `last_punch_at`, and `last_flood_at`/`last_flood_dropped` when
+  something was dropped.
+- **`ingest_take_commands(sn, ip, now, max)`:** nothing unless `ip` is an address the device
+  trusts. Then the device's next commands in `seq` order, at most `least(max, 50)`: PENDING ones
+  and SENT ones unanswered for 5 minutes with fewer than 5 attempts (`FOR UPDATE SKIP LOCKED`);
+  they become SENT with one more attempt. A command sent 5 times and unanswered for 5 minutes
+  becomes FAILED first.
+- **`ingest_command_results(sn, ip, now, results)`:** 0 unless `ip` is an address the device
+  trusts. The device's answers (at most 200 `{id: seq, return_code}`): only this device's SENT or
+  PENDING commands change, code 0 is DONE, anything else FAILED, with the code and `done_at`.
+  Returns how many changed, so another device's `seq` changes nothing.
+- `sms_purpose` gained `ATTENDANCE_ENTRY` and `ATTENDANCE_EXIT` in their own migration
+  (`20261029010100_attendance_sms_purposes`).
+- Tests: `packages/db/test/devices-rls.test.ts`, `ingest-functions.test.ts`; the table list and
+  the ingest checks in `schema-safety.test.ts`.
+
+### Staff attendance (step 11)
+
+`staff_attendance_days` (tenant table, forced RLS, migration `20261029020000_staff_attendance`):
+one row per staff member per day (unique `(tenant_id, user_id, date)`), composite →
+`staff_profiles (tenant_id, user_id)`, so only this institute's staff; every foreign key
+`ON UPDATE RESTRICT`.
+
+- Status `PRESENT` | `ABSENT` | `LEAVE`. Only a PRESENT day has times: always `in_at`, and
+  `out_at` never before it. Late and early minutes 0–1440.
+- `office_start` and `office_end` are copied onto each day: the hours it was judged by, so a later
+  change to the institute's office hours never re-judges past days.
+- `source`: the device job writes PRESENT days, and ABSENT when a review rejected every punch of
+  a device day; never LEAVE. A MANUAL day (an admin's) needs a `reason` of 3–200 characters
+  (trimmed) and `updated_by_id` (CHECK). `version` is for optimistic concurrency.
+- `jantrik_app`: SELECT, INSERT, UPDATE, **no DELETE** (history: a day is corrected, never
+  removed).
+- `staff_profiles.attendance_tracked`: NULL is the default rule (tracked unless the person's only
+  staff role here is OWNER), decided in code.
+- Tests: `packages/db/test/staff-attendance-rls.test.ts`; the table list in
+  `schema-safety.test.ts`.
+
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
 > **In the API, services never call these.** Every authenticated request already runs inside one
@@ -390,8 +530,16 @@ Without either helper, queries run with no tenant and return nothing. That is in
 - Phone numbers are E.164 Bangladeshi mobiles (`+8801XXXXXXXXX`), enforced by a CHECK constraint.
   Normalise input with `normalizeBdPhone` / `bdPhoneSchema` from `@jantrik/shared`.
 - Students are soft-deleted (`deleted_at`). Queries must filter `deletedAt: null` themselves.
-- **History tables have no DELETE grant:** `attendance_sessions`, `attendance_records` and
-  `sms_logs` (we bill from it) can be inserted and updated by the app, never deleted.
+- **History tables have no DELETE grant:** `attendance_sessions`, `attendance_records`,
+  `staff_attendance_days` and `sms_logs` (we bill from it) can be inserted and updated by the app,
+  never deleted.
+- **Register sources (step 11):** `attendance_sessions.source` and `attendance_records.source`
+  (`attendance_source`: `MANUAL` | `DEVICE`, default `MANUAL`). Only a DEVICE register (written by
+  the device job at the cutoff) may have no taker: `taken_by_id` and `updated_by_id` are nullable,
+  and the CHECKs `attendance_sessions_taker` and `attendance_sessions_updater` refuse NULL on a
+  MANUAL one. The API returns a NULL updater like a staff member without a profile (no name, and
+  an empty id), with `updatedByDevice: true`. A person's change to a record makes that record
+  MANUAL; a DEVICE register they edit stays DEVICE and gets them as its updater.
 - **Don't backfill tenant rows in a migration.** Migrations run as `jantrik_owner`, and FORCE RLS
   hides every tenant row from it, so an `INSERT … SELECT FROM tenants` silently inserts nothing.
   Create per-tenant rows in `provisionTenant()`, and give existing tenants defaults in code

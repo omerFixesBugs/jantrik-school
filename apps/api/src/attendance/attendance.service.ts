@@ -1,14 +1,12 @@
-import { Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
-import { Prisma } from '@jantrik/db';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  DEVICE_SUBMISSION_ID,
   addDays,
   attendancePercent,
-  DEFAULT_ABSENT_SMS_TEMPLATE,
   dateToDb,
-  formatDate,
-  renderSmsTemplate,
   type AttendanceSessionState,
   type AttendanceSheet,
+  type AttendanceSource,
   type AttendanceStatus,
   type AttendanceTodaySummary,
   type IsoDate,
@@ -25,11 +23,13 @@ import { TenantSmsService } from '../sms/tenant-sms.service.js';
 import { staffNames, staffRef } from '../staff/staff.module.js';
 import { Db } from '../tenancy/db.service.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
+import { AbsentSmsService } from './absent-sms.service.js';
 import {
   AttendanceSettingsService,
   type AttendanceTenant,
   type StoredSettings,
 } from './attendance-settings.service.js';
+import { DeviceArrivalsService } from './device-arrivals.service.js';
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -57,7 +57,7 @@ interface DateAccess {
 }
 
 @Injectable()
-export class AttendanceService implements OnModuleInit {
+export class AttendanceService {
   constructor(
     private readonly db: Db,
     private readonly context: RequestContext,
@@ -65,18 +65,9 @@ export class AttendanceService implements OnModuleInit {
     private readonly settings: AttendanceSettingsService,
     private readonly audit: AuditService,
     private readonly sms: TenantSmsService,
+    private readonly absentSms: AbsentSmsService,
+    private readonly deviceArrivals: DeviceArrivalsService,
   ) {}
-
-  /** Just before an absent SMS goes out: is the student still absent in some register that day? */
-  onModuleInit(): void {
-    this.sms.registerRelevanceCheck('ATTENDANCE_ABSENT', async ({ relatedId, localDate }) => {
-      if (!relatedId) return false;
-      const absent = await this.db.tx.attendanceRecord.count({
-        where: { studentId: relatedId, status: 'ABSENT', session: { date: dateToDb(localDate) } },
-      });
-      return absent > 0;
-    });
-  }
 
   // ─────────────────────────── Reads ───────────────────────────
 
@@ -143,6 +134,21 @@ export class AttendanceService implements OnModuleInit {
     const nonWorkingDay = await this.settings.nonWorkingDay(date, tenant.settings);
     const blockedReason =
       dateAccess.blockedReason ?? (nonWorkingDay && !caller.isAdmin ? 'NON_WORKING_DAY' : null);
+    const roster = await this.roster(section.id, section.academicYearId);
+    const session = await this.sessionState(section.id, date, query.periodNo);
+    // Each student's arrival by device; a register not taken yet starts from the device's view
+    // when the device marks attendance (DAILY mode, auto-mark on).
+    const start = await this.deviceArrivals.sectionStart(section.id, tenant);
+    const arrivals = await this.deviceArrivals.arrivals(
+      new Map(roster.map((st) => [st.id, start])),
+      date,
+      tenant,
+    );
+    const suggest =
+      session === null && tenant.settings.mode === 'DAILY' && tenant.settings.deviceAutoMark;
+    // Only ACTIVE students are on the devices: one not active is suggested nothing, so the screen
+    // starts them as a register taken by hand does.
+    const active = suggest ? await this.activeIds(roster.map((st) => st.id)) : new Set<string>();
     return {
       today: tenant.today,
       date,
@@ -152,8 +158,15 @@ export class AttendanceService implements OnModuleInit {
       nonWorkingDay,
       canSubmit: blockedReason === null,
       blockedReason,
-      students: await this.roster(section.id, section.academicYearId),
-      session: await this.sessionState(section.id, date, query.periodNo),
+      students: roster.map((st) => {
+        const arrival = arrivals.get(st.id) ?? null;
+        return {
+          ...st,
+          arrival: arrival && { at: arrival.at.toISOString(), status: arrival.status },
+          suggested: suggest ? (arrival?.status ?? (active.has(st.id) ? 'ABSENT' : null)) : null,
+        };
+      }),
+      session,
     };
   }
 
@@ -243,8 +256,8 @@ export class AttendanceService implements OnModuleInit {
 
     // Lock the register (if it exists) so two submits for it are applied one after the other.
     const date = dateToDb(input.date);
-    const [locked] = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id::text FROM attendance_sessions
+    const [locked] = await tx.$queryRaw<{ id: string; last_submission_id: string }[]>`
+      SELECT id::text, last_submission_id::text FROM attendance_sessions
       WHERE section_id = ${section.id}::uuid AND date = ${date}::date AND period_no = ${input.periodNo}
       FOR UPDATE`;
     const now = new Date();
@@ -263,22 +276,41 @@ export class AttendanceService implements OnModuleInit {
         });
       }
       const before = new Map(current.records.map((r) => [r.studentId, r]));
-      const changed = [...next].filter(([id, n]) => {
+      // A status a person changed is theirs (MANUAL): the device never changes it again. A record
+      // whose status stays keeps its source; a DEVICE register stays DEVICE, now with an updater.
+      const changed = [...next].flatMap(([id, n]) => {
         const b = before.get(id);
-        return !b || b.status !== n.status || b.note !== n.note;
+        if (b && b.status === n.status && b.note === n.note) return [];
+        const source: AttendanceSource = b && b.status === n.status ? b.source : 'MANUAL';
+        return [[id, { ...n, source }] as const];
       });
       for (const [studentId, n] of changed) {
-        await tx.attendanceRecord.update({
-          where: {
-            tenantId_sessionId_studentId: { tenantId: tenant.id, sessionId: locked.id, studentId },
-          },
-          data: { status: n.status, note: n.note },
-        });
+        const data = { status: n.status, note: n.note, source: n.source };
+        if (before.has(studentId)) {
+          await tx.attendanceRecord.update({
+            where: {
+              tenantId_sessionId_studentId: {
+                tenantId: tenant.id,
+                sessionId: locked.id,
+                studentId,
+              },
+            },
+            data,
+          });
+        } else {
+          // Enrolled after this register was written: the submit (the whole roster) adds them.
+          await tx.attendanceRecord.create({
+            data: { tenantId: tenant.id, sessionId: locked.id, studentId, ...data },
+          });
+        }
       }
       await tx.attendanceSession.update({
         where: { id: locked.id },
         data: {
-          lastSubmissionId: input.submissionId,
+          // Nothing changed after the device's change: it stays the last one (its id is kept).
+          ...(changed.length > 0 || locked.last_submission_id !== DEVICE_SUBMISSION_ID
+            ? { lastSubmissionId: input.submissionId }
+            : {}),
           ...(changed.length > 0
             ? { version: { increment: 1 }, updatedById: caller.userId, submittedAt: now }
             : {}),
@@ -289,18 +321,19 @@ export class AttendanceService implements OnModuleInit {
           entity: 'attendance_session',
           entityId: locked.id,
           action: 'UPDATE',
-          oldValues: Object.fromEntries(changed.map(([id]) => [id, statusJson(before.get(id))])),
+          oldValues: Object.fromEntries(changed.map(([id]) => [id, recordJson(before.get(id))])),
           newValues: {
-            ...Object.fromEntries(changed.map(([id, n]) => [id, statusJson(n)])),
+            ...Object.fromEntries(changed.map(([id, n]) => [id, recordJson(n)])),
             lateEdit: dateAccess.lateEdit,
           },
         });
       }
     } else {
-      let sessionId: string;
-      try {
-        const created = await tx.attendanceSession.create({
-          data: {
+      // ON CONFLICT DO NOTHING: when another submit or the device's cutoff created this register a
+      // moment ago, this transaction stays usable and the conflict carries what they saved.
+      const [created] = await tx.attendanceSession.createManyAndReturn({
+        data: [
+          {
             tenantId: tenant.id,
             sectionId: section.id,
             date,
@@ -312,18 +345,16 @@ export class AttendanceService implements OnModuleInit {
             lastSubmissionId: input.submissionId,
             onNonWorkingDay: nonWorkingDay !== null,
           },
-          select: { id: true },
+        ],
+        skipDuplicates: true,
+        select: { id: true },
+      });
+      if (!created) {
+        throw apiError(409, 'VERSION_CONFLICT', 'Someone else just took this attendance', {
+          session: await this.sessionState(section.id, input.date, input.periodNo),
         });
-        sessionId = created.id;
-      } catch (error) {
-        // Another submit created this register a moment ago: the client reloads and retries.
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-          throw apiError(409, 'VERSION_CONFLICT', 'Someone else just took this attendance', {
-            session: null,
-          });
-        }
-        throw error;
       }
+      const sessionId = created.id;
       await tx.attendanceRecord.createMany({
         data: [...next].map(([studentId, n]) => ({
           tenantId: tenant.id,
@@ -349,54 +380,10 @@ export class AttendanceService implements OnModuleInit {
     }
 
     const absent = [...next].filter(([, n]) => n.status === 'ABSENT').map(([id]) => id);
-    await this.queueAbsentSms(tenant, input.date, absent);
+    await this.absentSms.queue(tenant, input.date, absent);
 
     const session = (await this.sessionState(section.id, input.date, input.periodNo))!;
     return { today: tenant.today, session, replayed: false };
-  }
-
-  /**
-   * One SMS per absent student per day to the primary guardian (sms_logs dedupe key), only for
-   * today's registers, and only when the tenant has turned absent SMS on.
-   */
-  private async queueAbsentSms(tenant: AttendanceTenant, date: IsoDate, studentIds: string[]) {
-    const s = tenant.settings;
-    if (!s.absentSmsEnabled || date !== tenant.today || studentIds.length === 0) return;
-    const students = await this.db.tx.student.findMany({
-      where: { id: { in: studentIds } },
-      select: {
-        id: true,
-        nameBn: true,
-        nameEn: true,
-        guardians: {
-          where: { isPrimary: true },
-          take: 1,
-          select: { guardian: { select: { phone: true } } },
-        },
-      },
-    });
-    const template = s.absentSmsTemplate ?? DEFAULT_ABSENT_SMS_TEMPLATE;
-    const cap = await this.settings.effectiveDailySmsCap(s);
-    const dateText = formatDate(dateToDb(date), 'bn', 'long');
-    for (const st of students) {
-      const phone = st.guardians[0]?.guardian.phone;
-      if (!phone) continue;
-      await this.sms.queue({
-        purpose: 'ATTENDANCE_ABSENT',
-        phone,
-        body: renderSmsTemplate(template, {
-          student: st.nameBn ?? st.nameEn ?? '',
-          date: dateText,
-          institute: tenant.name,
-        }),
-        localDate: date,
-        dedupeKey: `absent:${st.id}:${date}`,
-        relatedEntity: 'student',
-        relatedId: st.id,
-        delayMs: s.absentSmsDelayMinutes * 60_000,
-        dailyCap: cap,
-      });
-    }
   }
 
   // ─────────────────────────── Rules ───────────────────────────
@@ -526,19 +513,37 @@ export class AttendanceService implements OnModuleInit {
         id: true,
         version: true,
         submittedAt: true,
+        source: true,
         updatedById: true,
-        records: { select: { studentId: true, status: true, note: true } },
+        lastSubmissionId: true,
+        records: { select: { studentId: true, status: true, note: true, source: true } },
       },
     });
     if (!s) return null;
-    const names = await staffNames(this.db.tx, [s.updatedById]);
+    // The device changed it last when it wrote the register (no updater, NULL) or changed a record
+    // since a person's edit (its submission id): then nobody is named, so a conflict names the
+    // device and a teacher's client never takes the device's change for its own.
+    const byDevice = s.updatedById === null || s.lastSubmissionId === DEVICE_SUBMISSION_ID;
+    const updater = byDevice ? null : s.updatedById;
+    const names = await staffNames(this.db.tx, updater ? [updater] : []);
     return {
       id: s.id,
       version: s.version,
       submittedAt: s.submittedAt.toISOString(),
-      updatedBy: staffRef(names, s.updatedById),
+      source: s.source,
+      updatedBy: staffRef(names, updater),
+      updatedByDevice: byDevice,
       records: s.records,
     };
+  }
+
+  /** Those of these students who are ACTIVE. */
+  private async activeIds(studentIds: string[]): Promise<Set<string>> {
+    const rows = await this.db.tx.student.findMany({
+      where: { id: { in: studentIds }, status: 'ACTIVE', deletedAt: null },
+      select: { id: true },
+    });
+    return new Set(rows.map((r) => r.id));
   }
 
   private async isReplay(sessionId: string, submissionId: string): Promise<boolean> {
@@ -559,3 +564,8 @@ const STATUS_KEY = {
 
 const statusJson = (r: { status: AttendanceStatus; note: string | null } | undefined) =>
   r ? (r.note ? { status: r.status, note: r.note } : r.status) : null;
+
+/** A changed record in an UPDATE audit: its status, note and who set it. */
+const recordJson = (
+  r: { status: AttendanceStatus; note: string | null; source: AttendanceSource } | undefined,
+) => (r ? { status: r.status, ...(r.note ? { note: r.note } : {}), source: r.source } : null);
