@@ -23,6 +23,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import type { Locale } from '@/i18n/config';
+import { guideAddress } from '@/lib/devices/addresses';
 import { cn } from '@/lib/utils';
 import { TrustState, useAddressTrust, useDeviceAddresses } from './addresses';
 import { Ascii, copyText, formatSeen } from './kit';
@@ -44,7 +45,8 @@ const value = (chunks: ReactNode) => (
  * How to point a ZKTeco device at us, Bangla first: the server and port to copy, the device's menu
  * steps, and a line that turns from "waiting for the device…" to "connected" by itself (the page
  * polls the list every 5 s while this is open and the device has not connected). Once connected it
- * shows the address the device came from and asks whether it is the institute's own.
+ * shows the device's trusted address, or while none is trusted the latest untrusted one with when
+ * it was seen and its punches, and asks whether it is the institute's own (`guideAddress`).
  */
 export function SetupGuide({
   device,
@@ -150,14 +152,16 @@ function CopyRow({ label, text, testId }: { label: string; text: string; testId:
 
 /**
  * Switched off, waiting for its first call, online now, or offline now (it has called before); a
- * device that has called shows the address it came from and whether it is ours.
+ * device that has called shows its address (`guideAddress`, never the latest caller as such) and
+ * whether it is ours.
  */
 function GuideStatus({ device }: { device: DeviceView }) {
   const t = useTranslations('devices.devices.guide');
+  const tAddress = useTranslations('devices.devices.addresses');
   const locale = useLocale() as Locale;
   const seen = device.lastSeenAt !== null;
   const online = device.state === 'ONLINE';
-  const addresses = useDeviceAddresses(seen && device.lastIp ? device.id : null);
+  const addresses = useDeviceAddresses(seen ? device.id : null);
   const { askTrust, askRevoke, dialogs } = useAddressTrust();
 
   if (!device.isActive) {
@@ -186,7 +190,7 @@ function GuideStatus({ device }: { device: DeviceView }) {
       </div>
     );
   }
-  const address = addresses.data?.find((a) => a.ip === device.lastIp);
+  const address = addresses.data ? guideAddress(addresses.data) : null;
   return (
     <div
       className={cn(
@@ -212,42 +216,48 @@ function GuideStatus({ device }: { device: DeviceView }) {
           {!online && <span className="text-muted-foreground text-sm">{t('offlineHint')}</span>}
         </div>
       </div>
-      {device.lastIp && (
-        <div className="bg-card flex flex-col gap-2 rounded-md border p-3">
-          <p className="text-sm">{t.rich('fromAddress', { ip: device.lastIp, v: value })}</p>
-          {address && (
-            <>
-              <TrustState address={address} />
-              <p className="text-muted-foreground text-sm">
-                {address.trusted ? t('notOursHint') : t('trustHint')}
-              </p>
-              <div>
-                {address.trusted ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      askRevoke({ deviceId: device.id, ipId: address.id, ip: address.ip })
-                    }
-                    data-testid="guide-revoke"
-                  >
-                    <ShieldOffIcon aria-hidden />
-                    {t('notOurs')}
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      askTrust({ deviceId: device.id, ipId: address.id, ip: address.ip })
-                    }
-                  >
-                    <ShieldCheckIcon aria-hidden />
-                    {t('ours')}
-                  </Button>
-                )}
-              </div>
-            </>
-          )}
+      {address && (
+        <div
+          className="bg-card flex flex-col gap-2 rounded-md border p-3"
+          data-testid="guide-address"
+        >
+          <p className="text-sm">{t.rich('fromAddress', { ip: address.ip, v: value })}</p>
+          <TrustState address={address} />
+          <p className="text-muted-foreground text-sm">
+            {tAddress('seen', {
+              first: formatSeen(address.firstSeenAt, locale),
+              last: formatSeen(address.lastSeenAt, locale),
+            })}
+            {' · '}
+            {tAddress('punches', {
+              count: formatCount(address.punchCount, locale),
+              n: address.punchCount,
+            })}
+          </p>
+          <p className="text-muted-foreground text-sm">
+            {address.trusted ? t('notOursHint') : t('trustHint')}
+          </p>
+          <div>
+            {address.trusted ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => askRevoke({ deviceId: device.id, ipId: address.id, ip: address.ip })}
+                data-testid="guide-revoke"
+              >
+                <ShieldOffIcon aria-hidden />
+                {t('notOurs')}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={() => askTrust({ deviceId: device.id, ipId: address.id, ip: address.ip })}
+              >
+                <ShieldCheckIcon aria-hidden />
+                {t('ours')}
+              </Button>
+            )}
+          </div>
         </div>
       )}
       {dialogs}

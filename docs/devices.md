@@ -584,10 +584,12 @@ The devices screen's setup guide (Bangla, per device) walks the admin through it
 8. **System Info → Device Info:** the serial number must match exactly.
 9. Save, then switch the device off and on once.
 
-The guide then waits for the device and turns "connected" by itself. It shows the address the
-device called from and asks whether it is the institute's own connection: an untrusted address
-gets "Yes, trust it" (no commands go to the device until then), a trusted one "No, it isn't ours"
-(revoke). Then give people IDs (People and device IDs), **Send to devices**, and enrol each
+The guide then waits for the device and turns "connected" by itself. It shows the device's
+trusted address, or while none is trusted the untrusted one seen last, each with when it was first
+and last seen and its punch count, and asks whether it is the institute's own connection: an
+untrusted address gets "Yes, trust it" (no commands go to the device until then), a trusted one
+"No, it isn't ours" (revoke). It never offers the latest caller as such (`last_ip`): anyone who
+knows the serial number can be that, also after the device's own address is trusted. Then give people IDs (People and device IDs), **Send to devices**, and enrol each
 person's finger, card or face on the device under their ID. Enrolment happens on the device
 itself; Jantrik never keeps the biometric data (above). Names show in English on the device.
 

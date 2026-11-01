@@ -198,6 +198,10 @@ export interface DeviceView {
   state: DeviceState;
   lastSeenAt: string | null;
   lastPunchAt: string | null;
+  /**
+   * The latest caller's address, trusted or not: anyone who knows the serial number can be it.
+   * Never offer it for trust; the setup guide and the address list use the device's addresses.
+   */
   lastIp: string | null;
   firmware: string | null;
   userCount: number | null;
