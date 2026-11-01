@@ -94,8 +94,12 @@ export interface AttendanceTodayReport {
       periodNo: number;
       submittedAt: string;
       source: AttendanceSource;
-      /** Unnamed when the device changed it last (`updatedByDevice`). */
+      /**
+       * The person who last changed it: on a DEVICE register the one who edited it, still named
+       * when the device changes a record later. Unnamed while no person has (`updatedByDevice`).
+       */
       updatedBy: PersonRef;
+      /** True while no person has changed it: taken by the device and not edited. */
       updatedByDevice: boolean;
       counts: AttendanceCounts;
       percent: number | null;

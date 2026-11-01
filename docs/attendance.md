@@ -93,7 +93,9 @@ period-0 register can be written from punches. Full rules: [devices.md](devices.
   `DEVICE` and gets the teacher as its updater. A student enrolled after the device wrote the
   register gets a `MANUAL` record from the teacher's submit.
 - **A punch after the cutoff** (today, with auto-mark on) turns a still-DEVICE ABSENT into LATE;
-  a pending absent SMS is then cancelled by the relevance check. With auto-mark off, punches never
+  a pending absent SMS is then cancelled by the relevance check. The teacher who edited the
+  register stays its updater; the take screen names the device as the last change (a stale
+  draft's conflict says so). With auto-mark off, punches never
   change a register, not even one written by "take from the device".
 - Lock waits on these paths are limited to 5 s: a request that runs out answers 409 `BUSY` with
   `Retry-After` and changes nothing, and the screen says "the system is busy right now, try

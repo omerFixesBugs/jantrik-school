@@ -447,7 +447,10 @@ hand.
   gets the teacher as its updater.
 - **Late punches after the cutoff** (today only, with auto-mark on): a student still ABSENT on a
   DEVICE record who punches in becomes LATE (or PRESENT, when a delayed upload shows they came on
-  time): version bump, no updater, audited with `source: DEVICE`. A pending absent SMS is then
+  time): version bump, audited with `source: DEVICE`. The register keeps its updater, so a
+  teacher who edited it stays named on the today page ("edited by"), and it carries the device's
+  submission id (`DEVICE_SUBMISSION_ID`), so the take screen names the device as its last change
+  and a draft older than it gets a conflict that names the device. A pending absent SMS is then
   cancelled by the relevance check; one already sent cannot be taken back (the entry SMS follows
   it). With auto-mark off, punches and reviews never change a register, not even one an admin
   wrote with "close from device".

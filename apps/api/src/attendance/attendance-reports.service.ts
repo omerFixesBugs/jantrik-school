@@ -130,7 +130,8 @@ export class AttendanceReportsService {
           mine.sections.map((s) => s.id),
           new Set(first.keys()),
         );
-    // The device changed it last when there is no updater (NULL): staffRef returns it unnamed.
+    // No person has changed it when there is no updater (NULL): staffRef returns it unnamed. A
+    // person who edited a DEVICE register stays named after the device changes a record again.
     const updatedNames = await staffNames(this.db.tx, [
       ...new Set([...first.values()].flatMap((s) => (s.updatedById ? [s.updatedById] : []))),
     ]);

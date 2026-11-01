@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  DEVICE_SUBMISSION_ID,
   arrivalStatus,
   countsOnDay,
   dateToDb,
@@ -56,8 +57,10 @@ export class DeviceAttendanceService {
   /**
    * The student's record on the period-0 register of their current section for `date`, from the
    * punches that count: the first IN gives PRESENT or LATE, none gives ABSENT. Nothing without a
-   * register or when the record is not DEVICE. A change bumps the version, names no updater, is
-   * audited, and an ABSENT today queues the absent SMS (once per day, by its dedupe key).
+   * register or when the record is not DEVICE. A change bumps the version, keeps the register's
+   * updater (a person who edited it stays named) and marks the device as its last change
+   * (`DEVICE_SUBMISSION_ID`), is audited, and an ABSENT today queues the absent SMS (once per day,
+   * by its dedupe key).
    */
   async recomputeStudentDay(
     studentId: string,
@@ -112,7 +115,12 @@ export class DeviceAttendanceService {
     });
     await tx.attendanceSession.update({
       where: { id: session.id },
-      data: { version: { increment: 1 }, updatedById: null, submittedAt: now, updatedAt: now },
+      data: {
+        version: { increment: 1 },
+        lastSubmissionId: DEVICE_SUBMISSION_ID,
+        submittedAt: now,
+        updatedAt: now,
+      },
     });
     await this.audit.record({
       entity: 'attendance_session',

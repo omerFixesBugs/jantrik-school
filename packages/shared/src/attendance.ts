@@ -16,6 +16,13 @@ export type AttendanceSource = (typeof ATTENDANCE_SOURCES)[number];
 export const MAX_PERIOD = 20;
 const periodSchema = z.coerce.number().int().min(0).max(MAX_PERIOD);
 
+/**
+ * The submission id a change by the device leaves on a register (`last_submission_id`), so the
+ * register says the device changed it last while it keeps the person who edited it. Never a
+ * client's.
+ */
+export const DEVICE_SUBMISSION_ID = '00000000-0000-0000-0000-000000000000';
+
 // ─────────────────────────── Requests ───────────────────────────
 
 /** PUT /attendance/sessions — submit (create or replace) one register. Idempotent per submissionId. */
@@ -25,7 +32,7 @@ export const submitAttendanceSchema = z.object({
   periodNo: periodSchema.default(0),
   subjectId: z.uuid().nullish(),
   /** Client-generated per draft revision; a retried request with the same id is answered, not re-applied. */
-  submissionId: z.uuid(),
+  submissionId: z.uuid().refine((id) => id !== DEVICE_SUBMISSION_ID, 'Reserved for the device'),
   /** The version the draft was based on; 0 for a register that did not exist yet. */
   baseVersion: z.number().int().min(0),
   /** OWNER/ADMIN only: take attendance on a weekly off day or holiday. */
@@ -248,9 +255,12 @@ export interface AttendanceSessionState {
   submittedAt: string;
   /** DEVICE: written at the cutoff; it stays DEVICE when a person edits it. */
   source: AttendanceSource;
-  /** Unnamed (empty id and name) when the device changed it last. */
+  /** Unnamed (empty id and name) when the device changed it last, even after a person's edit. */
   updatedBy: PersonRef;
-  /** True when the device changed it last ("ডিভাইস changed this at 09:30"). */
+  /**
+   * True when the device changed it last ("ডিভাইস changed this at 09:30"): it wrote the register,
+   * or changed a record after a person's edit.
+   */
   updatedByDevice: boolean;
   records: {
     studentId: string;

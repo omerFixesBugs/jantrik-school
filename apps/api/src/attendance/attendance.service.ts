@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  DEVICE_SUBMISSION_ID,
   addDays,
   attendancePercent,
   dateToDb,
@@ -252,8 +253,8 @@ export class AttendanceService {
 
     // Lock the register (if it exists) so two submits for it are applied one after the other.
     const date = dateToDb(input.date);
-    const [locked] = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id::text FROM attendance_sessions
+    const [locked] = await tx.$queryRaw<{ id: string; last_submission_id: string }[]>`
+      SELECT id::text, last_submission_id::text FROM attendance_sessions
       WHERE section_id = ${section.id}::uuid AND date = ${date}::date AND period_no = ${input.periodNo}
       FOR UPDATE`;
     const now = new Date();
@@ -303,7 +304,10 @@ export class AttendanceService {
       await tx.attendanceSession.update({
         where: { id: locked.id },
         data: {
-          lastSubmissionId: input.submissionId,
+          // Nothing changed after the device's change: it stays the last one (its id is kept).
+          ...(changed.length > 0 || locked.last_submission_id !== DEVICE_SUBMISSION_ID
+            ? { lastSubmissionId: input.submissionId }
+            : {}),
           ...(changed.length > 0
             ? { version: { increment: 1 }, updatedById: caller.userId, submittedAt: now }
             : {}),
@@ -508,19 +512,24 @@ export class AttendanceService {
         submittedAt: true,
         source: true,
         updatedById: true,
+        lastSubmissionId: true,
         records: { select: { studentId: true, status: true, note: true, source: true } },
       },
     });
     if (!s) return null;
-    // The device changed it last when there is no updater (NULL): staffRef returns it unnamed.
-    const names = await staffNames(this.db.tx, s.updatedById ? [s.updatedById] : []);
+    // The device changed it last when it wrote the register (no updater, NULL) or changed a record
+    // since a person's edit (its submission id): then nobody is named, so a conflict names the
+    // device and a teacher's client never takes the device's change for its own.
+    const byDevice = s.updatedById === null || s.lastSubmissionId === DEVICE_SUBMISSION_ID;
+    const updater = byDevice ? null : s.updatedById;
+    const names = await staffNames(this.db.tx, updater ? [updater] : []);
     return {
       id: s.id,
       version: s.version,
       submittedAt: s.submittedAt.toISOString(),
       source: s.source,
-      updatedBy: staffRef(names, s.updatedById),
-      updatedByDevice: s.updatedById === null,
+      updatedBy: staffRef(names, updater),
+      updatedByDevice: byDevice,
       records: s.records,
     };
   }

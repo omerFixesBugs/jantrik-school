@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common';
 import { withTenant } from '@jantrik/db';
 import type { ZkDeviceSimulator } from '@jantrik/device-sim';
 import {
+  DEVICE_SUBMISSION_ID,
   dateToDb,
   isoWeekday,
   type AttendanceSettings,
@@ -973,7 +974,40 @@ describe('device registers', () => {
         ['LEAVE', 'MANUAL'],
         ['LATE', 'DEVICE'],
       ]);
-      expect(await registerOf(s)).toMatchObject({ version: 3, updatedById: null });
+      // The device changed it last, and the teacher's edit keeps their name on the register.
+      expect(await registerOf(s)).toMatchObject({ version: 3, updatedById: teacher });
+      expect(sectionOf(await todayReport(s.admin), s.sectionA).register).toMatchObject({
+        source: 'DEVICE',
+        updatedByDevice: false,
+        updatedBy: { id: teacher },
+      });
+      // The take screen names the device as the last change, so a stale draft's conflict names
+      // the device, not the teacher (whose client would otherwise take it for its own submit).
+      const deviceLast = { version: 3, updatedByDevice: true, updatedBy: { id: '', name: '' } };
+      expect((await sheet(s.teacher, s.sectionA)).session).toMatchObject(deviceLast);
+      const stale = await submit(s.teacher, s, 2, ['PRESENT', 'LEAVE', 'ABSENT']).expect(409);
+      expect(stale.body).toMatchObject({ code: 'VERSION_CONFLICT', session: deviceLast });
+      // Saving it unchanged keeps the device as the last change; a client never sends its id.
+      await submit(s.teacher, s, 3, ['PRESENT', 'LEAVE', 'LATE']).expect(200);
+      expect((await sheet(s.teacher, s.sectionA)).session).toMatchObject(deviceLast);
+      await http(h)
+        .put('/attendance/sessions')
+        .set(bearer(s.teacher))
+        .send({
+          sectionId: s.sectionA,
+          date: DAY,
+          baseVersion: 3,
+          submissionId: DEVICE_SUBMISSION_ID,
+          records: s.a.map((st) => ({ studentId: st.id, status: 'ABSENT' })),
+        })
+        .expect(400);
+      // A teacher's next change names them again.
+      await submit(s.teacher, s, 3, ['LATE', 'LEAVE', 'LATE']).expect(200);
+      expect((await sheet(s.teacher, s.sectionA)).session).toMatchObject({
+        version: 4,
+        updatedByDevice: false,
+        updatedBy: { id: teacher },
+      });
 
       await new Promise((r) => setTimeout(r, 300));
       expect(await absentSms(s.tenantId)).toEqual([[s.a[2]!.id, `absent:${s.a[2]!.id}:${DAY}`]]);
