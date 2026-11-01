@@ -142,6 +142,10 @@ are left out.
     process-punches job's skip is tested).
   - The arrival rule is written twice (the cutoff and the recompute): one shared rule; they agree
     today.
+  - Entry and exit SMS have no "today" check: `sendsSms` compares when a punch arrived with when
+    it was made, not when it is processed, so a leftover punch processed much later (by the minute
+    sweep, or after ATTENDANCE is switched back on) can still send a stale "entered at" SMS. The
+    window is small; check the processing time against the punch's day or the real-time window.
 - **Receiver and database**
   - A RESTRICTIVE twin of the permissive `ingest_delete` policy on `device_source_ips` in the next
     migration: unreachable today (no tenant context on the ingest login, and the function's DELETE
@@ -156,6 +160,10 @@ are left out.
   - Some INSERT grants are table-wide (the app could supply its own `device_commands.seq`), and the
     unique-violation tests match the word "unique" rather than the constraint's name: hardening, no
     exploit path found.
+  - A DEVICE staff day has no CHECK that `reason IS NULL`: the code never writes one (only manual
+    days carry a reason).
+  - `device_punches.reviewed_by_id` can be set without `review` (no CHECK pairs them; only
+    `review` and `reviewed_at` are paired): the app always writes the three together.
   - `parseDeviceCmdResults` accepts unbounded digit runs (Infinity, beyond 2^53): the receiver
     already keeps only safe integers in int32 range.
   - `wallClockToUtc` checks only the shape (2026-02-30 25:00:00 normalises silently): its inputs
@@ -186,6 +194,10 @@ are left out.
   - Refuse close from device for a section with no active student: reachable only by a direct API
     call, and the register it writes (all ABSENT, no SMS) is accurate.
   - A student inactive now shows no arrival on a past date's take screen.
+  - The today page reads "taken from the device; changed by <teacher>, <time>" where the time is
+    the register's last change, which can be the device's later change of a record (the teacher
+    stays named since the final fixes). Drop the time from that wording or label it as the last
+    change.
 - **Web, SMS and print**
   - The SMS student name is cut by code point, not grapheme (Bangla can end on a hasant): only for
     names too long for two segments.
@@ -196,8 +208,12 @@ are left out.
   - Staff month print: the weekday line (5.5 pt grey) is hard to read, দেআ fills its column, and
     the name button keeps its touch height in print (more pages).
 - **Tests, seed and tooling**
-  - Coverage gaps: shared rules (mapped-person collisions, a staff month row on an off day, the SMS
-    cut keeping the longest name), ingest error paths (`INGEST_BAD_RESULTS`, a non-object row, a
+  - Coverage gaps: the database tests never exercise the three grace-range CHECKs on
+    `attendance_settings` (device, staff late, staff early), and the receiver login's denial list
+    has no case for INSERT into `attendance_devices`, `device_commands` or `device_people`, or for
+    DELETE on `device_commands` or `device_source_ips` (the catalog shows it holds no grants); shared
+    rules (mapped-person collisions, a staff month row on an off day, the SMS cut keeping the
+    longest name), ingest error paths (`INGEST_BAD_RESULTS`, a non-object row, a
     NULL or negative `p_max`), retention (an old DONE superseded only by a young DONE), the
     simulator (per-record-type assertion, `poll()` silent on a non-200, the CLI's 50-line batches).
   - The race test's `pg_locks` poll matches any waiting `jantrik_ingest_app` session in the

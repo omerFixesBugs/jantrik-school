@@ -375,6 +375,13 @@ On the devices screen and the owner's and admin's dashboard, for active devices
   (409 on PUT, an error row in the CSV, a conflict in the defaults) until every such device
   confirms removing it. Otherwise the old person's finger would punch as the new holder. Giving
   the ID back to that same person is fine (no re-enrolment needed).
+- **Known limit: a device switched off, then on again.** The "still on a device" rule reads
+  active devices only. If a device is switched off while an ID it holds is given to someone else
+  (the other devices confirm removing it), then switched on again, it still has the old person's
+  fingerprints under that ID, and their finger punches as the new holder (sending people only
+  changes the name). Before switching a device back on, check whether an ID was given to someone
+  else meanwhile; if so, delete that user on the device itself and enrol the new holder again. The
+  fix, counting inactive devices too, is in [backlog.md](backlog.md).
 - **Changing someone's ID** asks for re-enrolment: their fingerprints stay on the device under
   the old ID. Punches are matched to people by their ID now, so punches made under an old ID no
   longer count for anyone.
