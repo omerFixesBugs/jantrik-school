@@ -163,9 +163,13 @@ screen. Devices that support HTTPS can use a TLS proxy in front of the receiver'
   tenant or device id: each takes the serial number, finds and locks the device itself, and
   scopes every query by that device. Details: [database.md](database.md) → Devices.
 - **Startup check.** The receiver refuses to start unless its login can run `ingest_resolve` and
-  cannot read `students` or `device_punches` (so `DATABASE_URL` pasted by mistake fails). A
-  database not reachable yet is asked again for about 30 s, then the start fails. In development
-  that stops the API too.
+  cannot read `students` or `device_punches` (so `DATABASE_URL` pasted by mistake fails): a check
+  that answers otherwise stops the start at once. A check that fails (the database not reachable
+  yet, or not migrated yet, e.g. 42501: the e2e run starts the API before its global setup
+  migrates the e2e database) is asked again after 1, 2, 4 and 8 s, then every 15 s, about 3
+  minutes in all, with one log line each naming the error's codes; still failing, the start
+  fails. Inside the API (development, e2e) the API is already listening meanwhile and the receiver
+  comes up once the check passes; a receiver that finally refuses stops the API too.
 - **Code scan.** [`ingest-isolation.spec.ts`](../apps/api/src/ingest/ingest-isolation.spec.ts)
   fails if receiver code imports the API's database access, or if anything outside the receiver
   provides its login; the receiver's e2e test checks that the running receiver has none of the

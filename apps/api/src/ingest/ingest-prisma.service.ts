@@ -3,14 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { createPrismaClient, type PrismaClient } from '@jantrik/db';
 import type { IngestEnv } from '../config/ingest-env.js';
 
-/** Driver errors that mean "not reachable (yet)": the start-up check tries again on these only. */
-const UNREACHABLE = new Set([
-  'DatabaseNotReachable',
-  'SocketTimeout',
-  'ConnectionClosed',
-  'TooManyConnections',
-]);
-
 /**
  * The device receiver's own database login (DATABASE_INGEST_URL, role jantrik_ingest_app). It may
  * run the four ingest_* functions and read no table, so a device request can never reach an
@@ -22,8 +14,12 @@ const UNREACHABLE = new Set([
 export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('DeviceReceiver');
   readonly client: PrismaClient;
-  /** Waits between start-up checks while the database is not reachable (about 30 s in all). */
-  retryDelaysMs = [1000, 2000, 4000, 8000, 15000];
+  /**
+   * Waits between start-up checks while the check itself fails, about 3 minutes in all: the
+   * database may not be reachable yet, or not migrated yet (the e2e run starts the API before its
+   * global setup migrates the database).
+   */
+  retryDelaysMs = [1000, 2000, 4000, 8000, ...Array<number>(11).fill(15000)];
 
   constructor(config: ConfigService<IngestEnv, true>) {
     const url = config.get('DATABASE_INGEST_URL', { infer: true });
@@ -38,8 +34,11 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Starts only when the check passes: the login runs ingest_resolve and reads neither students
-   * nor punches (e.g. not DATABASE_URL pasted by mistake). A database that is not reachable yet is
-   * asked again a few times; any other failure, or still no answer, stops the start.
+   * nor punches (e.g. not DATABASE_URL pasted by mistake). A check that answers otherwise stops the
+   * start at once. A check that fails (no connection, or an error such as 42501 before the
+   * migrations ran) is asked again with backoff, one log line each with the error's codes, and
+   * still failing after the last wait stops the start. When the receiver runs inside the API, the
+   * API is already listening meanwhile; the receiver comes up when the check passes.
    */
   async onModuleInit(): Promise<void> {
     for (let attempt = 0; ; attempt++) {
@@ -56,19 +55,25 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
       } catch (error) {
         const raw = databaseError(error)?.kind;
         const kind = typeof raw === 'string' && /^[A-Za-z]{1,60}$/.test(raw) ? raw : undefined;
+        const label = [errorLabel(error), kind].filter(Boolean).join(' ');
         const delay = this.retryDelaysMs[attempt];
-        if (kind === undefined || !UNREACHABLE.has(kind) || delay === undefined) {
+        if (delay === undefined) {
           throw new Error(
             `Could not check the device receiver's database login (DATABASE_INGEST_URL): ` +
-              `${[errorLabel(error), kind].filter(Boolean).join(' ')}. ` +
-              'The receiver does not start unchecked.',
+              `${label}. The receiver does not start unchecked.`,
           );
         }
-        this.logger.warn(`Database not reachable (${kind}); checking again in ${delay / 1000} s`);
+        this.logger.warn(
+          `Start-up check failed (${label}): the database may not be ready yet; ` +
+            `checking again in ${delay / 1000} s`,
+        );
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
-      if (row?.resolve === true && row.students === false && row.punches === false) return;
+      if (row?.resolve === true && row.students === false && row.punches === false) {
+        if (attempt > 0) this.logger.log('Start-up check passed');
+        return;
+      }
       throw new Error(
         'DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): it runs ' +
           'the ingest_* functions and reads no table. See docs/database.md.',
