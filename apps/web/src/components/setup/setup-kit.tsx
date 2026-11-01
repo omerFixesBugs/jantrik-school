@@ -283,6 +283,7 @@ export function FormDialog({
   onSubmit,
   children,
   testId,
+  noValidate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -293,6 +294,8 @@ export function FormDialog({
   onSubmit: () => void;
   children: ReactNode;
   testId?: string;
+  /** The form shows its own messages: the browser's bubble would stop the submit first. */
+  noValidate?: boolean;
 }) {
   const t = useTranslations('setup');
   return (
@@ -307,6 +310,7 @@ export function FormDialog({
             e.preventDefault();
             onSubmit();
           }}
+          noValidate={noValidate}
         >
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>

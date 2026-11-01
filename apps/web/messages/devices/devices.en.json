@@ -149,6 +149,7 @@
       "addresses": "Internet addresses",
       "edit": "Edit",
       "switchOff": "Switch off",
+      "switchOffConfirm": "Switch off",
       "switchOn": "Switch on again",
       "switchOffTitle": "Switch off {name}?",
       "switchOffBody": "While switched off, its punches are not taken and it shows no alerts. Earlier punches stay; you can switch it on again later.",

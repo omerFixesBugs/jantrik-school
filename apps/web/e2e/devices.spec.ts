@@ -385,7 +385,7 @@ test('the device goes quiet: offline two minutes after its last call, then switc
   // Switched off, after a confirm: the specs after this one see only the demo's devices on.
   await row.getByTestId('device-actions').click();
   await page.getByRole('menuitem', { name: 'বন্ধ করুন' }).click();
-  await page.getByTestId('confirm-dialog').getByRole('button', { name: 'বন্ধ করুন' }).click();
+  await page.getByTestId('confirm-dialog').getByRole('button', { name: 'মেশিন বন্ধ করুন' }).click();
   await expect(page.getByText(`${DEVICE_NAME} বন্ধ করা হলো`)).toBeVisible();
   await expect(row).toContainText('বন্ধ');
 });

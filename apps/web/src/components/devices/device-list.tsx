@@ -290,7 +290,7 @@ export function DeviceListView({ devices, ...actions }: { devices: DeviceView[] 
         onOpenChange={(open) => !open && setSwitchingOff(null)}
         title={t('switchOffTitle', { name: switchingOff?.name ?? '' })}
         body={t('switchOffBody')}
-        confirmLabel={t('switchOff')}
+        confirmLabel={t('switchOffConfirm')}
         pending={toggle.isPending}
         onConfirm={() => switchingOff && toggle.mutate(switchingOff)}
       />

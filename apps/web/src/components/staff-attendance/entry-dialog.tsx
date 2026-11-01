@@ -128,6 +128,7 @@ export function EntryDialog({
         if (Object.keys(entryProblems(form)).length === 0) save.mutate();
       }}
       testId="staff-entry-dialog"
+      noValidate
     >
       <div
         className="bg-canvas flex flex-col gap-1.5 rounded-lg border p-3 text-sm"
