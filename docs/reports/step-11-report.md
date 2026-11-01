@@ -31,7 +31,7 @@ for the first real device is in [devices.md](../devices.md) → Verify on the re
   receiver's login).
 - 1 new package (`@jantrik/device-sim`), 3 new screens (devices, people, staff), changes to the
   today page, the take screen, the student report, the settings and the dashboard.
-- 49 commits, 202 files, about 34 700 lines added (most of it tests and docs).
+- 58 commits, 204 files, about 35 600 lines added (most of it tests and docs).
 
 ### Commits
 
@@ -299,7 +299,10 @@ run the full suite):
 - `layout.spec.ts` and `numerals.spec.ts` (1 each): the four new screens at 360/390 px and their
   Bangla digits. `themes.spec.ts` covers them in dark (no new test).
 - 83 tests in 24 files in all.
-- **CI: pending — see the PR checks.** The first two runs found three problems, all fixed:
+- **CI: green** on run 3 (`12ee35c`, PR and push runs alike). "Lint, typecheck, test, build":
+  API 574, shared 565, db 348, web 71 and device-sim 17 tests passed. "End-to-end (Playwright)":
+  83 passed in 8.5 minutes, no retries, no flaky test; this was also the first full run of the new
+  demo seed. The first two runs found three problems, all fixed:
   - Run 1: the API exited at start-up. Playwright starts its web servers before its global setup
     migrates `jantrik_e2e`, so the receiver's start-up check met an empty database and refused.
     The check now retries a failing query for about 3 minutes (`6412892`).
@@ -420,7 +423,7 @@ and the ingest functions at several commits.
 
 Verdict: **ready to merge with fixes**. No Critical finding. Lock order, tenant isolation, the
 biometric rule and every SMS path were found to hold across tasks. Its one deferred MUST FIX item
-was the first end-to-end run of the new seed, which CI's e2e job now covers (section 8).
+was the first end-to-end run of the new seed, which CI's e2e job has now done, green (section 5).
 
 The fix wave (`7b2beaa..aad78d4`):
 
@@ -638,11 +641,21 @@ what was decided and what it costs if wrong. The durable ones are decisions-pend
   teacher retrying an old submission after a device change gets a conflict naming the device
   instead of a replay (rare).
 
+**CI:**
+
+- The receiver's start-up check retries a failing query (not only an unreachable database) for
+  about 3 minutes, then refuses; a wrong answer still refuses at once. Playwright's start order
+  (web servers before global setup) cannot be changed in its config, so the check waits instead.
+  Cost: a receiver pointed at a broken database takes about 3 minutes to fail, not 30 s.
+- The two Playwright failures were fixed in the app, not by loosening the specs: `FormDialog` got
+  an opt-in `noValidate` (other dialogs keep the browser's checks), and the switch-off confirm got
+  its own label. Cost: none.
+
 ## 8. What was NOT done, still open
 
-- **Local `pnpm e2e`:** not run, as you asked. GitHub CI runs the full Playwright suite on the PR,
-  and that is also the first end-to-end run of the new demo seed on `jantrik_e2e`. Result: see
-  section 5.
+- **Local `pnpm e2e`:** not run, as you asked. GitHub CI ran the full Playwright suite on the PR
+  (83 passed), which was also the first end-to-end run of the new demo seed on `jantrik_e2e`.
+  Section 5 has the runs.
 - **The manual walkthrough** (plan Verification 3) after a reseed: not done. It needs your approval
   for `pnpm db:reset`. Section 3 has the steps.
 - **The 3-second check** (plan Verification 4: `/attendance/devices` at 390 px, 4× CPU, slow 4G,
@@ -658,7 +671,8 @@ what was decided and what it costs if wrong. The durable ones are decisions-pend
   attendance and staff screens, bn at 1366 and 390 px). They are in the git-ignored
   `.superpowers/sdd/step-11/shots/`, not committed. The fix wave's setup-guide change (M3) had no
   screenshot; the Playwright specs check its text.
-- **The full API and web suites after the fix wave:** not run locally; CI runs them.
+- **The full API and web suites after the fix wave:** not run locally; CI ran them, all green
+  (section 5).
 
 ## 9. What you need to do
 
