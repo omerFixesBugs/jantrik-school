@@ -1,18 +1,28 @@
 import type { DeviceAddress } from '@jantrik/shared';
 
+/** What the setup guide shows about where the device called from. */
+export type GuideAddresses =
+  { kind: 'TRUSTED'; address: DeviceAddress } | { kind: 'UNTRUSTED'; addresses: DeviceAddress[] };
+
+const time = (iso: string) => Date.parse(iso);
+
 /**
- * The address the setup guide shows and offers to trust or revoke: the trusted one the device
- * called from last, or, while none is trusted, the untrusted one it called from last, with its
- * state. Never `DeviceView.lastIp`: that is the latest caller of any kind, and anyone who knows the
- * serial number can be it, so a guide built on it could ask the admin to trust an outsider while
- * the real device's address is trusted already.
+ * The setup guide's addresses, from the device's address list. When one is trusted: the trusted
+ * address seen last (the guide offers to revoke it). While none is: every untrusted address, in the
+ * order they first called, so the admin picks the institute's own. The guide never picks one for
+ * them: anyone who knows the serial number can call, and the address seen last is only the latest
+ * caller (`DeviceView.lastIp`). Null before the device has called.
  */
-export function guideAddress(addresses: readonly DeviceAddress[]): DeviceAddress | null {
-  const latest = (list: readonly DeviceAddress[]) =>
-    list.reduce<DeviceAddress | null>(
-      (best, a) =>
-        best === null || Date.parse(a.lastSeenAt) > Date.parse(best.lastSeenAt) ? a : best,
-      null,
-    );
-  return latest(addresses.filter((a) => a.trusted)) ?? latest(addresses);
+export function guideAddresses(addresses: readonly DeviceAddress[]): GuideAddresses | null {
+  const trusted = addresses
+    .filter((a) => a.trusted)
+    .sort((a, b) => time(b.lastSeenAt) - time(a.lastSeenAt))[0];
+  if (trusted) return { kind: 'TRUSTED', address: trusted };
+  if (addresses.length === 0) return null;
+  return {
+    kind: 'UNTRUSTED',
+    addresses: [...addresses].sort(
+      (a, b) => time(a.firstSeenAt) - time(b.firstSeenAt) || a.ip.localeCompare(b.ip),
+    ),
+  };
 }

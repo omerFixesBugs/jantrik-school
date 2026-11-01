@@ -201,9 +201,9 @@
       "lastSeen": "Last call {when}",
       "fromAddress": "The device connected from <v>{ip}</v>. Is this your institute’s internet connection?",
       "notOursHint": "If not, stop trusting it: no commands go to that address, and punches from it send no entry SMS.",
-      "trustHint": "Trust it if it is your institute’s; until then people can’t be sent to the device.",
       "notOurs": "No, it isn’t ours",
-      "ours": "Yes, trust it"
+      "untrustedIntro": "No address is trusted yet. The device called from the addresses below: trust only the one that is your institute’s internet connection (anyone who knows the serial number can call from anywhere).",
+      "untrustedHint": "Until one is trusted, people can’t be sent to the device."
     },
     "feed": {
       "title": "Live punches",
