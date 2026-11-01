@@ -6,8 +6,11 @@ import { ingestReceiverFields, positiveInt } from './ingest-env.js';
 const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_ENV: string }) =>
   env.INGEST_IN_PROCESS ?? env.NODE_ENV !== 'production';
 
-/** Hosts a device can never dial: the setup guide must not tell a school to use them. */
-const LOOPBACK_HOST = /^(localhost|127(\.\d{1,3}){3}|::1|\[::1\])$/i;
+/**
+ * Hosts a device can never dial (loopback, and the "any address" a server listens on): the setup
+ * guide must not tell a school to use them.
+ */
+const UNDIALABLE_HOST = /^(localhost|127(\.\d{1,3}){3}|::1|\[::1\]|0\.0\.0\.0|::|\[::\])$/i;
 
 /**
  * Environment variables the API needs. Validated once at startup. The stand-alone device receiver
@@ -135,13 +138,13 @@ export const envSchema = z
     }
     if (
       env.NODE_ENV === 'production' &&
-      (!env.INGEST_PUBLIC_HOST || LOOPBACK_HOST.test(env.INGEST_PUBLIC_HOST))
+      (!env.INGEST_PUBLIC_HOST || UNDIALABLE_HOST.test(env.INGEST_PUBLIC_HOST))
     ) {
       ctx.addIssue({
         code: 'custom',
         path: ['INGEST_PUBLIC_HOST'],
         message:
-          'INGEST_PUBLIC_HOST is required in production: the address or domain name devices dial (not localhost)',
+          'INGEST_PUBLIC_HOST is required in production: the address or domain name devices dial (not localhost or 0.0.0.0)',
       });
     }
     if (!env.COOKIE_SECURE && env.NODE_ENV === 'production') {

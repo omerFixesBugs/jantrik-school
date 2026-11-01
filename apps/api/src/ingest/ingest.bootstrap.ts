@@ -86,7 +86,11 @@ export async function createIngestApp(): Promise<NestExpressApplication> {
   return app;
 }
 
-/** Creates the receiver and listens on INGEST_PORT (ingest-main.ts, or main.ts in development). */
+/**
+ * Creates the receiver and listens on INGEST_PORT (ingest-main.ts, or api.bootstrap.ts in
+ * development). Importing this file validates the receiver's environment: only import it where the
+ * receiver runs.
+ */
 export async function startIngestApp(): Promise<NestExpressApplication> {
   const app = await createIngestApp();
   const port = app

@@ -149,9 +149,19 @@ describe('env: device receiver', () => {
     expect(envSchema.safeParse({ ...prod, INGEST_IN_PROCESS: 'true' }).success).toBe(false);
   });
 
-  it('the public host (the setup guide) must be set in production, and not to localhost', () => {
+  it('the public host (the setup guide) must be set in production, to an address devices can dial', () => {
     const prod = { ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'k'.repeat(40) };
-    for (const host of [undefined, 'localhost', 'LOCALHOST', '127.0.0.1', '::1', '[::1]']) {
+    const undialable = [
+      'localhost',
+      'LOCALHOST',
+      '127.0.0.1',
+      '::1',
+      '[::1]',
+      '0.0.0.0',
+      '::',
+      '[::]',
+    ];
+    for (const host of [undefined, ...undialable]) {
       const result = envSchema.safeParse({ ...prod, INGEST_PUBLIC_HOST: host });
       expect(result.success).toBe(false);
       expect(result.error?.issues.map((i) => i.path.join('.'))).toEqual(['INGEST_PUBLIC_HOST']);

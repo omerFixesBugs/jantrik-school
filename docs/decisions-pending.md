@@ -244,7 +244,7 @@ Recorded during step 8; to be done when the production setup is built.
      in the firewall. Devices that support HTTPS can go through a TLS proxy in front of it
      (optional). Set `INGEST_PUBLIC_HOST` and `INGEST_PUBLIC_PORT` **for the API** to what
      devices dial (the setup guide shows them): a fixed IP address or a domain name. The API
-     refuses to start in production without `INGEST_PUBLIC_HOST`, or with it set to localhost.
+     refuses to start in production without `INGEST_PUBLIC_HOST`, or with localhost or 0.0.0.0.
    - **Database:** create `jantrik_ingest` (NOLOGIN) and `jantrik_ingest_app` (LOGIN, a strong
      `DB_INGEST_PASSWORD`) as in `docker/postgres/init/01-roles.sh`, **before the first
      `prisma migrate deploy`** (the migrations grant to them), and give the receiver

@@ -26,9 +26,9 @@ export const ingestReceiverFields = {
 
 /**
  * Environment variables of the device receiver (IngestAppModule: `ingest-main.ts` in production,
- * or started by `main.ts` in development). Only what it uses: it is open to the internet without
- * a login, so it never needs the API's logins or secrets (DATABASE_URL, the JWT secret, the OTP
- * pepper, the platform's). Validated once at its start.
+ * or started by `api.bootstrap.ts` in development). Only what it uses: it is open to the internet
+ * without a login, so it never needs the API's logins or secrets (DATABASE_URL, the JWT secret,
+ * the OTP pepper, the platform's). Validated as soon as IngestAppModule is imported.
  */
 export const ingestEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),

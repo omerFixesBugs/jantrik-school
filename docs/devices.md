@@ -38,8 +38,10 @@ API devices worker ── TenantJobRunner.run(tenantId) ◀───────
 
 - **The receiver** (protocol, limits, startup check):
   [`apps/api/src/ingest`](../apps/api/src/ingest), started by
-  [`ingest-main.ts`](../apps/api/src/ingest-main.ts) in production or by
-  [`main.ts`](../apps/api/src/main.ts) in development.
+  [`ingest-main.ts`](../apps/api/src/ingest-main.ts) in production or by the API's
+  [`api.bootstrap.ts`](../apps/api/src/api.bootstrap.ts) in development. The API loads the
+  receiver's code only when it runs it (`INGEST_IN_PROCESS`): importing it validates the
+  receiver's environment, which a production API does not have.
 - **Devices, the punch feed, reviews, alerts, device IDs, processing, the cutoff, retention:**
   [`apps/api/src/devices`](../apps/api/src/devices). Arrivals from punches (take screen, today
   report, cutoff):
@@ -154,7 +156,7 @@ screen. Devices that support HTTPS can use a TLS proxy in front of the receiver'
   in the receiver finds no login that can choose an institute and no key that signs sessions
   ([decisions-pending.md](decisions-pending.md) → Deployment requirements). The setup guide's
   `INGEST_PUBLIC_HOST` and `INGEST_PUBLIC_PORT` belong to the API, which refuses to start in
-  production without the host (or with localhost).
+  production without the host (or with localhost or 0.0.0.0).
 - **Own login.** `DATABASE_INGEST_URL` logs in as `jantrik_ingest_app`, which can read no table
   and run only four `SECURITY DEFINER` functions owned by `jantrik_ingest`: `ingest_resolve`,
   `ingest_store_punches`, `ingest_take_commands` and `ingest_command_results`. None takes a
@@ -652,18 +654,18 @@ pnpm --filter @jantrik/api exec vitest run ingest devices- staff-attendance
 - The API specs share `jantrik_test` and the BullMQ prefix `jantrik-test`: run them from one
   terminal at a time.
 
-| Spec (`apps/api/test`)           | Covers                                                                                                                  |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `devices-ingest.e2e-spec.ts`     | the protocol, refusals, limits, addresses and trust, the per-minute cap, clock correction, commands, the biometric test |
-| `devices-ingest-env.e2e-spec.ts` | the stand-alone receiver starts in production from its own variables only, and refuses without `DATABASE_INGEST_URL`    |
-| `devices-api.e2e-spec.ts`        | devices, sync, the feed, reviews, trust and revoke, alerts, roles                                                       |
-| `devices-people.e2e-spec.ts`     | IDs, defaults, collisions, CSV, sync states, IDs still on a device, removal                                             |
-| `devices-processing.e2e-spec.ts` | outcomes, entry and exit SMS, the DEVICE register, staff days, the minute sweep                                         |
-| `devices-review.e2e-spec.ts`     | what accept, reject and OK do                                                                                           |
-| `devices-attendance.e2e-spec.ts` | the cutoff, hold-backs, close from device, races with a teacher, BUSY, the take screen                                  |
-| `devices-retention.e2e-spec.ts`  | what retention deletes and keeps                                                                                        |
-| `devices-simulator.e2e-spec.ts`  | the simulator against the receiver, end to end, to the register and the SMS                                             |
-| `staff-attendance.e2e-spec.ts`   | staff days, manual entries, the tracked switch, the day view, the month and its CSVs                                    |
+| Spec (`apps/api/test`)           | Covers                                                                                                                                                                                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `devices-ingest.e2e-spec.ts`     | the protocol, refusals, limits, addresses and trust, the per-minute cap, clock correction, commands, the biometric test                                                                     |
+| `devices-ingest-env.e2e-spec.ts` | the stand-alone receiver starts in production from its own variables only and refuses (exits) without `DATABASE_INGEST_URL`; the API starts without it when the receiver is its own process |
+| `devices-api.e2e-spec.ts`        | devices, sync, the feed, reviews, trust and revoke, alerts, roles                                                                                                                           |
+| `devices-people.e2e-spec.ts`     | IDs, defaults, collisions, CSV, sync states, IDs still on a device, removal                                                                                                                 |
+| `devices-processing.e2e-spec.ts` | outcomes, entry and exit SMS, the DEVICE register, staff days, the minute sweep                                                                                                             |
+| `devices-review.e2e-spec.ts`     | what accept, reject and OK do                                                                                                                                                               |
+| `devices-attendance.e2e-spec.ts` | the cutoff, hold-backs, close from device, races with a teacher, BUSY, the take screen                                                                                                      |
+| `devices-retention.e2e-spec.ts`  | what retention deletes and keeps                                                                                                                                                            |
+| `devices-simulator.e2e-spec.ts`  | the simulator against the receiver, end to end, to the register and the SMS                                                                                                                 |
+| `staff-attendance.e2e-spec.ts`   | staff days, manual entries, the tracked switch, the day view, the month and its CSVs                                                                                                        |
 
 ## Verify on the real device
 
