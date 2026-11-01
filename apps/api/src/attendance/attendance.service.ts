@@ -146,6 +146,9 @@ export class AttendanceService {
     );
     const suggest =
       session === null && tenant.settings.mode === 'DAILY' && tenant.settings.deviceAutoMark;
+    // Only ACTIVE students are on the devices: one not active is suggested nothing, so the screen
+    // starts them as a register taken by hand does.
+    const active = suggest ? await this.activeIds(roster.map((st) => st.id)) : new Set<string>();
     return {
       today: tenant.today,
       date,
@@ -160,7 +163,7 @@ export class AttendanceService {
         return {
           ...st,
           arrival: arrival && { at: arrival.at.toISOString(), status: arrival.status },
-          suggested: suggest ? (arrival?.status ?? 'ABSENT') : null,
+          suggested: suggest ? (arrival?.status ?? (active.has(st.id) ? 'ABSENT' : null)) : null,
         };
       }),
       session,
@@ -532,6 +535,15 @@ export class AttendanceService {
       updatedByDevice: byDevice,
       records: s.records,
     };
+  }
+
+  /** Those of these students who are ACTIVE. */
+  private async activeIds(studentIds: string[]): Promise<Set<string>> {
+    const rows = await this.db.tx.student.findMany({
+      where: { id: { in: studentIds }, status: 'ACTIVE', deletedAt: null },
+      select: { id: true },
+    });
+    return new Set(rows.map((r) => r.id));
   }
 
   private async isReplay(sessionId: string, submissionId: string): Promise<boolean> {

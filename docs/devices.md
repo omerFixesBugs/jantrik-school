@@ -410,7 +410,8 @@ hand.
   shows "punched in 28/35" per section (active students) with the late count and the cutoff. The
   take screen shows each active student's arrival time (late marked) in any mode, and with
   auto-mark on a register not taken yet starts from the device's view (arrived: PRESENT or LATE,
-  the others ABSENT).
+  the other active students ABSENT; a student not active gets no suggestion and starts as in a
+  register taken by hand, PRESENT).
 - **The cutoff** is per shift: its start + cutoff minutes (setting, default 60, 15–300). Every
   minute `devices-tick` looks at the current-year sections with no register today whose cutoff
   has passed, each in its own transaction, and writes the register (`closeDecision`) unless it
@@ -430,8 +431,9 @@ hand.
 - **The register written** has `source = DEVICE` and no taker: every student on the roster,
   arrived PRESENT or LATE, the others (inactive ones included) ABSENT, each record DEVICE; audited
   as `attendance_session`. Then the absent SMS for the ABSENT students who are ACTIVE, through the
-  same service as a submit (absent SMS setting, dedupe, cap, correction delay, relevance check). A
-  teacher's own submit still follows the usual absent SMS rule for everyone on it.
+  same service as a submit (absent SMS setting, dedupe, cap, correction delay, relevance check).
+  That service sends absent SMS only to ACTIVE students (not deleted) on every path, so a
+  teacher's submit marking an inactive student absent sends their guardian nothing either.
 - **Close from device:** an owner or admin can write a held-back section's register from the
   today page after a confirm that shows the counts, the students not on a device and the SMS rule
   (`POST /attendance/sections/:id/close-from-device`). The safety checks and the hour do not

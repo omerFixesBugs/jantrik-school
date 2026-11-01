@@ -71,7 +71,8 @@ period-0 register can be written from punches. Full rules: [devices.md](devices.
   gets no device view and no register from the device (take it by hand).
 - **Before the cutoff** nothing is written. The take screen shows each active student's punch-in
   time (late marked; in any mode) and, with auto-mark on, starts an untaken register from the
-  device's view (arrived PRESENT or LATE, the others ABSENT), saying so. The today page shows the
+  device's view (arrived PRESENT or LATE, the other active students ABSENT, one not active as by
+  hand), saying so. The today page shows the
   arrivals per section ("punched in 28/35", late count, cutoff).
 - **At the cutoff** (each shift's start + `device_cutoff_minutes`, default 60) the minute job
   writes the register: `source = DEVICE`, **no taker** (`taken_by_id` and `updated_by_id` NULL;
@@ -104,10 +105,11 @@ period-0 register can be written from punches. Full rules: [devices.md](devices.
 ## Absent SMS
 
 Off by default (it costs the institute money). When on, after a submit **commits**, one SMS per
-absent student per day goes to the primary guardian, only for today's registers. A register
-written from the device (at the cutoff, or by "take from the device") queues them the same way
-(`AbsentSmsService`), but only for ACTIVE students: an inactive student still enrolled is written
-ABSENT and gets no SMS from the device. See
+absent student per day goes to the primary guardian, only for today's registers, and only for
+ACTIVE students (not deleted): a student transferred, dropped out or otherwise inactive but still
+enrolled gets none, whoever marks them absent. A register written from the device (at the
+cutoff, or by "take from the device") queues them the same way (`AbsentSmsService`); an inactive
+student still enrolled is written ABSENT there. See
 [auth.md](auth.md) → `TenantSmsService` for dedupe (`absent:<student>:<date>`), the daily cap
 (`HELD_OVER_LIMIT`) and the correction delay (`absent_sms_delay_minutes`, default 10): just
 before sending, the worker checks the student is still absent, otherwise the SMS is `CANCELLED`.

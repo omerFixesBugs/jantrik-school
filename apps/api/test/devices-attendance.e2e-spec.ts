@@ -792,10 +792,11 @@ describe('device registers', () => {
         cutoffAt: '09:00',
         state: 'BEFORE_CUTOFF',
       });
+      // The take screen gives the inactive student no arrival and no suggestion (as by hand).
       const taking = await sheet(s.teacher, s.sectionA);
       expect(taking.students.find((st) => st.id === inactive[0]!.id)).toMatchObject({
         arrival: null,
-        suggested: 'ABSENT',
+        suggested: null,
       });
 
       // Counted over the whole roster (6 of 10 missing) it would be held back; over the ACTIVE
@@ -925,6 +926,41 @@ describe('device registers', () => {
         updatedBy: { id: '', name: '' },
       });
       expect(after.session!.records.map((r) => r.source)).toEqual(['DEVICE', 'DEVICE', 'DEVICE']);
+    });
+
+    it('the device suggests nothing for a student not active, as a register by hand; saving the suggestion sends them no absent SMS', async () => {
+      const s = await setup();
+      const gone = await enrol(s, { inactive: true });
+      await punch(s, '07:51:00', [['101', '07:50:00']]);
+      clock.set(at('08:30:00'));
+      const view = await sheet(s.teacher, s.sectionA);
+      expect(view.students.map((st) => [st.id, st.suggested])).toEqual([
+        [s.a[0]!.id, 'PRESENT'],
+        [s.a[1]!.id, 'ABSENT'],
+        [s.a[2]!.id, 'ABSENT'],
+        [gone.id, null],
+      ]);
+      // Even marked absent by the teacher, the inactive student's guardian gets nothing.
+      await http(h)
+        .put('/attendance/sessions')
+        .set(bearer(s.teacher))
+        .send({
+          sectionId: s.sectionA,
+          date: DAY,
+          baseVersion: 0,
+          submissionId: randomUUID(),
+          records: view.students.map((st) => ({
+            studentId: st.id,
+            status: st.suggested ?? 'ABSENT',
+          })),
+        })
+        .expect(200);
+      await waitForSms(s.tenantId, 'SENT', 2);
+      expect((await absentSms(s.tenantId)).map(([id]) => id).sort()).toEqual(
+        [s.a[1]!.id, s.a[2]!.id].sort(),
+      );
+      await new Promise((r) => setTimeout(r, 300));
+      expect(h.sms.sentTo(gone.phone)).toEqual([]);
     });
 
     it('a teacher fixing one record of a DEVICE register makes it MANUAL: the others stay DEVICE, a later punch changes nothing, no second absent SMS', async () => {

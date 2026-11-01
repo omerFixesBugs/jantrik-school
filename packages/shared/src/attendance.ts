@@ -284,7 +284,9 @@ export interface SheetStudent extends RosterStudent {
   arrival: StudentArrival | null;
   /**
    * Only while no register exists, in DAILY mode with device auto-mark on: the device's view to
-   * start the register from (arrived: PRESENT or LATE; others ABSENT). Null otherwise.
+   * start the register from (arrived: PRESENT or LATE; other ACTIVE students ABSENT). Null
+   * otherwise, and for a student not ACTIVE (not on the devices): the screen starts them as a
+   * register taken by hand does.
    */
   suggested: AttendanceStatus | null;
 }

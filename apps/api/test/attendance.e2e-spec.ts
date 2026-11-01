@@ -391,6 +391,22 @@ describe('attendance', () => {
       add.mockRestore();
     });
 
+    it('only ACTIVE students get one: a teacher marking a transferred student absent sends their guardian nothing', async () => {
+      const t = await school(h);
+      await withTenant(h.prisma, t.tenantId, async (tx) => {
+        await tx.student.update({ where: { id: t.a[1]!.id }, data: { status: 'TRANSFERRED' } });
+        await tx.student.update({ where: { id: t.a[2]!.id }, data: { status: 'DROPPED_OUT' } });
+      });
+      await submit(t.teacher, { sectionId: t.sectionA, records: records(t.a, [0, 1, 2]) }).expect(
+        200,
+      );
+      await waitForSms(t.a[0]!.phone);
+      expect((await smsLogs(t.tenantId)).map((r) => r.relatedId)).toEqual([t.a[0]!.id]);
+      await new Promise((r) => setTimeout(r, 300));
+      expect(h.sms.sentTo(t.a[1]!.phone)).toEqual([]);
+      expect(h.sms.sentTo(t.a[2]!.phone)).toEqual([]);
+    });
+
     it('is off by default for new tenants and sends nothing when off', async () => {
       const t = await createTenant(h, { modules: ['ATTENDANCE'] });
       const { phone } = await addMember(h, t.id, { roles: ['ADMIN'] });

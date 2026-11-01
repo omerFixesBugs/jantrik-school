@@ -43,12 +43,14 @@ export class AbsentSmsService implements OnModuleInit {
 
   /**
    * One SMS per absent student per day to the primary guardian (sms_logs dedupe key), only for
-   * today's registers, and only when the tenant has turned absent SMS on.
+   * today's registers, only when the tenant has turned absent SMS on, and only for ACTIVE students
+   * (not deleted), whoever wrote the register: one transferred or dropped out but still enrolled
+   * gets none, from a teacher's submit too.
    */
   async queue(tenant: AttendanceTenant, date: IsoDate, studentIds: string[]): Promise<void> {
     const s = tenant.settings;
     if (!s.absentSmsEnabled || date !== tenant.today || studentIds.length === 0) return;
-    const contacts = await this.contacts(studentIds);
+    const contacts = await this.contacts(studentIds, { activeOnly: true });
     const template = s.absentSmsTemplate ?? DEFAULT_ABSENT_SMS_TEMPLATE;
     const cap = await this.settings.effectiveDailySmsCap(s);
     const dateText = formatDate(dateToDb(date), 'bn', 'long');
@@ -72,10 +74,19 @@ export class AbsentSmsService implements OnModuleInit {
     }
   }
 
-  /** Each student's name for SMS and their primary guardian's phone, by student id. */
-  async contacts(studentIds: string[]): Promise<Map<string, GuardianContact>> {
+  /**
+   * Each student's name for SMS and their primary guardian's phone, by student id; `activeOnly`
+   * leaves out students not ACTIVE or deleted.
+   */
+  async contacts(
+    studentIds: string[],
+    opts: { activeOnly?: boolean } = {},
+  ): Promise<Map<string, GuardianContact>> {
     const students = await this.db.tx.student.findMany({
-      where: { id: { in: studentIds } },
+      where: {
+        id: { in: studentIds },
+        ...(opts.activeOnly ? { status: 'ACTIVE' as const, deletedAt: null } : {}),
+      },
       select: {
         id: true,
         nameBn: true,
