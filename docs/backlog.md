@@ -85,10 +85,12 @@ Agreed in the step 10 plan, not built yet. Rules today: [exams.md](exams.md).
 - **Term timeline with real exams:** the dashboard timeline still shows the usual exam months; the
   exams tile shows the real ones.
 
-## Devices and staff attendance: later work (from step 11)
+## Devices and staff attendance: later work (step 11)
 
-Agreed in the step 11 plan or deferred during the build, not built yet. Rules today:
-[devices.md](devices.md).
+Agreed in the step 11 plan, deferred during the build or left by the final review, not built yet.
+Rules today: [devices.md](devices.md).
+
+### From the plan and the build
 
 - **A separate billable DEVICES module**, if the owner chooses that later (devices sit under
   ATTENDANCE today: a new module needs a `module_key` value, a `tenant_modules` row for every
@@ -112,11 +114,107 @@ Agreed in the step 11 plan or deferred during the build, not built yet. Rules to
 - **Devices switched off and on again:** the "still on a device" rule counts active devices only,
   so a device switched off while an ID was given to someone else keeps the old person's
   fingerprints under it when switched back on. Count inactive devices too, or send the pending
-  removals when a device is switched on.
+  removals when a device is switched on. Also: an ID released between an add being SENT and
+  confirmed can be given away (negligible: the window is one poll).
 - **Other brands.** The receiver is ZKTeco push 2.x only, behind the `brand` column; the 3.x
   access-control firmware (`/iclock/registry`, `rtlog`) is not supported either.
 - **HTTPS and `pushcommkey`** directly in the receiver, once a real device shows how they work
   (a TLS proxy in front works today).
+
+### From the final review
+
+The CAN WAIT items of the final whole-branch review, each with why it waits. Done or fixed ones
+are left out.
+
+- **Processing and the tick**
+  - Re-queue an ID's UNMAPPED punches of the last 7 days when it is given to a person (M1): a
+    staff member's punches made before their ID was set build no staff day (the feed's "set an ID"
+    invites exactly this); it heals on their next punch that day. Students are fine (arrivals read
+    raw punches).
+  - Drop an id from `devices:tenants` whose institute no longer exists (M7): retention logs a
+    failure for it every night and the tick skips it silently.
+  - A tick duration metric before many schools turn auto-mark on (M8): every held-back section is
+    re-evaluated each minute for an hour (punch lock and `idsOnDevices`), in one sequential job over
+    all institutes. Fine at today's size.
+  - A review that does not change whether a punch counts keeps a stale outcome (e.g. REJECT of a
+    processed HELD punch stays HELD): informational only, counting reads the flags and the review.
+  - A test that the tick skips an institute with ATTENDANCE off that has leftover punches (the
+    process-punches job's skip is tested).
+  - The arrival rule is written twice (the cutoff and the recompute): one shared rule; they agree
+    today.
+- **Receiver and database**
+  - A RESTRICTIVE twin of the permissive `ingest_delete` policy on `device_source_ips` in the next
+    migration: unreachable today (no tenant context on the ingest login, and the function's DELETE
+    filters `trusted_at IS NULL`).
+  - A lower bound on the 24-hour first-address window (a `p_now` before `created_at` counts as
+    inside): `p_now` is the receiver's clock, not an attacker's.
+  - The Redis trusted mark is per /64, and the untrusted-budget peek and the refused-address brake
+    can overshoot under concurrent requests: still charged after `ingest_resolve`; the overshoot is
+    small.
+  - An index for refused serials: each unknown or inactive serial scans `attendance_devices`;
+    braked per address before the database.
+  - Some INSERT grants are table-wide (the app could supply its own `device_commands.seq`), and the
+    unique-violation tests match the word "unique" rather than the constraint's name: hardening, no
+    exploit path found.
+  - `parseDeviceCmdResults` accepts unbounded digit runs (Infinity, beyond 2^53): the receiver
+    already keeps only safe integers in int32 range.
+  - `wallClockToUtc` checks only the shape (2026-02-30 25:00:00 normalises silently): its inputs
+    pass `realDeviceTime` first.
+  - An untrusted `devicecmd` body is drained up to 2 MB rather than the 64 KB cap (never buffered);
+    in development a receiver that refuses to start stops the API too (fail-loud accepted).
+  - The isolation code scan misses indirect imports, and the biometric sentinel's database scan
+    sees only rows visible under the device institute's RLS: the receiver's start-up check covers
+    the first at run time.
+  - The unknown-IDs join has no tenant predicate and the feed cursor no plain lower bound: RLS, and
+    the 60 s overlap with the 7-day window, cover them.
+- **People and device IDs**
+  - Fail closed for an ID freed without an audit row (today it counts as free): every app path
+    audits, only hand-made data lacks one; do it with the next people change.
+  - `reenrol` reads false when someone takes their ID back while a removal is still waiting (the
+    removal wipes the fingerprints): rare, and the person re-enrols when the device rejects them.
+  - Collisions do not say whether the holder has the ID or it is only still on a device (wording).
+  - People-API minors: a remove-then-re-add skipped while the old upsert waits, each PUT reading
+    all waiting upserts, a 1 MB file of blank lines parsed before the row cap, `MISSING_COLUMNS`
+    overstating, a 413 without a code; and coverage gaps (concurrent writers, removal of an unheld
+    ID, the import branch of the audit lookup).
+  - The people page loses the staff view on reload with `unmapped=1`, and the not-on-device text
+    tells teachers to give IDs (they cannot open that screen).
+- **Registers and close from device**
+  - The close-from-device confirm counts active absent students while the register also marks the
+    inactive ones ABSENT ("2" vs "6"), and the card shows "10 students" next to "4/6": show "+N
+    inactive also marked absent (no SMS)". Cosmetic, on an admin-confirmed action.
+  - Refuse close from device for a section with no active student: reachable only by a direct API
+    call, and the register it writes (all ABSENT, no SMS) is accurate.
+  - A student inactive now shows no arrival on a past date's take screen.
+- **Web, SMS and print**
+  - The SMS student name is cut by code point, not grapheme (Bangla can end on a hasant): only for
+    names too long for two segments.
+  - Devices screen minors: the feed polls with no devices, partial "send to devices" failures lose
+    the totals, focus after a review, a trust confirm that can vanish mid-dialog, the dashboard
+    card shifting layout, a stale poll carrying an older review over a newer one (two admins within
+    one poll), duplicated query keys and helpers.
+  - Staff month print: the weekday line (5.5 pt grey) is hard to read, দেআ fills its column, and
+    the name button keeps its touch height in print (more pages).
+- **Tests, seed and tooling**
+  - Coverage gaps: shared rules (mapped-person collisions, a staff month row on an off day, the SMS
+    cut keeping the longest name), ingest error paths (`INGEST_BAD_RESULTS`, a non-object row, a
+    NULL or negative `p_max`), retention (an old DONE superseded only by a young DONE), the
+    simulator (per-record-type assertion, `poll()` silent on a non-200, the CLI's 50-line batches).
+  - The race test's `pg_locks` poll matches any waiting `jantrik_ingest_app` session in the
+    cluster: a possible flake, never a false pass.
+  - The staff desk e2e cannot run twice in one run (the saved leave stays), and specs must not
+    assert today's computed staff state (it depends on the real time of the run).
+  - Seed minors: demo serials stay active in jantrik_test after a killed run, a failed owner insert
+    leaves Shapla without punches and a reseed skips it, hard-coded special-day phones, staff-day
+    timestamps at seed time. Demo and test data only.
+  - Clean up the 4 tenants and 16 devices the retention benchmark left in jantrik_test: invisible
+    without a tenant context, and the gates pass with them.
+  - The local `jantrik` database holds test data from the step's visual checks (a switched-off
+    device, default IDs, punches, addresses, a device register, a manual staff day): a reseed with
+    the owner's approval clears it.
+  - Style: the duplicated `toSeconds` helpers (`devices.ts`, `staff-attendance.ts`, `dates.ts`) and
+    long comment lines in `ci.yml`; `packages/db/test/env.ts` throws at import without the ingest
+    login, as for the platform one (CI sets both).
 
 ## Performance: reach the 3-second budget (from step 9)
 

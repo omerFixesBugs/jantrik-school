@@ -133,9 +133,9 @@ Held SMS not released by the end of their day become `EXPIRED` and are never sen
 Next to the absent SMS, two more settings (off by default, any mode): "entered at 7:45" for a
 student's first IN punch of the day and "left at" for the first OUT after it. At most one of each
 per student per day (`entry:<student>:<date>`, `exit:<student>:<date>`), only on working days,
-only for punches received within 10 minutes of being made and without a flag, and
-**never over 90 % of the daily cap**: past it they are skipped (no row, never held), so the rest
-stays for absent alerts and receipts. Fixed Bangla text. Details: [devices.md](devices.md) →
+only for punches received within 10 minutes of being made and without a flag that stops SMS
+(any but `CLOCK_CORRECTED`), and **never over 90 % of the daily cap**: past it they are skipped
+(no row, never held), so the rest stays for absent alerts and receipts. Fixed Bangla text. Details: [devices.md](devices.md) →
 Entry and exit SMS.
 
 ## Reports

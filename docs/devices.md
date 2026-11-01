@@ -222,8 +222,8 @@ body limits follow. Counts are per minute unless shown, kept in Redis, and confi
   pause. Whether an address is trusted is always the database's answer; the Redis mark only
   skips the early check. Revoking an address does not clear its mark, so for up to 7 days after
   its last trusted request a revoked address (an IPv6 one: its whole /64) still skips the early
-  check; after `ingest_resolve` it is charged to the budget and refused like any untrusted one,
-  and it gets no commands.
+  check; after `ingest_resolve` it is charged to the budget like any untrusted one, refused once
+  the untrusted budget is spent, and it gets no commands.
 - **Behind a proxy**, `INGEST_TRUST_PROXY` decides which address is the client's (Express
   `trust proxy`). Use a hop count (`1`) or the proxy's address, never `true`, unless the proxy
   overwrites `X-Forwarded-For`: with `true` any client can claim any address, including a

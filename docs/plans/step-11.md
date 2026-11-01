@@ -110,7 +110,7 @@ API worker ── TenantJobRunner.run(tenantId) ◀─────────�
 
 - The ingest server has no JWT stack, no CORS, no cookies and no tenant context. It never touches `PrismaService` (the app role) or `Db`; a code-scan test (like `platform-isolation.spec.ts`) checks both directions.
 - The tenant id in a job comes from the `ingest_*` function's answer (the database's mapping of the serial number), never from the request.
-- On start, the ingest client refuses to run if its login can read any table or cannot run `ingest_resolve` (as `PlatformPrismaService` does).
+- On start, the ingest client refuses to run if its login can read `students` or `device_punches` or cannot run `ingest_resolve` (as `PlatformPrismaService` does).
 
 ## The device link: protocol and security
 
