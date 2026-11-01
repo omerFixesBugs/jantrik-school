@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import {
   DEVICE_CLOCK_WARNING_SEC,
   deviceState,
-  localDateOf,
   localTimeOf,
   type DeviceAlert,
 } from '@jantrik/shared';
@@ -138,8 +137,7 @@ export class DeviceAlertsService {
    */
   private async watchingForOffline(now: Date): Promise<boolean> {
     const tenant = await this.settings.load();
-    const today = localDateOf(now, tenant.timezone);
-    if ((await this.settings.nonWorkingDay(today, tenant.settings)) !== null) return false;
+    if ((await this.settings.nonWorkingDay(tenant.today, tenant.settings)) !== null) return false;
     const shifts = await this.db.tx.shift.findMany({
       where: { isActive: true },
       select: { startTime: true },

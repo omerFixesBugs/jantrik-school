@@ -4,8 +4,8 @@ import {
   addDays,
   arrivalStatus,
   dateFromDb,
-  localDateOf,
   localTimeOf,
+  todayAt,
   verifyKind,
   type FeedPunch,
   type PunchFeed,
@@ -190,7 +190,8 @@ export class DevicePunchesService {
   async unknownIds(): Promise<UnknownDeviceId[]> {
     const tx = this.db.tx;
     const { timezone } = await tx.tenant.findFirstOrThrow({ select: { timezone: true } });
-    const from = addDays(localDateOf(this.clock.now(), timezone), -(UNKNOWN_IDS_DAYS - 1));
+    // The institute's today, as every attendance rule reads it (a fixed test date still wins).
+    const from = addDays(todayAt(timezone, this.clock.now()), -(UNKNOWN_IDS_DAYS - 1));
     const rows = await tx.$queryRaw<
       { device_user_id: string; count: number; last_punch_at: Date; last_device_name: string }[]
     >`

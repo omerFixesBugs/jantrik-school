@@ -792,9 +792,50 @@ describe('devices API', () => {
         },
       ]);
     });
+
+    it("the 30 days end at the institute's today, a fixed test date too (JANTRIK_TEST_TODAY)", async () => {
+      const s = await school(h, { settings: { absentSmsEnabled: false } });
+      clock.set(at('08:00:00', addDays(DAY, -40)));
+      const front = await addDevice(s.admin, { name: 'Front' });
+      clock.set(at('09:00:00'));
+      const reader = sim(front.serialNo);
+      const res = await reader.uploadAttlog([
+        reader.attlogLine('777', at('08:00:00', addDays(DAY, -35))),
+      ]);
+      expect(res.status).toBe(200);
+      const ids = async () =>
+        (
+          (await get(s.admin, '/attendance/devices/unknown-ids').expect(200))
+            .body as UnknownDeviceId[]
+        ).map((u) => u.deviceUserId);
+      expect(await ids()).toEqual([]); // 35 days before the clock's day
+      vi.stubEnv('JANTRIK_TEST_TODAY', addDays(DAY, -10));
+      try {
+        expect(await ids()).toEqual(['777']); // 25 days before the fixed day
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
   });
 
   describe('alerts', () => {
+    it("OFFLINE follows the institute's today: none when a fixed test date is an off day (JANTRIK_TEST_TODAY)", async () => {
+      const t = await institute();
+      await putSettings(t.admin, { weeklyOffDays: [isoWeekday(addDays(DAY, 1))] });
+      clock.set(at('05:00:00'));
+      await addDevice(t.admin, { name: 'Never' });
+      clock.set(at('09:00:00'));
+      const offline = async () =>
+        (await alerts(t.admin)).filter((a) => a.kind === 'OFFLINE').map((a) => a.deviceName);
+      expect(await offline()).toEqual(['Never']);
+      vi.stubEnv('JANTRIK_TEST_TODAY', addDays(DAY, 1));
+      try {
+        expect(await offline()).toEqual([]);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it('OFFLINE: more than 10 minutes, on working days, from an hour before the earliest start to office end', async () => {
       const t = await institute();
       await putSettings(t.admin, { weeklyOffDays: [] });
