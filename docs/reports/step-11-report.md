@@ -414,16 +414,16 @@ was the first end-to-end run of the new seed, which CI's e2e job now covers (sec
 
 The fix wave (`7b2beaa..aad78d4`):
 
-| Item | Problem                                                                                            | Fix                                                                                               | Commit    |
-| ---- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------- |
-| I1   | An institute was listed for the minute tick and retention only when a device was added via the API | Listed again on every path that needs it (device change, sync, settings with auto-mark, each job) | `1720fe4` |
-| I2   | The stand-alone receiver needed the API's whole secret set to start                                | Its own environment schema; production gives it none of the API's logins or keys                  | `4a7d5c7` |
-| M2   | A late punch cleared the teacher's name on an edited device register                               | The teacher stays the updater; the device's change is marked so conflicts name the device         | `a5a480a` |
-| M3   | The setup guide offered to trust `last_ip`, which any caller with the serial can set               | It shows the device's own trusted address, or the untrusted one seen last, with counts            | `cd2e618` |
-| M4   | `INGEST_PUBLIC_HOST` defaulted to localhost in production                                          | The API refuses to start in production without it or with a loopback host                         | `4a7d5c7` |
-| M5   | The take screen suggested ABSENT for inactive students, and a save sent them absent SMS            | Absent SMS only to ACTIVE students on every path; no suggestion for inactive ones                 | `9596992` |
-| M6   | Two places used the clock's date instead of the institute's "today"                                | Both use `todayAt` / `settings.load().today`                                                      | `a798af9` |
-| M9   | `process-punches` did not check ATTENDANCE                                                         | It lists the institute and processes nothing while ATTENDANCE is off                              | `1720fe4` |
+| Item | Problem                                                                                            | Fix                                                                                               | Commit               |
+| ---- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------- |
+| I1   | An institute was listed for the minute tick and retention only when a device was added via the API | Listed again on every path that needs it (device change, sync, settings with auto-mark, each job) | `1720fe4`            |
+| I2   | The stand-alone receiver needed the API's whole secret set to start                                | Its own environment schema; production gives it none of the API's logins or keys                  | `4a7d5c7`            |
+| M2   | A late punch cleared the teacher's name on an edited device register                               | The teacher stays the updater; the device's change is marked so conflicts name the device         | `a5a480a`            |
+| M3   | The setup guide offered to trust `last_ip`, which any caller with the serial can set               | It shows the device's own trusted address; with none trusted, every address with its own Trust    | `cd2e618`, `ea287c9` |
+| M4   | `INGEST_PUBLIC_HOST` defaulted to localhost in production                                          | The API refuses to start in production without it or with a loopback host                         | `4a7d5c7`            |
+| M5   | The take screen suggested ABSENT for inactive students, and a save sent them absent SMS            | Absent SMS only to ACTIVE students on every path; no suggestion for inactive ones                 | `9596992`            |
+| M6   | Two places used the clock's date instead of the institute's "today"                                | Both use `todayAt` / `settings.load().today`                                                      | `a798af9`            |
+| M9   | `process-punches` did not check ATTENDANCE                                                         | It lists the institute and processes nothing while ATTENDANCE is off                              | `1720fe4`            |
 
 Also in the wave: doc wording from the T17 re-review and the backlog's step 11 list (`aad78d4`).
 
@@ -432,7 +432,22 @@ dropped-out) student absent no longer sends their guardian an absent SMS. Before
 This settles the owner note from T12 (a teacher's edit of a device register re-queued absent SMS
 for inactive students too). Decision #45.
 
-A fresh re-review of the fix wave was started at the same time as this report.
+The re-review of the fix wave confirmed I1, I2, M2, M4, M5, M6 and M9, and found three things,
+fixed in a short second round:
+
+- **A start-up regression from I2** (the most important): `main.ts` imported the receiver's code
+  statically, so the API exited at start-up when given no `DATABASE_INGEST_URL`, which is exactly
+  the documented production setup. The API start moved to `api.bootstrap.ts`, which loads the
+  receiver only when `INGEST_IN_PROCESS` is on; a test starts the API without the receiver's login
+  and fails if the static import comes back (`9cde8fe`).
+- **M3 was only half done:** with no trusted address, the guide still preselected the latest
+  caller. It now lists every address the device called from, each with its own Trust button and
+  the advice to trust only the institute's own connection (`ea287c9`).
+- **Five later-work items were missing from the backlog**, and devices.md lacked the known limit
+  of a device switched off and on again (`726e079`). `INGEST_PUBLIC_HOST` also refuses `0.0.0.0`
+  and `::` in production (`9cde8fe`).
+
+A scoped re-review of that round found every item addressed and nothing new above Minor.
 
 ## 7. Rulings made on your behalf
 
