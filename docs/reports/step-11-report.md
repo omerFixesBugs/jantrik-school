@@ -57,6 +57,7 @@ for the first real device is in [devices.md](../devices.md) → Verify on the re
 | T17  | `396eb05`, `323da37`                                                        | Docs                                                                            |
 | T18  | `42b9174`, `7b2beaa`                                                        | Playwright specs and their review fixes                                         |
 | Fix  | `1720fe4`, `4a7d5c7`, `a5a480a`, `cd2e618`, `9596992`, `a798af9`, `aad78d4` | The final review's fix wave (section 6)                                         |
+| CI   | `6412892`, `b485763`                                                        | What the first CI runs found (section 5)                                        |
 
 ## 2. Owner decisions honoured
 
@@ -186,9 +187,9 @@ learns a registered serial can post as that device. This is how it is contained.
   the serial number and scopes every query by it. The institute in a job comes from the
   function's answer, never from the request.
 - **Fail-closed start.** The receiver refuses to start unless its login can run `ingest_resolve`
-  and cannot read `students` or `device_punches`. A database not reachable yet is retried for
-  about 30 s, then the start fails. A code scan and a runtime check keep the API's database access
-  out of the receiver.
+  and cannot read `students` or `device_punches`. A query that fails (the database not up yet, or
+  not migrated yet) is retried for about 3 minutes, then the start fails; a wrong answer is refused
+  at once. A code scan and a runtime check keep the API's database access out of the receiver.
 - **Own environment.** The receiver validates only `NODE_ENV`, `DATABASE_INGEST_URL`, `REDIS_URL`,
   `QUEUE_PREFIX`, `INGEST_PORT`, `INGEST_TRUST_PROXY` and the limits. In production it must get
   none of the API's logins or secrets. A test boots it with only these variables.
@@ -298,7 +299,16 @@ run the full suite):
 - `layout.spec.ts` and `numerals.spec.ts` (1 each): the four new screens at 360/390 px and their
   Bangla digits. `themes.spec.ts` covers them in dark (no new test).
 - 83 tests in 24 files in all.
-- **CI: pending — see the PR checks.**
+- **CI: pending — see the PR checks.** The first two runs found three problems, all fixed:
+  - Run 1: the API exited at start-up. Playwright starts its web servers before its global setup
+    migrates `jantrik_e2e`, so the receiver's start-up check met an empty database and refused.
+    The check now retries a failing query for about 3 minutes (`6412892`).
+  - Run 2: lint, typecheck, unit tests and build green; Playwright 81 of 83. Both failures were
+    real UI problems. The staff entry dialog's reason box carried the browser's `required`, so an
+    empty save showed the browser's own bubble instead of the Bangla message; the dialog now checks
+    the reason itself. The device switch-off confirm button and the dialog's close button were
+    both named "বন্ধ করুন" (ambiguous for screen readers); the confirm now reads "মেশিন বন্ধ করুন"
+    (`b485763`).
 - The new demo seed has never run end to end on `jantrik_e2e`; CI's e2e job is its first run.
 
 Deviations in the specs: punches are made at the real time, not dated `E2E_TODAY` (a punch before
