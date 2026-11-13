@@ -207,10 +207,6 @@ are left out.
     one poll), duplicated query keys and helpers.
   - Staff month print: the weekday line (5.5 pt grey) is hard to read, দেআ fills its column, and
     the name button keeps its touch height in print (more pages).
-  - Two buttons with one name: the fees setup confirm for switching a bKash/Nagad number off
-    reads "বন্ধ করুন", the same as the dialog's close button (fixed for the device switch-off in
-    `b485763`). Give it its own label; screen-reader users hear two identical buttons. Older than
-    step 11.
 - **Tests, seed and tooling**
   - Coverage gaps: the database tests never exercise the three grace-range CHECKs on
     `attendance_settings` (device, staff late, staff early), and the receiver login's denial list
