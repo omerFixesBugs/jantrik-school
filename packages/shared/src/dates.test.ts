@@ -120,3 +120,31 @@ describe('wallClockToUtc around DST changes in other zones', () => {
     );
   });
 });
+
+describe('wallClockToUtc refuses times that do not exist', () => {
+  it.each([
+    '2026-02-30 08:00:00',
+    '2026-02-29 08:00:00', // not a leap year
+    '2026-13-01 08:00:00',
+    '2026-00-10 08:00:00',
+    '2026-10-00 08:00:00',
+    '2026-10-24 24:00:00',
+    '2026-10-24 25:00:00',
+    '2026-10-24 08:60:00',
+    '2026-10-24 08:00:60',
+    '0050-10-24 08:00:00',
+    '2026-10-24 8:00:00',
+    '2026-10-24',
+  ])('%s', (wallClock) => {
+    expect(() => wallClockToUtc(wallClock, 'Asia/Dhaka')).toThrow(/Not a wall-clock time/);
+  });
+
+  it('still reads the last second of a day and a leap day', () => {
+    expect(wallClockToUtc('2026-10-24 23:59:59', 'Asia/Dhaka').toISOString()).toBe(
+      '2026-10-24T17:59:59.000Z',
+    );
+    expect(wallClockToUtc('2028-02-29T08:00:00', 'Asia/Dhaka').toISOString()).toBe(
+      '2028-02-29T02:00:00.000Z',
+    );
+  });
+});

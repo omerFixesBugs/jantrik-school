@@ -124,7 +124,8 @@ export function timeZoneOffsetMinutes(timeZone: string, at: Date): number {
 /**
  * A wall-clock `YYYY-MM-DD HH:MM:SS` read in a timezone, as the real instant. Devices send local
  * time with no zone. Around a DST change a time that happens twice takes the first, one that
- * never happens is moved forward.
+ * never happens is moved forward. A date or time that does not exist (2026-02-30, 25:00:00) is
+ * refused, never moved to another day.
  */
 export function wallClockToUtc(wallClock: string, timeZone: string): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(wallClock);
@@ -138,6 +139,17 @@ export function wallClockToUtc(wallClock: string, timeZone: string): Date {
     number,
   ];
   const asUtc = Date.UTC(y, mo - 1, d, h, mi, s);
+  const real = new Date(asUtc);
+  if (
+    h > 23 ||
+    mi > 59 ||
+    s > 59 ||
+    real.getUTCFullYear() !== y ||
+    real.getUTCMonth() !== mo - 1 ||
+    real.getUTCDate() !== d
+  ) {
+    throw new Error(`Not a wall-clock time: "${wallClock}"`);
+  }
   // The offsets a day either side bracket any single change; keep the readings that are
   // self-consistent and take the earliest (the first of a repeated hour). In a gap neither is
   // consistent, so the earlier offset moves the time forward.
