@@ -164,10 +164,6 @@ are left out.
     days carry a reason).
   - `device_punches.reviewed_by_id` can be set without `review` (no CHECK pairs them; only
     `review` and `reviewed_at` are paired): the app always writes the three together.
-  - `parseDeviceCmdResults` accepts unbounded digit runs (Infinity, beyond 2^53): the receiver
-    already keeps only safe integers in int32 range.
-  - `wallClockToUtc` checks only the shape (2026-02-30 25:00:00 normalises silently): its inputs
-    pass `realDeviceTime` first.
   - An untrusted `devicecmd` body is drained up to 2 MB rather than the 64 KB cap (never buffered);
     in development a receiver that refuses to start stops the API too (fail-loud accepted).
   - The isolation code scan misses indirect imports, and the biometric sentinel's database scan

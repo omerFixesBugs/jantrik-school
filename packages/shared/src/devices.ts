@@ -284,7 +284,14 @@ export interface DeviceCmdResult {
   cmd: string;
 }
 
-/** `ID=<seq>&Return=<code>&CMD=…` lines from POST /iclock/devicecmd; anything else is ignored. */
+const INT32_MIN = -(2 ** 31);
+const INT32_MAX = 2 ** 31 - 1;
+
+/**
+ * `ID=<seq>&Return=<code>&CMD=…` lines from POST /iclock/devicecmd; anything else is ignored, a
+ * line whose ID is not a safe integer or whose Return is outside int32 too (never Infinity, never
+ * a number rounded past 2^53).
+ */
 export function parseDeviceCmdResults(body: string): DeviceCmdResult[] {
   const out: DeviceCmdResult[] = [];
   for (const line of body.split(/\r?\n/)) {
@@ -296,8 +303,12 @@ export function parseDeviceCmdResults(body: string): DeviceCmdResult[] {
     const id = fields.get('ID');
     const code = fields.get('Return');
     if (id === undefined || code === undefined) continue;
-    if (!/^\d+$/.test(id) || !/^-?\d+$/.test(code)) continue;
-    out.push({ id: Number(id), returnCode: Number(code), cmd: fields.get('CMD') ?? '' });
+    if (!/^\d{1,16}$/.test(id) || !/^-?\d{1,10}$/.test(code)) continue;
+    const idNumber = Number(id);
+    const returnCode = Number(code);
+    if (!Number.isSafeInteger(idNumber)) continue;
+    if (returnCode < INT32_MIN || returnCode > INT32_MAX) continue;
+    out.push({ id: idNumber, returnCode, cmd: fields.get('CMD') ?? '' });
   }
   return out;
 }

@@ -329,6 +329,21 @@ describe('parseDeviceCmdResults and parseInfo', () => {
       { id: 6, returnCode: -1002, cmd: 'DATA' },
     ]);
   });
+  it('skips an ID past 2^53 and a Return outside int32, never Infinity or a rounded number', () => {
+    const body = [
+      `ID=${'9'.repeat(400)}&Return=0`, // Number() would give Infinity
+      'ID=9007199254740993&Return=0', // past 2^53: would round to ...992
+      `ID=1&Return=${'9'.repeat(400)}`,
+      'ID=2&Return=2147483648',
+      'ID=3&Return=-2147483649',
+      'ID=9007199254740991&Return=2147483647',
+      'ID=4&Return=-2147483648',
+    ].join('\n');
+    expect(parseDeviceCmdResults(body)).toEqual([
+      { id: 9007199254740991, returnCode: 2147483647, cmd: '' },
+      { id: 4, returnCode: -2147483648, cmd: '' },
+    ]);
+  });
   it('keeps only firmware and user count from INFO', () => {
     expect(parseInfo('Ver 6.60 Apr 2 2019,1523,3,1,192.168.1.5,10,1')).toEqual({
       firmware: 'Ver 6.60 Apr 2 2019',
