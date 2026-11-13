@@ -543,6 +543,44 @@
   .register-off {
     background-image: repeating-linear-gradient(45deg, #ccc 0 1px, transparent 1px 4px);
   }
+  /* The staff month (components/staff-attendance/month-view.tsx): a printer never adds pages
+     sideways, so 31 days and the totals share the page's width. Fixed columns in percent (the
+     same on any paper width), smaller type, codes without their screen chip size; names wrap. */
+  .staff-month-table {
+    table-layout: fixed;
+    width: 100% !important;
+    min-width: 0 !important;
+    font-size: 7pt;
+  }
+  .staff-month-table th,
+  .staff-month-table td {
+    min-width: 0 !important;
+    max-width: none !important;
+    padding: 1pt !important;
+    font-size: 7pt;
+  }
+  .staff-month-table .staff-name {
+    width: auto !important;
+    overflow-wrap: anywhere;
+  }
+  .staff-month-table .staff-day {
+    width: 2.2%;
+  }
+  .staff-month-table .staff-total {
+    width: 2.6%;
+  }
+  .staff-month-table .staff-minutes {
+    width: 3.4%;
+  }
+  .staff-month-table .staff-weekday {
+    font-size: 5.5pt;
+  }
+  .staff-month-table .staff-code {
+    height: auto;
+    min-width: 0;
+    padding: 0 1pt;
+    font-size: 6.5pt;
+  }
   /* Fee receipts (components/fees/receipt.tsx) print on their own page size: named pages leave
      the A4 landscape register above as it is. Thermal printers may ignore the height; the
      receipt fits 80 mm by width alone. */

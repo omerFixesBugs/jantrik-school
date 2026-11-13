@@ -15,6 +15,8 @@ const putSettings = (s: AttendanceSettings, weeklyOffDays: number[]) =>
   api(ownerToken, '/attendance/settings', {
     method: 'PUT',
     json: {
+      // The device and staff settings as loaded (the API ignores the derived values).
+      ...s,
       mode: s.mode,
       weeklyOffDays,
       editWindowDays: s.editWindowDays,

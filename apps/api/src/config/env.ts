@@ -1,9 +1,21 @@
 import { isoDateSchema } from '@jantrik/shared';
 import { z } from 'zod';
+import { ingestReceiverFields, positiveInt } from './ingest-env.js';
 
-const positiveInt = (fallback: number) => z.coerce.number().int().positive().default(fallback);
+/** The receiver runs inside the API unless told otherwise; production runs it as its own process. */
+const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_ENV: string }) =>
+  env.INGEST_IN_PROCESS ?? env.NODE_ENV !== 'production';
 
-/** Environment variables the API needs. Validated once at startup. */
+/**
+ * Hosts a device can never dial (loopback, and the "any address" a server listens on): the setup
+ * guide must not tell a school to use them.
+ */
+const UNDIALABLE_HOST = /^(localhost|127(\.\d{1,3}){3}|::1|\[::1\]|0\.0\.0\.0|::|\[::\])$/i;
+
+/**
+ * Environment variables the API needs. Validated once at startup. The stand-alone device receiver
+ * has its own, smaller schema (ingest-env.ts).
+ */
 export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -26,6 +38,12 @@ export const envSchema = z
      * platform_* functions. Same database as DATABASE_URL.
      */
     DATABASE_PLATFORM_URL: z.string().min(1),
+    /**
+     * The device receiver's own login (role jantrik_ingest_app): the only role that may run the
+     * ingest_* functions. Same database as DATABASE_URL. Required when the receiver runs in this
+     * process; the API itself never uses it.
+     */
+    DATABASE_INGEST_URL: z.string().min(1).optional(),
     REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
     /** BullMQ key prefix, so several environments can share one Redis. */
     QUEUE_PREFIX: z.string().min(1).default('jantrik'),
@@ -61,6 +79,18 @@ export const envSchema = z
      * Refused in any other NODE_ENV.
      */
     JANTRIK_TEST_TODAY: isoDateSchema.optional(),
+
+    // Device receiver (ZKTeco attendance machines).
+    /** Run the receiver inside the API process. Default: yes, except in production (own process). */
+    INGEST_IN_PROCESS: z.stringbool().optional(),
+    /**
+     * Host and port a device is told to connect to; shown to admins in the device setup guide.
+     * The host is required in production (never localhost there); elsewhere it defaults to
+     * localhost.
+     */
+    INGEST_PUBLIC_HOST: z.string().trim().min(1).optional(),
+    INGEST_PUBLIC_PORT: z.coerce.number().int().positive().optional(),
+    ...ingestReceiverFields,
 
     // Rate limits. Per-phone / per-identifier limits are the real protection; per-IP limits are
     // generous because many Bangladeshi users share one IP (carrier CGNAT, school Wi-Fi).
@@ -98,6 +128,25 @@ export const envSchema = z
         message: 'PLATFORM_TOTP_KEY is required in production',
       });
     }
+    if (ingestInProcess(env) && !env.DATABASE_INGEST_URL) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DATABASE_INGEST_URL'],
+        message:
+          'DATABASE_INGEST_URL is required when the device receiver runs in the API process (INGEST_IN_PROCESS)',
+      });
+    }
+    if (
+      env.NODE_ENV === 'production' &&
+      (!env.INGEST_PUBLIC_HOST || UNDIALABLE_HOST.test(env.INGEST_PUBLIC_HOST))
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['INGEST_PUBLIC_HOST'],
+        message:
+          'INGEST_PUBLIC_HOST is required in production: the address or domain name devices dial (not localhost or 0.0.0.0)',
+      });
+    }
     if (!env.COOKIE_SECURE && env.NODE_ENV === 'production') {
       ctx.addIssue({
         code: 'custom',
@@ -105,7 +154,13 @@ export const envSchema = z
         message: 'COOKIE_SECURE must be true in production',
       });
     }
-  });
+  })
+  .transform((env) => ({
+    ...env,
+    INGEST_IN_PROCESS: ingestInProcess(env),
+    INGEST_PUBLIC_HOST: env.INGEST_PUBLIC_HOST ?? 'localhost',
+    INGEST_PUBLIC_PORT: env.INGEST_PUBLIC_PORT ?? env.INGEST_PORT,
+  }));
 
 export type Env = z.infer<typeof envSchema>;
 

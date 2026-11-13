@@ -234,6 +234,7 @@ export function ConfirmDialog({
   pending,
   onConfirm,
   destructive = true,
+  cancelLabel,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -243,6 +244,8 @@ export function ConfirmDialog({
   pending?: boolean;
   onConfirm: () => void;
   destructive?: boolean;
+  /** When "cancel" would read like the action ("বাতিল" for rejecting). */
+  cancelLabel?: string;
 }) {
   const t = useTranslations('setup');
   return (
@@ -254,7 +257,7 @@ export function ConfirmDialog({
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t('cancel')}
+            {cancelLabel ?? t('cancel')}
           </Button>
           <Button
             variant={destructive ? 'destructive' : 'default'}
@@ -280,6 +283,7 @@ export function FormDialog({
   onSubmit,
   children,
   testId,
+  noValidate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -290,6 +294,8 @@ export function FormDialog({
   onSubmit: () => void;
   children: ReactNode;
   testId?: string;
+  /** The form shows its own messages: the browser's bubble would stop the submit first. */
+  noValidate?: boolean;
 }) {
   const t = useTranslations('setup');
   return (
@@ -304,6 +310,7 @@ export function FormDialog({
             e.preventDefault();
             onSubmit();
           }}
+          noValidate={noValidate}
         >
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>

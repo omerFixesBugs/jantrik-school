@@ -7,6 +7,7 @@ import { AppearanceModule } from './appearance/appearance.module.js';
 import { AttendanceModule } from './attendance/attendance.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { AuthModule } from './auth/auth.module.js';
+import { DevicesModule } from './devices/devices.module.js';
 import { ExamsModule } from './exams/exams.module.js';
 import { FeesModule } from './fees/fees.module.js';
 import {
@@ -26,6 +27,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { SmsModule } from './sms/sms.module.js';
 import { SetupModule } from './setup/setup.module.js';
+import { StaffAttendanceModule } from './staff-attendance/staff-attendance.module.js';
 import { StaffModule } from './staff/staff.module.js';
 import { StudentsModule } from './students/students.module.js';
 import { TenancyModule } from './tenancy/tenancy.module.js';
@@ -65,6 +67,8 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     StaffModule,
     ImportsModule,
     AttendanceModule,
+    DevicesModule,
+    StaffAttendanceModule,
     FeesModule,
     ExamsModule,
     PlatformModule,

@@ -8,6 +8,7 @@ import {
   formatTime,
   type AttendanceStatus,
   type IsoDate,
+  type StudentArrival,
 } from '@jantrik/shared';
 import {
   CalendarOffIcon,
@@ -17,7 +18,9 @@ import {
   ClockIcon,
   CloudCheckIcon,
   CloudOffIcon,
+  FingerprintIcon,
   LoaderCircleIcon,
+  LogInIcon,
   SendIcon,
   SmartphoneIcon,
   TableIcon,
@@ -47,6 +50,7 @@ import { useCountdown, useErrorMessage, useLabel, useMeContext } from '@/lib/hoo
 import { displayName, displayUserName } from '@/lib/names';
 import { cn } from '@/lib/utils';
 import { registerHref } from './section-picker';
+import { SourceTag } from './source-tag';
 
 const STATUS_STYLE: Record<AttendanceStatus, { icon: LucideIcon; row: string; pill: string }> = {
   PRESENT: { icon: CheckIcon, row: 'bg-card', pill: 'bg-success-soft text-success' },
@@ -110,6 +114,16 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
     ? `${displayName(sheet.section.classLevel.nameBn, sheet.section.classLevel.nameEn, locale)}, ${sheet.section.name}`
     : draft.sectionName;
   const nothingToSend = sync.kind === 'saved' || sync.kind === 'sending';
+  // From the device's punches: each student's arrival, and which saved records the device set.
+  const arrivals = new Map(sheet?.students.map((st) => [st.id, st.arrival]));
+  const saved = new Map(sheet?.session?.records.map((r) => [r.studentId, r]));
+  const startedFromDevice =
+    !!sheet && !sheet.session && sheet.students.some((st) => st.suggested !== null);
+  // The device changed it last, and that is what is on screen.
+  const savedByDevice =
+    sync.kind === 'saved' &&
+    !!sheet?.session?.updatedByDevice &&
+    sheet.session.submittedAt === sync.submittedAt;
 
   const onSubmit = () => {
     if (counts.ABSENT * 2 > total) setConfirmOpen(true);
@@ -151,7 +165,7 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
               {formatDate(dateToDb(draft.date), locale, 'full')}
             </p>
           </div>
-          <SyncPill sync={sync} onRetry={() => void controller.submit()} />
+          <SyncPill sync={sync} byDevice={savedByDevice} onRetry={() => void controller.submit()} />
         </div>
       </div>
 
@@ -217,6 +231,15 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
       )}
 
       {editable && <p className="text-muted-foreground text-sm">{t('tapHint')}</p>}
+      {startedFromDevice && (
+        <p
+          className="text-info flex items-center gap-1.5 text-sm font-medium"
+          data-testid="started-from-device"
+        >
+          <FingerprintIcon aria-hidden className="size-4 shrink-0" />
+          {t('startedFromDevice')}
+        </p>
+      )}
 
       <ul
         className="bg-card divide-y overflow-hidden rounded-xl border shadow-xs"
@@ -227,6 +250,11 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
           const style = STATUS_STYLE[status];
           const name = displayName(st.nameBn, st.nameEn, locale);
           const roll = st.roll != null ? formatIdentifier(st.roll) : t('noRoll');
+          const arrival = arrivals.get(st.id) ?? null;
+          const record = saved.get(st.id);
+          // The device's record, as long as the teacher has not changed it here.
+          const byDevice = record?.source === 'DEVICE' && record.status === status;
+          const metaId = arrival || byDevice ? `register-meta-${st.id}` : undefined;
           return (
             <li key={st.id}>
               <button
@@ -234,7 +262,9 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
                 disabled={!editable}
                 onClick={() => controller.cycle(st.id)}
                 aria-label={t('rowLabel', { roll, name, status: t(`status${status}`) })}
+                aria-describedby={metaId}
                 data-status={status}
+                data-source={byDevice ? 'DEVICE' : undefined}
                 className={cn(
                   'flex min-h-16 w-full items-center gap-3 px-3 py-2 text-left transition-colors sm:px-4',
                   'focus-visible:ring-ring outline-none focus-visible:ring-3 focus-visible:ring-inset',
@@ -245,8 +275,16 @@ export function RegisterView({ sectionId, periodNo, date, sectionName, showBack 
                 <span className="font-numeric bg-canvas text-foreground flex size-11 shrink-0 items-center justify-center rounded-full border text-base font-semibold">
                   {st.roll != null ? formatIdentifier(st.roll) : '–'}
                 </span>
-                <span className="line-clamp-2 min-w-0 flex-1 text-base leading-snug font-medium break-words">
-                  {name}
+                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="line-clamp-2 text-base leading-snug font-medium break-words">
+                    {name}
+                  </span>
+                  {metaId && (
+                    <span id={metaId} className="flex flex-wrap items-center gap-1.5">
+                      {arrival && <ArrivalChip arrival={arrival} />}
+                      {byDevice && <SourceTag source="DEVICE" />}
+                    </span>
+                  )}
                 </span>
                 <span
                   className={cn(
@@ -357,8 +395,46 @@ const BLOCKED_KEYS = {
   blockedNON_WORKING_DAY: true,
 };
 
+/** When the student punched in on the device; "দেরি" too when that was late. */
+function ArrivalChip({ arrival }: { arrival: StudentArrival }) {
+  const t = useTranslations('attendance');
+  const locale = useLocale() as Locale;
+  // Non-breaking space inside the time ("সকাল ৭:৪৫"): it wraps as one piece.
+  const time = formatTime(arrival.at, locale).replace(' ', ' ');
+  const late = arrival.status === 'LATE';
+  return (
+    <span
+      className="bg-card text-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs leading-5 font-medium whitespace-nowrap"
+      data-testid="arrival-chip"
+      data-late={late || undefined}
+    >
+      <span className="sr-only">
+        {late ? t('arrivalLateLabel', { time }) : t('arrivalLabel', { time })}
+      </span>
+      <LogInIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
+      <span aria-hidden className="font-numeric">
+        {time}
+      </span>
+      {late && (
+        <span aria-hidden className="text-warning font-semibold">
+          · {t('statusLATE')}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** Saved or not, in words and an icon (never colour alone). */
-function SyncPill({ sync, onRetry }: { sync: SyncState; onRetry: () => void }) {
+function SyncPill({
+  sync,
+  byDevice,
+  onRetry,
+}: {
+  sync: SyncState;
+  /** Saved, and what is saved the device wrote last: "ডিভাইস থেকে, সকাল ৯:৩০". */
+  byDevice: boolean;
+  onRetry: () => void;
+}) {
   const t = useTranslations('attendance');
   const locale = useLocale() as Locale;
   const seconds = useCountdown(sync.kind === 'retrying' ? sync.at : null);
@@ -387,12 +463,14 @@ function SyncPill({ sync, onRetry }: { sync: SyncState; onRetry: () => void }) {
           : t('syncRetryingSoon');
       tone = 'bg-warning-soft text-warning';
       break;
-    case 'saved':
-      icon = CloudCheckIcon;
+    case 'saved': {
+      icon = byDevice ? FingerprintIcon : CloudCheckIcon;
       // Non-breaking space inside the time ("রাত ১০:৪২"): it wraps as one piece.
-      text = t('syncSaved', { time: formatTime(sync.submittedAt, locale).replace(' ', ' ') });
+      const time = formatTime(sync.submittedAt, locale).replace(' ', ' ');
+      text = byDevice ? t('syncFromDevice', { time }) : t('syncSaved', { time });
       tone = 'bg-success-soft text-success';
       break;
+    }
   }
   const Icon = icon;
   return (
@@ -462,15 +540,21 @@ function ConflictDialog({
 }) {
   const t = useTranslations('attendance');
   const locale = useLocale() as Locale;
+  // A register the device changed last names the device, not a person.
+  const byDevice = sync.server.updatedByDevice;
+  const time = formatTime(sync.server.submittedAt, locale);
   return (
     <Dialog open disablePointerDismissal onOpenChange={() => undefined}>
-      <DialogContent showCloseButton={false} data-testid="conflict-dialog">
+      <DialogContent
+        showCloseButton={false}
+        data-testid="conflict-dialog"
+        data-by-device={byDevice || undefined}
+      >
         <DialogHeader>
           <DialogTitle>
-            {t('conflictTitle', {
-              name: displayUserName(sync.server.updatedBy, locale),
-              time: formatTime(sync.server.submittedAt, locale),
-            })}
+            {byDevice
+              ? t('conflictTitleDevice', { time })
+              : t('conflictTitle', { name: displayUserName(sync.server.updatedBy, locale), time })}
           </DialogTitle>
           <DialogDescription>{t('conflictBody')}</DialogDescription>
         </DialogHeader>
@@ -487,14 +571,17 @@ function ConflictDialog({
               </span>
               <span className="flex flex-wrap gap-2 text-sm">
                 <StatusChip who={t('conflictYours')} status={mine} />
-                <StatusChip who={t('conflictOthers')} status={theirs} />
+                <StatusChip
+                  who={byDevice ? t('conflictOthersDevice') : t('conflictOthers')}
+                  status={theirs}
+                />
               </span>
             </li>
           ))}
         </ul>
         <DialogFooter className="grid grid-cols-2 gap-2 sm:flex">
           <Button variant="outline" size="lg" onClick={onTheirs}>
-            {t('conflictTheirs')}
+            {byDevice ? t('conflictTheirsDevice') : t('conflictTheirs')}
           </Button>
           <Button size="lg" onClick={onMine}>
             {t('conflictMine')}

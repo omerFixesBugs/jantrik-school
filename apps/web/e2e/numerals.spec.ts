@@ -1,4 +1,6 @@
+import { addDays } from '@jantrik/shared';
 import { expect, test, type Page } from '@playwright/test';
+import { E2E_TODAY } from '../playwright.config';
 import { DEMO, passwordLogin } from './helpers';
 
 // Bangla numerals must be unmistakable (docs/PRODUCT.md, principle 1). v1's body face, Hind
@@ -82,6 +84,33 @@ test('Bangla digits are drawn by the body face on the number-heavy screens', asy
   await page.getByTestId('tabulation-CLASS_9').click();
   await expect(page.getByTestId('tabulation-row').first()).toBeVisible();
   await expectBodyFaceDigits(page, 'tabulation');
+});
+
+test('Bangla digits are drawn by the body face on the devices and staff attendance screens', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+
+  // Punch times in the live feed, the device list's counts and times.
+  await page.goto('/attendance/devices');
+  await expect(page.getByTestId('feed-table')).toBeVisible();
+  await expectBodyFaceDigits(page, 'devices');
+
+  await page.goto('/attendance/devices/people');
+  await expect(page.getByTestId('people-table')).toBeVisible();
+  await expectBodyFaceDigits(page, 'device people');
+
+  // A seeded day's in and out times (today's own state follows the real clock).
+  await page.goto(`/attendance/staff?date=${addDays(E2E_TODAY, -1)}`);
+  await expect(page.getByTestId('staff-day-row').first()).toBeVisible();
+  await expectBodyFaceDigits(page, 'staff day');
+
+  // The month: day numbers, totals and minutes.
+  await page.goto('/attendance/staff?view=month');
+  await expect(page.getByTestId('staff-month-row').first()).toBeVisible();
+  await expectBodyFaceDigits(page, 'staff month');
 });
 
 test('every text style has one width per digit, and ১ is drawn whole', async ({ page }) => {

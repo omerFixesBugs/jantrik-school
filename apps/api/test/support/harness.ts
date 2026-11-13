@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { getQueueToken } from '@nestjs/bullmq';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
@@ -13,16 +14,24 @@ import {
 } from '@jantrik/db';
 import type { AuthResponse } from '@jantrik/shared';
 import { hash } from '@node-rs/argon2';
+import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module.js';
 import { AttendanceModule } from '../../src/attendance/attendance.module.js';
 import { configureApp } from '../../src/app.setup.js';
+import {
+  DEVICES_QUEUE,
+  DEVICES_TICK_JOB,
+  EXPIRE_PUNCHES_JOB,
+} from '../../src/devices/devices.constants.js';
+import { DevicesModule } from '../../src/devices/devices.module.js';
 import { ExamsModule } from '../../src/exams/exams.module.js';
 import { FeesModule } from '../../src/fees/fees.module.js';
 import { REDIS } from '../../src/redis/redis.constants.js';
 import { SMS_PROVIDER, type MemorySmsProvider } from '../../src/sms/sms.providers.js';
 import { TenantAccessService } from '../../src/tenancy/tenant-access.service.js';
+import { Clock } from '../../src/common/clock.js';
 import { TestController } from './test.controller.js';
 
 export interface Harness {
@@ -35,16 +44,24 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function createHarness(): Promise<Harness> {
-  const moduleRef = await Test.createTestingModule({
-    // AttendanceModule, FeesModule and ExamsModule again so TestController can inject their
-    // exported services (same instances).
-    imports: [AppModule, AttendanceModule, FeesModule, ExamsModule],
+export async function createHarness(opts: { clock?: Clock } = {}): Promise<Harness> {
+  const builder = Test.createTestingModule({
+    // AttendanceModule, DevicesModule, FeesModule and ExamsModule again so TestController can
+    // inject their exported services (same instances).
+    imports: [AppModule, AttendanceModule, DevicesModule, FeesModule, ExamsModule],
     controllers: [TestController],
-  }).compile();
+  });
+  // Tests that need to control time pass a FakeClock (test/support/clock.ts).
+  if (opts.clock) builder.overrideProvider(Clock).useValue(opts.clock);
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
   configureApp(app);
   await app.init();
+  // No real-time devices tick or retention in tests: they would visit each institute listed for
+  // devices while other tests run. Tests run them themselves (DevicesProcessor.tickAll, expire).
+  const devicesQueue = app.get<Queue>(getQueueToken(DEVICES_QUEUE));
+  await devicesQueue.removeJobScheduler(DEVICES_TICK_JOB);
+  await devicesQueue.removeJobScheduler(EXPIRE_PUNCHES_JOB);
   const prisma = createPrismaClient(process.env['DATABASE_URL']!);
   return {
     app,
@@ -73,7 +90,7 @@ export const randomIp = (): string => {
 export const http = (h: Harness) => request(h.app.getHttpServer());
 
 export async function createTenant(
-  h: Harness,
+  h: Pick<Harness, 'prisma'>,
   opts: { status?: TenantStatus; modules?: ('ATTENDANCE' | 'FEES' | 'EXAMS')[] } = {},
 ) {
   return provisionTenant(h.prisma, {

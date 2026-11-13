@@ -4,6 +4,7 @@ import {
   MAX_PERIOD,
   type AttendanceCounts,
   type AttendanceMode,
+  type AttendanceSource,
   type AttendanceStatus,
   type NonWorkingDay,
   type PersonRef,
@@ -11,6 +12,7 @@ import {
   type SectionRef,
 } from './attendance.js';
 import { addDays, isoDateSchema, type IsoDate } from './dates.js';
+import type { DeviceRegisterState } from './devices.js';
 import type { MonthRegister } from './register.js';
 
 // ─────────────────────────── Requests ───────────────────────────
@@ -54,6 +56,28 @@ export type TrendQuery = z.input<typeof trendQuerySchema>;
 
 // ─────────────────────────── Responses ───────────────────────────
 
+/**
+ * A section's day by device, live: students arrived so far (late among them) of those enrolled,
+ * the shift's cutoff, and where the register stands: CLOSED once the day's register exists, else
+ * BEFORE_CUTOFF or why the cutoff held it back (an admin can close it from the device then):
+ * DEVICE_OFFLINE, NOT_ON_DEVICE, TOO_MANY_MISSING, or AUTO_CLOSE_ENDED (an hour after the cutoff
+ * it no longer closes by itself and waits for a person). The counts are of ACTIVE enrolled
+ * students only (inactive ones are never sent to a device; the register still lists them).
+ */
+export interface SectionDeviceToday {
+  arrived: number;
+  late: number;
+  enrolled: number;
+  /**
+   * ACTIVE enrolled students who cannot punch: no device ID, or not confirmed on any active device
+   * (inactive ones are never sent to a device, so they are not counted).
+   */
+  notOnDevice: number;
+  /** HH:MM */
+  cutoffAt: string;
+  state: DeviceRegisterState;
+}
+
 /** GET /attendance/reports/today: every section's roll call today (teachers: their own). */
 export interface AttendanceTodayReport {
   today: IsoDate;
@@ -63,11 +87,20 @@ export interface AttendanceTodayReport {
   sections: {
     section: SectionRef;
     studentCount: number;
+    /** DAILY mode with device auto-mark on; null otherwise and for a section with no students. */
+    device: SectionDeviceToday | null;
     /** Null until the day's first register is submitted. */
     register: {
       periodNo: number;
       submittedAt: string;
+      source: AttendanceSource;
+      /**
+       * The person who last changed it: on a DEVICE register the one who edited it, still named
+       * when the device changes a record later. Unnamed while no person has (`updatedByDevice`).
+       */
       updatedBy: PersonRef;
+      /** True while no person has changed it: taken by the device and not edited. */
+      updatedByDevice: boolean;
       counts: AttendanceCounts;
       percent: number | null;
       /**
@@ -113,8 +146,8 @@ export interface StudentAttendanceReport {
   daysTaken: number;
   counts: AttendanceCounts;
   percent: number | null;
-  /** Only days with a record, newest first. */
-  days: (StudentDay & { status: AttendanceStatus })[];
+  /** Only days with a record, newest first; `source` says who set it (a person or the device). */
+  days: (StudentDay & { status: AttendanceStatus; source: AttendanceSource })[];
 }
 
 /** GET /me/children/:id/attendance: the guardian's month calendar. */

@@ -62,6 +62,12 @@ describe('schema safety net', () => {
         'exam_mark_sheets',
         'exam_marks',
         'exam_results',
+        'attendance_devices',
+        'device_people',
+        'device_commands',
+        'device_punches',
+        'device_source_ips',
+        'staff_attendance_days',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
@@ -151,6 +157,8 @@ describe('schema safety net', () => {
   // institute id, because they only ever run for a live platform session.
   const isPlatform = (fn: string) =>
     fn.startsWith('platform_') || fn === 'app_current_platform_admin_id';
+  // So are the device receiver's: no context at all, scoped by the device's serial number.
+  const isIngest = (fn: string) => fn.startsWith('ingest_');
 
   it('no SECURITY DEFINER function takes a tenant id parameter', async () => {
     const all = await app.$queryRaw<{ fn: string; args: string }[]>`
@@ -170,7 +178,7 @@ describe('schema safety net', () => {
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
         AND p.proname <> ALL(${PRE_CONTEXT_AUTH_LOOKUPS})`;
-    const scoped = rows.filter((r) => !isPlatform(r.fn));
+    const scoped = rows.filter((r) => !isPlatform(r.fn) && !isIngest(r.fn));
     expect(scoped.map((r) => r.fn).sort()).toEqual([
       'app_find_or_create_user',
       'auth_list_my_memberships',
@@ -225,5 +233,120 @@ describe('schema safety net', () => {
         AND p.proowner = 'jantrik_platform'::regrole`;
     expect(rows.length).toBeGreaterThanOrEqual(9);
     expect(rows.filter((r) => r.app_exec || r.public_exec || !r.platform_exec)).toEqual([]);
+  });
+
+  // The definer bodies use unqualified pg_catalog operators (enum =, text[] || text, …). A more
+  // specific operator or function created in public would win over them, so no login role may
+  // create anything there (only the NOLOGIN function owners may).
+  it('no login role can create objects in schema public', async () => {
+    const rows = await app.$queryRaw<{ role: string; can_create: boolean }[]>`
+      SELECT r.rolname AS role, has_schema_privilege(r.oid, 'public', 'CREATE') AS can_create
+      FROM pg_roles r
+      WHERE r.rolname IN ('jantrik_app', 'jantrik_ingest_app', 'jantrik_platform_app')
+      ORDER BY 1`;
+    expect(rows).toEqual([
+      { role: 'jantrik_app', can_create: false },
+      { role: 'jantrik_ingest_app', can_create: false },
+      { role: 'jantrik_platform_app', can_create: false },
+    ]);
+  });
+
+  // The device receiver (jantrik_ingest_app) runs these four SECURITY DEFINER functions; any other
+  // function owned by jantrik_ingest is a helper that only they call, running as its caller.
+  const INGEST_ENTRY_POINTS = [
+    'ingest_command_results',
+    'ingest_resolve',
+    'ingest_store_punches',
+    'ingest_take_commands',
+  ];
+
+  // By name and by owner: an ingest_* function owned by someone else would escape the context
+  // check above, and a jantrik_ingest function under another name would escape this one.
+  it('every ingest function is owned by jantrik_ingest, pins search_path and takes no tenant or uuid', async () => {
+    const rows = await app.$queryRaw<
+      { fn: string; owner: string; definer: boolean; temp_last: boolean; args: string }[]
+    >`
+      SELECT p.proname AS fn, r.rolname AS owner, p.prosecdef AS definer,
+             'search_path=pg_catalog, public, pg_temp' = ANY(p.proconfig) AS temp_last,
+             pg_get_function_arguments(p.oid) AS args
+      FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
+      WHERE p.pronamespace = 'public'::regnamespace
+        AND (p.proname LIKE 'ingest\_%' OR p.proowner = 'jantrik_ingest'::regrole)`;
+    expect(
+      rows
+        .filter((r) => r.definer)
+        .map((r) => r.fn)
+        .sort(),
+    ).toEqual(INGEST_ENTRY_POINTS);
+    expect(rows.filter((r) => r.owner !== 'jantrik_ingest')).toEqual([]);
+    expect(rows.filter((r) => !r.temp_last)).toEqual([]);
+    expect(rows.filter((r) => /tenant/i.test(r.args) || /\buuid\b/i.test(r.args))).toEqual([]);
+  });
+
+  // By owner, like the platform check: a migration that copies `GRANT EXECUTE … TO jantrik_app`
+  // fails here.
+  it('only jantrik_ingest_app may run the ingest functions, and nobody the helpers', async () => {
+    const rows = await app.$queryRaw<
+      {
+        fn: string;
+        app_exec: boolean;
+        platform_exec: boolean;
+        ingest_exec: boolean;
+        public_exec: boolean;
+      }[]
+    >`
+      SELECT p.proname AS fn,
+             has_function_privilege('jantrik_app', p.oid, 'EXECUTE') AS app_exec,
+             has_function_privilege('jantrik_platform_app', p.oid, 'EXECUTE') AS platform_exec,
+             has_function_privilege('jantrik_ingest_app', p.oid, 'EXECUTE') AS ingest_exec,
+             COALESCE(EXISTS (SELECT 1 FROM aclexplode(p.proacl) a
+                              WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'), true)
+               AS public_exec
+      FROM pg_proc p
+      WHERE p.pronamespace = 'public'::regnamespace
+        AND p.proowner = 'jantrik_ingest'::regrole`;
+    expect(rows.length).toBeGreaterThan(INGEST_ENTRY_POINTS.length);
+    expect(
+      rows.filter(
+        (r) =>
+          r.app_exec ||
+          r.platform_exec ||
+          r.public_exec ||
+          r.ingest_exec !== INGEST_ENTRY_POINTS.includes(r.fn),
+      ),
+    ).toEqual([]);
+  });
+
+  // The receiver parses internet input without a login: whatever it does goes through the
+  // functions above, never a table or another definer function.
+  it('jantrik_ingest_app has no privilege on any table, column or sequence, and no role', async () => {
+    const granted = await app.$queryRaw<{ name: string }[]>`
+      SELECT c.relname AS name
+      FROM pg_class c
+      WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+        -- CASE: has_sequence_privilege raises on a non-sequence, whatever the order.
+        AND CASE WHEN c.relkind = 'S'
+                 THEN has_sequence_privilege('jantrik_ingest_app', c.oid, 'USAGE, SELECT, UPDATE')
+                 ELSE has_table_privilege('jantrik_ingest_app', c.oid,
+                        'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                   OR has_any_column_privilege('jantrik_ingest_app', c.oid,
+                        'SELECT, INSERT, UPDATE, REFERENCES')
+            END
+      UNION ALL
+      SELECT p.proname
+      FROM pg_proc p
+      WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
+        AND p.proowner <> 'jantrik_ingest'::regrole
+        AND has_function_privilege('jantrik_ingest_app', p.oid, 'EXECUTE')`;
+    expect(granted).toEqual([]);
+    const [role] = await app.$queryRaw<
+      { superuser: boolean; bypassrls: boolean; roles: string[]; owned: bigint }[]
+    >`
+      SELECT r.rolsuper AS superuser, r.rolbypassrls AS bypassrls,
+             ARRAY(SELECT m.roleid::regrole::text FROM pg_auth_members m
+                   WHERE m.member = r.oid) AS roles,
+             (SELECT count(*) FROM pg_class c WHERE c.relowner = r.oid) AS owned
+      FROM pg_roles r WHERE r.rolname = 'jantrik_ingest_app'`;
+    expect(role).toEqual({ superuser: false, bypassrls: false, roles: [], owned: 0n });
   });
 });

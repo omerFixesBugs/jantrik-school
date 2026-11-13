@@ -6,12 +6,14 @@ import { useTranslations } from 'next-intl';
 import { useMeContext } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 
-export type AttendanceTab = 'take' | 'today' | 'register' | 'settings';
+export type AttendanceTab = 'take' | 'today' | 'register' | 'staff' | 'devices' | 'settings';
 
 const TABS: { key: AttendanceTab; href: string; label: string; adminOnly?: boolean }[] = [
   { key: 'take', href: '/attendance', label: 'tabTake' },
   { key: 'today', href: '/attendance/today', label: 'tabToday' },
   { key: 'register', href: '/attendance/register', label: 'tabRegister' },
+  { key: 'staff', href: '/attendance/staff', label: 'tabStaff', adminOnly: true },
+  { key: 'devices', href: '/attendance/devices', label: 'tabDevices', adminOnly: true },
   { key: 'settings', href: '/attendance/settings', label: 'tabSettings', adminOnly: true },
 ];
 

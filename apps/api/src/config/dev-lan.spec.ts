@@ -4,6 +4,7 @@ import { envSchema } from './env.js';
 const base = {
   DATABASE_URL: 'postgresql://x@localhost/jantrik',
   DATABASE_PLATFORM_URL: 'postgresql://p@localhost/jantrik',
+  DATABASE_INGEST_URL: 'postgresql://i@localhost/jantrik',
   JWT_ACCESS_SECRET: 'x'.repeat(40),
   OTP_PEPPER: 'y'.repeat(40),
 };
@@ -43,7 +44,12 @@ describe('env: loosened settings never leave development', () => {
   });
 
   it('COOKIE_SECURE=false is refused in production', () => {
-    const prod = { ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'k'.repeat(32) };
+    const prod = {
+      ...base,
+      NODE_ENV: 'production',
+      PLATFORM_TOTP_KEY: 'k'.repeat(32),
+      INGEST_PUBLIC_HOST: 'devices.example.com',
+    };
     const result = envSchema.safeParse({ ...prod, COOKIE_SECURE: 'false' });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error)).toContain('COOKIE_SECURE');
@@ -118,5 +124,71 @@ describe('refresh cookie Secure flag', () => {
     expect(
       refreshCookieSecure({ NODE_ENV: 'production', DEV_LAN: true, COOKIE_SECURE: true }),
     ).toBe(true);
+  });
+});
+
+describe('env: device receiver', () => {
+  const { DATABASE_INGEST_URL: _omit, ...withoutIngest } = base;
+
+  it('runs in process by default outside production, and then needs its database login', () => {
+    const parsed = envSchema.parse({ ...base, NODE_ENV: 'development' });
+    expect(parsed.INGEST_IN_PROCESS).toBe(true);
+    const result = envSchema.safeParse({ ...withoutIngest, NODE_ENV: 'development' });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('DATABASE_INGEST_URL');
+  });
+
+  it('is its own process in production unless told otherwise', () => {
+    const prod = {
+      ...withoutIngest,
+      NODE_ENV: 'production',
+      PLATFORM_TOTP_KEY: 'k'.repeat(40),
+      INGEST_PUBLIC_HOST: '203.0.113.7',
+    };
+    expect(envSchema.parse(prod).INGEST_IN_PROCESS).toBe(false);
+    expect(envSchema.safeParse({ ...prod, INGEST_IN_PROCESS: 'true' }).success).toBe(false);
+  });
+
+  it('the public host (the setup guide) must be set in production, to an address devices can dial', () => {
+    const prod = { ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'k'.repeat(40) };
+    const undialable = [
+      'localhost',
+      'LOCALHOST',
+      '127.0.0.1',
+      '::1',
+      '[::1]',
+      '0.0.0.0',
+      '::',
+      '[::]',
+    ];
+    for (const host of [undefined, ...undialable]) {
+      const result = envSchema.safeParse({ ...prod, INGEST_PUBLIC_HOST: host });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.path.join('.'))).toEqual(['INGEST_PUBLIC_HOST']);
+    }
+    for (const host of ['devices.example.com', '203.0.113.7']) {
+      expect(envSchema.parse({ ...prod, INGEST_PUBLIC_HOST: host }).INGEST_PUBLIC_HOST).toBe(host);
+    }
+    // Elsewhere localhost unless set.
+    for (const NODE_ENV of ['development', 'test']) {
+      expect(envSchema.parse({ ...base, NODE_ENV }).INGEST_PUBLIC_HOST).toBe('localhost');
+    }
+  });
+
+  it('takes the public port from the listen port unless set, and has the documented limits', () => {
+    const env = envSchema.parse({ ...base, INGEST_PORT: '4280' });
+    expect(env.INGEST_PUBLIC_PORT).toBe(4280);
+    expect(envSchema.parse({ ...base, INGEST_PUBLIC_PORT: '443' }).INGEST_PUBLIC_PORT).toBe(443);
+    expect(envSchema.parse(base)).toMatchObject({
+      INGEST_PORT: 4080,
+      INGEST_PUBLIC_HOST: 'localhost',
+      INGEST_TRUST_PROXY: 'false',
+      INGEST_PER_IP_PER_MIN: 1200,
+      INGEST_PER_DEVICE_PER_MIN: 300,
+      INGEST_PER_DEVICE_ALL_PER_MIN: 1200,
+      INGEST_REFUSED_PER_IP_PER_10MIN: 30,
+      INGEST_MAX_ATTLOG_BYTES: 524288,
+      INGEST_MAX_DRAIN_BYTES: 2097152,
+    });
   });
 });

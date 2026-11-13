@@ -1,7 +1,6 @@
 import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
-import type { Env } from '../config/env.js';
 import { RateLimiter } from './rate-limiter.service.js';
 import { REDIS } from './redis.constants.js';
 
@@ -13,7 +12,8 @@ export { REDIS };
     {
       provide: REDIS,
       inject: [ConfigService],
-      useFactory: (config: ConfigService<Env, true>) =>
+      // The API's and the device receiver's environments both have REDIS_URL.
+      useFactory: (config: ConfigService<{ REDIS_URL: string }, true>) =>
         new Redis(config.get('REDIS_URL', { infer: true }), { lazyConnect: false }),
     },
     RateLimiter,

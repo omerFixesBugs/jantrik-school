@@ -7,7 +7,8 @@ import {
   Param,
   Post,
 } from '@nestjs/common';
-import { RequireModule, Roles } from '../../src/common/decorators.js';
+import { Clock } from '../../src/common/clock.js';
+import { Public, RequireModule, Roles } from '../../src/common/decorators.js';
 import { AttendanceService, type SubmitInput } from '../../src/attendance/attendance.service.js';
 import { SaveMarkSheetDto } from '../../src/exams/exams.module.js';
 import { MarkSheetService } from '../../src/exams/marks/mark-sheet.service.js';
@@ -25,7 +26,15 @@ export class TestController {
     private readonly attendanceService: AttendanceService,
     private readonly fees: FeeCollectionService,
     private readonly markSheets: MarkSheetService,
+    private readonly clock: Clock,
   ) {}
+
+  /** The injected Clock's time (the tests install a FakeClock). */
+  @Public()
+  @Get('now')
+  now() {
+    return { now: this.clock.now().toISOString() };
+  }
 
   /** Saves a mark sheet and then fails: no mark, sheet or audit row may stay. */
   @Post('exam-sheet-then-fail')

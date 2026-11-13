@@ -6,8 +6,8 @@ import { seedPlatformAdmin } from './platform.js';
 import { maySeedPlatformAdmin } from './reset-guard.js';
 import { seedTemplates } from '../reference-data/templates.js';
 
-// Seeds global templates (as the owner role) and demo tenants (as the RLS-restricted app role).
-// Run with `pnpm db:seed`.
+// Seeds global templates (as the owner role) and demo tenants (as the RLS-restricted app role;
+// their device punches as the owner, in the tenant's context). Run with `pnpm db:seed`.
 
 config({ path: path.resolve(import.meta.dirname, '../../../../.env'), quiet: true });
 
@@ -30,7 +30,7 @@ try {
   console.log('Seeding institute types, templates and grading schemes...');
   await seedTemplates(owner);
   console.log('Seeding demo tenants...');
-  await seedDemo(app);
+  await seedDemo(app, owner);
   if (maySeedPlatformAdmin(process.env)) {
     console.log('Seeding the development platform admin...');
     await seedPlatformAdmin(owner);

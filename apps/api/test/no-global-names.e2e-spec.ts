@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { findOrCreateUser, withContext, withTenant } from '@jantrik/db';
-import { todayIn, toCsv, type StudentImportSummary } from '@jantrik/shared';
+import { ZkDeviceSimulator } from '@jantrik/device-sim';
+import { addDays, todayIn, toCsv, type StudentImportSummary } from '@jantrik/shared';
 import {
   bearer,
   createHarness,
   createTenant,
   http,
   otpLogin,
+  randomIp,
   randomPhone,
   type Harness,
 } from './support/harness.js';
+import { createIngestHarness, type IngestHarness } from './support/ingest.js';
 import { school, type School } from './support/school.js';
 
 // Decision #5: a person's global row (users.name / name_bn / email) never leaves the API for
@@ -216,15 +219,71 @@ describe('global names never leave the API', () => {
       await new Promise((r) => setTimeout(r, 200));
     }
     importId = up.id;
+
+    // A gate device: the teacher has a device ID, punches, and trusted the device's address.
+    ingest = await createIngestHarness();
+    const created = (
+      await http(h)
+        .post('/attendance/devices')
+        .set(bearer(s.admin))
+        .send({
+          serialNo: `N${randomUUID().replace(/-/g, '').slice(0, 15)}`,
+          name: 'Gate',
+          direction: 'IN',
+        })
+        .expect(201)
+    ).body as { id: string; serialNo: string };
+    deviceId = created.id;
+    await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.devicePerson.create({
+        data: { tenantId: s.tenantId, deviceUserId: '9001', staffUserId: userId },
+      }),
+    );
+    const device = new ZkDeviceSimulator({
+      baseUrl: ingest.baseUrl,
+      sn: created.serialNo,
+      forwardedFor: randomIp(),
+    });
+    expect((await device.punch('9001')).status).toBe(200);
+    await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.deviceSourceIp.updateMany({ where: { deviceId }, data: { trustedById: userId } }),
+    );
+    const punchId = (
+      (await http(h).get('/attendance/devices/punches').set(bearer(s.admin)).expect(200)).body as {
+        punches: { id: string }[];
+      }
+    ).punches[0]!.id;
+    keep(
+      'POST punch review',
+      await http(h)
+        .post(`/attendance/devices/punches/${punchId}/review`)
+        .set(bearer(s.admin))
+        .send({ action: 'OK' })
+        .expect(200),
+    );
+
+    // An admin sets the teacher's day before by hand.
+    keep(
+      'PUT staff day',
+      await http(h)
+        .put(`/staff-attendance/${userId}/${addDays(TODAY(), -1)}`)
+        .set(bearer(s.admin))
+        .send({ status: 'LEAVE', reason: 'Typed reason', baseVersion: 0 })
+        .expect(200),
+    );
   });
   let importId: string;
+  let ingest: IngestHarness;
+  let deviceId: string;
 
   afterAll(async () => {
+    await ingest.queue.obliterate({ force: true });
+    await ingest.close();
     await h.close();
   });
 
   it('the writes made while setting up return no global names either', () => {
-    expect(writes.length).toBe(6);
+    expect(writes.length).toBe(8);
     for (const [what, body] of writes) expect(leaks(body), what).toEqual([]);
   });
 
@@ -267,6 +326,24 @@ describe('global names never leave the API', () => {
       [`/student-imports/${importId}`],
       [`/student-imports/${importId}/rows`],
       [`/student-imports/${importId}/report.csv`, { locale: 'en' }],
+      ['/attendance/devices'],
+      ['/attendance/devices/punches'],
+      ['/attendance/devices/punches', { deviceId }],
+      [`/attendance/devices/${deviceId}/ips`],
+      ['/attendance/devices/unknown-ids'],
+      ['/attendance/devices/alerts'],
+      ['/attendance/device-people'],
+      ['/attendance/device-people/collisions'],
+      ['/attendance/device-people/csv', { locale: 'en' }],
+      ['/attendance/device-people/csv', { locale: 'bn' }],
+      ['/attendance/device-people/stale'],
+      ['/staff-attendance/day'],
+      ['/staff-attendance/day', { date: addDays(TODAY(), -1) }],
+      ['/staff-attendance/month', { month }],
+      ['/staff-attendance/month/csv', { month, locale: 'en', kind: 'grid' }],
+      ['/staff-attendance/month/csv', { month, locale: 'bn', kind: 'grid' }],
+      ['/staff-attendance/month/csv', { month, locale: 'en', kind: 'days' }],
+      ['/staff-attendance/month/csv', { month, locale: 'bn', kind: 'days' }],
     ];
     for (const [path, query] of paths) {
       expect(leaks(await text(s.admin, path, query)), path).toEqual([]);
@@ -295,11 +372,65 @@ describe('global names never leave the API', () => {
     }
   });
 
+  it('device people: answers naming people use staff profiles (defaults, import, ID taken)', async () => {
+    const send = (method: 'post' | 'put', path: string, body: object) =>
+      http(h)[method](path).set(bearer(s.admin)).send(body);
+    const bodies = [
+      (
+        await send('post', '/attendance/device-people/defaults', {
+          kind: 'ALL',
+          dryRun: true,
+        }).expect(200)
+      ).body,
+      (
+        await http(h)
+          .post('/attendance/device-people/import')
+          .set(bearer(s.admin))
+          .attach(
+            'file',
+            Buffer.from(
+              toCsv([
+                ['staff_phone', 'device_id'],
+                [person.phone.slice(3), '9002'],
+              ]),
+            ),
+            'ids.csv',
+          )
+          .expect(200)
+      ).body,
+      (
+        await send('put', '/attendance/device-people', { studentId, deviceUserId: '9001' }).expect(
+          409,
+        )
+      ).body,
+    ];
+    for (const body of bodies) expect(leaks(JSON.stringify(body))).toEqual([]);
+    expect(JSON.stringify(bodies[1])).toContain('Typed Teacher');
+    expect(bodies[2]).toMatchObject({
+      holder: { name: 'Typed Teacher', nameBn: 'টাইপ করা শিক্ষক' },
+    });
+  });
+
   it('the typed names are what this institute shows', async () => {
     expect(await text(s.admin, '/staff')).toContain('Typed Teacher');
     expect(await text(s.admin, `/students/${studentId}`)).toContain('Typed Guardian');
     expect(
       await text(s.admin, '/attendance/sessions', { sectionId: s.sectionA, date: TODAY() }),
     ).toContain('Typed Teacher');
+    // The punch feed and who trusted the device's address.
+    expect(await text(s.admin, '/attendance/devices/punches')).toContain('Typed Teacher');
+    expect(await text(s.admin, `/attendance/devices/${deviceId}/ips`)).toContain('Typed Teacher');
+    expect(await text(s.admin, '/attendance/device-people')).toContain('Typed Teacher');
+    expect(await text(s.admin, '/attendance/device-people/csv', { locale: 'en' })).toContain(
+      'Typed Teacher',
+    );
+    // Staff attendance: the day view and the month's CSV.
+    expect(await text(s.admin, '/staff-attendance/day')).toContain('Typed Teacher');
+    expect(
+      await text(s.admin, '/staff-attendance/month/csv', {
+        month: TODAY().slice(0, 7),
+        locale: 'bn',
+      }),
+    ).toContain('টাইপ করা শিক্ষক');
   });
 });
