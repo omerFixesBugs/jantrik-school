@@ -20,6 +20,12 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
    * global setup migrates the database).
    */
   retryDelaysMs = [1000, 2000, 4000, 8000, ...Array<number>(11).fill(15000)];
+  /**
+   * How long one start-up check may take before it counts as failed (and is asked again): a
+   * database that accepts the connection and never answers would otherwise hang the start. The
+   * check answers in milliseconds on a working database.
+   */
+  checkTimeoutMs = 10_000;
 
   constructor(config: ConfigService<IngestEnv, true>) {
     const url = config.get('DATABASE_INGEST_URL', { infer: true });
@@ -35,23 +41,17 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
   /**
    * Starts only when the check passes: the login runs ingest_resolve and reads neither students
    * nor punches (e.g. not DATABASE_URL pasted by mistake). A check that answers otherwise stops the
-   * start at once. A check that fails (no connection, or an error such as 42501 before the
-   * migrations ran) is asked again with backoff, one log line each with the error's codes, and
-   * still failing after the last wait stops the start. When the receiver runs inside the API, the
-   * API is already listening meanwhile; the receiver comes up when the check passes.
+   * start at once. A check that fails (no connection, an error such as 42501 before the migrations
+   * ran, or no answer within `checkTimeoutMs`) is asked again with backoff, one log line each with
+   * the error's codes, and still failing after the last wait stops the start. When the receiver
+   * runs inside the API, the API is already listening meanwhile; the receiver comes up when the
+   * check passes.
    */
   async onModuleInit(): Promise<void> {
     for (let attempt = 0; ; attempt++) {
-      let row: { resolve: boolean; students: boolean; punches: boolean } | undefined;
+      let row: StartupCheck | undefined;
       try {
-        [row] = await this.client.$queryRaw<
-          { resolve: boolean; students: boolean; punches: boolean }[]
-        >`
-          SELECT has_function_privilege(
-                   'public.ingest_resolve(text, inet, timestamptz, text, integer, text)', 'EXECUTE'
-                 ) AS resolve,
-                 has_table_privilege('public.students', 'SELECT') AS students,
-                 has_table_privilege('public.device_punches', 'SELECT') AS punches`;
+        [row] = await this.check();
       } catch (error) {
         const raw = databaseError(error)?.kind;
         const kind = typeof raw === 'string' && /^[A-Za-z]{1,60}$/.test(raw) ? raw : undefined;
@@ -81,10 +81,38 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * One start-up check, failed with a `StartupCheckTimeout` error when it has no answer within
+   * `checkTimeoutMs`. A query that answers after that is ignored (its late failure too).
+   */
+  private async check(): Promise<StartupCheck[]> {
+    const query = (async () =>
+      this.client.$queryRaw<StartupCheck[]>`
+        SELECT has_function_privilege(
+                 'public.ingest_resolve(text, inet, timestamptz, text, integer, text)', 'EXECUTE'
+               ) AS resolve,
+               has_table_privilege('public.students', 'SELECT') AS students,
+               has_table_privilege('public.device_punches', 'SELECT') AS punches`)();
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(Object.assign(new Error('No answer in time'), { name: 'StartupCheckTimeout' }));
+      }, this.checkTimeoutMs);
+    });
+    try {
+      return await Promise.race([query, timeout]);
+    } finally {
+      clearTimeout(timer);
+      void query.catch(() => undefined);
+    }
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.client.$disconnect();
   }
 }
+
+type StartupCheck = { resolve: boolean; students: boolean; punches: boolean };
 
 /**
  * What the driver says about a failed query: the database's error code (e.g. P0001 for RAISE,

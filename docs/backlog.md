@@ -170,9 +170,6 @@ are left out.
     pass `realDeviceTime` first.
   - An untrusted `devicecmd` body is drained up to 2 MB rather than the 64 KB cap (never buffered);
     in development a receiver that refuses to start stops the API too (fail-loud accepted).
-  - The receiver's start-up check retries a failing query for about 3 minutes but gives each
-    attempt no time limit of its own: a database that accepts the connection and never answers
-    hangs the start instead of failing it. Add a per-attempt timeout (CI run 1 fix, `6412892`).
   - The isolation code scan misses indirect imports, and the biometric sentinel's database scan
     sees only rows visible under the device institute's RLS: the receiver's start-up check covers
     the first at run time.

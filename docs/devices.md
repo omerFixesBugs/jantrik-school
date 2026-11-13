@@ -168,8 +168,10 @@ screen. Devices that support HTTPS can use a TLS proxy in front of the receiver'
   yet, or not migrated yet, e.g. 42501: the e2e run starts the API before its global setup
   migrates the e2e database) is asked again after 1, 2, 4 and 8 s, then every 15 s, about 3
   minutes in all, with one log line each naming the error's codes; still failing, the start
-  fails. Inside the API (development, e2e) the API is already listening meanwhile and the receiver
-  comes up once the check passes; a receiver that finally refuses stops the API too.
+  fails. Each check has 10 s to answer: a database that accepts the connection and never answers
+  counts as a failed check (`StartupCheckTimeout`), so the start fails within about 6 minutes
+  instead of hanging. Inside the API (development, e2e) the API is already listening meanwhile and
+  the receiver comes up once the check passes; a receiver that finally refuses stops the API too.
 - **Code scan.** [`ingest-isolation.spec.ts`](../apps/api/src/ingest/ingest-isolation.spec.ts)
   fails if receiver code imports the API's database access, or if anything outside the receiver
   provides its login; the receiver's e2e test checks that the running receiver has none of the
