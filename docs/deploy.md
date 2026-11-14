@@ -116,9 +116,13 @@ Fill in every value of `deploy/.env.prod` (git-ignored, never commit it):
 
 Nothing starts with the example values:
 
-- `deploy/compose.sh` refuses, before running any command, a settings file that still holds a
-  `CHANGE_ME` or `example.com` value, or a `*_PASSWORD` shorter than 24 characters or with
-  characters other than letters, digits and `. _ ~ -`;
+- `deploy/compose.sh` checks the settings file before running any command, so a bad value never
+  reaches Postgres's first start. It refuses a line that is not plain `KEY=value` (no spaces
+  around `=`; compose would read some of those differently), a `CHANGE_ME` or `example.com`
+  value, a `*_PASSWORD` shorter than 24 characters, with characters other than letters, digits
+  and `. _ ~ -`, with an example marker (the list below) or equal to another password, a secret
+  with an example marker, and any of the file's keys also set in your shell (compose would take
+  the shell's value);
 - `create-roles.sh` checks the superuser's and the roles' passwords again (step 7);
 - the API, the worker and the receiver refuse example secrets, an example or short Redis password
   and development settings (next section).
@@ -133,24 +137,24 @@ next to it; every rule has a test in `production-env.spec.ts`.
 
 The API and the worker refuse:
 
-| Setting                                                                                                                          | Why                                                                                                                                                                                                      |
-| -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SMS_PROVIDER` `console`, `memory`, `outbox`                                                                                     | they print or keep every code, OTPs included. Use `none` until a real gateway is built                                                                                                                   |
-| `COOKIE_SECURE` not `true`                                                                                                       | the refresh cookie would travel over plain HTTP                                                                                                                                                          |
-| `DEV_LAN=true`                                                                                                                   | development only (LAN CORS, cookie without Secure)                                                                                                                                                       |
-| `JANTRIK_TEST_TODAY` set                                                                                                         | tests only (a fixed "today")                                                                                                                                                                             |
-| `TRUST_PROXY` (or `INGEST_TRUST_PROXY`) `true` or a `/0` range                                                                   | Express would believe any client's `X-Forwarded-For`: anyone could pose as any address, or a new one per request past every per-address limit. Use a hop count (`1` behind Caddy) or the proxy's address |
-| `TRUST_PROXY` or `REDIS_URL` not set                                                                                             | their defaults (no proxy; Redis on localhost) suit a laptop. Behind Caddy, `TRUST_PROXY=false` would rate-limit everyone as one address                                                                  |
-| `INGEST_IN_PROCESS=true`                                                                                                         | the receiver is its own process, without the API's logins (deployment requirement 4)                                                                                                                     |
-| `CORS_ORIGINS` with `http://`, localhost, `127.0.0.1`, `[::1]`, `0.0.0.0`, `*.localhost` or `*`; or empty                        | the API answers browsers with credentials only from the real https origins                                                                                                                               |
-| a secret under 32 characters                                                                                                     | too short to resist guessing                                                                                                                                                                             |
-| a secret with an example marker (`change-me`, `CHANGE_ME`, `dev-only`, `test-only`, `ci-only`, `placeholder`, `example`)         | copied from `.env.example`, `deploy/.env.prod.example`, CI or a test config, not generated                                                                                                               |
-| two of `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY` equal                                                              | one leak would open two doors                                                                                                                                                                            |
-| `DATABASE_URL`, `DATABASE_PLATFORM_URL` or `DATABASE_INGEST_URL` logging in as `jantrik_owner` or `postgres`, or naming no login | the owner and the superuser are not subject to the database's protections the app relies on                                                                                                              |
-| a password in `REDIS_URL` under 24 characters or with an example marker                                                          | the published example would open Redis (its queues and sessions) to anything on the network. A URL without a password is allowed (Redis on a private network)                                            |
-| `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                          | the owner's and the superuser's credentials and the roles' raw passwords belong to Postgres and the migrate step only                                                                                    |
-| `PLATFORM_TOTP_KEY` missing                                                                                                      | the platform admins' 2FA secrets need their own key                                                                                                                                                      |
-| `INGEST_PUBLIC_HOST` missing, localhost or `0.0.0.0`                                                                             | the device setup guide would show an address no device can dial                                                                                                                                          |
+| Setting                                                                                                                                                                                                      | Why                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SMS_PROVIDER` `console`, `memory`, `outbox`                                                                                                                                                                 | they print or keep every code, OTPs included. Use `none` until a real gateway is built                                                                                                                   |
+| `COOKIE_SECURE` not `true`                                                                                                                                                                                   | the refresh cookie would travel over plain HTTP                                                                                                                                                          |
+| `DEV_LAN=true`                                                                                                                                                                                               | development only (LAN CORS, cookie without Secure)                                                                                                                                                       |
+| `JANTRIK_TEST_TODAY` set                                                                                                                                                                                     | tests only (a fixed "today")                                                                                                                                                                             |
+| `TRUST_PROXY` (or `INGEST_TRUST_PROXY`) `true` or a `/0` range                                                                                                                                               | Express would believe any client's `X-Forwarded-For`: anyone could pose as any address, or a new one per request past every per-address limit. Use a hop count (`1` behind Caddy) or the proxy's address |
+| `TRUST_PROXY` or `REDIS_URL` not set                                                                                                                                                                         | their defaults (no proxy; Redis on localhost) suit a laptop. Behind Caddy, `TRUST_PROXY=false` would rate-limit everyone as one address                                                                  |
+| `INGEST_IN_PROCESS=true`                                                                                                                                                                                     | the receiver is its own process, without the API's logins (deployment requirement 4)                                                                                                                     |
+| `CORS_ORIGINS` with `http://`, localhost, `127.0.0.1`, `[::1]`, `0.0.0.0`, `*.localhost` or `*`; or empty                                                                                                    | the API answers browsers with credentials only from the real https origins                                                                                                                               |
+| a secret under 32 characters                                                                                                                                                                                 | too short to resist guessing                                                                                                                                                                             |
+| a secret with an example marker (`change-me`, `CHANGE_ME`, `dev-only`, `test-only`, `ci-only`, `dev_password`, `ci_password`, `placeholder`, `example`; the same list as `compose.sh` and `create-roles.sh`) | copied from `.env.example`, `deploy/.env.prod.example`, CI or a test config, not generated                                                                                                               |
+| two of `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY` equal                                                                                                                                          | one leak would open two doors                                                                                                                                                                            |
+| `DATABASE_URL`, `DATABASE_PLATFORM_URL` or `DATABASE_INGEST_URL` logging in as `jantrik_owner` or `postgres`, or naming no login                                                                             | the owner and the superuser are not subject to the database's protections the app relies on                                                                                                              |
+| a password in `REDIS_URL` under 24 characters or with an example marker                                                                                                                                      | the published example would open Redis (its queues and sessions) to anything on the network. A URL without a password is allowed (Redis on a private network)                                            |
+| `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                                                                                                      | the owner's and the superuser's credentials and the roles' raw passwords belong to Postgres and the migrate step only                                                                                    |
+| `PLATFORM_TOTP_KEY` missing                                                                                                                                                                                  | the platform admins' 2FA secrets need their own key                                                                                                                                                      |
+| `INGEST_PUBLIC_HOST` missing, localhost or `0.0.0.0`                                                                                                                                                         | the device setup guide would show an address no device can dial                                                                                                                                          |
 
 The device receiver refuses:
 
@@ -198,28 +202,27 @@ the script on its first start (an empty volume) with the passwords from the sett
 - refuses passwords shorter than 24 characters, with characters a URL cannot carry, example
   values or two equal ones; and checks every role's attributes and memberships, new or found.
 
-The Postgres health check is a query (the roles and the production database must exist), so
-the apps never start against a half-made database.
+The Postgres health check is a query: the roles exist and the production database has been set
+up (schema owner, no USAGE or TEMPORARY for PUBLIC, UTC), so the apps never start against a
+half-made database.
 
 **When the first start fails** (`deploy/compose.sh logs postgres` shows a `create-roles:` error,
-and `postgres` stays "unhealthy"): Postgres has already made its data directory, so it will not
-run the roles script again by itself. Fix the settings file, then either
+and `postgres` stays "unhealthy"): Postgres has already made its data directory, with the
+superuser password of that first start, so it will not run the roles script again by itself.
+Fix the settings file, then **start Postgres over from an empty volume** (nothing is stored yet):
 
-- run the script by hand on the existing cluster (the superuser's password stays the one of the
-  first start):
+```bash
+deploy/compose.sh rm -sf postgres
+docker volume rm jantrik-prod_postgres-data
+deploy/compose.sh up -d postgres
+```
 
-  ```bash
-  deploy/compose.sh up -d postgres          # recreated with the fixed settings, data kept
-  deploy/compose.sh exec -u postgres postgres sh /jantrik/postgres/create-roles.sh
-  ```
-
-- or, as nothing is stored yet, start Postgres over from an empty volume:
-
-  ```bash
-  deploy/compose.sh rm -sf postgres
-  docker volume rm jantrik-prod_postgres-data
-  deploy/compose.sh up -d postgres
-  ```
+Only if you must keep that cluster: recreate the container with the fixed settings
+(`deploy/compose.sh up -d postgres`), run the script by hand
+(`deploy/compose.sh exec -u postgres postgres sh /jantrik/postgres/create-roles.sh`), and, if
+`POSTGRES_PASSWORD` changed, set it in Postgres too (`\password postgres`, below). Otherwise the
+health check still passes (it connects without a password from inside the container) while the
+nightly backup, which logs in with the new password, fails.
 
 **Changing a password later:** the settings file alone does not change a role or the superuser.
 Change it in Postgres too, typed at psql's hidden prompt (not on a command line, where it would
@@ -350,23 +353,26 @@ Every night, from the deploy user's crontab (`crontab -e`):
   the revoked-session markers, the roles-cache versions, rate-limit counters, OTP codes, platform
   login challenges, held SMS and the job queues; its AOF file on the `redis-data` volume survives
   restarts. **Losing Redis** (a deleted volume, a new server) lets a revoked access token work
-  again until it expires (up to 15 minutes), may serve someone's old roles until their cache
-  entry is rebuilt, and drops queued jobs, held SMS and pending codes. After a restore on a new
-  server, treat it like a security event: ask admins to sign out everywhere if a revocation
-  mattered.
+  again until it expires (up to 15 minutes) and drops queued jobs, held SMS and pending codes;
+  the roles cache simply starts empty. **Bringing back an older copy** of Redis's data (e.g. an
+  old volume) is worse: its older roles-cache versions can serve someone's old roles until the
+  entry is rebuilt. Do not restore Redis from a copy; start it empty. After a move to a new
+  server, ask admins to sign out everywhere if a recent revocation mattered.
 
 ## 13. Restore
 
 [`deploy/backup/restore.sh`](../deploy/backup/restore.sh) restores into a named database only, as
 the superuser, and refuses: missing roles, a database that is not empty (unless
 `--drop-existing=<name>` repeats its name and nothing is connected to it), `postgres` and the
-templates, a file that fails its checksum.
+templates, a file that fails its checksum, a file it cannot read. It warns when the file has no
+`.sha256` next to it.
 
 **On a new server** (the old one is gone): steps 1–5 with the same settings file, then
 
 ```bash
 deploy/compose.sh up -d postgres redis            # the roles and an empty database
-# copy the backup file (and its .sha256) into BACKUP_HOST_DIR, then:
+# copy the backup file and its .sha256 into BACKUP_HOST_DIR *as the deploy user* (the backup
+# service runs as BACKUP_UID and cannot read a root-owned private copy), then:
 deploy/compose.sh run --rm --entrypoint sh backup /jantrik/backup/restore.sh /backups/<file>.dump jantrik
 deploy/compose.sh run --rm migrate                # brings the restored database up to this version
 deploy/compose.sh up -d
@@ -404,7 +410,8 @@ function, policies, constraints, triggers, extensions; forced row-level security
 with a `tenant_id`; and that `jantrik_app` and `jantrik_owner` see no student without a tenant
 context. It drops the scratch database at the end, also on failure. It needs free disk space for
 one more copy of the database. CI runs the same check on every pull request (job "Production
-roles, backup and restore", on a fresh cluster set up by `create-roles.sh` with demo data).
+roles, backup and restore", on a fresh cluster set up by `create-roles.sh` with fresh random
+passwords and demo data).
 
 ## 15. Monitoring
 

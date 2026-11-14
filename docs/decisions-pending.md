@@ -141,9 +141,11 @@ D5. **`TRUST_PROXY` must be set in production** (the compose sets `1` for Caddy)
 - To change: remove it from `API_PRODUCTION_REQUIRED` in `production-env.ts`.
 
 D6. **Example secrets** are recognised by markers (`change-me`, `CHANGE_ME`, `dev-only`,
-`test-only`, `ci-only`, `placeholder`, `example`), and the three secrets must differ.
+`test-only`, `ci-only`, `dev_password`, `ci_password`, `placeholder`, `example`), and the three
+secrets must differ. The same list in `production-env.ts`, `deploy/compose.sh` and
+`create-roles.sh`.
 
-- To change: `isPlaceholderSecret` in `production-env.ts`.
+- To change: `isPlaceholderSecret` in `production-env.ts` and the two scripts together.
 
 D7. **The production roles script** is separate from `docker/postgres/init/01-roles.sh`
 (unchanged for development and CI) and creates the production database only. Passwords: at
@@ -197,17 +199,21 @@ devDependency of `@jantrik/db`, so its deploy includes all of them.
 
 Added after the review of the PR (2026-11-14):
 
-D15. **`deploy/compose.sh` checks the settings file first** and refuses, for every command, a
-value still holding `CHANGE_ME` or `example.com`, or a `*_PASSWORD` under 24 characters or with
-characters a URL cannot carry. The Postgres superuser and Redis passwords had no other check.
-`create-roles.sh` also checks `POSTGRES_PASSWORD` (when given) and that it differs from the
-roles'.
+D15. **`deploy/compose.sh` checks the settings file first** and refuses, for every command, a line
+that is not plain `KEY=value`, a value still holding `CHANGE_ME` or `example.com`, a `*_PASSWORD`
+under 24 characters, with characters a URL cannot carry, with an example marker or equal to
+another, a secret with an example marker, and a key also set in the shell (compose prefers the
+shell). So the superuser's password is checked before Postgres's first start sets it.
+`create-roles.sh` checks `POSTGRES_PASSWORD` (when given) and the roles' again. Second review
+round: the parsing follows compose's (`export`, quotes, inline comments).
 
 - To change: the loop at the top of `deploy/compose.sh`.
 
-D16. **The Postgres health check is a query** (the roles and the production database exist,
-over TCP), so a first start whose roles script failed stays unhealthy and the apps never start
-against it. The runbook gives the recovery (rerun the script, or a new volume).
+D16. **The Postgres health check is a query** over TCP, without a password (127.0.0.1 is trusted
+inside the image): the roles exist and `database-setup.sql` ran (schema owner, no USAGE or
+TEMPORARY for PUBLIC, the UTC setting). A first start that failed half-way stays unhealthy and the
+apps never start against it. The runbook's recovery is a new volume (or rerunning the script and
+setting the superuser's password by hand).
 
 D17. **Backups belong to the deploy user and live outside the checkout:** the `backup` service
 runs as `BACKUP_UID:BACKUP_GID` (default 1000:1000) and writes to `BACKUP_HOST_DIR` (default
@@ -238,7 +244,8 @@ Recorded for the owner, not built:
   the same for the platform and receiver logins). Today the env checks refuse the known admin
   logins by name, and the platform and receiver logins have their own start-up checks.
 - **CI coverage** of the compose Postgres's first start (initdb), the non-superuser branch of
-  `create-roles.sh` and the image builds (each checked by hand for this PR).
+  `create-roles.sh`, `deploy/compose.sh`'s settings check and the image builds (each checked by
+  hand for this PR). The CI restore job makes fresh random passwords each run.
 
 ## Exams and results (step 10)
 
