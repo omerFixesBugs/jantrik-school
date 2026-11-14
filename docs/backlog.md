@@ -63,6 +63,21 @@ lastTest}`; the audit stores field names only. A "test connection" job. A code-s
   sentinel credentials never appear in any response, log, `audit_logs`, `sms_logs`, Redis (incl.
   failed BullMQ jobs) or validation error.
 
+## Module keys for the sprint 1 features (before the first paid invoice)
+
+Agreed with the owner on 2026-11-14 (decision S3 of [plans/sprint-1.md](plans/sprint-1.md)).
+Sprint 1 puts admission, notices and documents under CORE, and online payments under FEES, with no
+new module keys. **Module keys for admission, notices, documents and online payments must exist
+before the first paid invoice to any institute,** so each can be priced and switched on or off.
+Adding a key touches:
+
+- the `module_key` enum and `PLATFORM_MODULES` (`packages/shared/src/platform.ts`);
+- `platform_set_module`'s hard-coded list;
+- the per-module price columns in `tenant_subscriptions`, `InvoiceLineKind` and the billing SQL;
+- `@RequireModule` on the routes and pages that move;
+- `tenant_modules` rows for existing institutes. A migration cannot backfill them: forced RLS hides
+  tenant rows from the owner role, and `provisioning_only` blocks the app. Use a platform function.
+
 ## Exams: later work (from step 10)
 
 Agreed in the step 10 plan, not built yet. Rules today: [exams.md](exams.md).
