@@ -147,23 +147,14 @@ are left out.
     sweep, or after ATTENDANCE is switched back on) can still send a stale "entered at" SMS. The
     window is small; check the processing time against the punch's day or the real-time window.
 - **Receiver and database**
-  - A RESTRICTIVE twin of the permissive `ingest_delete` policy on `device_source_ips` in the next
-    migration: unreachable today (no tenant context on the ingest login, and the function's DELETE
-    filters `trusted_at IS NULL`).
   - A lower bound on the 24-hour first-address window (a `p_now` before `created_at` counts as
     inside): `p_now` is the receiver's clock, not an attacker's.
   - The Redis trusted mark is per /64, and the untrusted-budget peek and the refused-address brake
     can overshoot under concurrent requests: still charged after `ingest_resolve`; the overshoot is
     small.
-  - An index for refused serials: each unknown or inactive serial scans `attendance_devices`;
-    braked per address before the database.
   - Some INSERT grants are table-wide (the app could supply its own `device_commands.seq`), and the
     unique-violation tests match the word "unique" rather than the constraint's name: hardening, no
     exploit path found.
-  - A DEVICE staff day has no CHECK that `reason IS NULL`: the code never writes one (only manual
-    days carry a reason).
-  - `device_punches.reviewed_by_id` can be set without `review` (no CHECK pairs them; only
-    `review` and `reviewed_at` are paired): the app always writes the three together.
   - In development a receiver that refuses to start stops the API too (fail-loud accepted).
   - The isolation code scan misses indirect imports, and the biometric sentinel's database scan
     sees only rows visible under the device institute's RLS: the receiver's start-up check covers
@@ -201,13 +192,10 @@ are left out.
   - Staff month print: the weekday line (5.5 pt grey) is hard to read, দেআ fills its column, and
     the name button keeps its touch height in print (more pages).
 - **Tests, seed and tooling**
-  - Coverage gaps: the database tests never exercise the three grace-range CHECKs on
-    `attendance_settings` (device, staff late, staff early), and the receiver login's denial list
-    has no case for INSERT into `attendance_devices`, `device_commands` or `device_people`, or for
-    DELETE on `device_commands` or `device_source_ips` (the catalog shows it holds no grants); shared
-    rules (mapped-person collisions, a staff month row on an off day), ingest error paths
-    (`INGEST_BAD_RESULTS`, a non-object row, a NULL or negative `p_max`), retention (an old DONE superseded only by a young DONE), the
-    simulator (per-record-type assertion, `poll()` silent on a non-200, the CLI's 50-line batches).
+  - Coverage gaps: shared rules (mapped-person collisions, a staff month row on an off day),
+    ingest error paths (`INGEST_BAD_RESULTS`, a non-object row, a NULL or negative `p_max`),
+    retention (an old DONE superseded only by a young DONE), the simulator (per-record-type
+    assertion, `poll()` silent on a non-200, the CLI's 50-line batches).
   - The race test's `pg_locks` poll matches any waiting `jantrik_ingest_app` session in the
     cluster: a possible flake, never a false pass.
   - The staff desk e2e cannot run twice in one run (the saved leave stays), and specs must not

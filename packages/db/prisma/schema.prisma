@@ -2923,6 +2923,8 @@ model AttendanceDevice {
   @@unique([tenantId, id])
   /// Across institutes: an active serial number belongs to one institute.
   @@unique([serialNo], map: "attendance_devices_active_serial", where: raw("is_active"))
+  /// Any serial number, active or not: the receiver's refusals look up unknown and inactive ones.
+  @@index([serialNo])
   @@map("attendance_devices")
 }
 

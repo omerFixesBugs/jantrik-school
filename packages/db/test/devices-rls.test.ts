@@ -411,6 +411,14 @@ describe('device tables: tenant isolation', () => {
     ).rejects.toThrow(/device_punches_reviewed_together/);
     await expect(
       asA((tx) =>
+        tx.devicePunch.update({
+          where: { id: a.punchId },
+          data: { reviewedById: a.staffUserId },
+        }),
+      ),
+    ).rejects.toThrow(/device_punches_reviewer_needs_review/);
+    await expect(
+      asA((tx) =>
         tx.devicePunch.update({ where: { id: a.punchId }, data: { processedAt: new Date() } }),
       ),
     ).rejects.toThrow(/device_punches_processed_together/);
@@ -616,6 +624,20 @@ describe('attendance_settings: device and staff columns', () => {
     await expect(update({ deviceCutoffMinutes: 14 })).rejects.toThrow(
       /attendance_settings_device_cutoff_range/,
     );
+    // The three grace minutes: 0 to 120.
+    for (const [column, constraint] of [
+      ['deviceGraceMinutes', 'attendance_settings_device_grace_range'],
+      ['staffLateGraceMinutes', 'attendance_settings_staff_late_grace_range'],
+      ['staffEarlyGraceMinutes', 'attendance_settings_staff_early_grace_range'],
+    ] as const) {
+      for (const value of [-1, 121]) {
+        await expect(update({ [column]: value }), `${column} ${value}`).rejects.toThrow(
+          new RegExp(constraint),
+        );
+      }
+      await update({ [column]: 0 });
+      await update({ [column]: 120 });
+    }
   });
 });
 
@@ -653,6 +675,22 @@ describe('the device receiver roles', () => {
     }
   });
 
+  it('jantrik_ingest_app cannot write any table either', async () => {
+    for (const sql of [
+      'INSERT INTO attendance_devices (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_commands (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_people (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_punches (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_source_ips (id) VALUES (gen_random_uuid())',
+      'UPDATE device_commands SET attempts = attempts',
+      'DELETE FROM device_commands',
+      'DELETE FROM device_source_ips',
+      'DELETE FROM device_punches',
+    ]) {
+      await expect(ingest.$executeRawUnsafe(sql), sql).rejects.toThrow(/permission denied/i);
+    }
+  });
+
   it('jantrik_ingest sees every institute without a context, but only the columns it needs', async () => {
     const ids = `('${a.deviceId}', '${b.deviceId}')`;
     const count = (sql: string) =>
@@ -680,6 +718,10 @@ describe('the device receiver roles', () => {
       'DELETE FROM device_punches',
       'UPDATE device_commands SET payload = payload',
       'UPDATE device_source_ips SET trusted_at = now()',
+      'INSERT INTO attendance_devices (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_commands (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_people (id) VALUES (gen_random_uuid())',
+      'DELETE FROM device_commands',
     ]) {
       await expect(asIngest((tx) => tx.$executeRawUnsafe(sql))).rejects.toThrow(
         /permission denied/i,
@@ -731,6 +773,34 @@ describe('the device receiver roles', () => {
       await tx.$executeRawUnsafe(`DELETE FROM device_source_ips WHERE id = '${untrusted.id}'`),
     ]);
     expect(deleted).toEqual([0, 1]);
+  });
+
+  it('an unknown or inactive serial number is looked up by an index, not a scan', async () => {
+    // As the receiver's refusal asks it (jantrik_ingest, by serial number alone): the unique
+    // index covers active devices only.
+    const plan = await asIngest(async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+      return tx.$queryRawUnsafe<{ 'QUERY PLAN': string }[]>(
+        "EXPLAIN SELECT 1 FROM attendance_devices WHERE serial_no = 'ABCDEF12'",
+      );
+    });
+    expect(plan.map((r) => r['QUERY PLAN']).join('\n')).toContain(
+      'attendance_devices_serial_no_idx',
+    );
+  });
+
+  it('jantrik_ingest cannot delete a trusted address even inside an institute context', async () => {
+    // tenant_isolation (permissive, every role) would allow it there; the RESTRICTIVE
+    // ingest_delete_untrusted_only does not.
+    const deleted = await asIngest(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${a.tenantId}, true)`;
+      return tx.$executeRawUnsafe(`DELETE FROM device_source_ips WHERE id = '${a.sourceIpId}'`);
+    });
+    expect(deleted).toBe(0);
+    const kept = await withTenant(owner, a.tenantId, (tx) =>
+      tx.deviceSourceIp.findUnique({ where: { id: a.sourceIpId } }),
+    );
+    expect(kept?.trustedAt).not.toBeNull();
   });
 
   it('the owner does not inherit what jantrik_ingest may see', async () => {

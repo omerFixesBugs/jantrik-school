@@ -152,6 +152,15 @@ describe('staff_attendance_days: tenant isolation and rules', () => {
         { status: 'LEAVE', inAt: null, source: 'DEVICE', reason: null, updatedById: null },
         /staff_attendance_days_device_no_leave/,
       ],
+      // Only an admin's MANUAL day carries a reason.
+      [
+        { source: 'DEVICE', reason: 'Device was down', updatedById: null },
+        /staff_attendance_days_device_no_reason/,
+      ],
+      [
+        { status: 'ABSENT', inAt: null, source: 'DEVICE', reason: 'Absent', updatedById: null },
+        /staff_attendance_days_device_no_reason/,
+      ],
       // Office hours and minutes.
       [{ officeEnd: time('08:00') }, /staff_attendance_days_office_hours/],
       [{ lateMinutes: -1 }, /staff_attendance_days_late_range/],
