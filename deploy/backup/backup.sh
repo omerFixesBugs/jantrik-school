@@ -41,8 +41,9 @@ trap 'rm -f "$tmp"' EXIT
 
 pg_dump --format=custom --no-password --file="$tmp" "$db"
 
-# Readable, and holds the migrations table: not an empty or a foreign database.
-pg_restore --list "$tmp" | grep -q 'TABLE DATA public _prisma_migrations' \
+# Readable, and holds the migrations table: not an empty or a foreign database. (grep reads it
+# all: with -q it would stop early, and pg_restore would complain of a broken pipe.)
+pg_restore --list "$tmp" | grep 'TABLE DATA public _prisma_migrations' > /dev/null \
   || die "the dump of $db has no _prisma_migrations data: not a migrated Jantrik database?"
 mv "$tmp" "$dir/$name"
 (cd "$dir" && sha256sum "$name" > "$name.sha256")
