@@ -398,6 +398,24 @@ describe('device user ids', () => {
       { deviceUserId: '7000', wantedBy: ['s3', 's4'], heldBy: null },
     ]);
   });
+  it('people who already have an ID: wanting one another person holds collides with its holder', () => {
+    expect(
+      deviceIdCollisions([
+        { key: 's1', kind: 'STUDENT', current: '5001', wanted: '5001' },
+        // Mapped to 6001, wants s1's 5001: collides with its holder, across kinds too.
+        { key: 't1', kind: 'STAFF', current: '6001', wanted: '5001' },
+        // Two people with an ID each swap them: each wants the other's.
+        { key: 's2', kind: 'STUDENT', current: '7001', wanted: '7002' },
+        { key: 's3', kind: 'STUDENT', current: '7002', wanted: '7001' },
+        // Keeping their own: fine.
+        { key: 's4', kind: 'STUDENT', current: '8001', wanted: '8001' },
+      ]),
+    ).toEqual([
+      { deviceUserId: '5001', wantedBy: ['t1'], heldBy: 's1' },
+      { deviceUserId: '7002', wantedBy: ['s2'], heldBy: 's3' },
+      { deviceUserId: '7001', wantedBy: ['s3'], heldBy: 's2' },
+    ]);
+  });
 });
 
 describe('hours and punch rules', () => {
