@@ -98,6 +98,9 @@ SELECT format('CREATE ROLE jantrik_platform_app LOGIN NOSUPERUSER NOBYPASSRLS NO
 -- The device receiver (DATABASE_INGEST_URL): the four ingest_* functions only.
 SELECT format('CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD %L', :'ingest_pw')
  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_ingest_app') \gexec
+-- Its statements stop after 5 s (decision #79). The receiver's pool sends the same limit and the
+-- receiver refuses to start without it; set on every run, so an existing role gets it too.
+ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s';
 
 -- Owners of the SECURITY DEFINER functions: no login, no RLS bypass. jantrik_owner may SET ROLE
 -- to them (migrations hand them their functions) but never inherits them: their policies would

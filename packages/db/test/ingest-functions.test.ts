@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { withTenant, type PrismaClient } from '../src/index.js';
+import { createPrismaClient, withTenant, type PrismaClient } from '../src/index.js';
+import { INGEST_URL } from './env.js';
 import { appClient, createTenant, ingestClient, ownerClient } from './helpers.js';
 
 // The device receiver logs in as jantrik_ingest_app: no table grants, only the four ingest_*
@@ -161,9 +162,11 @@ describe('ingest functions', () => {
       stamp?: string | null;
       samples?: number[];
       offset?: number | null;
+      /** Another receiver client (default: the shared one), e.g. with a shorter statement_timeout. */
+      client?: PrismaClient;
     } = {},
   ) =>
-    ingest.$queryRaw<
+    (opts.client ?? ingest).$queryRaw<
       { tenant_id: string; inserted: number; duplicates: number; held: number; dropped: number }[]
     >`SELECT * FROM ingest_store_punches(${sn}::text,
         ${opts.ip === undefined ? IP : opts.ip}::inet, ${opts.now ?? T0}::timestamptz,
@@ -728,6 +731,39 @@ describe('ingest functions', () => {
       expect(await resolve(old.serialNo)).toMatchObject({ device_id: replacement.id });
     },
   );
+
+  it('an upload cut by the statement timeout stores nothing; sending it again decides every punch once', async () => {
+    // The receiver's queries stop after 5 s (decision #79): a cut upload must leave nothing
+    // behind, and the device's resend must store each punch once (one statement, rolled back).
+    const dev = await addDevice(a);
+    const minuteAt = (m: number) =>
+      `${String(8 + Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    const rows = Array.from({ length: 50 }, (_, m) => burst(minuteAt(m), 200)).flat();
+    expect(rows).toHaveLength(10_000);
+    const now = after(60 * MIN);
+    const slow = createPrismaClient(INGEST_URL, { statement_timeout: 50 });
+    try {
+      await expect(store(dev.serialNo, rows, { now, client: slow })).rejects.toThrow(
+        /57014|canceling statement/,
+      );
+    } finally {
+      await slow.$disconnect();
+    }
+    expect(await punchesOf(a, dev.id)).toHaveLength(0);
+
+    const [first] = await store(dev.serialNo, rows, { now });
+    expect(first!.duplicates).toBe(0);
+    // `inserted` counts every stored punch, held ones included; the rest were dropped.
+    expect(first!.inserted + first!.dropped).toBe(rows.length);
+    expect(await punchesOf(a, dev.id)).toHaveLength(first!.inserted);
+
+    const [again] = await store(dev.serialNo, rows, { now: after(61 * MIN) });
+    expect(again).toMatchObject({
+      inserted: 0,
+      duplicates: first!.inserted,
+      dropped: first!.dropped,
+    });
+  });
 
   it('caps punches per device and minute: over N held as BURST, from 5 x N dropped', async () => {
     const t = { id: await cappedInstitute() };

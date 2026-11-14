@@ -1,6 +1,12 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createPrismaClient, type PoolOptions, type PrismaClient } from '@jantrik/db';
+import {
+  createPrismaClient,
+  loginPrivilegeProblems,
+  readLoginPrivileges,
+  type PoolOptions,
+  type PrismaClient,
+} from '@jantrik/db';
 import {
   STARTUP_CHECK_TIMEOUT_MS,
   STARTUP_RETRY_DELAYS_MS,
@@ -13,6 +19,11 @@ import type { IngestEnv } from '../config/ingest-env.js';
 
 export { errorLabel };
 
+/** How long one of the receiver's statements may run (decision #79): 5 s. */
+const STATEMENT_TIMEOUT_MS = 5_000;
+/** The same limit as Postgres shows it (`current_setting('statement_timeout')`). */
+const STATEMENT_TIMEOUT_SETTING = '5s';
+
 /**
  * The receiver's connection pool (node-postgres, at most 10 connections):
  * - Getting a connection fails after the check's time limit instead of waiting forever: opening
@@ -21,13 +32,17 @@ export { errorLabel };
  *   waiting requests fail (500); devices send again, nothing is lost.
  * - TCP keep-alive probes an idle connection after 30 s, so a database host that went away is
  *   noticed in minutes, not the operating system's 2 hours.
- * Queries themselves have no time limit yet, and the pool size is node-postgres' default (decision
- * #79 in docs/decisions-pending.md).
+ * - Every statement stops after 5 s (decision #79, the owner's choice): sent when a connection
+ *   opens, enforced by the server (and set on the role too, deploy/postgres/create-roles.sh). The
+ *   largest upload (10 000 lines) takes about 2 s to store; one cut by the limit stores nothing
+ *   (one statement), the device gets 500 and sends it again.
+ * The pool size is node-postgres' default (10).
  */
 export const INGEST_POOL: PoolOptions = {
   connectionTimeoutMillis: STARTUP_CHECK_TIMEOUT_MS,
   keepAlive: true,
   keepAliveInitialDelayMillis: 30_000,
+  statement_timeout: STATEMENT_TIMEOUT_MS,
 };
 
 /**
@@ -67,27 +82,45 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Starts only when the check passes: the login runs ingest_resolve and reads neither students
-   * nor punches (e.g. not DATABASE_URL pasted by mistake). A check that answers otherwise stops the
-   * start at once. A check that fails (no connection, an error such as 42501 before the migrations
-   * ran, or no answer within `checkTimeoutMs`) is asked again with backoff, one log line each with
-   * the error's codes, and still failing after the last wait stops the start. When the receiver
-   * runs inside the API, the API is already listening meanwhile; the receiver comes up when the
-   * check passes.
+   * nor punches (e.g. not DATABASE_URL pasted by mistake), its statements stop after 5 s, and it
+   * is not a superuser, BYPASSRLS, or able to become such a role. A check that answers otherwise
+   * stops the start at once. A check that fails (no connection, an error such as 42501 before the
+   * migrations ran, or no answer within `checkTimeoutMs`) is asked again with backoff, one log
+   * line each with the error's codes, and still failing after the last wait stops the start. When
+   * the receiver runs inside the API, the API is already listening meanwhile; the receiver comes
+   * up when the check passes.
    */
   async onModuleInit(): Promise<void> {
     await runStartupCheck({
-      run: () =>
-        this.client.$queryRaw<StartupCheck[]>`
+      run: async () => {
+        const [row] = await this.client.$queryRaw<StartupCheck[]>`
           SELECT has_function_privilege(
                    'public.ingest_resolve(text, inet, timestamptz, text, integer, text)', 'EXECUTE'
                  ) AS resolve,
                  has_table_privilege('public.students', 'SELECT') AS students,
-                 has_table_privilege('public.device_punches', 'SELECT') AS punches`,
-      verdict: ([row]) =>
-        row?.resolve === true && row.students === false && row.punches === false
+                 has_table_privilege('public.device_punches', 'SELECT') AS punches,
+                 current_setting('statement_timeout') AS statement_timeout`;
+        return { row, privileges: await readLoginPrivileges(this.client) };
+      },
+      verdict: ({ row, privileges }) => {
+        if (row?.resolve !== true || row.students !== false || row.punches !== false) {
+          return (
+            'DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): it runs ' +
+            'the ingest_* functions and reads no table. See docs/database.md.'
+          );
+        }
+        if (row.statement_timeout !== STATEMENT_TIMEOUT_SETTING) {
+          return (
+            `The device receiver's statements must stop after 5 s (statement_timeout ` +
+            `${STATEMENT_TIMEOUT_SETTING}), got ${String(row.statement_timeout)} (decision #79).`
+          );
+        }
+        const problems = loginPrivilegeProblems(privileges);
+        return problems.length === 0
           ? true
-          : 'DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): it runs ' +
-            'the ingest_* functions and reads no table. See docs/database.md.',
+          : `DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): ` +
+              `${privileges.login} ${problems.join(', ')}. See docs/database.md.`;
+      },
       retryDelaysMs: this.retryDelaysMs,
       checkTimeoutMs: this.checkTimeoutMs,
       logger: this.logger,
@@ -102,7 +135,12 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-type StartupCheck = { resolve: boolean; students: boolean; punches: boolean };
+type StartupCheck = {
+  resolve: boolean;
+  students: boolean;
+  punches: boolean;
+  statement_timeout: string;
+};
 
 /**
  * The device's answer when an ingest function refused its input (`RAISE EXCEPTION 'INGEST_…'`):
