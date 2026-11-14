@@ -32,7 +32,8 @@ const api = {
 const receiver = {
   NODE_ENV: 'production',
   DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:pw@db:5432/jantrik',
-  REDIS_URL: `redis://:${'f3'.repeat(24)}@redis:6379`,
+  // Its own Redis user (deploy/redis/ingest-user.acl).
+  REDIS_URL: `redis://jantrik_ingest:${'f3'.repeat(24)}@redis:6379`,
   QUEUE_PREFIX: 'jantrik',
 };
 
@@ -314,10 +315,24 @@ describe('production env: the device receiver', () => {
     expect(
       receiverError({
         ...receiver,
-        REDIS_URL: 'redis://:CHANGE_ME_openssl_rand_hex_24@redis:6379',
+        REDIS_URL: 'redis://jantrik_ingest:CHANGE_ME_openssl_rand_hex_24@redis:6379',
       }),
     ).toContain('REDIS_URL holds an example password');
-    expect(receiverError({ ...receiver, REDIS_URL: `redis://:${'b2'.repeat(24)}@redis` })).toBe('');
+    expect(
+      receiverError({ ...receiver, REDIS_URL: `redis://jantrik_ingest:${'b2'.repeat(24)}@redis` }),
+    ).toBe('');
+  });
+
+  it("the receiver's REDIS_URL must log in as jantrik_ingest, its own Redis user", () => {
+    const pw = 'f3'.repeat(24);
+    for (const url of [`redis://:${pw}@redis:6379`, `redis://default:${pw}@redis:6379`]) {
+      expect(receiverError({ ...receiver, REDIS_URL: url })).toMatch(
+        /REDIS_URL must log in as jantrik_ingest/,
+      );
+    }
+    expect(
+      receiverError({ ...receiver, REDIS_URL: `redis://jantrik_ingest:${pw}@redis:6379` }),
+    ).toBe('');
   });
 });
 

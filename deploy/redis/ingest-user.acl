@@ -1,0 +1,20 @@
+# ACL rules of jantrik_ingest, the device receiver's Redis user (docs/deploy.md → Redis).
+# Read by deploy/redis/start-redis.sh (production compose) and apps/api/test/redis-acl.e2e-spec.ts.
+# `{prefix}` stands for QUEUE_PREFIX. Lines starting with # are comments; the rest is joined.
+#
+# Keys: the receiver's own (ingest:refused, ingest:refused-log:<sn>, ingest:trusted:<sn>:<ip>),
+# its rate-limit counters (rl:ingest-ip:, rl:ingest-refused-ip:, rl:ingest-sn:) and the devices
+# queue it adds jobs to. No Pub/Sub channel.
+resetkeys ~ingest:* ~rl:ingest-* ~{prefix}:devices:*
+resetchannels
+# Commands: reading and writing those keys, and running BullMQ's Lua scripts (EVALSHA, then EVAL
+# when the script is not cached yet); then nothing dangerous
+# (FLUSHALL, KEYS, CONFIG, DEBUG, SHUTDOWN, ACL...), no SCRIPT or FUNCTION management.
+-@all +@read +@write +eval +evalsha
+-@dangerous
+# FUNCTION LOAD, FLUSH, DELETE and RESTORE are @write: never server-side code that outlives the call.
+-function
+# INFO is dangerous by category, but ioredis's ready check and BullMQ's version check need it.
++info
+# The rate limiter and the refused-serials list write in MULTI/EXEC transactions.
++multi +exec +discard

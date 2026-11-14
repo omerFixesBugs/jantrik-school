@@ -93,19 +93,18 @@ services:
     # Deployment requirement 2: never evict a key, and keep every write (AOF, fsync each second).
     # At REDIS_MAXMEMORY, writes fail loudly (noeviction) instead of Redis growing until the
     # kernel kills it.
-    command:
-      - sh
-      - -c
-      - >-
-        exec redis-server --appendonly yes --appendfsync everysec
-        --maxmemory "$$REDIS_MAXMEMORY" --maxmemory-policy noeviction
-        --requirepass "$$REDIS_PASSWORD"
+    # The default user (REDIS_PASSWORD) is the API's and the worker's; the device receiver logs in
+    # as jantrik_ingest, limited to its own keys and queue (deploy/redis/ingest-user.acl).
+    command: ['sh', '/usr/local/etc/jantrik-redis/start-redis.sh']
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?}
       REDISCLI_AUTH: ${REDIS_PASSWORD:?}
       REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-512mb}
+      REDIS_INGEST_PASSWORD: ${REDIS_INGEST_PASSWORD:?}
+      QUEUE_PREFIX: ${QUEUE_PREFIX:-jantrik}
     volumes:
       - redis-data:/data
+      - ./redis:/usr/local/etc/jantrik-redis:ro
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -174,7 +173,8 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_INGEST_URL: postgresql://jantrik_ingest_app:${DB_INGEST_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
-      REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
+      # Its own Redis user: its keys and the devices queue only (it refuses the default user).
+      REDIS_URL: redis://jantrik_ingest:${REDIS_INGEST_PASSWORD:?}@redis:6379
       QUEUE_PREFIX: ${QUEUE_PREFIX:-jantrik}
       INGEST_PORT: '4080'
       # Devices connect directly, so every X-Forwarded-For is a client's own words: trust none.

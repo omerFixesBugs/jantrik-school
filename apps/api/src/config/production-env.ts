@@ -294,6 +294,21 @@ export const API_ONLY_SECRETS = [
   'PLATFORM_TOTP_KEY',
 ] as const;
 
+/**
+ * The device receiver's Redis user: its own keys and its queue only (deploy/redis/ingest-user.acl,
+ * defined by the production compose from REDIS_INGEST_PASSWORD).
+ */
+export const INGEST_REDIS_USER = 'jantrik_ingest';
+
+/** The user a redis:// URL logs in as ('' for none, i.e. Redis's default user). */
+function redisUser(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url).username);
+  } catch {
+    return '';
+  }
+}
+
 /** The receiver's production rules on its parsed values. */
 export function receiverProductionProblems(env: ReceiverProductionEnv): EnvProblem[] {
   const problems: EnvProblem[] = [];
@@ -311,6 +326,12 @@ export function receiverProductionProblems(env: ReceiverProductionEnv): EnvProbl
     'jantrik_platform_app',
   ]);
   if (problem) problems.push(problem);
+  if (redisUser(env.REDIS_URL) !== INGEST_REDIS_USER) {
+    problems.push({
+      path: 'REDIS_URL',
+      message: `REDIS_URL must log in as ${INGEST_REDIS_USER}, the receiver's own Redis user (redis://${INGEST_REDIS_USER}:<REDIS_INGEST_PASSWORD>@redis:6379): the default user could queue jobs the worker trusts`,
+    });
+  }
   const redis = urlPasswordProblem('REDIS_URL', env.REDIS_URL);
   if (redis) problems.push(redis);
   return problems;
