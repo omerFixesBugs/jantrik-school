@@ -133,17 +133,21 @@ describe('production env: the API and the worker', () => {
     }
   });
 
-  it('refuses the example and test secrets (.env.example, CI, the test configs)', () => {
+  it('refuses the example and test secrets (the two env examples, CI, the test configs)', () => {
     const example = envFile('.env.example');
+    const prodExample = envFile('deploy/.env.prod.example');
     const copied = [
       example['JWT_ACCESS_SECRET']!,
       example['OTP_PEPPER']!,
+      prodExample['JWT_ACCESS_SECRET']!,
+      prodExample['OTP_PEPPER']!,
+      prodExample['PLATFORM_TOTP_KEY']!,
       'test-only-access-secret-0123456789abcdefghij',
       'ci-only-otp-pepper-0123456789abcdefghijklmno',
       'CHANGE_ME_generate_with_openssl_rand_base64_48',
       'placeholder-placeholder-placeholder-1234',
     ];
-    expect(copied[0]).toMatch(/.{32}/);
+    for (const value of copied) expect(value).toMatch(/.{32}/);
     for (const key of ['JWT_ACCESS_SECRET', 'OTP_PEPPER', 'PLATFORM_TOTP_KEY']) {
       for (const value of copied) {
         expect(apiError({ ...api, [key]: value })).toContain(`${key} is an example value`);

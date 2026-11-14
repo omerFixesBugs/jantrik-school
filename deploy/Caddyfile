@@ -1,0 +1,48 @@
+# HTTPS in front of the web app and the API (docs/deploy.md → HTTPS). Caddy gets and renews the
+# Let's Encrypt certificates itself; the domains come from deploy/.env.prod. The device receiver
+# is not behind it: devices speak plain HTTP to port 4080 directly.
+{
+	email {$ACME_EMAIL}
+}
+
+(common) {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+}
+
+# The institute app. The platform area has its own subdomain (deployment requirement 1).
+{$APP_DOMAIN} {
+	import common
+	@platform path /platform /platform/*
+	redir @platform https://{$PLATFORM_DOMAIN}{uri}
+	reverse_proxy web:3000
+}
+
+# Jantrik's own admins: the same web app, its /platform pages only.
+{$PLATFORM_DOMAIN} {
+	import common
+	redir / /platform 302
+	@platform path /platform /platform/* /_next/* /favicon.ico
+	handle @platform {
+		reverse_proxy web:3000
+	}
+	handle {
+		respond 404
+	}
+}
+
+{$API_DOMAIN} {
+	import common
+	# Until PlatformAuthGuard checks the Origin itself (an auth change for the owner,
+	# docs/deploy.md): a browser may call /platform/* only from the platform's own origin, so a
+	# script on the institute app's origin cannot use an admin's platform cookie. Requests without
+	# an Origin header (no browser) pass; the session cookie still decides.
+	@platformFromElsewhere {
+		path /platform /platform/*
+		header Origin *
+		not header Origin https://{$PLATFORM_DOMAIN}
+	}
+	respond @platformFromElsewhere 403
+	# Caddy replaces any X-Forwarded-For a client sends with the address it sees: TRUST_PROXY=1.
+	reverse_proxy api:4000
+}

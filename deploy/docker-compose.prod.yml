@@ -1,0 +1,243 @@
+# The production stack on one server (docs/deploy.md). Settings come from deploy/.env.prod (copy
+# deploy/.env.prod.example); run every command through deploy/compose.sh, e.g.
+#   deploy/compose.sh up -d --build
+# Start order: postgres (the roles on its first start) → migrate (one shot, as the owner role) →
+# api, worker, receiver; web and caddy next to them. Of the app services only migrate gets the
+# owner's password.
+
+name: jantrik-prod
+
+# Docker keeps container logs forever by default: cap them so they never fill the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '5'
+
+x-api-build: &api-build
+  context: ..
+  dockerfile: Dockerfile
+  target: api
+
+# The API's environment; the worker gets the same (it runs the API's modules without HTTP).
+x-api-env: &api-env
+  NODE_ENV: production
+  API_PORT: '4000'
+  DATABASE_URL: postgresql://jantrik_app:${DB_APP_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
+  DATABASE_PLATFORM_URL: postgresql://jantrik_platform_app:${DB_PLATFORM_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
+  QUEUE_PREFIX: ${QUEUE_PREFIX:-jantrik}
+  CORS_ORIGINS: https://${APP_DOMAIN:?},https://${PLATFORM_DOMAIN:?}
+  # One proxy (Caddy) in front of the API. Never true (the API refuses it).
+  TRUST_PROXY: ${TRUST_PROXY:-1}
+  COOKIE_SECURE: 'true'
+  JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?}
+  OTP_PEPPER: ${OTP_PEPPER:?}
+  PLATFORM_TOTP_KEY: ${PLATFORM_TOTP_KEY:?}
+  SMS_PROVIDER: ${SMS_PROVIDER:-none}
+  # The receiver is its own service below; the API only shows its address in the setup guide.
+  INGEST_IN_PROCESS: 'false'
+  INGEST_PUBLIC_HOST: ${DEVICE_HOST:?}
+  INGEST_PUBLIC_PORT: ${INGEST_PUBLIC_PORT:-4080}
+  # Jobs run in the worker service.
+  QUEUE_WORKERS: 'false'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      # The superuser: the roles script, backups and restores only. No app uses it.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: postgres
+      # Read by create-roles.sh on the first start (an empty volume) only.
+      DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:?}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:?}
+      DB_PLATFORM_PASSWORD: ${DB_PLATFORM_PASSWORD:?}
+      DB_INGEST_PASSWORD: ${DB_INGEST_PASSWORD:?}
+      JANTRIK_DB_NAME: ${POSTGRES_DB_NAME:-jantrik}
+      TZ: UTC
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres:/jantrik/postgres:ro
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    # Over TCP: during its first start Postgres runs the init scripts on a socket only, so the
+    # check passes once the roles and the database exist.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U postgres -d $${JANTRIK_DB_NAME}']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Deployment requirement 2: never evict a key, and keep every write (AOF, fsync each second).
+    command:
+      - sh
+      - -c
+      - >-
+        exec redis-server --appendonly yes --appendfsync everysec
+        --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  # One shot: prisma migrate deploy, then the institute types and templates, as the owner role.
+  # Also runs the platform admin CLI: deploy/compose.sh run --rm migrate node dist/cli/main.js list
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: migrate
+    image: jantrik-migrate:${IMAGE_TAG:-local}
+    restart: 'no'
+    environment:
+      NODE_ENV: production
+      DATABASE_MIGRATION_URL: postgresql://jantrik_owner:${DB_OWNER_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+
+  api:
+    build: *api-build
+    image: jantrik-api:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    environment: *api-env
+    # Caddy reaches it on the internal network; this port is for checks on the server itself.
+    ports:
+      - '127.0.0.1:${API_HOST_PORT:-4000}:4000'
+    depends_on: &after-migrate
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *logging
+
+  # The queue jobs (SMS, imports, fees, exams, devices): the API's modules without HTTP.
+  worker:
+    build: *api-build
+    image: jantrik-api:${IMAGE_TAG:-local}
+    command: ['node', 'dist/worker-main.js']
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      QUEUE_WORKERS: 'true'
+    # No HTTP to check; Docker restarts it if it exits. Watch its log (docs/deploy.md).
+    healthcheck:
+      disable: true
+    # Lets a running job finish on a restart.
+    stop_grace_period: 60s
+    depends_on: *after-migrate
+    logging: *logging
+
+  # The ZKTeco device receiver: its own process, login and variables only (requirement 4). Never
+  # give it the API's logins or secrets: it refuses to start with them.
+  receiver:
+    build: *api-build
+    image: jantrik-api:${IMAGE_TAG:-local}
+    command: ['node', 'dist/ingest-main.js']
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_INGEST_URL: postgresql://jantrik_ingest_app:${DB_INGEST_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
+      QUEUE_PREFIX: ${QUEUE_PREFIX:-jantrik}
+      INGEST_PORT: '4080'
+      # Devices connect directly. Behind a proxy: a hop count or its address, never true.
+      INGEST_TRUST_PROXY: ${INGEST_TRUST_PROXY:-false}
+    # Plain HTTP, open to the schools' devices.
+    ports:
+      - '${INGEST_BIND:-0.0.0.0}:${INGEST_HOST_PORT:-4080}:4080'
+    # Up when it answers HTTP: an unknown path is a plain 404 (no database, nothing logged).
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4080/health').then(r=>process.exit(r.status===404?0:1),()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      start_period: 240s
+      retries: 3
+    depends_on: *after-migrate
+    logging: *logging
+
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: web
+      args:
+        # Inlined into the browser code: rebuild the image after changing the API's domain.
+        NEXT_PUBLIC_API_URL: https://${API_DOMAIN:?}
+    image: jantrik-web:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${WEB_HOST_PORT:-3000}:3000'
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?}
+      API_DOMAIN: ${API_DOMAIN:?}
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?}
+      ACME_EMAIL: ${ACME_EMAIL:?}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    logging: *logging
+
+  # Not started by `up`: deploy/compose.sh run --rm backup (a cron job, docs/deploy.md). Writes
+  # a pg_dump to BACKUP_HOST_DIR as the superuser (the only login that reads past row security).
+  backup:
+    image: postgres:16-alpine
+    profiles: ['tools']
+    entrypoint: ['sh', '/jantrik/backup/backup.sh']
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      PGDATABASE: ${POSTGRES_DB_NAME:-jantrik}
+      BACKUP_DIR: /backups
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      TZ: UTC
+    volumes:
+      - ./backup:/jantrik/backup:ro
+      - ./postgres:/jantrik/postgres:ro
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:
