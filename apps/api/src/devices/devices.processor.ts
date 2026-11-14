@@ -148,7 +148,7 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
   async expireAll(): Promise<void> {
     for (const tenantId of await this.redis.zrange(DEVICES_TENANTS_KEY, 0, -1)) {
       try {
-        if (!(await this.runner.run(tenantId, () => this.retention.instituteExists()))) {
+        if (!(await this.runner.run(tenantId, () => this.retention.instituteExists(tenantId)))) {
           await this.redis.zrem(DEVICES_TENANTS_KEY, tenantId);
           this.logger.warn(`Institute ${tenantId} no longer exists: no longer listed for devices`);
           continue;

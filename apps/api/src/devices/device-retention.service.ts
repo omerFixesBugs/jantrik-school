@@ -21,13 +21,18 @@ export class DeviceRetentionService {
   ) {}
 
   /**
-   * Whether the job's institute still exists (its own row, read in its context). An institute
-   * that is gone has nothing left to process or delete.
+   * Whether `tenantId` still exists (its own row, read in its context). An institute that is gone
+   * has nothing left to process or delete. Throws unless the transaction runs in that institute's
+   * context, so a missing or different context can never make a live institute look gone.
    */
-  async instituteExists(): Promise<boolean> {
-    const [row] = await this.db.tx.$queryRaw<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM tenants WHERE id = app_current_tenant_id()`;
-    return (row?.n ?? 0) > 0;
+  async instituteExists(tenantId: string): Promise<boolean> {
+    const [row] = await this.db.tx.$queryRaw<{ context: string | null; n: number }[]>`
+      SELECT app_current_tenant_id()::text AS context,
+             (SELECT count(*)::int FROM tenants WHERE id = app_current_tenant_id()) AS n`;
+    if (!row || row.context !== tenantId) {
+      throw new Error("Not in the institute's context");
+    }
+    return row.n > 0;
   }
 
   /**

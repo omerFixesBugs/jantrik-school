@@ -300,6 +300,25 @@ describe('device retention (expire-punches)', () => {
     );
   });
 
+  it('the existence check fails outside the institute’s own context, and a failing check keeps the institute listed', async () => {
+    const a = await createTenant(h, { modules: ['ATTENDANCE'] });
+    const b = await createTenant(h, { modules: ['ATTENDANCE'] });
+    expect(await runner.run(a.id, () => retention.instituteExists(a.id))).toBe(true);
+    // Another institute's context: never "gone".
+    await expect(runner.run(a.id, () => retention.instituteExists(b.id))).rejects.toThrow(
+      /Not in the institute's context/,
+    );
+
+    vi.spyOn(retention, 'instituteExists').mockRejectedValueOnce(new Error('a row value'));
+    const errors = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await list(a.id);
+    await runJob();
+    expect(await h.redis.zscore(DEVICES_TENANTS_KEY, a.id)).not.toBeNull();
+    expect(errors.mock.calls.map((c) => String(c[0]))).toContain(
+      `Device retention failed for ${a.id}: Error`,
+    );
+  });
+
   it('the database refuses the app deleting a punch from the last 30 days (policy retention_only)', async () => {
     // The policy counts from the database's own date, so this test follows the real one.
     const today: IsoDate = todayIn('Asia/Dhaka', new Date());
