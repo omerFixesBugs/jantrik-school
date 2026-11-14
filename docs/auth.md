@@ -312,8 +312,9 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
 - **Page protection is UX only.** The real boundary is the API (token, guards, RLS).
   - `proxy.ts` redirects to `/login` when the readable, non-secret `jantrik_signed_in` hint
     cookie is missing.
-  - `(app)/layout.tsx` bootstraps the session, sends users without an institute to
-    `/select-institute`, and loads `GET /me/context` once (labels, modules, roles, academic year).
+  - `(app)/app-frame.tsx` (inside the `(app)` layout) bootstraps the session, sends users without
+    an institute to `/select-institute`, and loads `GET /me/context` once (labels, modules, roles,
+    academic year).
   - Sidebar items and page gates use the same `NAV_ITEMS` table (module + roles) as the API's
     guards.
 

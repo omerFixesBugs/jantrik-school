@@ -113,6 +113,43 @@ default (#38).
 
     - To change: Exams → Setup → Grading (rules and rounding) and Subject marks (parts, pass rule, combined marks); the template in `packages/db/src/reference-data/templates.ts` for new institutes.
 
+## Performance (step 12, day run of 2026-11-13)
+
+Decided while the owner was away (each one in PR #9, which is not merged):
+
+- **P1. Where the measurements ran.** Prisma refuses `migrate reset` from an AI agent without the
+  owner's consent, so `jantrik_e2e` was not reset. The measurements use a new scratch database,
+  `jantrik_perf` (created, `migrate deploy`, seeded with the e2e day 2026-10-21), and Redis DB 3;
+  the three tasks' tests used new scratch databases `jantrik_t1_test`, `jantrik_t2_test`,
+  `jantrik_t3_test` (Redis DBs 11-13). The owner's `jantrik` and `jantrik_test` were not touched.
+  - To change: drop them when done (`DROP DATABASE jantrik_perf;` and the three `_test` ones, as
+    the `postgres` user).
+- **P2. Fonts are unchanged.** Every Bangla page downloads Noto Sans Bengali's Bangla face
+  (106 KB) and its Latin face (26 KB), and Anek Bangla's Bangla face (57 KB) and Latin face
+  (19 KB). Design.md says Latin text on Bangla pages falls to Plus Jakarta Sans, but next/font
+  emits every Google subset, so it falls to the Noto/Anek Latin faces. Trimming means either
+  dropping those Latin faces (self-hosted with next/font/local and the OFL licence; Latin letters
+  and punctuation in titles and text would then render in Jakarta: a visible change) or keeping
+  fewer weights of the variable faces. Both are design decisions, so nothing was changed.
+  - To change: approve one of the two options (about 18-45 KB less per page).
+- **P3. The command palette loads on first use** (on the shortcut, or when a pointer, finger or
+  focus reaches its button). On a slow network the very first Ctrl/⌘ K can take a moment.
+  - To change: load it after the page is interactive instead (`requestIdleCallback`).
+- **P4. `@jantrik/shared` is split so the browser never loads zod:** `*-schema.ts` hold the
+  schemas, `*-values.ts` and the rules modules hold what the web uses; the package is marked
+  `sideEffects: false`. The API imports from the barrel as before. A web test fails when a value
+  the web imports reaches zod (the platform area may).
+- **P5. Translations per route:** `apps/web/src/i18n/route-messages.ts` lists what each area
+  sends; a test fails when a page's client code asks for a namespace its route does not send.
+  `nav.students` duplicates `students.title` so the shell needs no `students` namespace.
+- **P6. The size budget** is this build's first-load JavaScript + 5 % for the budget pages and
+  the login, and the largest other route + 5 % for every other route; CI fails above it.
+  - To change: `apps/web/perf/budget.json` (`node perf/check-budget.mjs --update` after a
+    deliberate change).
+- **P7. The "start the session refresh earlier" idea is not built:** the plan is in
+  [plans/step-12-auth.md](plans/step-12-auth.md), with the CORS preflight cache and the
+  same-origin API as related options. No auth, CORS or database change is in PR #9.
+
 ## Devices and staff attendance (step 11)
 
 Rules: [devices.md](devices.md). Owner decisions of 2026-10-24, approved as recommended:
