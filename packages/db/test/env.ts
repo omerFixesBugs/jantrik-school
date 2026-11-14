@@ -32,6 +32,28 @@ export const PLATFORM_URL = (() => {
 })();
 
 /**
+ * The cluster superuser on the test database, for tests that must create roles (the login
+ * privilege check). DATABASE_SUPERUSER_URL_TEST (CI), or POSTGRES_USER and POSTGRES_PASSWORD from
+ * the root .env on APP_URL's server and database. A function, so only the tests that need it fail
+ * without it; they fail, never skip.
+ */
+export function superuserUrl(): string {
+  const given = process.env['DATABASE_SUPERUSER_URL_TEST'];
+  if (given) return given;
+  const user = process.env['POSTGRES_USER'];
+  const password = process.env['POSTGRES_PASSWORD'];
+  if (!user || !password) {
+    throw new Error(
+      'Set DATABASE_SUPERUSER_URL_TEST (or POSTGRES_USER and POSTGRES_PASSWORD, see .env.example)',
+    );
+  }
+  const url = new URL(APP_URL);
+  url.username = user;
+  url.password = password;
+  return url.toString();
+}
+
+/**
  * The device receiver's login (jantrik_ingest_app: user and password of DATABASE_INGEST_URL) on
  * the test database; server, port and database come from APP_URL.
  */

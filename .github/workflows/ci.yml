@@ -30,6 +30,9 @@ env:
   DATABASE_MIGRATION_URL: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
   DATABASE_URL_TEST: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_test
   DATABASE_MIGRATION_URL_TEST: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
+  # The service container's superuser on the test database: the login privilege tests create
+  # their own roles with it (packages/db/test/login-privileges.test.ts).
+  DATABASE_SUPERUSER_URL_TEST: postgresql://postgres:postgres@localhost:5432/jantrik_test
   REDIS_URL: redis://localhost:6379
   REDIS_URL_TEST: redis://localhost:6379/1
   # Playwright end-to-end tests: seeded jantrik_e2e database, Redis DB 2.

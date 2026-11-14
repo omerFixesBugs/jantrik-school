@@ -3,6 +3,7 @@ import { PrismaClient } from './generated/prisma/client.js';
 
 export { PrismaClient };
 export * from './generated/prisma/client.js';
+export * from './login-privileges.js';
 export * from './platform/context.js';
 export * from './platform/secrets.js';
 export * from './platform/totp.js';
