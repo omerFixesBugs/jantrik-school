@@ -615,6 +615,41 @@ describe('punch processing', () => {
       ]);
     });
 
+    it('devices-tick leaves the punches of an institute with ATTENDANCE off; they are processed once it is on again', async () => {
+      const on = await f.institute();
+      const off = await f.institute();
+      clock.set(at('07:51:00'));
+      for (const t of [on, off]) {
+        await f.map(t.tenantId, [{ deviceUserId: '101', studentId: t.a[0]!.id }]);
+        await f.upload(f.sim(t.device.serialNo), DAY, [['101', '07:50:00']]);
+        // Leftovers: stored, with no job that processed them.
+        await f.holdJob(t.tenantId);
+      }
+      const real = h.access.getEnabledModules.bind(h.access);
+      const modules = vi
+        .spyOn(h.access, 'getEnabledModules')
+        .mockImplementation(async (tenantId) => (tenantId === off.tenantId ? [] : real(tenantId)));
+      await h.redis.del(DEVICES_TENANTS_KEY);
+      for (const t of [off, on]) await h.redis.zadd(DEVICES_TENANTS_KEY, Date.now(), t.tenantId);
+
+      clock.set(at('07:52:00'));
+      await processor.process({ name: DEVICES_TICK_JOB } as unknown as Job);
+      expect((await f.punches(on.tenantId)).map((p) => [p.outcome, p.processedAt])).toEqual([
+        ['APPLIED', at('07:52:00')],
+      ]);
+      expect((await f.punches(off.tenantId)).map((p) => [p.outcome, p.processedAt])).toEqual([
+        [null, null],
+      ]);
+
+      // ATTENDANCE on again: the next minute processes them.
+      modules.mockRestore();
+      clock.set(at('07:53:00'));
+      await processor.process({ name: DEVICES_TICK_JOB } as unknown as Job);
+      expect((await f.punches(off.tenantId)).map((p) => [p.outcome, p.processedAt])).toEqual([
+        ['APPLIED', at('07:53:00')],
+      ]);
+    });
+
     it('a batch waits at most 5 s for a lock, then fails and is left for the next tick', async () => {
       const s = await f.institute();
       await f.map(s.tenantId, [{ deviceUserId: '101', studentId: s.a[0]!.id }]);

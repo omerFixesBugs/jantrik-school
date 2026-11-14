@@ -672,9 +672,9 @@ describe('ingest functions', () => {
     '%s refuses a device deactivated, and its serial number registered again, while the call waits',
     async (kind) => {
       const old = await addDevice(a);
-      let registered!: () => void;
+      let registered!: (xid: string) => void;
       let commit!: () => void;
-      const ready = new Promise<void>((r) => (registered = r));
+      const ready = new Promise<string>((r) => (registered = r));
       const go = new Promise<void>((r) => (commit = r));
       // An admin deactivates the device and registers its serial number again, as a new device.
       const admin = withTenant(
@@ -685,24 +685,29 @@ describe('ingest functions', () => {
           const replacement = await tx.attendanceDevice.create({
             data: { tenantId: a, serialNo: old.serialNo, name: 'New gate', direction: 'IN' },
           });
-          registered();
+          // The admin's transaction id: the call below waits for exactly this one.
+          const [own] = await tx.$queryRaw<{ xid: string }[]>`
+            SELECT pg_current_xact_id()::xid::text AS xid`;
+          registered(own!.xid);
           await go;
           return replacement;
         },
         { timeout: 20_000 },
       );
-      await ready;
+      const adminXid = await ready;
       // Started now (a Prisma query runs only once awaited).
       const call = (async () =>
         kind === 'resolve'
           ? resolve(old.serialNo)
           : store(old.serialNo, [punch('101', '2026-10-20 08:00:00')]))();
-      // Wait until the call waits for the device's lock, then commit.
+      // Wait until the call waits for the device's lock (the admin's transaction), then commit.
+      // Only a receiver session waiting on that transaction counts, never another test's.
       try {
         for (let i = 0; ; i++) {
           const [w] = await app.$queryRaw<{ n: bigint }[]>`
             SELECT count(*) AS n FROM pg_locks l JOIN pg_stat_activity s ON s.pid = l.pid
-            WHERE NOT l.granted AND s.usename = 'jantrik_ingest_app'`;
+            WHERE NOT l.granted AND s.usename = 'jantrik_ingest_app'
+              AND l.locktype = 'transactionid' AND l.transactionid = ${adminXid}::xid`;
           if (w!.n > 0n) break;
           if (i > 100) throw new Error('the call never waited for the lock');
           await new Promise((r) => setTimeout(r, 50));

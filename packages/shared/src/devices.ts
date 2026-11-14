@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { addDays, localDateOf, timeZoneOffsetMinutes, wallClockToUtc } from './dates.js';
+import {
+  addDays,
+  localDateOf,
+  secondsOfDay,
+  timeZoneOffsetMinutes,
+  wallClockToUtc,
+} from './dates.js';
 import type { IsoDate } from './dates.js';
 import { toAsciiDigits } from './digits.js';
 import { formatTime } from './format.js';
@@ -284,7 +290,14 @@ export interface DeviceCmdResult {
   cmd: string;
 }
 
-/** `ID=<seq>&Return=<code>&CMD=…` lines from POST /iclock/devicecmd; anything else is ignored. */
+const INT32_MIN = -(2 ** 31);
+const INT32_MAX = 2 ** 31 - 1;
+
+/**
+ * `ID=<seq>&Return=<code>&CMD=…` lines from POST /iclock/devicecmd; anything else is ignored, a
+ * line whose ID is not a safe integer or whose Return is outside int32 too (never Infinity, never
+ * a number rounded past 2^53).
+ */
 export function parseDeviceCmdResults(body: string): DeviceCmdResult[] {
   const out: DeviceCmdResult[] = [];
   for (const line of body.split(/\r?\n/)) {
@@ -296,8 +309,12 @@ export function parseDeviceCmdResults(body: string): DeviceCmdResult[] {
     const id = fields.get('ID');
     const code = fields.get('Return');
     if (id === undefined || code === undefined) continue;
-    if (!/^\d+$/.test(id) || !/^-?\d+$/.test(code)) continue;
-    out.push({ id: Number(id), returnCode: Number(code), cmd: fields.get('CMD') ?? '' });
+    if (!/^\d{1,16}$/.test(id) || !/^-?\d{1,10}$/.test(code)) continue;
+    const idNumber = Number(id);
+    const returnCode = Number(code);
+    if (!Number.isSafeInteger(idNumber)) continue;
+    if (returnCode < INT32_MIN || returnCode > INT32_MAX) continue;
+    out.push({ id: idNumber, returnCode, cmd: fields.get('CMD') ?? '' });
   }
   return out;
 }
@@ -502,23 +519,18 @@ export function movementOf(punch: DayPunch, day: readonly DayPunch[]): 'ENTRY' |
 // ---------------------------------------------------------------------------------------------
 // Student arrival and closing the register
 
-const toSeconds = (hhmm: string): number => {
-  const [h = 0, m = 0, s = 0] = hhmm.split(':').map(Number);
-  return h * 3600 + m * 60 + s;
-};
-
 /** LATE iff the first IN is strictly after shift start + grace (08:10:00 is on time at grace 10). */
 export function arrivalStatus(
   firstIn: string,
   shiftStart: string,
   graceMin: number,
 ): 'PRESENT' | 'LATE' {
-  return toSeconds(firstIn) > toSeconds(shiftStart) + graceMin * 60 ? 'LATE' : 'PRESENT';
+  return secondsOfDay(firstIn) > secondsOfDay(shiftStart) + graceMin * 60 ? 'LATE' : 'PRESENT';
 }
 
 /** When a shift's register may be closed: its start + cutoff minutes, at most 23:59:59. */
 export function cutoffTime(shiftStart: string, cutoffMin: number): string {
-  const total = toSeconds(shiftStart) + cutoffMin * 60;
+  const total = secondsOfDay(shiftStart) + cutoffMin * 60;
   if (total >= 86_400) return '23:59:59';
   const two = (n: number) => String(n).padStart(2, '0');
   return `${two(Math.floor(total / 3600))}:${two(Math.floor((total % 3600) / 60))}:${two(total % 60)}`;
@@ -597,6 +609,21 @@ export function deviceState(lastSeenAt: Date | null, now: Date, isActive: boolea
 
 const MAX_SMS_SEGMENTS = 2;
 
+/**
+ * A name's letters as a reader sees them (grapheme clusters: a consonant with its vowel sign, a
+ * conjunct), so a cut never splits one. Without Intl.Segmenter (an old browser's preview), code
+ * points; `cutName` then drops a dangling hasant or joiner.
+ */
+function nameLetters(name: string): string[] {
+  if (typeof Intl.Segmenter !== 'function') return Array.from(name);
+  const segments = new Intl.Segmenter('bn', { granularity: 'grapheme' }).segment(name);
+  return Array.from(segments, (s) => s.segment);
+}
+
+/** A cut name never ends on a space, a hasant (্) or a zero-width joiner (it would join the verb). */
+const cutName = (letters: readonly string[]): string =>
+  letters.join('').replace(/[\s\u09cd\u200c\u200d]+$/u, '');
+
 function movementSms(
   verb: string,
   input: { student: string; at: Date; institute: string },
@@ -607,10 +634,10 @@ function movementSms(
   if (fits(full)) return full;
   const short = `${input.student} ${verb} ${time}`;
   if (fits(short)) return short;
-  const letters = Array.from(input.student);
+  const letters = nameLetters(input.student);
   while (letters.length > 1) {
     letters.pop();
-    const text = `${letters.join('').trimEnd()} ${verb} ${time}`;
+    const text = `${cutName(letters)} ${verb} ${time}`;
     if (fits(text)) return text;
   }
   return `${letters.join('')} ${verb} ${time}`;

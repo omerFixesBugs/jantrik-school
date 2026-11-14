@@ -358,9 +358,10 @@ composite keys, every foreign key `ON UPDATE RESTRICT`), migration `202610290000
   (`IN` | `OUT` | `BOTH`), `is_active`, and columns only the receiver writes (last seen, last IP,
   firmware, ATTLOG stamp, clock offset and samples, the last flood). A serial number is active in
   one institute at most: a partial unique index on `serial_no WHERE is_active` across all
-  institutes (inactive copies are allowed). `jantrik_app` may add devices and UPDATE only name,
-  gate, direction, `is_active` and `serial_no`; no DELETE (a device is deactivated, its punches
-  stay).
+  institutes (inactive copies are allowed), and a plain index on `serial_no` for the receiver's
+  refusals of unknown and inactive serials (migration `20261113000000_devices_hardening`).
+  `jantrik_app` may add devices and UPDATE only name, gate, direction, `is_active` and
+  `serial_no`; no DELETE (a device is deactivated, its punches stay).
 - **`device_people`:** a person's device ID (`^[1-9][0-9]{2,8}$`), for a student
   (composite → students) or a staff member (composite → `staff_profiles (tenant_id, user_id)`, so
   only this institute's staff), exactly one of the two. **One unique index on
@@ -380,6 +381,7 @@ composite keys, every foreign key `ON UPDATE RESTRICT`), migration `202610290000
   database's `current_date`, so no bug can delete recent punches (the `expire-punches` job deletes
   by the institute's `punch_retention_days`, at least 30). `flags` is a subset of `PUNCH_FLAGS`
   (CHECK); the unique `(tenant_id, device_id, device_user_id, device_time)` is the dedupe.
+  `review` and `reviewed_at` are set together, and `reviewed_by_id` only with a review (CHECKs).
 - **`device_source_ips`:** the addresses a device calls from; the app may only trust one or
   revoke its trust (UPDATE on `trusted_at`, `trusted_by_id`). `trusted_by_id` NULL with
   `trusted_at` set means trusted automatically (the first address, below).
@@ -392,7 +394,9 @@ composite keys, every foreign key `ON UPDATE RESTRICT`), migration `202610290000
   `attendance_settings` (the device hours and the cap), all of `attendance_devices` and UPDATE on
   the receiver's columns, INSERT on punches and SELECT on the columns the dedupe and the
   per-minute cap need, the commands' delivery columns, the source addresses' counters, and DELETE
-  on untrusted source addresses only (policy `ingest_delete`, to make room for new ones).
+  on untrusted source addresses only (policy `ingest_delete`, to make room for new ones, and its
+  RESTRICTIVE twin `ingest_delete_untrusted_only`, so no other policy, such as
+  `tenant_isolation` inside a tenant context, can widen it).
   `jantrik_ingest_app` has schema USAGE and EXECUTE on the four functions, nothing else.
 - **The `ingest_*` family** (migrations `20261029000100_devices_ingest_functions`,
   `20261029000200_devices_ingest_trust` and `20261029000300_devices_ingest_trust_hardening`).
@@ -467,7 +471,8 @@ one row per staff member per day (unique `(tenant_id, user_id, date)`), composit
   change to the institute's office hours never re-judges past days.
 - `source`: the device job writes PRESENT days, and ABSENT when a review rejected every punch of
   a device day; never LEAVE. A MANUAL day (an admin's) needs a `reason` of 3–200 characters
-  (trimmed) and `updated_by_id` (CHECK). `version` is for optimistic concurrency.
+  (trimmed) and `updated_by_id` (CHECK); a DEVICE day has no reason (CHECK). `version` is for
+  optimistic concurrency.
 - `jantrik_app`: SELECT, INSERT, UPDATE, **no DELETE** (history: a day is corrected, never
   removed).
 - `staff_profiles.attendance_tracked`: NULL is the default rule (tracked unless the person's only

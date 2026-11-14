@@ -51,3 +51,30 @@ test('the owner lets a teacher collect fees in one step; the teacher then sees t
     });
   }
 });
+
+// Two buttons with one name are two identical buttons to a screen reader: the confirm for
+// switching a bKash/Nagad number off is not named like the dialog's close button (both were
+// "বন্ধ করুন"). Cancelled, so the number stays on for the other specs.
+test('switching a bKash/Nagad number off: the confirm and the close button have their own names', async ({
+  page,
+}) => {
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.goto('/fees/setup/numbers');
+  const row = page.getByTestId('fee-number-row').first();
+  await expect(row).toContainText('চালু');
+  await row.getByRole('button').click();
+  await page.getByRole('menuitem', { name: 'বন্ধ করুন' }).click();
+
+  const dialog = page.getByTestId('fees-confirm-dialog');
+  await expect(page.getByTestId('fee-number-toggle-confirm')).toHaveAccessibleName(
+    'নম্বর বন্ধ করুন',
+  );
+  // Only the close button (the X) is named "বন্ধ করুন".
+  await expect(dialog.getByRole('button', { name: 'বন্ধ করুন', exact: true })).toHaveCount(1);
+  await expect(dialog.getByRole('button', { name: 'নম্বর বন্ধ করুন', exact: true })).toHaveCount(1);
+
+  await dialog.getByRole('button', { name: 'বাতিল', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row).toContainText('চালু');
+});

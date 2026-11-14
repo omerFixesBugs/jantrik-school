@@ -329,6 +329,22 @@ describe('parseDeviceCmdResults and parseInfo', () => {
       { id: 6, returnCode: -1002, cmd: 'DATA' },
     ]);
   });
+  it('skips an ID past 2^53 and a Return outside int32, never Infinity or a rounded number', () => {
+    const body = [
+      `ID=${'9'.repeat(400)}&Return=0`, // Number() would give Infinity
+      'ID=9007199254740993&Return=0', // past 2^53: would round to ...992
+      'ID=9007199254740992&Return=0', // exactly 2^53: not a safe integer
+      `ID=1&Return=${'9'.repeat(400)}`,
+      'ID=2&Return=2147483648',
+      'ID=3&Return=-2147483649',
+      'ID=9007199254740991&Return=2147483647',
+      'ID=4&Return=-2147483648',
+    ].join('\n');
+    expect(parseDeviceCmdResults(body)).toEqual([
+      { id: 9007199254740991, returnCode: 2147483647, cmd: '' },
+      { id: 4, returnCode: -2147483648, cmd: '' },
+    ]);
+  });
   it('keeps only firmware and user count from INFO', () => {
     expect(parseInfo('Ver 6.60 Apr 2 2019,1523,3,1,192.168.1.5,10,1')).toEqual({
       firmware: 'Ver 6.60 Apr 2 2019',
@@ -381,6 +397,24 @@ describe('device user ids', () => {
     ).toEqual([
       { deviceUserId: '5001', wantedBy: ['s2'], heldBy: 's1' },
       { deviceUserId: '7000', wantedBy: ['s3', 's4'], heldBy: null },
+    ]);
+  });
+  it('people who already have an ID: wanting one another person holds collides with its holder', () => {
+    expect(
+      deviceIdCollisions([
+        { key: 's1', kind: 'STUDENT', current: '5001', wanted: '5001' },
+        // Mapped to 6001, wants s1's 5001: collides with its holder, across kinds too.
+        { key: 't1', kind: 'STAFF', current: '6001', wanted: '5001' },
+        // Two people with an ID each swap them: each wants the other's.
+        { key: 's2', kind: 'STUDENT', current: '7001', wanted: '7002' },
+        { key: 's3', kind: 'STUDENT', current: '7002', wanted: '7001' },
+        // Keeping their own: fine.
+        { key: 's4', kind: 'STUDENT', current: '8001', wanted: '8001' },
+      ]),
+    ).toEqual([
+      { deviceUserId: '5001', wantedBy: ['t1'], heldBy: 's1' },
+      { deviceUserId: '7002', wantedBy: ['s2'], heldBy: 's3' },
+      { deviceUserId: '7001', wantedBy: ['s3'], heldBy: 's2' },
     ]);
   });
 });
@@ -610,6 +644,48 @@ describe('entry and exit SMS text', () => {
       expect(b).toContain('সকাল ৭:৪৫');
       expect(b).not.toContain('—');
       expect(b.startsWith('ক')).toBe(true);
+    }
+  });
+
+  const HASANT = String.fromCodePoint(0x09cd);
+  const VERB = ' প্রবেশ করেছে ';
+  const letters = (s: string) =>
+    Array.from(new Intl.Segmenter('bn', { granularity: 'grapheme' }).segment(s), (x) => x.segment);
+
+  it('cuts a long name between letters and keeps the longest name that fits', () => {
+    // Conjuncts and vowel signs throughout; each extra prefix letter moves where the cut lands.
+    for (let shift = 0; shift < 12; shift += 1) {
+      const student = 'অ'.repeat(shift) + 'লক্ষ্মীকান্ত'.repeat(15);
+      const text = entrySmsText({ student, at, institute: 'শাপলা' });
+      const name = text.slice(0, text.indexOf(VERB));
+      expect(smsLength(text).segments).toBeLessThanOrEqual(2);
+      expect(name.endsWith(HASANT)).toBe(false);
+      // A whole number of the name's letters: never a consonant without its vowel sign.
+      const kept = letters(name);
+      expect(letters(student).slice(0, kept.length)).toEqual(kept);
+      // One letter more would not fit.
+      const longer = letters(student)
+        .slice(0, kept.length + 1)
+        .join('');
+      expect(smsLength(`${longer}${VERB}সকাল ৭:৪৫`).segments).toBeGreaterThan(2);
+    }
+  });
+
+  it('without Intl.Segmenter (an old browser), a cut name still never ends on a hasant', () => {
+    const segmenter = Intl.Segmenter;
+    Object.assign(Intl, { Segmenter: undefined });
+    try {
+      for (let shift = 0; shift < 6; shift += 1) {
+        const student = 'অ'.repeat(shift) + 'ক্ষ'.repeat(60);
+        const text = exitSmsText({ student, at, institute: 'শাপলা' });
+        const name = text.slice(0, text.indexOf(' বের হয়েছে '));
+        expect(smsLength(text).segments).toBeLessThanOrEqual(2);
+        expect(name.length).toBeGreaterThan(0);
+        expect(name.endsWith(HASANT)).toBe(false);
+        expect(student.startsWith(name)).toBe(true);
+      }
+    } finally {
+      Object.assign(Intl, { Segmenter: segmenter });
     }
   });
 });

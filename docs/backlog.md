@@ -131,15 +131,11 @@ are left out.
     staff member's punches made before their ID was set build no staff day (the feed's "set an ID"
     invites exactly this); it heals on their next punch that day. Students are fine (arrivals read
     raw punches).
-  - Drop an id from `devices:tenants` whose institute no longer exists (M7): retention logs a
-    failure for it every night and the tick skips it silently.
   - A tick duration metric before many schools turn auto-mark on (M8): every held-back section is
     re-evaluated each minute for an hour (punch lock and `idsOnDevices`), in one sequential job over
     all institutes. Fine at today's size.
   - A review that does not change whether a punch counts keeps a stale outcome (e.g. REJECT of a
     processed HELD punch stays HELD): informational only, counting reads the flags and the review.
-  - A test that the tick skips an institute with ATTENDANCE off that has leftover punches (the
-    process-punches job's skip is tested).
   - The arrival rule is written twice (the cutoff and the recompute): one shared rule; they agree
     today.
   - Entry and exit SMS have no "today" check: `sendsSms` compares when a punch arrived with when
@@ -147,32 +143,14 @@ are left out.
     sweep, or after ATTENDANCE is switched back on) can still send a stale "entered at" SMS. The
     window is small; check the processing time against the punch's day or the real-time window.
 - **Receiver and database**
-  - A RESTRICTIVE twin of the permissive `ingest_delete` policy on `device_source_ips` in the next
-    migration: unreachable today (no tenant context on the ingest login, and the function's DELETE
-    filters `trusted_at IS NULL`).
   - A lower bound on the 24-hour first-address window (a `p_now` before `created_at` counts as
     inside): `p_now` is the receiver's clock, not an attacker's.
   - The Redis trusted mark is per /64, and the untrusted-budget peek and the refused-address brake
     can overshoot under concurrent requests: still charged after `ingest_resolve`; the overshoot is
     small.
-  - An index for refused serials: each unknown or inactive serial scans `attendance_devices`;
-    braked per address before the database.
-  - Some INSERT grants are table-wide (the app could supply its own `device_commands.seq`), and the
-    unique-violation tests match the word "unique" rather than the constraint's name: hardening, no
-    exploit path found.
-  - A DEVICE staff day has no CHECK that `reason IS NULL`: the code never writes one (only manual
-    days carry a reason).
-  - `device_punches.reviewed_by_id` can be set without `review` (no CHECK pairs them; only
-    `review` and `reviewed_at` are paired): the app always writes the three together.
-  - `parseDeviceCmdResults` accepts unbounded digit runs (Infinity, beyond 2^53): the receiver
-    already keeps only safe integers in int32 range.
-  - `wallClockToUtc` checks only the shape (2026-02-30 25:00:00 normalises silently): its inputs
-    pass `realDeviceTime` first.
-  - An untrusted `devicecmd` body is drained up to 2 MB rather than the 64 KB cap (never buffered);
-    in development a receiver that refuses to start stops the API too (fail-loud accepted).
-  - The receiver's start-up check retries a failing query for about 3 minutes but gives each
-    attempt no time limit of its own: a database that accepts the connection and never answers
-    hangs the start instead of failing it. Add a per-attempt timeout (CI run 1 fix, `6412892`).
+  - Some INSERT grants are table-wide (the app could supply its own `device_commands.seq`):
+    hardening, no exploit path found.
+  - In development a receiver that refuses to start stops the API too (fail-loud accepted).
   - The isolation code scan misses indirect imports, and the biometric sentinel's database scan
     sees only rows visible under the device institute's RLS: the receiver's start-up check covers
     the first at run time.
@@ -188,8 +166,6 @@ are left out.
     all waiting upserts, a 1 MB file of blank lines parsed before the row cap, `MISSING_COLUMNS`
     overstating, a 413 without a code; and coverage gaps (concurrent writers, removal of an unheld
     ID, the import branch of the audit lookup).
-  - The people page loses the staff view on reload with `unmapped=1`, and the not-on-device text
-    tells teachers to give IDs (they cannot open that screen).
 - **Registers and close from device**
   - The close-from-device confirm counts active absent students while the register also marks the
     inactive ones ABSENT ("2" vs "6"), and the card shows "10 students" next to "4/6": show "+N
@@ -197,34 +173,16 @@ are left out.
   - Refuse close from device for a section with no active student: reachable only by a direct API
     call, and the register it writes (all ABSENT, no SMS) is accurate.
   - A student inactive now shows no arrival on a past date's take screen.
-  - The today page reads "taken from the device; changed by <teacher>, <time>" where the time is
-    the register's last change, which can be the device's later change of a record (the teacher
-    stays named since the final fixes). Drop the time from that wording or label it as the last
-    change.
 - **Web, SMS and print**
-  - The SMS student name is cut by code point, not grapheme (Bangla can end on a hasant): only for
-    names too long for two segments.
   - Devices screen minors: the feed polls with no devices, partial "send to devices" failures lose
     the totals, focus after a review, a trust confirm that can vanish mid-dialog, the dashboard
     card shifting layout, a stale poll carrying an older review over a newer one (two admins within
     one poll), duplicated query keys and helpers.
   - Staff month print: the weekday line (5.5 pt grey) is hard to read, দেআ fills its column, and
     the name button keeps its touch height in print (more pages).
-  - Two buttons with one name: the fees setup confirm for switching a bKash/Nagad number off
-    reads "বন্ধ করুন", the same as the dialog's close button (fixed for the device switch-off in
-    `b485763`). Give it its own label; screen-reader users hear two identical buttons. Older than
-    step 11.
 - **Tests, seed and tooling**
-  - Coverage gaps: the database tests never exercise the three grace-range CHECKs on
-    `attendance_settings` (device, staff late, staff early), and the receiver login's denial list
-    has no case for INSERT into `attendance_devices`, `device_commands` or `device_people`, or for
-    DELETE on `device_commands` or `device_source_ips` (the catalog shows it holds no grants); shared
-    rules (mapped-person collisions, a staff month row on an off day, the SMS cut keeping the
-    longest name), ingest error paths (`INGEST_BAD_RESULTS`, a non-object row, a
-    NULL or negative `p_max`), retention (an old DONE superseded only by a young DONE), the
-    simulator (per-record-type assertion, `poll()` silent on a non-200, the CLI's 50-line batches).
-  - The race test's `pg_locks` poll matches any waiting `jantrik_ingest_app` session in the
-    cluster: a possible flake, never a false pass.
+  - Coverage gap: the simulator CLI's 50-line batches (`cli.ts` runs at import; testing it needs
+    its loop split out).
   - The staff desk e2e cannot run twice in one run (the saved leave stays), and specs must not
     assert today's computed staff state (it depends on the real time of the run).
   - Seed minors: demo serials stay active in jantrik_test after a killed run, a failed owner insert
@@ -235,9 +193,8 @@ are left out.
   - The local `jantrik` database holds test data from the step's visual checks (a switched-off
     device, default IDs, punches, addresses, a device register, a manual staff day): a reseed with
     the owner's approval clears it.
-  - Style: the duplicated `toSeconds` helpers (`devices.ts`, `staff-attendance.ts`, `dates.ts`) and
-    long comment lines in `ci.yml`; `packages/db/test/env.ts` throws at import without the ingest
-    login, as for the platform one (CI sets both).
+  - Style: `packages/db/test/env.ts` throws at import without the ingest login, as for the
+    platform one (CI sets both).
 
 ## Performance: reach the 3-second budget (from step 9)
 

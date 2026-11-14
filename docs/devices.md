@@ -99,7 +99,7 @@ we can see which one it speaks.
 | `POST /iclock/cdata?SN=…&table=ATTLOG&Stamp=…`                                                                                 | Lines `PIN⇥time⇥state⇥verify⇥…` parsed and stored, then `OK: <non-blank lines received>` (duplicates and rejected lines included, so the device moves on). The `Stamp` is stored for the next handshake                                                                                                                                                |
 | `POST /iclock/cdata` with any other `table` (OPERLOG, BIODATA, ATTPHOTO, IDCARD, ERRORLOG…) or `FPImage`; `POST /iclock/fdata` | Read off the socket without being parsed, stored, queued or logged, then `200 OK`: any other status makes a device send it again forever                                                                                                                                                                                                               |
 | `GET /iclock/getrequest?SN=…&INFO=…` (every 30 s)                                                                              | Up to 20 waiting commands, one per line, `C:<seq>:DATA UPDATE USERINFO PIN=<id>⇥Name=<name>` or `C:<seq>:DATA DELETE USERINFO PIN=<id>`, or `OK`. Only to an address the device trusts. From `INFO` only the firmware and the user count are kept                                                                                                      |
-| `POST /iclock/devicecmd?SN=…`                                                                                                  | Lines `ID=<seq>&Return=<code>&CMD=…`: 0 is done, anything else failed with its code (e.g. −1002 "not supported"); then `OK`. Only from an address the device trusts; from any other address the body is drained unread                                                                                                                                 |
+| `POST /iclock/devicecmd?SN=…`                                                                                                  | Lines `ID=<seq>&Return=<code>&CMD=…`: 0 is done, anything else failed with its code (e.g. −1002 "not supported"); then `OK`. Only from an address the device trusts; from any other address the body is drained unread (up to 64 KB, then the connection is closed)                                                                                    |
 | `GET /iclock/ping`                                                                                                             | `OK`                                                                                                                                                                                                                                                                                                                                                   |
 | Any other path, and any method but GET and POST                                                                                | `404 Not Found` (a HEAD on getrequest would otherwise mark commands sent that never left)                                                                                                                                                                                                                                                              |
 
@@ -168,8 +168,14 @@ screen. Devices that support HTTPS can use a TLS proxy in front of the receiver'
   yet, or not migrated yet, e.g. 42501: the e2e run starts the API before its global setup
   migrates the e2e database) is asked again after 1, 2, 4 and 8 s, then every 15 s, about 3
   minutes in all, with one log line each naming the error's codes; still failing, the start
-  fails. Inside the API (development, e2e) the API is already listening meanwhile and the receiver
-  comes up once the check passes; a receiver that finally refuses stops the API too.
+  fails. Each check has 10 s to answer: a database that accepts the connection and never answers
+  counts as a failed check (`StartupCheckTimeout`), so the start fails within about 6 minutes
+  instead of hanging. The receiver's pool (at most 10 connections) also gives up getting a
+  connection after 10 s: opening one, and waiting for a free one, so with more than 10 device
+  calls in flight a request that waits longer fails with 500 and the device sends it again. TCP
+  keep-alive probes an idle connection after 30 s. Queries themselves have no time limit yet
+  (decision #79). Inside the API (development, e2e) the API is already listening meanwhile and
+  the receiver comes up once the check passes; a receiver that finally refuses stops the API too.
 - **Code scan.** [`ingest-isolation.spec.ts`](../apps/api/src/ingest/ingest-isolation.spec.ts)
   fails if receiver code imports the API's database access, or if anything outside the receiver
   provides its login; the receiver's e2e test checks that the running receiver has none of the
@@ -211,6 +217,7 @@ body limits follow. Counts are per minute unless shown, kept in Redis, and confi
 | ATTLOG body (413)                                                                                  | 512 KB and 10 000 lines            | `INGEST_MAX_ATTLOG_BYTES`         |
 | Other uploads drained, then the connection is closed                                               | 2 MB                               | `INGEST_MAX_DRAIN_BYTES`          |
 | A devicecmd body (413)                                                                             | 64 KB                              |                                   |
+| A devicecmd body from an address the device does not trust: drained, then the connection is closed | 64 KB                              |                                   |
 | Server: headers / whole request / idle connection / connections at once                            | 10 s / 30 s / 5 s / 1000           |                                   |
 
 - **"An address"** is an IPv4 address, or an IPv6 address's /64 (one home or host usually holds
@@ -565,7 +572,8 @@ OWNER/ADMIN, under Attendance → Staff (`/attendance/staff`).
 - **Raw punches** are kept for the institute's `punch_retention_days` (setting, default 730,
   30–3650). The daily `expire-punches` job (00:40 Asia/Dhaka) visits every institute in
   `devices:tenants`, attendance on or not, each in its own transactions, and deletes punches whose
-  day is before today − that setting, oldest first, 5000 per transaction.
+  day is before today − that setting, oldest first, 5000 per transaction. An institute that no
+  longer exists is taken off `devices:tenants` instead (a warning names it).
 - **The database floor:** the app can never delete a punch from the last 30 days (restrictive
   policy `retention_only`, by the database's own date, so it can be a day behind the institute's).
   Raw columns can never be updated.
