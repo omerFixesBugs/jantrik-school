@@ -331,6 +331,55 @@ Decided while the owner was away (each one in PR #9, which is not merged):
   `apps/api/src/app.setup.ts`, with a test). Parts A and C are still open. No other auth, CORS or
   database change is in PR #9.
 
+### The boot refresh (part A of the plan, 2026-11-14)
+
+The owner approved part A with the early `/me/context`, on conditions (plan → Status). Decided
+while building it (`perf/step-12-boot-refresh`):
+
+- **B1. Where it runs:** only the `(app)` layout renders the script, so only a full load of an
+  institute app page. Not `/select-institute`: it is signed in but has no institute yet, and it
+  lives in the `(auth)` group.
+  - To change: render `BootRefreshScript` in another layout.
+- **B2. The switch:** `JANTRIK_BOOT_REFRESH` on the web server, read per request (`off`, `false`,
+  `0` or `no` turn it off; anything else, or unset, is on). The production compose passes it to
+  the web container; `deploy/compose.sh up -d web` applies a change with no rebuild.
+  - To change: `bootRefreshEnabled` in `apps/web/src/lib/auth/boot-refresh.ts`.
+- **B3. Who wins at the hand-over:** anything the script hears after sending its refresh beats
+  that refresh's result, which is then neither used nor broadcast: a logout (it probably revoked
+  the session), or another tab's login or institute switch (refreshes take the lock, so a
+  session heard then is one of those). Anything `AuthClient`'s own channel heard before it took
+  the result over beats the result, and a session that reaches `AuthClient` before its restore
+  drops the hand-over. In the plan's words "the boot result is checked against a logout
+  broadcast"; the other rules keep a tab that was still loading in step with the others (the
+  review found an institute switch heard mid-refresh sent the switching tab back). A client
+  React builds and then throws away can take the hand-over the same way; the kept client then
+  refreshes the usual way (safe, only slower).
+- **B7. HTTP failures are reported like AuthClient's own:** a 429 or 5xx from the boot refresh
+  shows "unreachable" and retries with backoff (no second request at once, so a 429's wait or an
+  overloaded API is respected). A network error, seconds old by the time `AuthClient` looks and
+  no load on the API, or a failure of the script itself (an unreadable answer) makes
+  `AuthClient` refresh at once.
+- **B8. Not done: `keepalive` on the refresh.** A refresh aborted after the API rotated the token
+  but before the cookie arrived (the tab closed mid-load) leaves the old token in the browser;
+  presented again after 30 s it revokes the session. That was already true of `AuthClient`'s
+  refresh; the boot refresh runs in the first second of a load, when people abandon more often.
+  `fetch(…, { keepalive: true })` would let the browser finish it, but keepalive with a CORS
+  preflight is not dependable on every browser the app targets, so it is in backlog.md →
+  Performance for a check on real phones first.
+- **B9. The hand-over global (`window.__jantrikBoot`) is a plain property.** Replacing it needs
+  script in the page, which could already broadcast a session on the BroadcastChannel or call
+  `/auth/refresh` itself; a frozen property would also stop the tests from running the script
+  more than once.
+- **B4. The early `/me/context` is used only for the exact session it was fetched with** (same
+  access token) **and the page's institute;** otherwise the shell fetches it as before. A tab
+  that was still loading during an institute switch therefore opens on the new institute, with
+  its own context.
+- **B5. No script element on client-side renders:** after a login the app layout renders in the
+  browser, where React never runs a script it creates (and development reports one as an
+  error), so `BootRefreshScript` renders it only in the server HTML and during hydration.
+- **B6. It starts after the CSS:** an inline script waits for the stylesheets in `<head>`
+  (24 KB), so the refresh starts once they arrive, still well before the JavaScript.
+
 ## Devices and staff attendance (step 11)
 
 Rules: [devices.md](devices.md). Owner decisions of 2026-10-24, approved as recommended:
