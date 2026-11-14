@@ -192,6 +192,8 @@ describe('device retention (expire-punches)', () => {
       { pin: '108', status: 'FAILED', days: 89, kept: true },
       { pin: '109', status: 'DONE', days: 150, kept: false }, // added, then removed:
       { pin: '109', status: 'DONE', days: 100, kept: true, removal: true }, // the latest DONE
+      { pin: '110', status: 'DONE', days: 120, kept: false }, // superseded by a young DONE only
+      { pin: '110', status: 'DONE', days: 10, kept: true },
     ];
     const label = (i: number) => `#${i} ${rows[i]!.pin} ${rows[i]!.status} ${rows[i]!.days}d`;
     const index = new Map<string, number>();

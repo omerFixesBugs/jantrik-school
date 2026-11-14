@@ -184,8 +184,8 @@ are left out.
   - Staff month print: the weekday line (5.5 pt grey) is hard to read, দেআ fills its column, and
     the name button keeps its touch height in print (more pages).
 - **Tests, seed and tooling**
-  - Coverage gaps: retention (an old DONE superseded only by a young DONE), the simulator
-    (per-record-type assertion, `poll()` silent on a non-200, the CLI's 50-line batches).
+  - Coverage gap: the simulator CLI's 50-line batches (`cli.ts` runs at import; testing it needs
+    its loop split out).
   - The staff desk e2e cannot run twice in one run (the saved leave stays), and specs must not
     assert today's computed staff state (it depends on the real time of the run).
   - Seed minors: demo serials stay active in jantrik_test after a killed run, a failed owner insert

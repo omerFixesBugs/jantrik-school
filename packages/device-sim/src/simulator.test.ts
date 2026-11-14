@@ -164,6 +164,19 @@ describe('poll', () => {
     expect(seen[0]!.path).toBe('/iclock/getrequest?SN=SIM001');
   });
 
+  it('is silent on an answer that is not 200: no commands applied, nothing reported', async () => {
+    replies['GET /iclock/getrequest'] = {
+      status: 403,
+      body: 'C:101:DATA UPDATE USERINFO PIN=5\tName=Rahim\n',
+    };
+    const sim = make();
+    expect(await sim.poll(true)).toEqual({ commands: [] });
+    expect(sim.users.size).toBe(0);
+    expect(seen.map((s) => `${s.method} ${s.path.split('?')[0]}`)).toEqual([
+      'GET /iclock/getrequest',
+    ]);
+  });
+
   it('applies commands and reports the results', async () => {
     replies['GET /iclock/getrequest'] = {
       body: [
@@ -239,10 +252,24 @@ describe('sendBiometricPayloads', () => {
     ]);
     for (const s of seen) expect(s.body.toString('latin1')).toContain(sentinel);
     const oper = seen[0]!.body.toString();
-    for (const kind of ['USER ', 'FP ', 'FACE ', 'FVEIN ', 'USERPIC ', 'BIOPHOTO ', 'OPLOG ']) {
-      expect(oper).toContain(`${kind}`);
+    // One line per record type, in this order, each biometric one carrying the sentinel (FP's
+    // template as base64); the operation log line carries none.
+    const lines = oper.trimEnd().split('\n');
+    expect(lines.map((l) => l.split(' ')[0])).toEqual([
+      'USER',
+      'FP',
+      'FACE',
+      'FVEIN',
+      'USERPIC',
+      'BIOPHOTO',
+      'OPLOG',
+    ]);
+    const base64 = Buffer.from(sentinel).toString('base64');
+    for (const line of lines.slice(0, -1)) {
+      expect(line.includes(sentinel) || line.includes(base64), line).toBe(true);
     }
-    expect(oper).toContain(Buffer.from(sentinel).toString('base64'));
+    expect(lines[1]).toContain(`TMP=${base64}`);
+    expect(lines[6]).not.toContain(sentinel);
     expect(seen[2]!.body.includes(0)).toBe(true);
   });
 });
