@@ -1,4 +1,4 @@
-import { localTimeOf } from './dates.js';
+import { localTimeOf, secondsOfDay } from './dates.js';
 import type { IsoDate } from './dates.js';
 import type { StaffRole } from './staff.js';
 
@@ -16,11 +16,6 @@ export function staffAttendanceTracked(input: {
   if (input.activeStaffRoles.length === 0) return false;
   return input.tracked ?? input.activeStaffRoles.some((r) => r !== 'OWNER');
 }
-
-const toSeconds = (hhmm: string): number => {
-  const [h = 0, m = 0, s = 0] = hhmm.split(':').map(Number);
-  return h * 3600 + m * 60 + s;
-};
 
 export interface StaffDay {
   inAt: Date;
@@ -50,15 +45,15 @@ export function staffDay(input: {
   const inAt = new Date(first);
   const outAt = last - first >= minGapMin * 60_000 ? new Date(last) : null;
 
-  const start = toSeconds(input.officeStart);
-  const inSec = toSeconds(localTimeOf(inAt, timeZone));
+  const start = secondsOfDay(input.officeStart);
+  const inSec = secondsOfDay(localTimeOf(inAt, timeZone));
   const lateMinutes =
     inSec > start + input.lateGraceMin * 60 ? Math.max(1, Math.floor((inSec - start) / 60)) : 0;
 
   let earlyMinutes = 0;
   if (outAt) {
-    const end = toSeconds(input.officeEnd);
-    const outSec = toSeconds(localTimeOf(outAt, timeZone));
+    const end = secondsOfDay(input.officeEnd);
+    const outSec = secondsOfDay(localTimeOf(outAt, timeZone));
     if (outSec < end - input.earlyGraceMin * 60) {
       earlyMinutes = Math.max(1, Math.floor((end - outSec) / 60));
     }

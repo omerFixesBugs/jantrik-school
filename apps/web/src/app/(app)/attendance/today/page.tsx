@@ -78,7 +78,8 @@ function TakenBy({
         {register.updatedByDevice
           ? t('takenByDevice', { time })
           : fromDevice
-            ? t('takenByDeviceEdited', { name, time })
+            ? // No time: the register's last change can be the device's, after the person's.
+              t('takenByDeviceEdited', { name })
             : t('takenBy', { name, time })}
       </span>
     </p>

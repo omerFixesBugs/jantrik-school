@@ -123,7 +123,19 @@ describe('the filter in the URL', () => {
       sectionId: SECTION,
       query: '',
     });
-    // Staff have no section: it leaves the URL with the flag.
-    expect(Object.fromEntries(off)).toEqual({ unknown: '4321' });
+    // Staff have no section: it leaves the URL with the flag; the staff list stays in it.
+    expect(Object.fromEntries(off)).toEqual({ unknown: '4321', kind: 'staff' });
+    const back = peopleFilterUrl(off, { ...all, unmappedOnly: false });
+    expect(Object.fromEntries(back)).toEqual({ unknown: '4321' });
+  });
+
+  it('a reload of the staff without an ID shows the staff without an ID again', () => {
+    const staffUnmapped = { kind: 'STAFF' as const, unmappedOnly: true, sectionId: '', query: '' };
+    const url = peopleFilterUrl(new URLSearchParams(''), staffUnmapped);
+    expect(url.toString()).toBe('kind=staff&unmapped=1');
+    expect(peopleFilterFromUrl(url, '')).toEqual(staffUnmapped);
+    expect(ids(filterPeople(ROWS, peopleFilterFromUrl(url, '')))).toEqual(['t2']);
+    // Any other kind is the students.
+    expect(peopleFilterFromUrl(new URLSearchParams('kind=STAFF'), '').kind).toBe('STUDENT');
   });
 });

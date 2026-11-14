@@ -74,6 +74,179 @@ first review) or _Changed_ (done differently, as described).
     - The sender's number of a bKash/Nagad transfer is masked for the accountant (the TrxID and amount suffice to check it).
 30. **_Approved (step 9)._ The bKash gateway (tokenized checkout) is a later step:** plan in [backlog.md](backlog.md).
 
+## Deployment readiness (day run 2026-11-13)
+
+Runbook: [deploy.md](deploy.md). Decided without the owner (unattended day run, PR "Deployment
+readiness without a provider"); each is reversible.
+
+How the "Deployment requirements (step 11)" below are now covered:
+
+- **1. Platform subdomain:** `deploy/Caddyfile` serves the web app's `/platform` pages only on
+  `platform.<domain>` and redirects them away from `app.<domain>`; the platform cookie keeps its
+  flags. The `Origin` allowlist in `PlatformAuthGuard` is **not** built (an auth change for the
+  owner); meanwhile Caddy refuses `/platform/*` API calls from any other browser origin (D9).
+- **2. Redis:** the production compose runs `--appendonly yes --appendfsync everysec
+--maxmemory-policy noeviction` with a `--maxmemory` (D10), so noeviction applies, plus a password.
+- **3. Roles and deploy order:** `deploy/postgres/create-roles.sh` creates every role before the
+  first migration (D7); the compose starts the apps only after the one-shot `migrate` service
+  succeeded, and the runbook's upgrade is migrations first, then restart. The optional
+  `REVOKE TEMPORARY` hardening is applied in production (D7).
+- **4. The device receiver:** its own service (`node dist/ingest-main.js`) with its own variables
+  only (it now refuses to start with any of the API's logins or secrets, D4), port 4080 published
+  as plain HTTP (IPv4), `INGEST_TRUST_PROXY=false` fixed in the compose file (D18; `true`
+  refused), `INGEST_PUBLIC_HOST` from `DEVICE_HOST`; `INGEST_IN_PROCESS=true` is refused in
+  production.
+
+D1. **SMS without a gateway.** Every provider refused production, so the API could not start
+there at all. New `SMS_PROVIDER=none`: every send fails, is retried and recorded as FAILED;
+nothing is sent, kept or printed. **Until a gateway exists no institute user can sign in**
+(revised after review): guardians and staff alike need an OTP, as no production path sets a
+staff member's password (invitations and first logins go through an OTP; only the demo seed and
+the tests set passwords). Only platform admins can sign in. A go-live blocker for the owner; no
+password path was built.
+
+- To change: build the gateway provider and set it; `none` can stay for staging servers.
+
+D2. **A separate queue worker.** The BullMQ processors ran only inside the API. `node
+dist/worker-main.js` boots the same modules without HTTP; AppModule starts the workers itself
+(BullModule `manualRegistration`) unless `QUEUE_WORKERS=false`. Default on, so the API, the tests
+and `pnpm dev` behave as before; the production compose runs the API with `false` next to a
+`worker` service. The worker refuses `QUEUE_WORKERS=false`. It gets the API's environment (it
+runs the API's modules, so the same validation).
+
+- To change: run jobs in the API again (drop the worker service, `QUEUE_WORKERS=true`), or give
+  the worker a smaller module and environment later.
+
+D3. **Templates in production.** Institute types, templates and grading schemes came only from
+`pnpm db:seed`, which refuses production. `packages/db/dist/cli/seed-templates.js` runs the same
+idempotent `seedTemplates` as the owner after every `prisma migrate deploy` (the `migrate`
+service). Without it no institute could be registered.
+
+- To change: load them in a migration instead.
+
+D4. **Production environment checks** (deploy.md → Environment checks): with
+`NODE_ENV=production` the API, the worker and the receiver refuse development SMS providers,
+`TRUST_PROXY`/`INGEST_TRUST_PROXY` `true` or a `/0` range, `INGEST_IN_PROCESS=true`, non-https or
+local CORS origins, example or reused secrets, runtime logins as `jantrik_owner` or `postgres`,
+`REDIS_URL`/`TRUST_PROXY` left unset, an example or short password inside `REDIS_URL`, and
+`DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in their environment (added
+after review); the receiver also refuses any of the API's logins or secrets. The API tests and Playwright's API run with `NODE_ENV=test` (and the
+web app has no env validation), so nothing was relaxed for them and there is no override flag.
+
+- To change: `apps/api/src/config/production-env.ts` (each rule is a few lines with a test).
+
+D5. **`TRUST_PROXY` must be set in production** (the compose sets `1` for Caddy). Its default
+`false` behind a proxy would make every visitor one address for the per-IP rate limits.
+
+- To change: remove it from `API_PRODUCTION_REQUIRED` in `production-env.ts`.
+
+D6. **Example secrets** are recognised by markers (`change-me`, `CHANGE_ME`, `dev-only`,
+`test-only`, `ci-only`, `dev_password`, `ci_password`, `placeholder`, `example`), and the three
+secrets must differ. The same list in `production-env.ts`, `deploy/compose.sh` and
+`create-roles.sh`.
+
+- To change: `isPlaceholderSecret` in `production-env.ts` and the two scripts together.
+
+D7. **The production roles script** is separate from `docker/postgres/init/01-roles.sh`
+(unchanged for development and CI) and creates the production database only. Passwords: at
+least 24 URL-safe characters, distinct, no example values; existing roles keep their passwords,
+but every role's attributes and memberships are checked on each run. The production database
+also gets `REVOKE TEMPORARY ON DATABASE ... FROM PUBLIC` (requirement 3's optional hardening;
+nothing in the app makes temporary tables) and `timezone UTC`. A non-superuser admin (a managed
+Postgres) gets SET-only membership of `jantrik_owner` to create and set up the database.
+
+- To change: `deploy/postgres/create-roles.sh` and `database-setup.sql`.
+
+D8. **Backups and restores run as the superuser.** `jantrik_owner` cannot dump forced-RLS
+tables, and only a superuser restores every owner and grant. Restores go into a missing or empty
+database only, or replace one with `--drop-existing=<name>` when nothing is connected to it;
+extensions are created as the owner first so it keeps owning them. Retention 14 days; the
+off-site upload is a documented placeholder (`BACKUP_UPLOAD_CMD`). The restore check runs in CI
+on every pull request, on a fresh cluster set up by `create-roles.sh`, with demo data.
+
+- To change: `deploy/backup/*.sh`; the job "Production roles, backup and restore" in `ci.yml`.
+
+D9. **Caddy is the reverse proxy** in the production compose (automatic Let's Encrypt). On
+`api.<domain>` it answers 403 to a browser request to `/platform/*` from any origin other than
+the platform's: a stopgap for the `PlatformAuthGuard` `Origin` check (owner).
+
+- To change: drop the `@platformFromElsewhere` rule once the guard checks the origin; another
+  proxy needs the same routing (deploy.md → HTTPS).
+
+D10. **Redis has a password** (`REDIS_PASSWORD`), though only the compose network reaches it,
+and a memory ceiling, `REDIS_MAXMEMORY` (default `512mb`): without one `noeviction` never applies
+and Redis grows until the kernel kills it. At the ceiling writes fail loudly.
+
+- To change: drop `--requirepass` and the password in `REDIS_URL`; size `REDIS_MAXMEMORY` to the
+  server (about an eighth of its memory to start, leaving room for the AOF rewrite).
+
+D11. **Next.js standalone output only in the image** (`NEXT_OUTPUT=standalone`, set by the
+Dockerfile): `next start`, which CI's Playwright run uses, refuses standalone output.
+
+D12. **Images are built on the server** (`deploy/compose.sh build`); CI does not build them (it
+would add several minutes to every run). They were built and run locally.
+
+- To change: build them in CI and push to a registry; the compose then pulls `IMAGE_TAG`.
+
+D13. **No health route on the receiver.** Its Docker health check asks for an unknown path and
+expects 404 (no database, no log line), so the internet-facing receiver gets no new route. The
+worker has no health check (no HTTP); Docker restarts it if it exits.
+
+D14. **The `migrate` image carries the dev tools** (about 950 MB): the Prisma CLI is a
+devDependency of `@jantrik/db`, so its deploy includes all of them.
+
+- To change: move `prisma` to `dependencies` (a lockfile change) and deploy with `--prod`.
+
+Added after the review of the PR (2026-11-14):
+
+D15. **`deploy/compose.sh` checks the settings file first** and refuses, for every command, a line
+that is not plain `KEY=value`, a value still holding `CHANGE_ME` or `example.com`, a `*_PASSWORD`
+under 24 characters, with characters a URL cannot carry, with an example marker or equal to
+another, a secret with an example marker, and a key also set in the shell (compose prefers the
+shell). So the superuser's password is checked before Postgres's first start sets it.
+`create-roles.sh` checks `POSTGRES_PASSWORD` (when given) and the roles' again. Second review
+round: the parsing follows compose's (`export`, quotes, inline comments).
+
+- To change: the loop at the top of `deploy/compose.sh`.
+
+D16. **The Postgres health check is a query** over TCP, without a password (127.0.0.1 is trusted
+inside the image): the roles exist and `database-setup.sql` ran (schema owner, no USAGE or
+TEMPORARY for PUBLIC, the UTC setting). A first start that failed half-way stays unhealthy and the
+apps never start against it. The runbook's recovery is a new volume (or rerunning the script and
+setting the superuser's password by hand).
+
+D17. **Backups belong to the deploy user and live outside the checkout:** the `backup` service
+runs as `BACKUP_UID:BACKUP_GID` (default 1000:1000) and writes to `BACKUP_HOST_DIR` (default
+`/srv/jantrik-backups`), so the deploy user's cron jobs can copy the private (600) files away and
+a `git clean` cannot delete them.
+
+- To change: the `backup` service's `user` and volume; or run the cron jobs as root.
+
+D18. **`INGEST_TRUST_PROXY` is fixed to `false`** in the compose file and gone from the
+settings file: nothing proxies port 4080, and a hop count with direct devices trusts the
+client-written `X-Forwarded-For` as much as `true` does.
+
+- To change: only behind a proxy you run in front of port 4080, in
+  `deploy/docker-compose.override.yml`.
+
+D19. **IPv4 only for now:** no AAAA records (never for `device.`). The compose network has no
+IPv6, so Docker would show every IPv6 visitor to the API as one address (one rate-limit bucket);
+port 4080 is published on IPv4 only.
+
+- To change: an IPv6 compose network (checked end to end), then AAAA records for `app.`,
+  `platform.` and `api.`.
+
+Recorded for the owner, not built:
+
+- **A Redis user for the receiver** limited to its own keys (Redis ACL). Today it has full Redis
+  rights, so code run in it could queue jobs the worker trusts.
+- **A start-up check that fails when the app's database login is a superuser or BYPASSRLS** (and
+  the same for the platform and receiver logins). Today the env checks refuse the known admin
+  logins by name, and the platform and receiver logins have their own start-up checks.
+- **CI coverage** of the compose Postgres's first start (initdb), the non-superuser branch of
+  `create-roles.sh`, `deploy/compose.sh`'s settings check and the image builds (each checked by
+  hand for this PR). The CI restore job makes fresh random passwords each run.
+
 ## Exams and results (step 10)
 
 Rules: [exams.md](exams.md). Owner decisions of 2026-10-23: browser print / Save as PDF; an
@@ -299,3 +472,35 @@ Recorded during step 8; to be done when the production setup is built.
      `DATABASE_INGEST_URL`, `INGEST_PORT`, `INGEST_TRUST_PROXY`, and the limits
      `INGEST_PER_IP_PER_MIN`, `INGEST_PER_DEVICE_PER_MIN`, `INGEST_PER_DEVICE_ALL_PER_MIN`,
      `INGEST_REFUSED_PER_IP_PER_10MIN`, `INGEST_MAX_ATTLOG_BYTES`, `INGEST_MAX_DRAIN_BYTES`.
+
+## Backlog fixes (day run 2026-11-13)
+
+Taken without the owner during the unattended backlog run (branch `chore/backlog-fixes`, PR #7).
+Each is a small default; how to change it is given.
+
+69. **The receiver's start-up check gives each attempt 10 s** (`StartupCheckTimeout`, then retried like any other failure). The check answers in milliseconds on a working database; with the existing waits (about 3 minutes) a database that never answers fails the start within about 6 minutes.
+    - To change: `checkTimeoutMs` in `apps/api/src/ingest/ingest-prisma.service.ts`.
+70. **The fees setup's switch-off confirm for a bKash/Nagad number reads "নম্বর বন্ধ করুন" / "Turn off number"** (the menu item stays "বন্ধ করুন" / "Turn off"). English was not ambiguous ("Close" vs "Turn off") but follows the Bangla, so both say what is switched off.
+    - To change: `numbers.deactivateConfirm` in `apps/web/messages/fees/setup.{bn,en}.json`.
+71. **`wallClockToUtc` refuses a date or time that does not exist** (2026-02-30, 24:00:00) with its usual "Not a wall-clock time" error, rather than moving it to another day. Every caller already passes real times; the simulator CLI now refuses `--from 25:00` instead of using 01:00 the next day.
+    - To change: the check in `packages/shared/src/dates.ts`.
+72. **The entry and exit SMS cut a long name by grapheme cluster** (`Intl.Segmenter`, code points where it is missing) and drop a trailing hasant, zero-width joiner or space. Only names too long for two segments are cut.
+    - To change: `nameLetters` / `cutName` in `packages/shared/src/devices.ts`.
+73. **A devicecmd body from an address the device does not trust is cut at 64 KB by closing the connection** (as every drain past its limit is), not answered 413: nothing is answered to an untrusted address's command results anyway.
+    - To change: `commandResults` in `apps/api/src/ingest/ingest.controller.ts`.
+74. **The device hardening migration (`20261113000000_devices_hardening`)**: the reviewer CHECK goes one way only (`reviewed_by_id` needs a `review`; a review without a reviewer stays allowed, as today: requiring one would be a new rule); the serial number index is a plain index on all rows (the table is small; a partial `WHERE NOT is_active` index would also serve); each CHECK is added `NOT VALID` and then validated (a brief lock instead of a scan under an exclusive lock on `device_punches`). No app path writes a violating row, so only hand-made data in a local database could make the migration fail. Prisma does not wrap a migration in a transaction, so every statement in it can run again (`DROP … IF EXISTS` before each policy and CHECK, `CREATE INDEX IF NOT EXISTS`) and a failed deploy can be finished (tried on the scratch test database). No `lock_timeout`: `SET LOCAL` has no effect outside a transaction, and a session-wide `SET` would also bound the later migrations of the same deploy.
+    - Recovery after a failed deploy ("check constraint … is violated by some row"; the error does not name the row). The migration login (`jantrik_owner`) cannot see or fix the rows: these tables force RLS and it does not bypass it. As the Postgres superuser (`POSTGRES_USER`, `postgres` locally) or another role with BYPASSRLS, on that database:
+      1. Find the rows: `SELECT tenant_id, id FROM device_punches WHERE reviewed_by_id IS NOT NULL AND review IS NULL;` and `SELECT tenant_id, id FROM staff_attendance_days WHERE source = 'DEVICE' AND reason IS NOT NULL;`
+      2. Fix them as that role, e.g. `UPDATE device_punches SET reviewed_by_id = NULL WHERE reviewed_by_id IS NOT NULL AND review IS NULL;` and `UPDATE staff_attendance_days SET reason = NULL WHERE source = 'DEVICE' AND reason IS NOT NULL;` (or make such a day MANUAL with its `updated_by_id`, if the reason is worth keeping).
+      3. From the repository root: `pnpm --filter @jantrik/db exec prisma migrate resolve --rolled-back 20261113000000_devices_hardening`, then `pnpm db:deploy`.
+    - To change: a later migration.
+75. **The today page's line for a device register a person changed drops the time** ("ডিভাইস থেকে নেওয়া; {name} বদলেছেন"), rather than labelling it as the register's last change: the person's own time is not stored apart from the device's later changes.
+    - To change: `reports.takenByDeviceEdited` in `apps/web/messages/{bn,en}.json`.
+76. **Teachers' text for a register held back because students are not on a device ends "হাতে হাজিরা নিন।" / "Take it by hand."**, without "ask an admin to give IDs" (owners and admins keep the give-IDs advice and link).
+    - To change: `reports.deviceNotOnDevice` (teachers) and `reports.deviceNotOnDeviceAdmin` in `apps/web/messages/{bn,en}.json`.
+77. **The device people page keeps the staff list in the URL as `kind=staff`** (students need no parameter), next to `unmapped=1` and `section`.
+    - To change: `peopleFilterFromUrl` / `peopleFilterUrl` in `apps/web/src/lib/devices/people.ts`.
+78. **An institute that no longer exists leaves `devices:tenants` during the nightly retention job** (once a day, not every minute in the tick), found by its own `tenants` row being gone in its context, with a warning naming it. A failing or switched-off institute stays listed as before.
+    - To change: `expireAll` in `apps/api/src/devices/devices.processor.ts`.
+79. **Open for the owner: a time limit on the receiver's live database calls, and its pool size.** The receiver's pool (`INGEST_POOL` in `apps/api/src/ingest/ingest-prisma.service.ts`) now gives up getting a connection after 10 s, which covers both opening one and waiting for a free one while all 10 (node-postgres' default `max`) are busy: with more than 10 device calls in flight and a wait over 10 s, the waiting requests fail with 500 and the devices send them again (nothing is lost). TCP keep-alive probes an idle connection after 30 s (`keepAliveInitialDelayMillis`; without it the operating system waits about 2 hours). A device request's query still has no time limit: a database that answers the connection and then hangs a query keeps that request, and its pool connection, waiting. Not changed here: a `statement_timeout` or the driver's `query_timeout` would bound every `ingest_*` call, and the value must leave room for the largest upload (10 000 lines take about 2 s to store) under load. Defaults until decided: no query limit and a pool of 10, as before.
+    - To decide: a value (e.g. 15–30 s) for `statement_timeout` on the `jantrik_ingest_app` role (`ALTER ROLE … SET statement_timeout`, a migration) or `query_timeout` in `INGEST_POOL`; and whether the receiver needs more than 10 connections (`max` in `INGEST_POOL`, within the database's `max_connections`) once many schools' devices call at once.

@@ -7,6 +7,7 @@ import { REDIS } from '../redis/redis.constants.js';
 import {
   ConsoleSmsProvider,
   MemorySmsProvider,
+  NoSmsProvider,
   RedisOutboxSmsProvider,
   SMS_PROVIDER,
 } from './sms.providers.js';
@@ -27,6 +28,8 @@ import { TenantSmsService } from './tenant-sms.service.js';
             return new MemorySmsProvider(nodeEnv);
           case 'outbox':
             return new RedisOutboxSmsProvider(redis, nodeEnv);
+          case 'none':
+            return new NoSmsProvider();
           default:
             return new ConsoleSmsProvider(nodeEnv);
         }

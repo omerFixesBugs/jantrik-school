@@ -182,6 +182,20 @@ describe('staffMonth', () => {
     expect(after.totals.absent).toBe(5);
   });
 
+  it('a row on an off day (someone came in on a weekly off day) shows and counts it', () => {
+    const r = staffMonth({
+      month: '2026-10',
+      days,
+      today: '2026-10-06',
+      officeEndPassedToday: false,
+      people: [{ key: 'a', since: '2026-09-01' }],
+      rows: [row('a', '2026-10-01', 'PRESENT'), row('a', '2026-10-02', 'PRESENT', 4, 0)],
+    })[0]!;
+    // 2026-10-02 is off, but its row wins over OFF; the days without a row are absent as usual.
+    expect(r.cells).toEqual(['PRESENT', 'LATE', 'ABSENT', 'ABSENT', 'ABSENT', 'NONE', 'NONE']);
+    expect(r.totals).toMatchObject({ present: 2, late: 1, lateMinutes: 4, absent: 3 });
+  });
+
   it('someone whose attendance is not kept (listed for their rows) is never absent', () => {
     const r = staffMonth({
       month: '2026-10',

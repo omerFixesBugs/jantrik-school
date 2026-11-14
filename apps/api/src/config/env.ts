@@ -1,6 +1,7 @@
 import { isoDateSchema } from '@jantrik/shared';
 import { z } from 'zod';
 import { ingestReceiverFields, positiveInt } from './ingest-env.js';
+import { apiEnvironmentProblems, apiProductionProblems, formatProblems } from './production-env.js';
 
 /** The receiver runs inside the API unless told otherwise; production runs it as its own process. */
 const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_ENV: string }) =>
@@ -71,8 +72,15 @@ export const envSchema = z
     /**
      * `console` logs codes (development only); `memory` keeps them in-process (API tests);
      * `outbox` pushes them to a Redis list that Playwright reads (e2e). Never in production.
+     * `none`: no gateway yet, every SMS fails (and is recorded as failed); production until a real
+     * gateway is built.
      */
-    SMS_PROVIDER: z.enum(['console', 'memory', 'outbox']).default('console'),
+    SMS_PROVIDER: z.enum(['console', 'memory', 'outbox', 'none']).default('console'),
+    /**
+     * Process the queues' jobs in this process (default). `false` for an API next to a separate
+     * worker process (`worker-main.js`), which must keep it on.
+     */
+    QUEUE_WORKERS: z.stringbool().default(true),
     /**
      * Tests only: a fixed "today" (YYYY-MM-DD) for every calendar date the API works out (the
      * end-to-end suite sets it; `todayIn` in @jantrik/shared reads it). Timestamps stay real.
@@ -154,6 +162,12 @@ export const envSchema = z
         message: 'COOKIE_SECURE must be true in production',
       });
     }
+    // The other production rules (production-env.ts, docs/deploy.md → Environment checks).
+    if (env.NODE_ENV === 'production') {
+      for (const { path, message } of apiProductionProblems(env)) {
+        ctx.addIssue({ code: 'custom', path: [path], message });
+      }
+    }
   })
   .transform((env) => ({
     ...env,
@@ -166,8 +180,15 @@ export type Env = z.infer<typeof envSchema>;
 
 export function validateEnv(config: Record<string, unknown>): Env {
   const result = envSchema.safeParse(config);
-  if (!result.success) {
-    throw new Error(`Invalid environment variables:\n${z.prettifyError(result.error)}`);
+  // What the environment holds: the variables production must set, none of the database's
+  // admin secrets (production-env.ts).
+  const given = config['NODE_ENV'] === 'production' ? apiEnvironmentProblems(config) : [];
+  if (!result.success || given.length > 0) {
+    const errors = [
+      ...(result.success ? [] : [z.prettifyError(result.error)]),
+      ...(given.length > 0 ? [formatProblems(given)] : []),
+    ];
+    throw new Error(`Invalid environment variables:\n${errors.join('\n')}`);
   }
   return result.data;
 }

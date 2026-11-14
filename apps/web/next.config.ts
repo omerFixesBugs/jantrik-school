@@ -19,7 +19,20 @@ const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 // PC's private IP. allowedDevOrigins has no effect outside `next dev`. One `*` = one label.
 const LAN_DEV_ORIGINS = ['192.168.*.*', '10.*.*.*', '172.*.*.*'];
 
+// The production image only (Dockerfile sets NEXT_OUTPUT=standalone): a self-contained server
+// (node apps/web/server.js) with just the files it needs. Never elsewhere: `next start`, which CI's
+// Playwright run uses, refuses standalone output.
+const standalone =
+  process.env['NEXT_OUTPUT'] === 'standalone'
+    ? {
+        output: 'standalone' as const,
+        // The monorepo root, so the workspace packages (@jantrik/shared) are traced too.
+        outputFileTracingRoot: path.resolve(process.cwd(), '../..'),
+      }
+    : {};
+
 const nextConfig: NextConfig = {
+  ...standalone,
   ...(process.env['DEV_LAN'] === 'true' ? { allowedDevOrigins: LAN_DEV_ORIGINS } : {}),
   // cacheComponents is off: the root layout reads the locale cookie, and every page is per-user
   // with data fetched in the browser, so prerendered/cached components would not help.

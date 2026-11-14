@@ -130,7 +130,7 @@ describe('staff_attendance_days: tenant isolation and rules', () => {
   it('one row per person per day', async () => {
     await expect(
       asA((tx) => tx.staffAttendanceDay.create({ data: manualDay('2026-10-20') })),
-    ).rejects.toThrow(/unique/i);
+    ).rejects.toThrow(/staff_attendance_days_tenant_id_user_id_date_key/);
   });
 
   it('checks reject bad values', async () => {
@@ -151,6 +151,15 @@ describe('staff_attendance_days: tenant isolation and rules', () => {
       [
         { status: 'LEAVE', inAt: null, source: 'DEVICE', reason: null, updatedById: null },
         /staff_attendance_days_device_no_leave/,
+      ],
+      // Only an admin's MANUAL day carries a reason.
+      [
+        { source: 'DEVICE', reason: 'Device was down', updatedById: null },
+        /staff_attendance_days_device_no_reason/,
+      ],
+      [
+        { status: 'ABSENT', inAt: null, source: 'DEVICE', reason: 'Absent', updatedById: null },
+        /staff_attendance_days_device_no_reason/,
       ],
       // Office hours and minutes.
       [{ officeEnd: time('08:00') }, /staff_attendance_days_office_hours/],

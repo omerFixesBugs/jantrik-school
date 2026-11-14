@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import { addDays, dateFromDb, todayIn, type IsoDate } from '@jantrik/shared';
 import type { Job } from 'bullmq';
@@ -192,6 +193,8 @@ describe('device retention (expire-punches)', () => {
       { pin: '108', status: 'FAILED', days: 89, kept: true },
       { pin: '109', status: 'DONE', days: 150, kept: false }, // added, then removed:
       { pin: '109', status: 'DONE', days: 100, kept: true, removal: true }, // the latest DONE
+      { pin: '110', status: 'DONE', days: 120, kept: false }, // superseded by a young DONE only
+      { pin: '110', status: 'DONE', days: 10, kept: true },
     ];
     const label = (i: number) => `#${i} ${rows[i]!.pin} ${rows[i]!.status} ${rows[i]!.days}d`;
     const index = new Map<string, number>();
@@ -279,6 +282,43 @@ describe('device retention (expire-punches)', () => {
     expect(lines).toContain(`Device retention failed for ${broken.id}: Error`);
     expect(lines.join('\n')).not.toContain('a row value');
     expect(await h.redis.zscore(DEVICES_TENANTS_KEY, broken.id)).not.toBeNull();
+  });
+
+  it('an institute that no longer exists leaves the list, with no error; the others stay', async () => {
+    const fine = await createTenant(h, { modules: ['ATTENDANCE'] });
+    const gone = randomUUID();
+    const errors = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const warnings = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await list(gone, fine.id);
+
+    await runJob();
+    expect(await h.redis.zscore(DEVICES_TENANTS_KEY, gone)).toBeNull();
+    expect(await h.redis.zscore(DEVICES_TENANTS_KEY, fine.id)).not.toBeNull();
+    expect(errors).not.toHaveBeenCalled();
+    expect(warnings.mock.calls.map((c) => String(c[0]))).toContain(
+      `Institute ${gone} no longer exists: no longer listed for devices`,
+    );
+  });
+
+  it('the existence check fails outside the institute’s own context, and a failing check keeps the institute listed', async () => {
+    const a = await createTenant(h, { modules: ['ATTENDANCE'] });
+    const b = await createTenant(h, { modules: ['ATTENDANCE'] });
+    expect(await runner.run(a.id, () => retention.instituteExists(a.id))).toBe(true);
+    // Compared as uuids: the letter case of the listed id does not matter.
+    expect(await runner.run(a.id, () => retention.instituteExists(a.id.toUpperCase()))).toBe(true);
+    // Another institute's context: never "gone".
+    await expect(runner.run(a.id, () => retention.instituteExists(b.id))).rejects.toThrow(
+      /Not in the institute's context/,
+    );
+
+    vi.spyOn(retention, 'instituteExists').mockRejectedValueOnce(new Error('a row value'));
+    const errors = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await list(a.id);
+    await runJob();
+    expect(await h.redis.zscore(DEVICES_TENANTS_KEY, a.id)).not.toBeNull();
+    expect(errors.mock.calls.map((c) => String(c[0]))).toContain(
+      `Device retention failed for ${a.id}: Error`,
+    );
   });
 
   it('the database refuses the app deleting a punch from the last 30 days (policy retention_only)', async () => {

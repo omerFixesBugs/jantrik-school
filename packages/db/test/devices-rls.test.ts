@@ -291,7 +291,7 @@ describe('device tables: tenant isolation', () => {
         }),
       );
     const deviceA = await add(a.tenantId);
-    await expect(add(b.tenantId)).rejects.toThrow(/unique/i);
+    await expect(add(b.tenantId)).rejects.toThrow(/attendance_devices_active_serial/);
     await add(b.tenantId, false);
     await add(a.tenantId, false);
     await withTenant(app, a.tenantId, (tx) =>
@@ -303,7 +303,7 @@ describe('device tables: tenant isolation', () => {
       withTenant(app, a.tenantId, (tx) =>
         tx.attendanceDevice.update({ where: { id: deviceA.id }, data: { isActive: true } }),
       ),
-    ).rejects.toThrow(/unique/i);
+    ).rejects.toThrow(/attendance_devices_active_serial/);
   });
 
   it('one device ID belongs to one person of an institute, student or staff', async () => {
@@ -313,19 +313,23 @@ describe('device tables: tenant isolation', () => {
       );
     // 101 is A's student's: refused for a staff member and for another student.
     await expect(map({ deviceUserId: '101', staffUserId: a.staffUserId })).rejects.toThrow(
-      /unique/i,
+      /device_people_tenant_id_device_user_id_key/,
     );
     const other = await withTenant(app, a.tenantId, (tx) =>
       tx.student.create({
         data: { tenantId: a.tenantId, studentCode: `S-${randomUUID().slice(0, 8)}`, nameEn: 'S2' },
       }),
     );
-    await expect(map({ deviceUserId: '101', studentId: other.id })).rejects.toThrow(/unique/i);
+    await expect(map({ deviceUserId: '101', studentId: other.id })).rejects.toThrow(
+      /device_people_tenant_id_device_user_id_key/,
+    );
     // One ID per person.
-    await expect(map({ deviceUserId: '102', studentId: a.studentId })).rejects.toThrow(/unique/i);
+    await expect(map({ deviceUserId: '102', studentId: a.studentId })).rejects.toThrow(
+      /device_people_one_per_student/,
+    );
     await map({ deviceUserId: '9001', staffUserId: a.staffUserId });
     await expect(map({ deviceUserId: '9002', staffUserId: a.staffUserId })).rejects.toThrow(
-      /unique/i,
+      /device_people_one_per_staff/,
     );
     // B's student has 101 too: IDs are per institute.
     const personB = await withTenant(app, b.tenantId, (tx) =>
@@ -409,6 +413,14 @@ describe('device tables: tenant isolation', () => {
     await expect(
       asA((tx) => tx.devicePunch.update({ where: { id: a.punchId }, data: { review: 'OK' } })),
     ).rejects.toThrow(/device_punches_reviewed_together/);
+    await expect(
+      asA((tx) =>
+        tx.devicePunch.update({
+          where: { id: a.punchId },
+          data: { reviewedById: a.staffUserId },
+        }),
+      ),
+    ).rejects.toThrow(/device_punches_reviewer_needs_review/);
     await expect(
       asA((tx) =>
         tx.devicePunch.update({ where: { id: a.punchId }, data: { processedAt: new Date() } }),
@@ -616,6 +628,20 @@ describe('attendance_settings: device and staff columns', () => {
     await expect(update({ deviceCutoffMinutes: 14 })).rejects.toThrow(
       /attendance_settings_device_cutoff_range/,
     );
+    // The three grace minutes: 0 to 120.
+    for (const [column, constraint] of [
+      ['deviceGraceMinutes', 'attendance_settings_device_grace_range'],
+      ['staffLateGraceMinutes', 'attendance_settings_staff_late_grace_range'],
+      ['staffEarlyGraceMinutes', 'attendance_settings_staff_early_grace_range'],
+    ] as const) {
+      for (const value of [-1, 121]) {
+        await expect(update({ [column]: value }), `${column} ${value}`).rejects.toThrow(
+          new RegExp(constraint),
+        );
+      }
+      await update({ [column]: 0 });
+      await update({ [column]: 120 });
+    }
   });
 });
 
@@ -653,6 +679,22 @@ describe('the device receiver roles', () => {
     }
   });
 
+  it('jantrik_ingest_app cannot write any table either', async () => {
+    for (const sql of [
+      'INSERT INTO attendance_devices (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_commands (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_people (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_punches (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_source_ips (id) VALUES (gen_random_uuid())',
+      'UPDATE device_commands SET attempts = attempts',
+      'DELETE FROM device_commands',
+      'DELETE FROM device_source_ips',
+      'DELETE FROM device_punches',
+    ]) {
+      await expect(ingest.$executeRawUnsafe(sql), sql).rejects.toThrow(/permission denied/i);
+    }
+  });
+
   it('jantrik_ingest sees every institute without a context, but only the columns it needs', async () => {
     const ids = `('${a.deviceId}', '${b.deviceId}')`;
     const count = (sql: string) =>
@@ -680,6 +722,10 @@ describe('the device receiver roles', () => {
       'DELETE FROM device_punches',
       'UPDATE device_commands SET payload = payload',
       'UPDATE device_source_ips SET trusted_at = now()',
+      'INSERT INTO attendance_devices (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_commands (id) VALUES (gen_random_uuid())',
+      'INSERT INTO device_people (id) VALUES (gen_random_uuid())',
+      'DELETE FROM device_commands',
     ]) {
       await expect(asIngest((tx) => tx.$executeRawUnsafe(sql))).rejects.toThrow(
         /permission denied/i,
@@ -731,6 +777,47 @@ describe('the device receiver roles', () => {
       await tx.$executeRawUnsafe(`DELETE FROM device_source_ips WHERE id = '${untrusted.id}'`),
     ]);
     expect(deleted).toEqual([0, 1]);
+  });
+
+  it('the hardening CHECKs (added NOT VALID, then validated) hold for every row', async () => {
+    const rows = await owner.$queryRawUnsafe<{ conname: string; convalidated: boolean }[]>(
+      `SELECT conname, convalidated FROM pg_constraint
+       WHERE conname IN ('staff_attendance_days_device_no_reason',
+                         'device_punches_reviewer_needs_review')
+       ORDER BY conname`,
+    );
+    expect(rows).toEqual([
+      { conname: 'device_punches_reviewer_needs_review', convalidated: true },
+      { conname: 'staff_attendance_days_device_no_reason', convalidated: true },
+    ]);
+  });
+
+  it('an unknown or inactive serial number is looked up by an index, not a scan', async () => {
+    // As the receiver's refusal asks it (jantrik_ingest, by serial number alone): the unique
+    // index covers active devices only.
+    const plan = await asIngest(async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+      return tx.$queryRawUnsafe<{ 'QUERY PLAN': string }[]>(
+        "EXPLAIN SELECT 1 FROM attendance_devices WHERE serial_no = 'ABCDEF12'",
+      );
+    });
+    expect(plan.map((r) => r['QUERY PLAN']).join('\n')).toContain(
+      'attendance_devices_serial_no_idx',
+    );
+  });
+
+  it('jantrik_ingest cannot delete a trusted address even inside an institute context', async () => {
+    // tenant_isolation (permissive, every role) would allow it there; the RESTRICTIVE
+    // ingest_delete_untrusted_only does not.
+    const deleted = await asIngest(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${a.tenantId}, true)`;
+      return tx.$executeRawUnsafe(`DELETE FROM device_source_ips WHERE id = '${a.sourceIpId}'`);
+    });
+    expect(deleted).toBe(0);
+    const kept = await withTenant(owner, a.tenantId, (tx) =>
+      tx.deviceSourceIp.findUnique({ where: { id: a.sourceIpId } }),
+    );
+    expect(kept?.trustedAt).not.toBeNull();
   });
 
   it('the owner does not inherit what jantrik_ingest may see', async () => {

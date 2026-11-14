@@ -1,16 +1,42 @@
-import { IngestPrismaService, errorLabel, ingestRefusalStatus } from './ingest-prisma.service.js';
+import { createServer, type Socket } from 'node:net';
+import type { createPrismaClient } from '@jantrik/db';
+import {
+  INGEST_POOL,
+  IngestPrismaService,
+  errorLabel,
+  ingestRefusalStatus,
+} from './ingest-prisma.service.js';
+
+/** The arguments of each createPrismaClient call (the real one still builds the client). */
+const created = vi.hoisted(() => [] as unknown[][]);
+vi.mock('@jantrik/db', async (importOriginal) => {
+  const real = await importOriginal<{ createPrismaClient: typeof createPrismaClient }>();
+  return {
+    ...real,
+    createPrismaClient: (...args: Parameters<typeof createPrismaClient>) => {
+      created.push(args);
+      return real.createPrismaClient(...args);
+    },
+  };
+});
 
 type Check = { resolve: boolean; students: boolean; punches: boolean };
 const PASS: Check = { resolve: true, students: false, punches: false };
+/** A check that never answers (a database that took the connection and went quiet). */
+const HANG = 'hang' as const;
 
 /** The service with the privilege check answering each call in turn (a row, or a failure). */
-function service(...answers: (Check | Error)[]) {
+function service(...answers: (Check | Error | typeof HANG)[]) {
   const warn = vi.fn();
   const log = vi.fn();
   const queryRaw = vi.fn();
   for (const a of answers) {
     queryRaw.mockImplementationOnce(() =>
-      a instanceof Error ? Promise.reject(a) : Promise.resolve([a]),
+      a === HANG
+        ? new Promise(() => undefined)
+        : a instanceof Error
+          ? Promise.reject(a)
+          : Promise.resolve([a]),
     );
   }
   const s = Object.create(IngestPrismaService.prototype) as IngestPrismaService;
@@ -18,6 +44,7 @@ function service(...answers: (Check | Error)[]) {
     client: { $queryRaw: queryRaw },
     logger: { warn, log },
     retryDelaysMs: [0, 0, 0],
+    checkTimeoutMs: 50,
   });
   return { s, warn, log, queryRaw };
 }
@@ -81,6 +108,19 @@ describe('IngestPrismaService startup check', () => {
     const total = real.retryDelaysMs.reduce((a, b) => a + b, 0);
     expect(total).toBeGreaterThanOrEqual(170_000);
     expect(total).toBeLessThanOrEqual(190_000);
+    // Each check may take 10 s: a start that never gets an answer fails within about 6 minutes.
+    expect(real.checkTimeoutMs).toBe(10_000);
+  });
+
+  it("builds the receiver's pool with a connection timeout no longer than a check, and keep-alive after 30 s idle", () => {
+    created.length = 0;
+    new IngestPrismaService({ get: () => 'postgresql://x@localhost/db' } as never);
+    expect(created).toEqual([['postgresql://x@localhost/db', INGEST_POOL]]);
+    expect(INGEST_POOL).toEqual({
+      connectionTimeoutMillis: 10_000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 30_000,
+    });
   });
 
   it('asks again while the database is not reachable, then checks as usual', async () => {
@@ -95,6 +135,60 @@ describe('IngestPrismaService startup check', () => {
     const { s, queryRaw } = service(unreachable(), unreachable(), unreachable(), unreachable());
     await expect(s.onModuleInit()).rejects.toThrow(/DatabaseNotReachable.*does not start/);
     expect(queryRaw).toHaveBeenCalledTimes(4);
+  });
+
+  it('gives each check a time limit: one with no answer counts as failed and is asked again', async () => {
+    const { s, warn, queryRaw } = service(HANG, HANG, PASS);
+    await expect(s.onModuleInit()).resolves.toBeUndefined();
+    expect(queryRaw).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('(StartupCheckTimeout)'));
+  });
+
+  it('refuses to start when no check ever answers, instead of hanging the start', async () => {
+    const { s, queryRaw } = service(HANG, HANG, HANG, HANG);
+    await expect(s.onModuleInit()).rejects.toThrow(/StartupCheckTimeout\. The receiver does not/);
+    expect(queryRaw).toHaveBeenCalledTimes(4);
+  });
+
+  it('a late failure of a check that already timed out is ignored', async () => {
+    let fail: (e: Error) => void = () => undefined;
+    const late = new Promise((_, reject) => (fail = reject));
+    const { s, queryRaw } = service(PASS);
+    queryRaw.mockReset();
+    queryRaw.mockImplementationOnce(() => late).mockResolvedValueOnce([PASS]);
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      await expect(s.onModuleInit()).resolves.toBeUndefined();
+      fail(unreachable());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('a real client against a server that accepts and never answers fails the start in time', async () => {
+    const sockets = new Set<Socket>();
+    const server = createServer((socket) => sockets.add(socket));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as { port: number };
+    const real = new IngestPrismaService({
+      get: () => `postgresql://ingest:x@127.0.0.1:${port}/silent`,
+    } as never);
+    Object.assign(real, { retryDelaysMs: [0], checkTimeoutMs: 300 });
+    Object.assign(real, { logger: { warn: vi.fn(), log: vi.fn() } });
+    const started = Date.now();
+    try {
+      await expect(real.onModuleInit()).rejects.toThrow(/StartupCheckTimeout/);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(sockets.size).toBeGreaterThan(0);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await real.onModuleDestroy().catch(() => undefined);
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   it('a check that answers wrongly (a wrong login) is refused at once, never asked again', async () => {

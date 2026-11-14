@@ -350,7 +350,8 @@ function ToggleDialog({
     <FeeConfirmDialog
       title={account.isActive ? t('deactivateTitle', { phone }) : t('activateTitle', { phone })}
       body={account.isActive ? t('deactivateBody') : t('activateBody')}
-      confirmLabel={account.isActive ? t('deactivate') : t('activate')}
+      // Not plain "বন্ধ করুন": the dialog's close button already has that name.
+      confirmLabel={account.isActive ? t('deactivateConfirm') : t('activate')}
       destructive={account.isActive}
       pending={save.isPending}
       onConfirm={() => save.mutate(undefined)}

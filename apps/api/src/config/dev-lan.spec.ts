@@ -9,6 +9,9 @@ const base = {
   OTP_PEPPER: 'y'.repeat(40),
 };
 
+/** What every production environment also needs (production-env.spec.ts tests these rules). */
+const prodRest = { SMS_PROVIDER: 'none', CORS_ORIGINS: 'https://app.example.com' };
+
 describe('env: loosened settings never leave development', () => {
   it('DEV_LAN is accepted only in development', () => {
     expect(envSchema.safeParse({ ...base, NODE_ENV: 'development', DEV_LAN: 'true' }).success).toBe(
@@ -46,6 +49,7 @@ describe('env: loosened settings never leave development', () => {
   it('COOKIE_SECURE=false is refused in production', () => {
     const prod = {
       ...base,
+      ...prodRest,
       NODE_ENV: 'production',
       PLATFORM_TOTP_KEY: 'k'.repeat(32),
       INGEST_PUBLIC_HOST: 'devices.example.com',
@@ -141,6 +145,7 @@ describe('env: device receiver', () => {
   it('is its own process in production unless told otherwise', () => {
     const prod = {
       ...withoutIngest,
+      ...prodRest,
       NODE_ENV: 'production',
       PLATFORM_TOTP_KEY: 'k'.repeat(40),
       INGEST_PUBLIC_HOST: '203.0.113.7',
@@ -150,7 +155,12 @@ describe('env: device receiver', () => {
   });
 
   it('the public host (the setup guide) must be set in production, to an address devices can dial', () => {
-    const prod = { ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'k'.repeat(40) };
+    const prod = {
+      ...base,
+      ...prodRest,
+      NODE_ENV: 'production',
+      PLATFORM_TOTP_KEY: 'k'.repeat(40),
+    };
     const undialable = [
       'localhost',
       'LOCALHOST',

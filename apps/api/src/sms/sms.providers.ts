@@ -46,6 +46,17 @@ export class MemorySmsProvider implements SmsProvider {
 }
 
 /**
+ * No SMS gateway yet (`SMS_PROVIDER=none`, production until the real one is built): every send
+ * fails, so the job is retried and then recorded as FAILED like any gateway error. Nothing is sent,
+ * kept or printed.
+ */
+export class NoSmsProvider implements SmsProvider {
+  async send(): Promise<void> {
+    throw new Error('no SMS gateway is configured (SMS_PROVIDER=none)');
+  }
+}
+
+/**
  * End-to-end tests only: pushes each message to the Redis list `sms:outbox:<phone>` (1 h TTL),
  * where Playwright reads the OTP. Refuses to run in production.
  */

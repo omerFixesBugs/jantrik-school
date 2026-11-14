@@ -407,6 +407,7 @@
       "actions": "{phone}: more actions",
       "editLabel": "Change name or note",
       "deactivate": "Turn off",
+      "deactivateConfirm": "Turn off number",
       "activate": "Turn on again",
       "addTitle": "Add a bKash/Nagad number",
       "addHint": "A number cannot be changed later; if it is wrong, turn it off and add a new one.",
