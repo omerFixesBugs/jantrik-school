@@ -1,10 +1,17 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createPrismaClient, type PoolOptions, type PrismaClient } from '@jantrik/db';
+import {
+  STARTUP_CHECK_TIMEOUT_MS,
+  STARTUP_RETRY_DELAYS_MS,
+  databaseError,
+  errorLabel,
+  runStartupCheck,
+  startupErrorLabel,
+} from '../common/startup-check.js';
 import type { IngestEnv } from '../config/ingest-env.js';
 
-/** How long one start-up check, or opening one connection, may take. */
-const STARTUP_CHECK_TIMEOUT_MS = 10_000;
+export { errorLabel };
 
 /**
  * The receiver's connection pool (node-postgres, at most 10 connections):
@@ -39,7 +46,7 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
    * database may not be reachable yet, or not migrated yet (the e2e run starts the API before its
    * global setup migrates the database).
    */
-  retryDelaysMs = [1000, 2000, 4000, 8000, ...Array<number>(11).fill(15000)];
+  retryDelaysMs: readonly number[] = STARTUP_RETRY_DELAYS_MS;
   /**
    * How long one start-up check may take before it counts as failed (and is asked again): a
    * database that accepts the connection and never answers would otherwise hang the start. The
@@ -68,64 +75,26 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
    * check passes.
    */
   async onModuleInit(): Promise<void> {
-    for (let attempt = 0; ; attempt++) {
-      let row: StartupCheck | undefined;
-      try {
-        [row] = await this.check();
-      } catch (error) {
-        const raw = databaseError(error)?.kind;
-        const kind = typeof raw === 'string' && /^[A-Za-z]{1,60}$/.test(raw) ? raw : undefined;
-        const label = [errorLabel(error), kind].filter(Boolean).join(' ');
-        const delay = this.retryDelaysMs[attempt];
-        if (delay === undefined) {
-          throw new Error(
-            `Could not check the device receiver's database login (DATABASE_INGEST_URL): ` +
-              `${label}. The receiver does not start unchecked.`,
-          );
-        }
-        this.logger.warn(
-          `Start-up check failed (${label}): the database may not be ready yet; ` +
-            `checking again in ${delay / 1000} s`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
-      }
-      if (row?.resolve === true && row.students === false && row.punches === false) {
-        if (attempt > 0) this.logger.log('Start-up check passed');
-        return;
-      }
-      throw new Error(
-        'DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): it runs ' +
-          'the ingest_* functions and reads no table. See docs/database.md.',
-      );
-    }
-  }
-
-  /**
-   * One start-up check, failed with a `StartupCheckTimeout` error when it has no answer within
-   * `checkTimeoutMs`. A query that answers after that is ignored (its late failure too).
-   */
-  private async check(): Promise<StartupCheck[]> {
-    const query = (async () =>
-      this.client.$queryRaw<StartupCheck[]>`
-        SELECT has_function_privilege(
-                 'public.ingest_resolve(text, inet, timestamptz, text, integer, text)', 'EXECUTE'
-               ) AS resolve,
-               has_table_privilege('public.students', 'SELECT') AS students,
-               has_table_privilege('public.device_punches', 'SELECT') AS punches`)();
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(Object.assign(new Error('No answer in time'), { name: 'StartupCheckTimeout' }));
-      }, this.checkTimeoutMs);
+    await runStartupCheck({
+      run: () =>
+        this.client.$queryRaw<StartupCheck[]>`
+          SELECT has_function_privilege(
+                   'public.ingest_resolve(text, inet, timestamptz, text, integer, text)', 'EXECUTE'
+                 ) AS resolve,
+                 has_table_privilege('public.students', 'SELECT') AS students,
+                 has_table_privilege('public.device_punches', 'SELECT') AS punches`,
+      verdict: ([row]) =>
+        row?.resolve === true && row.students === false && row.punches === false
+          ? true
+          : 'DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): it runs ' +
+            'the ingest_* functions and reads no table. See docs/database.md.',
+      retryDelaysMs: this.retryDelaysMs,
+      checkTimeoutMs: this.checkTimeoutMs,
+      logger: this.logger,
+      what: "the device receiver's database login (DATABASE_INGEST_URL)",
+      unchecked: 'The receiver does not start unchecked.',
+      label: startupErrorLabel,
     });
-    try {
-      // The race handles the query's rejection too: one that fails after the timeout is not an
-      // unhandled rejection (tested).
-      return await Promise.race([query, timeout]);
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -136,19 +105,6 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
 type StartupCheck = { resolve: boolean; students: boolean; punches: boolean };
 
 /**
- * What the driver says about a failed query: the database's error code (e.g. P0001 for RAISE,
- * 23514 for a CHECK) and message, or the kind of failure (e.g. DatabaseNotReachable).
- */
-function databaseError(
-  error: unknown,
-): { code?: unknown; message?: unknown; kind?: unknown } | undefined {
-  const meta = (error as { meta?: { driverAdapterError?: { cause?: unknown } } } | null)?.meta;
-  const cause = meta?.driverAdapterError?.cause as
-    { originalCode?: unknown; originalMessage?: unknown; kind?: unknown } | undefined;
-  return cause && { code: cause.originalCode, message: cause.originalMessage, kind: cause.kind };
-}
-
-/**
  * The device's answer when an ingest function refused its input (`RAISE EXCEPTION 'INGEST_…'`):
  * 413 for too many rows or results, 400 otherwise. Null for any other error.
  */
@@ -157,17 +113,4 @@ export function ingestRefusalStatus(error: unknown): 400 | 413 | null {
   if (db?.code !== 'P0001' || typeof db.message !== 'string') return null;
   if (!/^INGEST_[A-Z_]+$/.test(db.message)) return null;
   return db.message.startsWith('INGEST_TOO_MANY_') ? 413 : 400;
-}
-
-/**
- * What may be logged about an error: its name and codes only. Messages are never logged: a
- * CHECK failure's detail repeats the row (tenant and device ids), and others echo device input.
- */
-export function errorLabel(error: unknown): string {
-  const token = (v: unknown) =>
-    typeof v === 'string' && /^[A-Za-z0-9_]{1,60}$/.test(v) ? v : undefined;
-  const e = error as { name?: unknown; code?: unknown } | null;
-  return [token(e?.name) ?? 'Error', token(e?.code), token(databaseError(error)?.code)]
-    .filter(Boolean)
-    .join(' ');
 }
