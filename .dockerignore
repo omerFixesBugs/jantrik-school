@@ -1,0 +1,28 @@
+# What the Dockerfile may not see: build output, dependencies, and anything secret.
+# Never the .env files or deploy/ (the production env file and the backups live there).
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+**/next-env.d.ts
+packages/db/src/generated
+apps/web/playwright-report
+apps/web/test-results
+apps/web/.impeccable
+
+**/.env
+**/.env.*
+deploy
+
+.git
+.github
+.claude
+.superpowers
+.vscode
+.idea
+docs
+*.log
+Dockerfile
+.dockerignore
