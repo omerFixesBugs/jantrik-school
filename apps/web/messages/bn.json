@@ -88,6 +88,7 @@
   },
   "nav": {
     "dashboard": "ড্যাশবোর্ড",
+    "students": "{student} তালিকা",
     "classesAndSections": "{classLevel} ও {section}",
     "attendance": "হাজিরা",
     "fees": "ফি",

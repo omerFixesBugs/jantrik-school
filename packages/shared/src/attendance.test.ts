@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import {
-  DEVICE_SETTINGS_DEFAULTS,
-  attendancePercent,
-  attendanceSettingsSchema,
-  submitAttendanceSchema,
-} from './attendance.js';
-import { addDays, isoDateSchema, isoWeekday, todayIn } from './dates.js';
+import { DEVICE_SETTINGS_DEFAULTS, attendancePercent } from './attendance.js';
+import { attendanceSettingsSchema, submitAttendanceSchema } from './attendance-schema.js';
+import { addDays, isIsoDate, isoWeekday, todayIn } from './dates.js';
+import { isoDateSchema } from './dates-schema.js';
 import {
   DEFAULT_ABSENT_SMS_TEMPLATE,
   renderSmsTemplate,
@@ -220,6 +217,11 @@ describe('dates', () => {
     expect(isoDateSchema.safeParse('2026-02-30').success).toBe(false);
     expect(isoDateSchema.safeParse('18-10-2026').success).toBe(false);
     expect(isoDateSchema.safeParse('2026-10-18').success).toBe(true);
+    // The zod-free check the browser uses agrees.
+    expect(isIsoDate('2026-02-30')).toBe(false);
+    expect(isIsoDate('18-10-2026')).toBe(false);
+    expect(isIsoDate('2026-10-18')).toBe(true);
+    expect(isIsoDate('2026-10-18T00:00')).toBe(false);
   });
 });
 

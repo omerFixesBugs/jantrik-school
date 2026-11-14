@@ -8,7 +8,6 @@ import type {
 } from './device-people.js';
 import {
   DEVICE_DIRECTIONS,
-  deviceUserIdSchema,
   type DeviceDirection,
   type DeviceState,
   type PunchDirection,
@@ -17,6 +16,7 @@ import {
   type PunchReview,
   type VerifyKind,
 } from './devices.js';
+import { deviceUserIdSchema } from './devices-schema.js';
 import { toAsciiDigits } from './digits.js';
 import type { StaffRole } from './staff.js';
 
@@ -149,8 +149,6 @@ export const deviceImportQuerySchema = z.object({
     .transform((v) => v === '1'),
 });
 
-export const DEVICE_IMPORT_MAX_BYTES = 1024 * 1024;
-export const DEVICE_IMPORT_MAX_ROWS = 5000;
 /** The CSV's columns: the header row in both languages (the import reads the first three). */
 export const DEVICE_PEOPLE_CSV_COLUMNS = [
   'student_code',
@@ -171,9 +169,6 @@ export const removeFromDevicesSchema = z.object({
     .max(500)
     .transform((ids) => [...new Set(ids)]),
 });
-
-/** The numbers a staff start covers in the settings warning: start to start + 999. */
-export const STAFF_RANGE_SIZE = 1000;
 
 /** GET /attendance/device-people/staff-range-check?start= (Bangla digits accepted). */
 export const staffRangeCheckQuerySchema = z.object({

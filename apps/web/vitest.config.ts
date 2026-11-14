@@ -5,7 +5,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: { alias: { '@': path.resolve(import.meta.dirname, 'src') } },
   test: {
-    include: ['src/**/*.test.ts'],
+    // perf/: the size budget script (check-budget.mjs) is plain Node.
+    include: ['src/**/*.test.ts', 'perf/**/*.test.mjs'],
     maxWorkers: process.env['CI'] ? undefined : 2,
   },
 });

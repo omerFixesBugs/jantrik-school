@@ -15,11 +15,12 @@ import {
   type AttendanceTrendReport,
 } from '@jantrik/shared';
 import { ChevronRightIcon, PhoneIcon, TriangleAlertIcon } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import type { ReactNode } from 'react';
-import { registerHref } from '@/components/attendance/section-picker';
-import { TrendChart, type TrendPoint } from '@/components/charts';
+import { registerHref } from '@/lib/attendance/register-href';
+import type { TrendPoint } from '@/components/charts';
 import { SegmentedControl } from '@/components/kit/segmented-control';
 import { SectionBoard, type BoardSection } from '@/components/section-board';
 import { buttonVariants } from '@/components/ui/button';
@@ -28,6 +29,13 @@ import type { Locale } from '@/i18n/config';
 import { useLabel } from '@/lib/hooks';
 import { displayName } from '@/lib/names';
 import { cn } from '@/lib/utils';
+
+// The trend sits below the first screen and renders when near it (Deferred): its chart code loads
+// then, not with the page (docs/design.md → Performance budget).
+const TrendChart = dynamic(() => import('@/components/charts').then((m) => m.TrendChart), {
+  ssr: false,
+  loading: () => <Skeleton className="h-[190px] w-full" />,
+});
 
 /*
  * Attendance on the dashboard (docs/design.md → Dashboards): the section board (today, this week

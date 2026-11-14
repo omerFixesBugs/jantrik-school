@@ -4,7 +4,8 @@
  */
 import { z } from 'zod';
 import type { PersonRef } from './attendance.js';
-import { isoDateSchema, type IsoDate } from './dates.js';
+import type { IsoDate } from './dates.js';
+import { isoDateSchema } from './dates-schema.js';
 import {
   COMPONENT_KINDS,
   EXAM_KINDS,

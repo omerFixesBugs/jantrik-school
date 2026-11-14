@@ -49,7 +49,7 @@ import { useRegister } from '@/lib/attendance/use-register';
 import { useCountdown, useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { displayName, displayUserName } from '@/lib/names';
 import { cn } from '@/lib/utils';
-import { registerHref } from './section-picker';
+import { registerHref } from '@/lib/attendance/register-href';
 import { SourceTag } from './source-tag';
 
 const STATUS_STYLE: Record<AttendanceStatus, { icon: LucideIcon; row: string; pill: string }> = {

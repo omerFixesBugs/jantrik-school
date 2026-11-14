@@ -7,7 +7,7 @@ import {
   formatCount,
   formatDate,
   formatIdentifier,
-  isoDateSchema,
+  isIsoDate,
   type MySectionsResponse,
   type StudentAttendanceReport,
 } from '@jantrik/shared';
@@ -43,7 +43,7 @@ export default function StudentAttendancePage() {
   );
 }
 
-const valid = (d: string | null) => (d && isoDateSchema.safeParse(d).success ? d : null);
+const valid = (d: string | null) => (d && isIsoDate(d) ? d : null);
 
 function StudentReport() {
   const t = useTranslations('reports');

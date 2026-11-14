@@ -12,7 +12,6 @@ import {
   deviceIdCollisions,
   deviceRegisterState,
   deviceState,
-  deviceUserIdSchema,
   entrySmsText,
   exitSmsText,
   firstCountingIn,
@@ -33,6 +32,7 @@ import {
   userUpsertPayload,
   verifyKind,
 } from './devices.js';
+import { deviceUserIdSchema } from './devices-schema.js';
 import { smsLength } from './sms.js';
 
 const T = '\t';

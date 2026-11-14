@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { isoDateSchema, type MySectionsResponse } from '@jantrik/shared';
+import { isIsoDate, type MySectionsResponse } from '@jantrik/shared';
 import { useLocale } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
@@ -34,7 +34,7 @@ function Attendance() {
   const sectionId = params.get('section');
   const periodNo = Math.max(0, Math.min(20, Number(params.get('period') ?? 0) || 0));
   const rawDate = params.get('date');
-  const date = rawDate && isoDateSchema.safeParse(rawDate).success ? rawDate : undefined;
+  const date = rawDate && isIsoDate(rawDate) ? rawDate : undefined;
 
   // Shared with the picker (cached): gives the section's name and whether to show "back".
   const mine = useQuery({

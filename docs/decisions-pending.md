@@ -286,6 +286,51 @@ default (#38).
 
     - To change: Exams → Setup → Grading (rules and rounding) and Subject marks (parts, pass rule, combined marks); the template in `packages/db/src/reference-data/templates.ts` for new institutes.
 
+## Performance (step 12, day run of 2026-11-13)
+
+Decided while the owner was away (each one in PR #9, which is not merged):
+
+- **P1. Where the measurements ran.** Prisma refuses `migrate reset` from an AI agent without the
+  owner's consent, so `jantrik_e2e` was not reset. The measurements use a new scratch database,
+  `jantrik_perf` (created, `migrate deploy`, seeded with the e2e day 2026-10-21), and Redis DB 3;
+  the three tasks' tests used new scratch databases `jantrik_t1_test`, `jantrik_t2_test`,
+  `jantrik_t3_test` (Redis DBs 11-13). The owner's `jantrik` and `jantrik_test` were not touched.
+  - To change: drop them when done (`DROP DATABASE jantrik_perf;` and the three `_test` ones, as
+    the `postgres` user).
+- **P2. The Bangla faces carry only their Bangla subset** (owner decision of 2026-11-14: drop the
+  Latin faces of Noto Sans Bengali and Anek Bangla). Next/font/google emitted every Google subset,
+  so Latin text on Bangla pages was drawn by Noto's and Anek's Latin faces (26 + 19 KB), not by
+  Plus Jakarta Sans as design.md says. The two faces are now Google's own Bengali subset files in
+  `apps/web/src/fonts` (next/font/local, with their OFL licences), and Latin letters, ASCII digits
+  and punctuation on a Bangla page render in Jakarta (a visible change). Their unicode-range is
+  Google's Bengali range plus the space and no-break space (both in the files), so Bangla word
+  spacing and Noto's line metrics stay as they were.
+  - Measured on the Bangla login page (cold): 4 font files, 210 KB → 3 files, 192 KB, because
+    Jakarta's Latin face (27 KB) now loads instead. A page that never fetched Anek's Latin face
+    comes out about even (Jakarta's 27 KB for Noto's 26 KB), so the saving is at the low end of
+    the 18-45 KB estimated; the gain is mainly that Latin text renders as design.md describes.
+  - To change: back to `next/font/google` for both faces (one commit in PR #9).
+- **P3. The command palette loads on first use** (on the shortcut, or when a pointer, finger or
+  focus reaches its button). On a slow network the very first Ctrl/⌘ K can take a moment.
+  - To change: load it after the page is interactive instead (`requestIdleCallback`).
+- **P4. `@jantrik/shared` is split so the browser never loads zod:** `*-schema.ts` hold the
+  schemas, `*-values.ts` and the rules modules hold what the web uses; the package is marked
+  `sideEffects: false`. The API imports from the barrel as before. A web test fails when a value
+  the web imports reaches zod (the platform area may).
+- **P5. Translations per route:** `apps/web/src/i18n/route-messages.ts` lists what each area
+  sends; a test fails when a page's client code asks for a namespace its route does not send.
+  `nav.students` duplicates `students.title` so the shell needs no `students` namespace.
+- **P6. The size budget** is this build's first-load JavaScript + 5 % for the budget pages and
+  the login, and the largest other route + 5 % for every other route; CI fails above it.
+  - To change: `apps/web/perf/budget.json` (`node perf/check-budget.mjs --update` after a
+    deliberate change).
+- **P7. The "start the session refresh earlier" idea is not built:** the plan is in
+  [plans/step-12-auth.md](plans/step-12-auth.md), with the CORS preflight cache and the
+  same-origin API as related options. Of these the owner approved part B on 2026-11-14: the API
+  lets browsers cache its CORS preflight answers for 2 h (`maxAge: 7200` in
+  `apps/api/src/app.setup.ts`, with a test). Parts A and C are still open. No other auth, CORS or
+  database change is in PR #9.
+
 ## Devices and staff attendance (step 11)
 
 Rules: [devices.md](devices.md). Owner decisions of 2026-10-24, approved as recommended:

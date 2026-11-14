@@ -11,7 +11,8 @@ import {
   type RosterStudent,
   type SectionRef,
 } from './attendance.js';
-import { addDays, isoDateSchema, type IsoDate } from './dates.js';
+import { addDays, type IsoDate } from './dates.js';
+import { isoDateSchema } from './dates-schema.js';
 import type { DeviceRegisterState } from './devices.js';
 import type { MonthRegister } from './register.js';
 

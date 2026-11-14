@@ -1,21 +1,17 @@
-import { z } from 'zod';
-
 /**
  * Calendar dates as `YYYY-MM-DD` strings. "Today" always comes from the server in the tenant's
  * timezone (tenants.timezone): phones often have the wrong date, so clients never compute it.
  */
 export type IsoDate = string;
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** A real calendar date (rejects 2026-02-30). */
-export const isoDateSchema = z
-  .string()
-  .regex(ISO_DATE, 'Expected YYYY-MM-DD')
-  .refine((v) => {
-    const d = new Date(`${v}T00:00:00Z`);
-    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
-  }, 'Not a calendar date');
+/** A real calendar date in `YYYY-MM-DD` form (rejects 2026-02-30). Its zod form: dates-schema.ts. */
+export function isIsoDate(value: string): value is IsoDate {
+  if (!ISO_DATE.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
 
 const dayFormats = new Map<string, Intl.DateTimeFormat>();
 
@@ -29,7 +25,7 @@ function fixedToday(): IsoDate | null {
     ?.env;
   const value = env?.['JANTRIK_TEST_TODAY'];
   if (!value || env['NODE_ENV'] === 'production') return null;
-  if (!isoDateSchema.safeParse(value).success) {
+  if (!isIsoDate(value)) {
     throw new Error(`JANTRIK_TEST_TODAY must be a calendar date (YYYY-MM-DD), not "${value}"`);
   }
   return value;

@@ -10,7 +10,7 @@ import {
   formatDate,
   formatMonth,
   formatTaka,
-  isoDateSchema,
+  isIsoDate,
   type FeeCollectionRow,
   type FeeCollections,
 } from '@jantrik/shared';
@@ -41,7 +41,7 @@ import { downloadFile, EmptyState, LoadError } from './kit';
 type Group = (typeof FEE_COLLECTION_GROUPS)[number];
 type Column = DataColumn<FeeCollectionRow> & { foot?: string };
 
-const isDate = (v: string | null): v is string => v !== null && isoDateSchema.safeParse(v).success;
+const isDate = (v: string | null): v is string => v !== null && isIsoDate(v);
 
 export function CollectionsReport() {
   const t = useTranslations('fees.reports.collections');

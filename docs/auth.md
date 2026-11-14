@@ -312,23 +312,24 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
 - **Page protection is UX only.** The real boundary is the API (token, guards, RLS).
   - `proxy.ts` redirects to `/login` when the readable, non-secret `jantrik_signed_in` hint
     cookie is missing.
-  - `(app)/layout.tsx` bootstraps the session, sends users without an institute to
-    `/select-institute`, and loads `GET /me/context` once (labels, modules, roles, academic year).
+  - `(app)/app-frame.tsx` (inside the `(app)` layout) bootstraps the session, sends users without
+    an institute to `/select-institute`, and loads `GET /me/context` once (labels, modules, roles,
+    academic year).
   - Sidebar items and page gates use the same `NAV_ITEMS` table (module + roles) as the API's
     guards.
 
 ## Configuration
 
-| Variable             | Purpose                                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `JWT_ACCESS_SECRET`  | at least 32 characters                                                                                                                |
-| `OTP_PEPPER`         | at least 32 characters                                                                                                                |
-| `CORS_ORIGINS`       | comma-separated allowlist                                                                                                             |
-| `COOKIE_SECURE`      | Secure flag on the refresh cookie                                                                                                     |
-| `TRUST_PROXY`        | Express `trust proxy`; set it behind a load balancer so client IPs are right                                                          |
-| `INGEST_*`           | the device receiver: port, public host and port for the setup guide, `INGEST_TRUST_PROXY`, limits ([devices.md](devices.md))          |
-| `SMS_PROVIDER`       | `console` in development, `memory` in API tests, `outbox` (Redis list `sms:outbox:<phone>`) for Playwright; all refused in production |
-| rate-limit variables | see `.env.example`                                                                                                                    |
+| Variable             | Purpose                                                                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `JWT_ACCESS_SECRET`  | at least 32 characters                                                                                                                                        |
+| `OTP_PEPPER`         | at least 32 characters                                                                                                                                        |
+| `CORS_ORIGINS`       | comma-separated allowlist; browsers may cache a preflight's answer for 2 h (`maxAge` in `app.setup.ts`), so a narrower list reaches open tabs up to 2 h later |
+| `COOKIE_SECURE`      | Secure flag on the refresh cookie                                                                                                                             |
+| `TRUST_PROXY`        | Express `trust proxy`; set it behind a load balancer so client IPs are right                                                                                  |
+| `INGEST_*`           | the device receiver: port, public host and port for the setup guide, `INGEST_TRUST_PROXY`, limits ([devices.md](devices.md))                                  |
+| `SMS_PROVIDER`       | `console` in development, `memory` in API tests, `outbox` (Redis list `sms:outbox:<phone>`) for Playwright; all refused in production                         |
+| rate-limit variables | see `.env.example`                                                                                                                                            |
 
 In production `SMS_PROVIDER=none` stands in until a gateway is built: every SMS fails and is
 recorded as failed. What else production refuses: [deploy.md](deploy.md) → Environment checks.

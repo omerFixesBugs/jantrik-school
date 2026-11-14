@@ -1,6 +1,6 @@
 'use client';
 
-import { isoDateSchema, type IsoDate } from '@jantrik/shared';
+import { isIsoDate, type IsoDate } from '@jantrik/shared';
 import { LockIcon } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -54,8 +54,7 @@ function StaffAttendance({ today }: { today: IsoDate }) {
   const params = useSearchParams();
   const view = params.get('view') === 'month' ? 'month' : 'day';
   const rawDate = params.get('date');
-  const date =
-    rawDate && isoDateSchema.safeParse(rawDate).success && rawDate <= today ? rawDate : today;
+  const date = rawDate && isIsoDate(rawDate) && rawDate <= today ? rawDate : today;
   const thisMonth = today.slice(0, 7);
   const rawMonth = params.get('month');
   const month = rawMonth && MONTH_RE.test(rawMonth) && rawMonth <= thisMonth ? rawMonth : thisMonth;

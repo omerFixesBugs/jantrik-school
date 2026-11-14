@@ -20,7 +20,7 @@ import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { AttendanceTabs, isAdminRole } from '@/components/attendance/attendance-tabs';
 import { CountChips } from '@/components/attendance/count-chips';
-import { registerHref } from '@/components/attendance/section-picker';
+import { registerHref } from '@/lib/attendance/register-href';
 import {
   CloseFromDevice,
   DeviceHeldBack,

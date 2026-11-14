@@ -26,6 +26,21 @@ test('the suite lives on its fixed day: the specs, the API and the dashboard agr
   await expect(page.getByText(formatDate(dateToDb(E2E_TODAY), 'bn', 'full')).first()).toBeVisible();
 });
 
+test('a page ships only its own texts: the dashboard HTML has no fee setup messages', async ({
+  page,
+}) => {
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  // Raw HTML, as a phone downloads it (src/i18n/route-messages.ts; docs/design.md → Performance).
+  const html = async (path: string) => (await page.request.get(path)).text();
+  const dashboard = await html('/dashboard');
+  // dashboard.presentTodayHint: sent with the dashboard.
+  expect(dashboard).toContain('হাজিরা নেওয়া শুরু হলে এখানে দেখাবে');
+  // fees.setup.managersOnlyTitle: only with fee setup.
+  expect(dashboard).not.toContain('ফি সেটআপ শুধু প্রতিষ্ঠান প্রধান ও প্রশাসকের জন্য');
+  expect(await html('/fees/setup')).toContain('ফি সেটআপ শুধু প্রতিষ্ঠান প্রধান ও প্রশাসকের জন্য');
+});
+
 test('staff dashboard: Bangla date, student total, getting-started steps', async ({ page }) => {
   await passwordLogin(page, DEMO.shaplaOwner);
   await expect(page).toHaveURL(/\/dashboard$/);

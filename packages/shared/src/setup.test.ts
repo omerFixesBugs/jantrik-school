@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  createClassLevelSchema,
-  createShiftSchema,
-  suggestNextYear,
-  updateLabelsSchema,
-} from './setup.js';
+import { createClassLevelSchema, createShiftSchema, updateLabelsSchema } from './setup.js';
+import { suggestNextYear } from './setup-values.js';
 
 describe('suggestNextYear', () => {
   it.each([

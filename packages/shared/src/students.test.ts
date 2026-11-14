@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { STUDENTS_PAGE_SIZE, studentsQuerySchema } from './api.js';
+import { STUDENTS_PAGE_SIZE } from './api.js';
+import { studentsQuerySchema } from './api-schema.js';
+import { admissionSchema, studentSettingsSchema } from './students.js';
 import {
-  admissionSchema,
   defaultCodePrefix,
   normalizeBirthRegistration,
   renderStudentCode,
-  studentSettingsSchema,
   validateCodePattern,
-} from './students.js';
+} from './students-values.js';
 
 const base = {
   nameBn: 'তাসনিম',
