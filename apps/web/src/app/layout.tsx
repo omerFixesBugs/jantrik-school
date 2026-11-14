@@ -7,7 +7,8 @@ import {
 } from 'next/font/google';
 import { themeCss } from '@jantrik/shared';
 import { NextIntlClientProvider } from 'next-intl';
-import { getLocale, getTranslations } from 'next-intl/server';
+import { getLocale, getMessages, getTranslations } from 'next-intl/server';
+import { pickMessages, ROUTE_MESSAGES } from '@/i18n/route-messages';
 import { DENSITY_SCRIPT } from '@/lib/density-script';
 import { THEME_SCRIPT } from '@/lib/theme-script';
 import { cn } from '@/lib/utils';
@@ -62,6 +63,8 @@ const THEMES_CSS = themeCss();
 
 export default async function RootLayout({ children }: LayoutProps<'/'>) {
   const locale = await getLocale();
+  // Only the texts every page needs; each area's layout adds its own (src/i18n/route-messages.ts).
+  const messages = pickMessages(await getMessages(), ROUTE_MESSAGES.root);
   return (
     // data-density, data-theme and data-mode (and an owner's accent) are set by the head scripts
     // before the first paint, so the server's <html> and the browser's differ there on purpose.
@@ -86,7 +89,7 @@ export default async function RootLayout({ children }: LayoutProps<'/'>) {
             even if the app's JavaScript never loads (next/script would queue it for Next's own
             runtime instead). See boot-watchdog.ts. */}
         <script id="boot-watchdog" dangerouslySetInnerHTML={{ __html: BOOT_WATCHDOG }} />
-        <NextIntlClientProvider>
+        <NextIntlClientProvider messages={messages}>
           <Providers>{children}</Providers>
         </NextIntlClientProvider>
       </body>

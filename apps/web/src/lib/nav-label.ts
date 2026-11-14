@@ -6,18 +6,14 @@ import type { NavKey } from '@/lib/navigation';
 
 /** Nav item text. Uses tenant labels, so a coaching centre reads "Course & Batch". */
 export function useNavLabel() {
-  const t = useTranslations();
+  const t = useTranslations('nav');
   const label = useLabel();
   return (key: NavKey): string => {
     switch (key) {
       case 'students':
-        return t('students.title', { student: label('student', 'Student') });
-      case 'setup':
-        return t('nav.setup');
-      case 'staff':
-        return t('nav.staff');
+        return t('students', { student: label('student', 'Student') });
       default:
-        return t(`nav.${key}`);
+        return t(key);
     }
   };
 }

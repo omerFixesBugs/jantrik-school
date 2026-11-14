@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { addDays, localDateOf, timeZoneOffsetMinutes, wallClockToUtc } from './dates.js';
 import type { IsoDate } from './dates.js';
 import { toAsciiDigits } from './digits.js';
@@ -326,13 +325,6 @@ export function parseInfo(info: string | undefined): {
 
 export const DEVICE_USER_ID_RE = /^[1-9][0-9]{2,8}$/;
 
-export const deviceUserIdSchema = z
-  .string()
-  .transform((v) => toAsciiDigits(v).trim())
-  .pipe(
-    z.string().regex(DEVICE_USER_ID_RE, 'Device ID must be 3 to 9 digits, not starting with 0'),
-  );
-
 /** The digits of a student code without leading zeros, or null when that is not a valid ID. */
 export function defaultStudentDeviceId(code: string): string | null {
   const digits = toAsciiDigits(code).replace(/\D/g, '').replace(/^0+/, '');
@@ -623,3 +615,13 @@ export function entrySmsText(input: { student: string; at: Date; institute: stri
 export function exitSmsText(input: { student: string; at: Date; institute: string }): string {
   return movementSms('বের হয়েছে', input);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Limits the browser checks before calling the API (devices-api.ts holds the schemas)
+
+/** The device people CSV import: at most this many bytes and rows. */
+export const DEVICE_IMPORT_MAX_BYTES = 1024 * 1024;
+export const DEVICE_IMPORT_MAX_ROWS = 5000;
+
+/** The numbers a staff start covers in the settings warning: start to start + 999. */
+export const STAFF_RANGE_SIZE = 1000;

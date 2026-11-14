@@ -1,6 +1,4 @@
-import { z } from 'zod';
-import type { IsoDate } from './dates.js';
-import { isoDateSchema } from './dates.js';
+import { isIsoDate, type IsoDate } from './dates.js';
 import { toAsciiDigits } from './digits.js';
 import {
   generatedGuardianName,
@@ -17,7 +15,7 @@ import {
   type Gender,
   type GuardianRelation,
   type Religion,
-} from './students.js';
+} from './students-values.js';
 
 // Student import from Excel/CSV: columns, header detection, cell parsing and row validation.
 // The API runs the same functions for the preview and again when the import runs.
@@ -166,14 +164,6 @@ export function detectMapping(headers: string[]): Record<ImportField, number | n
   return out;
 }
 
-export const importMappingSchema = z.object({
-  mapping: z
-    .record(z.enum(IMPORT_FIELDS), z.number().int().min(0).max(200).nullable())
-    .refine((m) => {
-      const cols = Object.values(m).filter((v): v is number => v !== null);
-      return new Set(cols).size === cols.length;
-    }, 'A column is mapped twice'),
-});
 export type ImportMapping = Partial<Record<ImportField, number | null>>;
 
 // ─────────────────────────── Cell parsing ───────────────────────────
@@ -299,7 +289,7 @@ export function parseImportDate(v: string): IsoDate | null {
   if (m) iso = `${m[1]}-${m[2]!.padStart(2, '0')}-${m[3]!.padStart(2, '0')}`;
   m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s);
   if (m) iso = `${m[3]}-${m[2]!.padStart(2, '0')}-${m[1]!.padStart(2, '0')}`;
-  if (!iso || !isoDateSchema.safeParse(iso).success) return null;
+  if (!iso || !isIsoDate(iso)) return null;
   return iso >= '1920-01-01' && iso <= new Date().toISOString().slice(0, 10) ? iso : null;
 }
 
@@ -735,11 +725,3 @@ export interface ImportPreviewPage {
   rows: ImportPreviewRow[];
   total: number;
 }
-
-export const importRowsQuerySchema = z.object({
-  filter: z.enum(['all', 'ok', 'error', 'exists', 'duplicate']).default('all'),
-  page: z.coerce.number().int().min(0).max(1000).default(0),
-});
-
-/** PUT /student-imports/:id/rows/:row/duplicate: import a possible duplicate anyway (or not). */
-export const duplicateOverrideSchema = z.object({ import: z.boolean() });

@@ -525,44 +525,68 @@ alone.
 
 **Target: ≤ 3 s to interactive on a 390 px phone with 4× CPU throttling and slow 4G.**
 
-Cold-cache runs, signed in, with Chrome DevTools throttling (CPU 4×; 150 ms RTT, 1.6 Mbps down);
-"interactive" is the main content on screen followed by 2 s without a long task. The checkpoint
-is commit `6fd66ac` (design v2 part 4a). CPU throttling is relative to the machine running the
-test, so the two builds are measured interleaved (one run of each in turn, six pairs, the same
-API and data) and only compared with each other; runs in separate sessions differed by up to
-0.8 s for the same build, and an earlier separate-session comparison (7.05 s → 5.6 s) overstated
-the gain.
+Cold-cache runs, signed in, with Chrome's throttling (CPU 4×; 150 ms RTT, 1.6 Mbps down, 750 kbps
+up); "interactive" is the main content on screen followed by 2 s without a long task. CPU
+throttling is relative to the machine running the test, so two builds are only compared with each
+other, measured interleaved: one run of each in turn, six pairs, the same API code and data, the
+medians and the range over the runs; a change is real where the ranges do not overlap. Runs in
+separate sessions differed by up to 0.8 s for the same build, and runs while the machine is busy
+(builds, tests) spread so much that nothing can be read from them: measure on a quiet machine.
 
-Medians, with the range over the six runs:
+The method is a script, `apps/web/perf/measure.mjs` (the six budget pages, each opened by its
+user; logins go straight to the API, the guardian by OTP through the test outbox). Serve the two
+builds side by side, each against its own API on one database (for example the e2e seed with
+`SMS_PROVIDER=outbox`), then run
+`node apps/web/perf/measure.mjs --side A=<web>,<api> --side B=<web>,<api> --pairs 6`. It also
+records the bytes per type and every API call's start and end.
 
-| Page      | Measure           | Checkpoint      | Now (v2.1)      | Budget | Status      |
-| --------- | ----------------- | --------------- | --------------- | ------ | ----------- |
-| Dashboard | content on screen | 5.9 s (5.7–6.0) | 5.4 s (5.2–5.5) |        |             |
-| Dashboard | to interactive    | 6.6 s (6.4–6.8) | 6.8 s (6.5–6.9) | 3 s    | over budget |
-| Students  | to interactive    | 6.5 s (6.3–6.8) | 6.2 s (6.1–6.2) | 3 s    | over budget |
+### Step 12 (2026-11-14): main against the step 12 branch
 
-The dashboard shows its content sooner (the ranges do not overlap) but is interactive no sooner
-(+0.2 s is within the spread): the time from content to interactive grew from 0.8 s to 1.5 s
-(the median of the per-run gaps). The cause is not measured yet; the candidates are what starts
-right after the first screen: the sections near it, the 60-day history and the setup checklist's
-requests. The students list is faster (the ranges do not overlap).
+Time to interactive, medians with the range over six interleaved pairs:
+
+| Page                      | Before          | After           | First-load JS (gzip) | HTML (gzip) |
+| ------------------------- | --------------- | --------------- | -------------------- | ----------- |
+| Owner dashboard           | 6.5 s (6.3–7.2) | 5.6 s (5.5–6.9) | 372 → 311 KB         | 70 → 27 KB  |
+| Students                  | 5.4 s (5.2–8.5) | 4.8 s (4.6–8.3) | 357 → 303 KB         | 70 → 18 KB  |
+| Take attendance (teacher) | 5.6 s (5.3–6.1) | 4.8 s (4.7–5.6) | 345 → 287 KB         | 70 → 20 KB  |
+| Fees counter (accountant) | 4.6 s (4.5–5.2) | 3.9 s (3.8–4.0) | 341 → 284 KB         | 70 → 23 KB  |
+| Marks entry (teacher)     | 5.1 s (4.9–5.1) | 4.2 s (4.2–4.5) | 350 → 294 KB         | 70 → 23 KB  |
+| Guardian dashboard        | 5.3 s (5.1–5.6) | 4.6 s (4.3–4.7) | 367 → 306 KB         | 70 → 27 KB  |
+
+The JavaScript column is what the page downloaded; fonts (187–206 KB) and CSS (24 KB) did not
+change. The fees counter, marks entry and guardian dashboard are faster beyond the spread; the
+owner dashboard's content shows 0.7 s sooner (5.0 → 4.3 s, the ranges do not overlap) and its
+interactive range overlaps by one run. **Every page is still over the 3 s budget.** On the branch
+the session refresh starts only at 3.1–3.3 s (the HTML, the JavaScript, hydration); the refresh,
+`GET /me/context` and the page's first requests then take about 0.7 s, its data and render the
+rest. The owner dashboard is interactive 1.2 s after its content because its second batch of
+requests (the setup checklist, the device alerts) arrives and renders after the content.
+
+What changed in step 12:
+
+- **No zod in the browser:** `@jantrik/shared` keeps the schemas apart from what the web uses (a
+  test guards it), about 35 KB off every page.
+- **Loaded when wanted:** the command palette (on the shortcut, or when a pointer or focus reaches
+  its button) and the dashboard's below-the-fold charts.
+- **Each route sends only its own translations** (`apps/web/src/i18n/route-messages.ts`, a test
+  and an e2e check).
+- **A size budget in CI** for every page (`apps/web/perf/budget.json`).
 
 What is deferred today:
 
 - **Fonts:** only Noto Sans Bengali is preloaded; Anek Bangla, Plus Jakarta Sans and Noto Naskh
-  Arabic load when their text appears (titles show in the body face for a moment and swap).
+  Arabic load when their text appears (titles show in the body face for a moment and swap). Bangla
+  pages also download Noto's and Anek's Latin faces (26 + 19 KB): see backlog.md → Performance.
 - **The dashboard below the fold:** the trend, students by class and the term timeline render
-  when near the viewport; the 60-day history and the setup checklist are fetched after the first
-  screen's own data.
+  when near the viewport, and their charts' code loads then; the 60-day history and the setup
+  checklist are fetched after the first screen's own data.
 - **No paint costs on phones:** the canvas is a fixed layer without blur, coaching glass has no
   backdrop filter, hover lifts only on hover-capable pointers.
 - **Theme CSS** is inlined once (under 28 KB) so there is no theme request and no flash.
 
-Both pages are still over budget; the gap is flagged here until it is closed, not hidden. What
-remains on a slow phone: about 340 KB of JavaScript (about 3 s on the link, then about 1 s of CPU),
-then the session refresh, `GET /me/context` and the page's data one after another. Closing it
-needs a smaller first bundle (the palette and the charts split out) and starting the session
-refresh before React runs (an auth change: owner approval first).
+What is left to reach 3 s is in backlog.md → Performance: above all the session and data
+waterfall (the plan in plans/step-12-auth.md, an auth change that needs the owner's approval),
+then the dashboard's second batch and the render after `/me/context`.
 
 ## Copy
 

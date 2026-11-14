@@ -1,4 +1,5 @@
-import { defaultStudentDeviceId, deviceUserIdSchema, nextStaffDeviceId } from './devices.js';
+import { defaultStudentDeviceId, nextStaffDeviceId } from './devices.js';
+import { deviceUserIdSchema } from './devices-schema.js';
 import { toAsciiDigits } from './digits.js';
 import { parseImportPhone } from './import.js';
 

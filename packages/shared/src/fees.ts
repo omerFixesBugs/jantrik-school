@@ -570,3 +570,16 @@ export function reminderSmsText(input: {
 function takaBn(paisa: number): string {
   return formatTaka(paisa, 'bn');
 }
+
+// ───────────── Values the browser uses (fees-api.ts holds the schemas) ─────────────
+
+/** Manual bKash/Nagad: the methods and the kinds of the institute's own numbers. */
+export const FEE_MOBILE_METHODS = ['BKASH', 'NAGAD'] as const;
+export type FeeMobileMethod = (typeof FEE_MOBILE_METHODS)[number];
+export const FEE_MOBILE_ACCOUNT_KINDS = ['PERSONAL', 'MERCHANT', 'AGENT'] as const;
+
+/** A guardian's or a desk's mobile payment submission. */
+export const FEE_SUBMISSION_STATUSES = ['PENDING', 'VERIFIED', 'REJECTED', 'VOIDED'] as const;
+
+/** GET /fees/reports/collections: how the money is grouped. */
+export const FEE_COLLECTION_GROUPS = ['day', 'month', 'head', 'method', 'collector'] as const;

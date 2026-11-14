@@ -6,7 +6,7 @@ import { toAsciiDigits } from '@jantrik/shared';
 import { SearchIcon, type LucideIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useMemo } from 'react';
-import { cn } from '@/lib/utils';
+import { isApple, Kbd } from '@/components/kbd';
 
 /*
  * The command palette (Ctrl/⌘ K; docs/design.md → Principles 8): pages, actions and records in one
@@ -154,22 +154,5 @@ export function CommandPalette({
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-/** ⌘ on Apple keyboards, Ctrl elsewhere. Only rendered in the browser (behind the session). */
-export const isApple = (): boolean =>
-  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
-
-export function Kbd({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <kbd
-      className={cn(
-        'bg-card text-foreground inline-flex min-w-5 items-center justify-center rounded border px-1 font-sans text-[0.75rem] leading-4',
-        className,
-      )}
-    >
-      {children}
-    </kbd>
   );
 }

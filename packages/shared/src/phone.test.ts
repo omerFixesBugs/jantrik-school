@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { bdPhoneSchema, normalizeBdPhone } from './phone.js';
+import { normalizeBdPhone } from './phone.js';
+import { bdPhoneSchema } from './phone-schema.js';
 
 describe('normalizeBdPhone', () => {
   it.each(['01712345678', '8801712345678', '+8801712345678', '008801712345678', '017-1234 5678'])(

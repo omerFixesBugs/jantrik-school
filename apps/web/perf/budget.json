@@ -1,0 +1,12 @@
+{
+  "headroom": 0.05,
+  "default": 326,
+  "routes": {
+    "/dashboard": 313,
+    "/students": 310,
+    "/attendance": 294,
+    "/fees": 291,
+    "/exams/[id]/sheet": 301,
+    "/login": 246
+  }
+}

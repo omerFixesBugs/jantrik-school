@@ -6,7 +6,7 @@ import {
   staffMonthCsvQuerySchema,
   staffMonthQuerySchema,
   staffTrackedSchema,
-} from './staff-attendance-api.js';
+} from './staff-attendance-schema.js';
 
 const UUID = '0199f000-0000-7000-8000-000000000001';
 
