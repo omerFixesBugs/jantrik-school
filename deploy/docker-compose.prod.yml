@@ -62,16 +62,23 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres:/jantrik/postgres:ro
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
-    # Healthy only once the roles and the production database are set up: a query over TCP (a
-    # first start runs its init scripts on a socket only), so a first start whose roles script
-    # failed never looks ready (docs/deploy.md → First start, when it fails).
+    # Healthy only once create-roles.sh finished: the roles exist and database-setup.sql changed
+    # what a new database has (schema owner, no USAGE or TEMPORARY for PUBLIC, UTC). A query over
+    # TCP (a first start runs its init scripts on a socket only; 127.0.0.1 is trusted inside the
+    # container, so no password), so a first start that failed half-way never looks ready
+    # (docs/deploy.md → First start, when it fails).
     healthcheck:
       test:
         - CMD-SHELL
         - >-
-          PGPASSWORD="$$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U postgres -d "$$JANTRIK_DB_NAME" -XAtc
-          "SELECT has_schema_privilege('jantrik_app', 'public', 'USAGE')
-          AND EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_ingest_app')"
+          psql -h 127.0.0.1 -U postgres -d "$$JANTRIK_DB_NAME" -XAtc
+          "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_ingest_app')
+          AND has_schema_privilege('jantrik_app', 'public', 'USAGE')
+          AND NOT has_schema_privilege('public', 'public', 'USAGE')
+          AND NOT has_database_privilege('public', current_database(), 'TEMPORARY')
+          AND (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'public') = 'jantrik_owner'
+          AND EXISTS (SELECT FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase
+          WHERE d.datname = current_database() AND s.setrole = 0)"
           | grep -qx t
       interval: 5s
       timeout: 5s
