@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { bdPhoneSchema } from './phone.js';
+import { bdPhoneSchema } from './phone-schema.js';
 import type { ColorScheme } from './themes.js';
 
 /**

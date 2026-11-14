@@ -3,14 +3,19 @@
  * dates are `YYYY-MM-DD`. The rules themselves live in fees.ts.
  */
 import { z } from 'zod';
-import { isoDateSchema, type IsoDate } from './dates.js';
-import { bdPhoneSchema } from './phone.js';
+import type { IsoDate } from './dates.js';
+import { isoDateSchema } from './dates-schema.js';
+import { bdPhoneSchema } from './phone-schema.js';
 import {
   FEE_AMOUNT_TYPES,
   FEE_CONCESSION_CATEGORIES,
   FEE_FINE_TYPES,
   FEE_FREQUENCIES,
+  FEE_COLLECTION_GROUPS,
   FEE_HEAD_KINDS,
+  FEE_MOBILE_ACCOUNT_KINDS,
+  FEE_MOBILE_METHODS,
+  FEE_SUBMISSION_STATUSES,
   MAX_FEE_PAISA,
   normalizeTrxId,
   type FeeAmountType,
@@ -18,6 +23,7 @@ import {
   type FeeFineType,
   type FeeFrequency,
   type FeeHeadKind,
+  type FeeMobileMethod,
 } from './fees.js';
 
 const nameSchema = z.string().trim().min(1).max(100);
@@ -562,10 +568,6 @@ export interface FeeClosing {
 
 // ─────────────────────────── Manual bKash/Nagad ───────────────────────────
 
-export const FEE_MOBILE_METHODS = ['BKASH', 'NAGAD'] as const;
-export type FeeMobileMethod = (typeof FEE_MOBILE_METHODS)[number];
-export const FEE_MOBILE_ACCOUNT_KINDS = ['PERSONAL', 'MERCHANT', 'AGENT'] as const;
-
 /** POST /fees/mobile-accounts (OWNER): the institute's own number. */
 export const createMobileAccountSchema = z.object({
   method: z.enum(FEE_MOBILE_METHODS),
@@ -627,7 +629,6 @@ export const guardianSubmissionSchema = z.object(submissionFields);
 export const staffSubmissionSchema = z.object({ ...submissionFields, studentId: z.uuid() });
 export type FeeSubmissionInput = z.input<typeof guardianSubmissionSchema>;
 
-export const FEE_SUBMISSION_STATUSES = ['PENDING', 'VERIFIED', 'REJECTED', 'VOIDED'] as const;
 export const feeSubmissionsQuerySchema = z.object({
   status: z.enum(FEE_SUBMISSION_STATUSES).optional(),
 });
@@ -724,7 +725,6 @@ export interface FeeDueList {
   };
 }
 
-export const FEE_COLLECTION_GROUPS = ['day', 'month', 'head', 'method', 'collector'] as const;
 /** GET /fees/reports/collections: money kept (void payments left out), recorded in a range. */
 export const feeCollectionsQuerySchema = z
   .object({

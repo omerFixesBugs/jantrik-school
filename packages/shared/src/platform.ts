@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { isoDateSchema, type IsoDate } from './dates.js';
-import { bdPhoneSchema } from './phone.js';
+import type { IsoDate } from './dates.js';
+import { isoDateSchema } from './dates-schema.js';
+import { bdPhoneSchema } from './phone-schema.js';
 import { monthSchema } from './reports.js';
 
 /** A month (YYYY-MM) the platform deals with: 2020 to 2100 (a year 0000 is not a date). */
