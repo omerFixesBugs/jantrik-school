@@ -779,6 +779,19 @@ describe('the device receiver roles', () => {
     expect(deleted).toEqual([0, 1]);
   });
 
+  it('the hardening CHECKs (added NOT VALID, then validated) hold for every row', async () => {
+    const rows = await owner.$queryRawUnsafe<{ conname: string; convalidated: boolean }[]>(
+      `SELECT conname, convalidated FROM pg_constraint
+       WHERE conname IN ('staff_attendance_days_device_no_reason',
+                         'device_punches_reviewer_needs_review')
+       ORDER BY conname`,
+    );
+    expect(rows).toEqual([
+      { conname: 'device_punches_reviewer_needs_review', convalidated: true },
+      { conname: 'staff_attendance_days_device_no_reason', convalidated: true },
+    ]);
+  });
+
   it('an unknown or inactive serial number is looked up by an index, not a scan', async () => {
     // As the receiver's refusal asks it (jantrik_ingest, by serial number alone): the unique
     // index covers active devices only.
