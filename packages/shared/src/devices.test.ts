@@ -627,4 +627,46 @@ describe('entry and exit SMS text', () => {
       expect(b.startsWith('ক')).toBe(true);
     }
   });
+
+  const HASANT = String.fromCodePoint(0x09cd);
+  const VERB = ' প্রবেশ করেছে ';
+  const letters = (s: string) =>
+    Array.from(new Intl.Segmenter('bn', { granularity: 'grapheme' }).segment(s), (x) => x.segment);
+
+  it('cuts a long name between letters and keeps the longest name that fits', () => {
+    // Conjuncts and vowel signs throughout; each extra prefix letter moves where the cut lands.
+    for (let shift = 0; shift < 12; shift += 1) {
+      const student = 'অ'.repeat(shift) + 'লক্ষ্মীকান্ত'.repeat(15);
+      const text = entrySmsText({ student, at, institute: 'শাপলা' });
+      const name = text.slice(0, text.indexOf(VERB));
+      expect(smsLength(text).segments).toBeLessThanOrEqual(2);
+      expect(name.endsWith(HASANT)).toBe(false);
+      // A whole number of the name's letters: never a consonant without its vowel sign.
+      const kept = letters(name);
+      expect(letters(student).slice(0, kept.length)).toEqual(kept);
+      // One letter more would not fit.
+      const longer = letters(student)
+        .slice(0, kept.length + 1)
+        .join('');
+      expect(smsLength(`${longer}${VERB}সকাল ৭:৪৫`).segments).toBeGreaterThan(2);
+    }
+  });
+
+  it('without Intl.Segmenter (an old browser), a cut name still never ends on a hasant', () => {
+    const segmenter = Intl.Segmenter;
+    Object.assign(Intl, { Segmenter: undefined });
+    try {
+      for (let shift = 0; shift < 6; shift += 1) {
+        const student = 'অ'.repeat(shift) + 'ক্ষ'.repeat(60);
+        const text = exitSmsText({ student, at, institute: 'শাপলা' });
+        const name = text.slice(0, text.indexOf(' বের হয়েছে '));
+        expect(smsLength(text).segments).toBeLessThanOrEqual(2);
+        expect(name.length).toBeGreaterThan(0);
+        expect(name.endsWith(HASANT)).toBe(false);
+        expect(student.startsWith(name)).toBe(true);
+      }
+    } finally {
+      Object.assign(Intl, { Segmenter: segmenter });
+    }
+  });
 });

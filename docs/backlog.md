@@ -195,8 +195,6 @@ are left out.
     stays named since the final fixes). Drop the time from that wording or label it as the last
     change.
 - **Web, SMS and print**
-  - The SMS student name is cut by code point, not grapheme (Bangla can end on a hasant): only for
-    names too long for two segments.
   - Devices screen minors: the feed polls with no devices, partial "send to devices" failures lose
     the totals, focus after a review, a trust confirm that can vanish mid-dialog, the dashboard
     card shifting layout, a stale poll carrying an older review over a newer one (two admins within
@@ -208,9 +206,8 @@ are left out.
     `attendance_settings` (device, staff late, staff early), and the receiver login's denial list
     has no case for INSERT into `attendance_devices`, `device_commands` or `device_people`, or for
     DELETE on `device_commands` or `device_source_ips` (the catalog shows it holds no grants); shared
-    rules (mapped-person collisions, a staff month row on an off day, the SMS cut keeping the
-    longest name), ingest error paths (`INGEST_BAD_RESULTS`, a non-object row, a
-    NULL or negative `p_max`), retention (an old DONE superseded only by a young DONE), the
+    rules (mapped-person collisions, a staff month row on an off day), ingest error paths
+    (`INGEST_BAD_RESULTS`, a non-object row, a NULL or negative `p_max`), retention (an old DONE superseded only by a young DONE), the
     simulator (per-record-type assertion, `poll()` silent on a non-200, the CLI's 50-line batches).
   - The race test's `pg_locks` poll matches any waiting `jantrik_ingest_app` session in the
     cluster: a possible flake, never a false pass.

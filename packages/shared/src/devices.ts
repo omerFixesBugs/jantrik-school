@@ -608,6 +608,21 @@ export function deviceState(lastSeenAt: Date | null, now: Date, isActive: boolea
 
 const MAX_SMS_SEGMENTS = 2;
 
+/**
+ * A name's letters as a reader sees them (grapheme clusters: a consonant with its vowel sign, a
+ * conjunct), so a cut never splits one. Without Intl.Segmenter (an old browser's preview), code
+ * points; `cutName` then drops a dangling hasant or joiner.
+ */
+function nameLetters(name: string): string[] {
+  if (typeof Intl.Segmenter !== 'function') return Array.from(name);
+  const segments = new Intl.Segmenter('bn', { granularity: 'grapheme' }).segment(name);
+  return Array.from(segments, (s) => s.segment);
+}
+
+/** A cut name never ends on a space, a hasant (্) or a zero-width joiner (it would join the verb). */
+const cutName = (letters: readonly string[]): string =>
+  letters.join('').replace(/[\s\u09cd\u200c\u200d]+$/u, '');
+
 function movementSms(
   verb: string,
   input: { student: string; at: Date; institute: string },
@@ -618,10 +633,10 @@ function movementSms(
   if (fits(full)) return full;
   const short = `${input.student} ${verb} ${time}`;
   if (fits(short)) return short;
-  const letters = Array.from(input.student);
+  const letters = nameLetters(input.student);
   while (letters.length > 1) {
     letters.pop();
-    const text = `${letters.join('').trimEnd()} ${verb} ${time}`;
+    const text = `${cutName(letters)} ${verb} ${time}`;
     if (fits(text)) return text;
   }
   return `${letters.join('')} ${verb} ${time}`;
