@@ -23,17 +23,19 @@ describe('createPrismaClient pool options', () => {
     expect(configs).toEqual([{ connectionString: 'postgresql://u:p@127.0.0.1:1/x' }]);
   });
 
-  it('passes the connection timeout and keep-alive to the pool when given', () => {
+  it('passes the connection timeout and keep-alive (with its first probe delay) when given', () => {
     configs.length = 0;
     createPrismaClient('postgresql://u:p@127.0.0.1:1/x', {
       connectionTimeoutMillis: 5000,
       keepAlive: true,
+      keepAliveInitialDelayMillis: 30_000,
     });
     expect(configs).toEqual([
       {
         connectionString: 'postgresql://u:p@127.0.0.1:1/x',
         connectionTimeoutMillis: 5000,
         keepAlive: true,
+        keepAliveInitialDelayMillis: 30_000,
       },
     ]);
   });

@@ -170,8 +170,11 @@ screen. Devices that support HTTPS can use a TLS proxy in front of the receiver'
   minutes in all, with one log line each naming the error's codes; still failing, the start
   fails. Each check has 10 s to answer: a database that accepts the connection and never answers
   counts as a failed check (`StartupCheckTimeout`), so the start fails within about 6 minutes
-  instead of hanging. The receiver's pool also gives up opening a connection after 10 s and uses
-  TCP keep-alive; queries themselves have no time limit yet (decision #79). Inside the API (development, e2e) the API is already listening meanwhile and
+  instead of hanging. The receiver's pool (at most 10 connections) also gives up getting a
+  connection after 10 s: opening one, and waiting for a free one, so with more than 10 device
+  calls in flight a request that waits longer fails with 500 and the device sends it again. TCP
+  keep-alive probes an idle connection after 30 s. Queries themselves have no time limit yet
+  (decision #79). Inside the API (development, e2e) the API is already listening meanwhile and
   the receiver comes up once the check passes; a receiver that finally refuses stops the API too.
 - **Code scan.** [`ingest-isolation.spec.ts`](../apps/api/src/ingest/ingest-isolation.spec.ts)
   fails if receiver code imports the API's database access, or if anything outside the receiver

@@ -7,14 +7,20 @@ import type { IngestEnv } from '../config/ingest-env.js';
 const STARTUP_CHECK_TIMEOUT_MS = 10_000;
 
 /**
- * The receiver's connection pool: opening a connection fails after the check's time limit instead
- * of waiting forever (a check that timed out while connecting does not keep its attempt in the
- * pool), and TCP keep-alive notices a database that went away. Queries themselves have no time
- * limit yet (decision #79 in docs/decisions-pending.md).
+ * The receiver's connection pool (node-postgres, at most 10 connections):
+ * - Getting a connection fails after the check's time limit instead of waiting forever: opening
+ *   one (a check that timed out while connecting does not keep its attempt in the pool), and also
+ *   waiting for a free one. With more than 10 device calls in flight and a wait over 10 s, the
+ *   waiting requests fail (500); devices send again, nothing is lost.
+ * - TCP keep-alive probes an idle connection after 30 s, so a database host that went away is
+ *   noticed in minutes, not the operating system's 2 hours.
+ * Queries themselves have no time limit yet, and the pool size is node-postgres' default (decision
+ * #79 in docs/decisions-pending.md).
  */
 export const INGEST_POOL: PoolOptions = {
   connectionTimeoutMillis: STARTUP_CHECK_TIMEOUT_MS,
   keepAlive: true,
+  keepAliveInitialDelayMillis: 30_000,
 };
 
 /**

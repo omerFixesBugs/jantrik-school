@@ -112,11 +112,15 @@ describe('IngestPrismaService startup check', () => {
     expect(real.checkTimeoutMs).toBe(10_000);
   });
 
-  it("builds the receiver's pool with a connection timeout no longer than a check, and keep-alive", () => {
+  it("builds the receiver's pool with a connection timeout no longer than a check, and keep-alive after 30 s idle", () => {
     created.length = 0;
     new IngestPrismaService({ get: () => 'postgresql://x@localhost/db' } as never);
     expect(created).toEqual([['postgresql://x@localhost/db', INGEST_POOL]]);
-    expect(INGEST_POOL).toEqual({ connectionTimeoutMillis: 10_000, keepAlive: true });
+    expect(INGEST_POOL).toEqual({
+      connectionTimeoutMillis: 10_000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 30_000,
+    });
   });
 
   it('asks again while the database is not reachable, then checks as usual', async () => {

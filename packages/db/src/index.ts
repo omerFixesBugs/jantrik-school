@@ -14,10 +14,18 @@ export { seedTemplates } from './reference-data/templates.js';
 
 /** Connection pool settings a caller may set (node-postgres; none by default). */
 export interface PoolOptions {
-  /** How long a new connection may take before it fails (default: no limit). */
+  /**
+   * How long getting a connection may take before it fails (default: no limit): opening a new
+   * one, and also waiting for a free one while the pool is full (at most 10 connections).
+   */
   connectionTimeoutMillis?: number;
-  /** TCP keep-alive on the pool's connections, so a dead peer is noticed (default: off). */
+  /** TCP keep-alive on the pool's connections (default: off). */
   keepAlive?: boolean;
+  /**
+   * Idle time before the first keep-alive probe. Without it node-postgres passes 0, which keeps
+   * the operating system's default (about 2 hours on Linux and Windows).
+   */
+  keepAliveInitialDelayMillis?: number;
 }
 
 /** Create a Prisma client bound to the given Postgres connection string. */
