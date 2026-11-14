@@ -3,14 +3,14 @@
 # Run it once, BEFORE the first `prisma migrate deploy`: the migrations grant to these roles.
 #
 #   - The production compose Postgres runs it on its first start (deploy/postgres/initdb).
-#   - By hand, on any Postgres 16 (a managed one too), as an admin with CREATEROLE and CREATEDB:
-#       PGHOST=db.example.com PGUSER=admin PGPASSWORD=... \
-#       DB_OWNER_PASSWORD=... DB_APP_PASSWORD=... DB_PLATFORM_PASSWORD=... DB_INGEST_PASSWORD=... \
+#   - By hand, on any Postgres 16 (a managed one too), as an admin with CREATEROLE and CREATEDB,
+#     with the passwords in a private file rather than on the command line (docs/deploy.md):
+#       set -a; . ./roles.env; set +a      # PGHOST, PGUSER, PGPASSWORD and the DB_*_PASSWORD
 #       sh deploy/postgres/create-roles.sh
 #
-# Passwords come from the environment only, never the command line (psql reads them with \getenv,
-# psql 15 or newer). JANTRIK_DB_NAME names the database (default jantrik). Safe to run again: an
-# existing role keeps its password, an existing database is left as it is; both are checked.
+# Passwords come from the environment only (psql reads them with \getenv, psql 15 or newer).
+# JANTRIK_DB_NAME names the database (default jantrik). Safe to run again: an existing role keeps
+# its password, an existing database is left as it is; both are checked.
 # Development and CI use docker/postgres/init/01-roles.sh (dev, test and e2e databases) instead.
 
 jantrik_create_roles() (
@@ -23,29 +23,55 @@ jantrik_create_roles() (
   [ -f "$here/database-setup.sql" ] || die "database-setup.sql not found next to $0"
   export PGUSER="${PGUSER:-${POSTGRES_USER:-postgres}}"
 
+  # Whole values are checked with case: grep would check line by line, so a value with a
+  # newline in it could pass.
+  lower=abcdefghijklmnopqrstuvwxyz
+  url_safe="ABCDEFGHIJKLMNOPQRSTUVWXYZ${lower}0123456789._~-"
+
   db="${JANTRIK_DB_NAME:-jantrik}"
-  printf '%s' "$db" | grep -Eq '^[a-z_][a-z0-9_]{0,62}$' \
-    || die "JANTRIK_DB_NAME must be lower-case letters, digits and _ (got '$db')"
   case "$db" in
+    '' | [!"$lower"_]* | *[!"$lower"0123456789_]*)
+      die "JANTRIK_DB_NAME must be lower-case letters, digits and _ (got '$db')"
+      ;;
     postgres | template0 | template1 | jantrik_test | jantrik_e2e)
       die "JANTRIK_DB_NAME=$db is not a production database name"
       ;;
   esac
+  [ "${#db}" -le 63 ] || die "JANTRIK_DB_NAME is longer than 63 characters"
 
-  # Strong, distinct passwords that can go into a URL as they are (openssl rand -hex 24).
-  for var in DB_OWNER_PASSWORD DB_APP_PASSWORD DB_PLATFORM_PASSWORD DB_INGEST_PASSWORD; do
-    eval "pw=\${$var:-}"
-    [ -n "$pw" ] || die "$var is not set"
-    [ "${#pw}" -ge 24 ] || die "$var must be at least 24 characters (openssl rand -hex 24)"
-    printf '%s' "$pw" | grep -Eq '^[A-Za-z0-9._~-]+$' \
-      || die "$var may hold only letters, digits and . _ ~ - (it goes into the DATABASE_*_URL as it is)"
-    if printf '%s' "$pw" | grep -Eiq 'change[-_]?me|dev_password|ci_password|example|placeholder'; then
-      die "$var is an example value: generate one (openssl rand -hex 24)"
-    fi
-  done
-  dupes=$(printf '%s\n' "$DB_OWNER_PASSWORD" "$DB_APP_PASSWORD" "$DB_PLATFORM_PASSWORD" \
-    "$DB_INGEST_PASSWORD" | sort | uniq -d)
-  [ -z "$dupes" ] || die "the four DB_*_PASSWORD values must differ"
+  # Strong passwords that can go into a URL as they are (openssl rand -hex 24).
+  check_password() {
+    [ -n "$2" ] || die "$1 is not set"
+    [ "${#2}" -ge 24 ] || die "$1 must be at least 24 characters (openssl rand -hex 24)"
+    case "$2" in
+      *[!"$url_safe"]*)
+        die "$1 may hold only letters, digits and . _ ~ - (it goes into a URL as it is)"
+        ;;
+    esac
+    case "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" in
+      *change_me* | *change-me* | *changeme* | *dev_password* | *ci_password* | *example* | *placeholder*)
+        die "$1 is an example value: generate one (openssl rand -hex 24)"
+        ;;
+    esac
+  }
+  check_password DB_OWNER_PASSWORD "${DB_OWNER_PASSWORD:-}"
+  check_password DB_APP_PASSWORD "${DB_APP_PASSWORD:-}"
+  check_password DB_PLATFORM_PASSWORD "${DB_PLATFORM_PASSWORD:-}"
+  check_password DB_INGEST_PASSWORD "${DB_INGEST_PASSWORD:-}"
+  # The superuser's own password when this script is given it (the compose Postgres's first
+  # start): as strong as the others, and none of them.
+  if [ -n "${POSTGRES_PASSWORD:-}" ]; then
+    check_password POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
+  fi
+  # One per line (none holds a newline: checked above).
+  dupes=$(
+    {
+      printf '%s\n' "$DB_OWNER_PASSWORD" "$DB_APP_PASSWORD" "$DB_PLATFORM_PASSWORD" \
+        "$DB_INGEST_PASSWORD"
+      if [ -n "${POSTGRES_PASSWORD:-}" ]; then printf '%s\n' "$POSTGRES_PASSWORD"; fi
+    } | sort | uniq -d
+  )
+  [ -z "$dupes" ] || die "the DB_*_PASSWORD values and POSTGRES_PASSWORD must all differ"
 
   psql -X -q -v ON_ERROR_STOP=1 --dbname postgres -v db="$db" <<'SQL'
 SET client_min_messages TO warning;
