@@ -188,8 +188,6 @@ are left out.
     ingest error paths (`INGEST_BAD_RESULTS`, a non-object row, a NULL or negative `p_max`),
     retention (an old DONE superseded only by a young DONE), the simulator (per-record-type
     assertion, `poll()` silent on a non-200, the CLI's 50-line batches).
-  - The race test's `pg_locks` poll matches any waiting `jantrik_ingest_app` session in the
-    cluster: a possible flake, never a false pass.
   - The staff desk e2e cannot run twice in one run (the saved leave stays), and specs must not
     assert today's computed staff state (it depends on the real time of the run).
   - Seed minors: demo serials stay active in jantrik_test after a killed run, a failed owner insert
