@@ -126,6 +126,11 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Each page's first-load JavaScript (gzip) against apps/web/perf/budget.json, from the
+      # build's route bundle stats (docs/design.md → Performance budget).
+      - name: Size budget
+        run: node apps/web/perf/check-budget.mjs
+
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-24.04
