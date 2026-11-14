@@ -26,12 +26,11 @@ export class DeviceRetentionService {
    * context, so a missing or different context can never make a live institute look gone.
    */
   async instituteExists(tenantId: string): Promise<boolean> {
-    const [row] = await this.db.tx.$queryRaw<{ context: string | null; n: number }[]>`
-      SELECT app_current_tenant_id()::text AS context,
+    // Compared as uuids (any letter case); no context gives NULL, which throws too.
+    const [row] = await this.db.tx.$queryRaw<{ same: boolean | null; n: number }[]>`
+      SELECT app_current_tenant_id() = ${tenantId}::uuid AS same,
              (SELECT count(*)::int FROM tenants WHERE id = app_current_tenant_id()) AS n`;
-    if (!row || row.context !== tenantId) {
-      throw new Error("Not in the institute's context");
-    }
+    if (row?.same !== true) throw new Error("Not in the institute's context");
     return row.n > 0;
   }
 

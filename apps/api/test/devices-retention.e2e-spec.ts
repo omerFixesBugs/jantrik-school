@@ -304,6 +304,8 @@ describe('device retention (expire-punches)', () => {
     const a = await createTenant(h, { modules: ['ATTENDANCE'] });
     const b = await createTenant(h, { modules: ['ATTENDANCE'] });
     expect(await runner.run(a.id, () => retention.instituteExists(a.id))).toBe(true);
+    // Compared as uuids: the letter case of the listed id does not matter.
+    expect(await runner.run(a.id, () => retention.instituteExists(a.id.toUpperCase()))).toBe(true);
     // Another institute's context: never "gone".
     await expect(runner.run(a.id, () => retention.instituteExists(b.id))).rejects.toThrow(
       /Not in the institute's context/,
