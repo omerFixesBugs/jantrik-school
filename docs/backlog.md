@@ -209,6 +209,12 @@ interleaved, with `apps/web/perf/measure.mjs`. Step 12 (day run of 2026-11-13, P
   (`apps/web/src/i18n/route-messages.ts`, a test and an e2e check): a page's HTML went from 69 KB
   to 17-26 KB (gzip).
 - **A size budget in CI** (`apps/web/perf/budget.json`).
+- **Fonts (decision P2, 2026-11-14):** the two Bangla faces carry only their Bangla subset
+  (`apps/web/src/fonts`, next/font/local), so Latin text on a Bangla page renders in Plus Jakarta
+  Sans as design.md says; the Bangla login page fetches 3 font files (192 KB) instead of 4
+  (210 KB). Tried and not kept: not preloading Noto Sans Bengali and starting both Bangla faces
+  when the app hydrates (interleaved, the medians were equal or up to 0.8 s worse on the four
+  pages measured, the ranges overlapping).
 
 Still open:
 
@@ -228,19 +234,7 @@ waiting for the owner (auth change).
 - **The render after `/me/context`** (the shell, the theme and density providers) takes
   0.5-1 s on the throttled phone before the page's first requests start; profile it.
 
-### 3. Fonts (owner decision)
-
-Every Bangla page downloads Noto Sans Bengali's Bangla and Latin faces (106 + 26 KB) and Anek
-Bangla's Bangla and Latin faces (57 + 19 KB): next/font emits every Google subset, so Latin text
-does not fall to Plus Jakarta Sans as design.md says. Options: self-host only the Bangla faces
-(next/font/local, OFL licence; Latin letters then render in Jakarta, a visible change), or keep
-fewer weights. Decisions P2 in [decisions-pending.md](decisions-pending.md).
-
-Tried and not kept (2026-11-14): not preloading Noto Sans Bengali and starting both Bangla faces
-when the app hydrates instead. Against the branch, interleaved, the medians were equal or up to
-0.8 s worse on the four pages measured (the ranges overlap), so the preload stays.
-
-### 4. API calls worth a look (not on the critical path today)
+### 3. API calls worth a look (not on the critical path today)
 
 Server time of every call the budget pages make was 12-107 ms, except:
 
@@ -255,7 +249,7 @@ Server time of every call the budget pages make was 12-107 ms, except:
 On slow 4G each call costs 300-600 ms (a preflight and a round trip) whatever its server time, so
 fewer sequential calls (section 1) matter more than faster queries.
 
-### 5. Smaller scripts still
+### 4. Smaller scripts still
 
 - The user menu (Base UI Menu) and the phone drawer (Sheet) could load on first use.
 - next-intl parses ICU messages in the browser (about 9 KB of parser); precompiled messages would

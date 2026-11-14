@@ -185,8 +185,18 @@ Rules:
 
 ## Typography
 
-Fonts come through `next/font/google` (`src/app/layout.tsx`), self-hosted and split by script
-with `unicode-range`, `display: swap`. The stacks switch on the page language (`globals.css`).
+Fonts are self-hosted through next/font (`src/app/layout.tsx`), split by script with
+`unicode-range`, `display: swap`. The stacks switch on the page language (`globals.css`).
+
+- **The two Bangla faces carry only their Bangla subset** (decision P2): Google Fonts' own Bengali
+  subset files (Noto Sans Bengali v33, variable; Anek Bangla v16 at 600) in `apps/web/src/fonts`
+  with their OFL licences, through next/font/local. Their unicode-range is Google's Bengali range
+  plus the space and no-break space (both in the files), so Bangla words keep Noto's spacing and
+  Noto stays the first available font (line metrics); everything else falls to Jakarta. No
+  metric-adjusted fallback face for them: next/font's is `local("Arial")` with no unicode-range,
+  which would draw Latin text before Jakarta. To update a file, take the Bengali subset's URL
+  from Google's CSS (`fonts.googleapis.com/css2?family=…`) and replace it.
+- Plus Jakarta Sans and Noto Naskh Arabic come through next/font/google.
 
 | Language / role        | Family                                                           | Loading                                            |
 | ---------------------- | ---------------------------------------------------------------- | -------------------------------------------------- |
@@ -575,8 +585,9 @@ What changed in step 12:
 What is deferred today:
 
 - **Fonts:** only Noto Sans Bengali is preloaded; Anek Bangla, Plus Jakarta Sans and Noto Naskh
-  Arabic load when their text appears (titles show in the body face for a moment and swap). Bangla
-  pages also download Noto's and Anek's Latin faces (26 + 19 KB): see backlog.md → Performance.
+  Arabic load when their text appears (titles show in the body face for a moment and swap). Since
+  decision P2 a Bangla page's Latin text loads Jakarta's Latin face (27 KB) instead of Noto's and
+  Anek's (26 + 19 KB): the Bangla login page fetches 192 KB of fonts instead of 210 KB.
 - **The dashboard below the fold:** the trend, students by class and the term timeline render
   when near the viewport, and their charts' code loads then; the 60-day history and the setup
   checklist are fetched after the first screen's own data.

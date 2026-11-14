@@ -1,10 +1,6 @@
 import type { Metadata, Viewport } from 'next';
-import {
-  Anek_Bangla,
-  Noto_Naskh_Arabic,
-  Noto_Sans_Bengali,
-  Plus_Jakarta_Sans,
-} from 'next/font/google';
+import { Noto_Naskh_Arabic, Plus_Jakarta_Sans } from 'next/font/google';
+import localFont from 'next/font/local';
 import { themeCss } from '@jantrik/shared';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages, getTranslations } from 'next-intl/server';
@@ -16,27 +12,53 @@ import { BOOT_WATCHDOG } from './boot-watchdog';
 import { Providers } from './providers';
 import './globals.css';
 
-// Body: Noto Sans Bengali, a variable font (one file per script for every weight) whose Bangla
-// digits are drawn correctly and are all one width (docs/design.md → Typography). Self-hosted by
-// next/font and split by unicode-range; only the Bangla file is preloaded, the Latin one loads
-// when Latin text appears. `swap`: text shows at once in the fallback on a slow network.
-const body = Noto_Sans_Bengali({
-  subsets: ['bengali'],
+// The two Bangla faces carry only their Bangla subset (decision P2, docs/decisions-pending.md):
+// Latin letters, ASCII digits and punctuation on a Bangla page fall to Plus Jakarta Sans. The
+// files are Google Fonts' own Bengali subsets, kept in src/fonts with their OFL licences, because
+// next/font/google would emit (and the browser download) the Latin faces too. The range is
+// Google's Bengali range plus the space and no-break space (both in the files), so spaces between
+// Bangla words stay in Noto and Noto stays the first available font (line metrics) on Bangla
+// pages. No metric-adjusted fallback face: next/font's is local("Arial") with no unicode-range,
+// so it would draw the Latin text before Jakarta was reached (Arial has no Bangla anyway).
+// next/font reads its options as literals, so the two calls repeat the same range. The CSS family
+// is next/font's own (from the const's name): a `font-family` declaration would rename the
+// @font-face but not the CSS variable under Turbopack, and the face would never be used.
+// Body: Noto Sans Bengali, a variable font (one file for every weight) whose Bangla digits are
+// drawn correctly and are all one width (docs/design.md → Typography). Preloaded: it is the first
+// paint. `swap`: text shows at once in the fallback on a slow network.
+const notoSansBengali = localFont({
+  src: [{ path: '../fonts/noto-sans-bengali/NotoSansBengali-bengali.woff2', weight: '100 900' }],
+  declarations: [
+    {
+      prop: 'unicode-range',
+      value:
+        'U+0020, U+00A0, U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1',
+    },
+  ],
   display: 'swap',
+  adjustFontFallback: false,
   variable: '--font-body',
 });
 // Display: Anek Bangla, for the wordmark, page titles and the greeting only: one static weight
-// (600), 55 KB. Not preloaded: on a slow phone it would share the link with the app's JavaScript;
+// (600), 56 KB. Not preloaded: on a slow phone it would share the link with the app's JavaScript;
 // titles show in the body face for a moment and swap (design v2.1 performance budget).
-const display = Anek_Bangla({
-  subsets: ['bengali'],
-  weight: '600',
+const anekBangla = localFont({
+  src: [{ path: '../fonts/anek-bangla/AnekBangla-SemiBold-bengali.woff2', weight: '600' }],
+  declarations: [
+    {
+      prop: 'unicode-range',
+      value:
+        'U+0020, U+00A0, U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1',
+    },
+  ],
   display: 'swap',
   preload: false,
+  adjustFontFallback: false,
   variable: '--font-display',
 });
 // Latin text (English UI, IDs, phone numbers, Latin digits): Plus Jakarta Sans, first in the
-// stack; Bangla falls through to Noto by unicode-range. Not preloaded: Bangla is the first paint.
+// stack on English pages (Bangla falls through to Noto by unicode-range) and after the Bangla
+// faces on Bangla pages. Not preloaded: Bangla is the first paint.
 const latin = Plus_Jakarta_Sans({
   subsets: ['latin'],
   display: 'swap',
@@ -72,8 +94,8 @@ export default async function RootLayout({ children }: LayoutProps<'/'>) {
       lang={locale}
       className={cn(
         'h-full antialiased',
-        body.variable,
-        display.variable,
+        notoSansBengali.variable,
+        anekBangla.variable,
         latin.variable,
         arabic.variable,
       )}

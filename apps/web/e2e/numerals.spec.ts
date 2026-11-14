@@ -8,6 +8,10 @@ import { DEMO, passwordLogin } from './helpers';
 // These checks fail on any face that does either, on the screens that are mostly numbers.
 
 const BODY_FACE = 'Noto Sans Bengali';
+// The Bangla faces carry only their Bangla subset (decision P2), so an element's ASCII punctuation
+// and digits (the colon in ১০:৩০, the slash in ২১/২৪) are drawn by the Latin face. It has no Bangla
+// glyphs, so it can never draw a Bangla digit; any other face can.
+const LATIN_FACE = 'Plus Jakarta Sans';
 const DIGITS = '০১২৩৪৫৬৭৮৯';
 
 /** Every element whose own text has a Bangla digit, and the fonts Chromium drew it with. */
@@ -58,7 +62,11 @@ async function expectBodyFaceDigits(page: Page, where: string) {
   await page.waitForLoadState('networkidle');
   const found = await digitFonts(page);
   expect(found.length, `${where}: no Bangla digits on the page`).toBeGreaterThan(0);
-  const wrong = found.filter((f) => f.fonts.some((name) => name !== BODY_FACE));
+  const wrong = found.filter(
+    (f) =>
+      !f.fonts.includes(BODY_FACE) ||
+      f.fonts.some((name) => name !== BODY_FACE && name !== LATIN_FACE),
+  );
   expect(wrong, `${where}: digits drawn by another font`).toEqual([]);
 }
 
@@ -147,13 +155,11 @@ test('every text style has one width per digit, and ১ is drawn whole', async (
     }
     // Ink height of ১ against ৬ in the body face, at each weight the UI uses.
     const family = getComputedStyle(document.body).fontFamily;
-    // Load the real Bangla face by name (English pages put the Latin face first; next/font's
-    // "… Fallback" face is local("Arial"), which a Linux runner doesn't have, and a failed face
-    // makes fonts.load() reject).
-    const face = family
-      .split(',')
-      .map((f) => f.trim())
-      .find((f) => f.replace(/["']/g, '') === 'Noto Sans Bengali')!;
+    // Load the real Bangla face by its CSS family, next/font's name in --font-body, not the whole
+    // stack (English pages put the Latin face first; next/font's "… Fallback" faces are local
+    // fonts a Linux runner doesn't have, and a failed face makes fonts.load() reject).
+    const face = getComputedStyle(document.documentElement).getPropertyValue('--font-body').trim();
+    if (!face) throw new Error('--font-body is not set');
     const shapes: Record<number, { one: number; six: number; same: boolean }> = {};
     for (const weight of [300, 400, 500, 600]) {
       await document.fonts.load(`${weight} 100px ${face}`, '১৬');

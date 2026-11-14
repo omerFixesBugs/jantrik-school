@@ -159,14 +159,17 @@
   --radius-control: 12px;
 }
 
-/* Bangla pages: Noto Sans Bengali draws everything it can (correct, tabular digits; one face per
-   line, punctuation included). English pages: Plus Jakarta Sans first, Bangla names falling through
-   to Noto. Arabic (Noto Naskh Arabic) only where Arabic text appears. Display: Anek Bangla, only for
-   the wordmark, page titles and the section board's letters. See docs/design.md → Typography. */
+/* Bangla pages: Noto Sans Bengali draws the Bangla text and its spaces (correct, tabular digits);
+   Latin letters, ASCII digits and punctuation fall to Plus Jakarta Sans (the Bangla faces carry
+   only their Bangla subset, decision P2). English pages: Plus Jakarta Sans first, Bangla names
+   falling through to Noto. Arabic (Noto Naskh Arabic) only where Arabic text appears. Display:
+   Anek Bangla, only for the wordmark, page titles and the section board's letters, its Latin in
+   Jakarta too. See docs/design.md → Typography. */
 :root {
   --app-font-stack:
     var(--font-body), var(--font-latin), var(--font-arabic), ui-sans-serif, system-ui, sans-serif;
-  --app-display-stack: var(--font-display), var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --app-display-stack:
+    var(--font-display), var(--font-body), var(--font-latin), ui-sans-serif, system-ui, sans-serif;
 }
 :root:lang(en) {
   --app-font-stack:

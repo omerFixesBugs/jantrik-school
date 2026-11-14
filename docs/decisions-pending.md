@@ -297,14 +297,19 @@ Decided while the owner was away (each one in PR #9, which is not merged):
   `jantrik_t3_test` (Redis DBs 11-13). The owner's `jantrik` and `jantrik_test` were not touched.
   - To change: drop them when done (`DROP DATABASE jantrik_perf;` and the three `_test` ones, as
     the `postgres` user).
-- **P2. Fonts are unchanged.** Every Bangla page downloads Noto Sans Bengali's Bangla face
-  (106 KB) and its Latin face (26 KB), and Anek Bangla's Bangla face (57 KB) and Latin face
-  (19 KB). Design.md says Latin text on Bangla pages falls to Plus Jakarta Sans, but next/font
-  emits every Google subset, so it falls to the Noto/Anek Latin faces. Trimming means either
-  dropping those Latin faces (self-hosted with next/font/local and the OFL licence; Latin letters
-  and punctuation in titles and text would then render in Jakarta: a visible change) or keeping
-  fewer weights of the variable faces. Both are design decisions, so nothing was changed.
-  - To change: approve one of the two options (about 18-45 KB less per page).
+- **P2. The Bangla faces carry only their Bangla subset** (owner decision of 2026-11-14: drop the
+  Latin faces of Noto Sans Bengali and Anek Bangla). Next/font/google emitted every Google subset,
+  so Latin text on Bangla pages was drawn by Noto's and Anek's Latin faces (26 + 19 KB), not by
+  Plus Jakarta Sans as design.md says. The two faces are now Google's own Bengali subset files in
+  `apps/web/src/fonts` (next/font/local, with their OFL licences), and Latin letters, ASCII digits
+  and punctuation on a Bangla page render in Jakarta (a visible change). Their unicode-range is
+  Google's Bengali range plus the space and no-break space (both in the files), so Bangla word
+  spacing and Noto's line metrics stay as they were.
+  - Measured on the Bangla login page (cold): 4 font files, 210 KB → 3 files, 192 KB, because
+    Jakarta's Latin face (27 KB) now loads instead. A page that never fetched Anek's Latin face
+    comes out about even (Jakarta's 27 KB for Noto's 26 KB), so the saving is at the low end of
+    the 18-45 KB estimated; the gain is mainly that Latin text renders as design.md describes.
+  - To change: back to `next/font/google` for both faces (one commit in PR #9).
 - **P3. The command palette loads on first use** (on the shortcut, or when a pointer, finger or
   focus reaches its button). On a slow network the very first Ctrl/⌘ K can take a moment.
   - To change: load it after the page is interactive instead (`requestIdleCallback`).
