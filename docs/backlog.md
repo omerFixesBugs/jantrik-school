@@ -180,10 +180,6 @@ are left out.
   - Refuse close from device for a section with no active student: reachable only by a direct API
     call, and the register it writes (all ABSENT, no SMS) is accurate.
   - A student inactive now shows no arrival on a past date's take screen.
-  - The today page reads "taken from the device; changed by <teacher>, <time>" where the time is
-    the register's last change, which can be the device's later change of a record (the teacher
-    stays named since the final fixes). Drop the time from that wording or label it as the last
-    change.
 - **Web, SMS and print**
   - Devices screen minors: the feed polls with no devices, partial "send to devices" failures lose
     the totals, focus after a review, a trust confirm that can vanish mid-dialog, the dashboard

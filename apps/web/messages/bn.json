@@ -470,7 +470,7 @@
     "callGuardian": "{name}-এর অভিভাবককে কল করুন",
     "tabStaff": "কর্মীদের হাজিরা",
     "takenByDevice": "ডিভাইস থেকে নেওয়া, {time}",
-    "takenByDeviceEdited": "ডিভাইস থেকে নেওয়া; {name} বদলেছেন, {time}",
+    "takenByDeviceEdited": "ডিভাইস থেকে নেওয়া; {name} বদলেছেন",
     "deviceArrived": "ডিভাইসে প্রবেশ {arrived}/{enrolled}",
     "deviceLate": "দেরি {count}",
     "deviceCutoff": "সময়সীমা {time}",

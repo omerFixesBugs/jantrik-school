@@ -470,7 +470,7 @@
     "callGuardian": "Call {name}’s guardian",
     "tabStaff": "Staff",
     "takenByDevice": "Taken from the device, {time}",
-    "takenByDeviceEdited": "Taken from the device; changed by {name}, {time}",
+    "takenByDeviceEdited": "Taken from the device; changed by {name}",
     "deviceArrived": "Punched in {arrived}/{enrolled}",
     "deviceLate": "late {count}",
     "deviceCutoff": "cutoff {time}",
