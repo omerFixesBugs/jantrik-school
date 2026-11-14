@@ -38,8 +38,13 @@ the worker log in as `jantrik_app` and `jantrik_platform_app`, the receiver as
 
 ## 2. DNS
 
-Create these records at your domain's DNS provider, all pointing at the server's IP address (A
-record; also AAAA if the server has IPv6). A low TTL (300 s) at first makes mistakes cheap.
+Create these records at your domain's DNS provider, all pointing at the server's IPv4 address
+(A records). A low TTL (300 s) at first makes mistakes cheap.
+
+**No AAAA (IPv6) records yet**, even if the server has IPv6. The compose network has no IPv6:
+Docker would hand every IPv6 visitor to the API as one address (the network's gateway), so they
+would all share one per-address rate limit. The device port is published on IPv4 only, so
+`device.` must never get an AAAA record. Enabling IPv6 end to end is a later step (below).
 
 | Name                     | For                                                        |
 | ------------------------ | ---------------------------------------------------------- |
@@ -96,14 +101,27 @@ Fill in every value of `deploy/.env.prod` (git-ignored, never commit it):
 - **Domains:** `APP_DOMAIN`, `API_DOMAIN`, `PLATFORM_DOMAIN`, `DEVICE_HOST` (a domain or the
   server's fixed IP), `ACME_EMAIL` (Let's Encrypt's expiry warnings).
 - **Passwords** (Postgres superuser, the four roles, Redis): `openssl rand -hex 24` each. Letters
-  and digits only, because they go into connection URLs as they are.
+  and digits only, because they go into connection URLs as they are. Postgres takes the
+  superuser's and the roles' passwords on its **first start only** (below).
+- **Redis memory:** `REDIS_MAXMEMORY` (default `512mb`, about an eighth of a 4 GB server). Redis
+  refuses writes beyond it rather than evicting anything, so watch it (Monitoring) and raise it
+  before it fills.
+- **Backups:** `BACKUP_HOST_DIR` (default `/srv/jantrik-backups`, outside the git checkout) and
+  the deploy user's ids `BACKUP_UID` / `BACKUP_GID` (`id -u`, `id -g`; Backups below).
 - **Secrets** (`JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY`):
   `openssl rand -base64 48 | tr -d '\n'` each, all different.
 - Keep a copy of the file in a password manager. Losing `PLATFORM_TOTP_KEY` means every platform
-  admin enrols their authenticator again; losing the role passwords means resetting them with
-  `ALTER ROLE` as the superuser.
+  admin enrols their authenticator again; losing the role passwords means resetting them as the
+  superuser (First start below).
 
-The services refuse to start with the example values or with development settings (next section).
+Nothing starts with the example values:
+
+- `deploy/compose.sh` refuses, before running any command, a settings file that still holds a
+  `CHANGE_ME` or `example.com` value, or a `*_PASSWORD` shorter than 24 characters or with
+  characters other than letters, digits and `. _ ~ -`;
+- `create-roles.sh` checks the superuser's and the roles' passwords again (step 7);
+- the API, the worker and the receiver refuse example secrets, an example or short Redis password
+  and development settings (next section).
 
 ## 6. Environment checks
 
@@ -129,6 +147,8 @@ The API and the worker refuse:
 | a secret with an example marker (`change-me`, `CHANGE_ME`, `dev-only`, `test-only`, `ci-only`, `placeholder`, `example`)         | copied from `.env.example`, `deploy/.env.prod.example`, CI or a test config, not generated                                                                                                               |
 | two of `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY` equal                                                              | one leak would open two doors                                                                                                                                                                            |
 | `DATABASE_URL`, `DATABASE_PLATFORM_URL` or `DATABASE_INGEST_URL` logging in as `jantrik_owner` or `postgres`, or naming no login | the owner and the superuser are not subject to the database's protections the app relies on                                                                                                              |
+| a password in `REDIS_URL` under 24 characters or with an example marker                                                          | the published example would open Redis (its queues and sessions) to anything on the network. A URL without a password is allowed (Redis on a private network)                                            |
+| `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                          | the owner's and the superuser's credentials and the roles' raw passwords belong to Postgres and the migrate step only                                                                                    |
 | `PLATFORM_TOTP_KEY` missing                                                                                                      | the platform admins' 2FA secrets need their own key                                                                                                                                                      |
 | `INGEST_PUBLIC_HOST` missing, localhost or `0.0.0.0`                                                                             | the device setup guide would show an address no device can dial                                                                                                                                          |
 
@@ -139,11 +159,13 @@ The device receiver refuses:
 | any of `DATABASE_URL`, `DATABASE_PLATFORM_URL`, `DATABASE_MIGRATION_URL`, `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY` in its environment | it is open to the internet without a login: code run in it must find no login that can choose an institute and no key that signs sessions |
 | `INGEST_TRUST_PROXY` `true` or a `/0` range                                                                                                         | a client could claim a school's trusted address and receive its commands                                                                  |
 | `DATABASE_INGEST_URL` as `jantrik_owner`, `postgres`, `jantrik_app` or `jantrik_platform_app`                                                       | its own login only                                                                                                                        |
-| `REDIS_URL` not set                                                                                                                                 | as for the API                                                                                                                            |
+| `REDIS_URL` not set, or with an example or short password                                                                                           | as for the API                                                                                                                            |
+| `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                                             | as for the API                                                                                                                            |
 
 Beyond these, the API checks at start-up that its platform login can run the platform functions
 and its main login cannot, and the receiver that its login cannot read a table
-([devices.md](devices.md)). The database passwords are checked by the roles script (next step).
+([devices.md](devices.md)). The database passwords are checked by `compose.sh` and the roles
+script (next step).
 
 ## 7. First start
 
@@ -176,9 +198,37 @@ the script on its first start (an empty volume) with the passwords from the sett
 - refuses passwords shorter than 24 characters, with characters a URL cannot carry, example
   values or two equal ones; and checks every role's attributes and memberships, new or found.
 
-Changing a password in the settings file later does not change the role: run
-`ALTER ROLE jantrik_app PASSWORD '...'` as the superuser too
-(`deploy/compose.sh exec postgres psql -U postgres`), then restart the services.
+The Postgres health check is a query (the roles and the production database must exist), so
+the apps never start against a half-made database.
+
+**When the first start fails** (`deploy/compose.sh logs postgres` shows a `create-roles:` error,
+and `postgres` stays "unhealthy"): Postgres has already made its data directory, so it will not
+run the roles script again by itself. Fix the settings file, then either
+
+- run the script by hand on the existing cluster (the superuser's password stays the one of the
+  first start):
+
+  ```bash
+  deploy/compose.sh up -d postgres          # recreated with the fixed settings, data kept
+  deploy/compose.sh exec -u postgres postgres sh /jantrik/postgres/create-roles.sh
+  ```
+
+- or, as nothing is stored yet, start Postgres over from an empty volume:
+
+  ```bash
+  deploy/compose.sh rm -sf postgres
+  docker volume rm jantrik-prod_postgres-data
+  deploy/compose.sh up -d postgres
+  ```
+
+**Changing a password later:** the settings file alone does not change a role or the superuser.
+Change it in Postgres too, typed at psql's hidden prompt (not on a command line, where it would
+land in the shell history and the process list), then restart the services:
+
+```bash
+deploy/compose.sh exec -u postgres postgres psql
+#   \password jantrik_app        (or jantrik_platform_app, jantrik_ingest_app, jantrik_owner, postgres)
+```
 
 **Check it:**
 
@@ -211,9 +261,13 @@ same way.
 
 - Devices dial `DEVICE_HOST` on port `INGEST_PUBLIC_PORT` (4080) over plain HTTP; the setup guide
   in the app shows both ([devices.md](devices.md) → Setting up a device).
-- The receiver sees the devices' real addresses (no proxy): keep `INGEST_TRUST_PROXY=false`. If
-  you put a TLS proxy or load balancer in front of it for devices that support HTTPS, set the hop
-  count or the proxy's address, never `true`.
+- The receiver sees the devices' real addresses (no proxy), so every `X-Forwarded-For` it gets
+  is a client's own words: the compose file fixes `INGEST_TRUST_PROXY=false`. A hop count there
+  without a proxy would be as bad as `true` (anyone could claim a school's trusted address and
+  receive its device commands). Only if you run a TLS proxy or load balancer in front of port 4080
+  (for devices that support HTTPS) set its hop count or address, in
+  `deploy/docker-compose.override.yml`; never `true`.
+- IPv4 only (DNS above).
 - Its health check asks for an unknown path and expects `404`: that proves it serves HTTP without
   touching the database or writing a log line.
 
@@ -258,9 +312,20 @@ deploy/compose.sh ps
 ## 12. Backups
 
 `deploy/compose.sh run --rm backup` runs [`deploy/backup/backup.sh`](../deploy/backup/backup.sh):
-a `pg_dump` (custom format) of the database to `BACKUP_HOST_DIR` (default `deploy/backups/`,
-git-ignored) as `jantrik-<UTC time>.dump`, checked and with a `.sha256` file; then it deletes
-backups older than `BACKUP_KEEP_DAYS` (default 14) and writes `LAST_SUCCESS`.
+a `pg_dump` (custom format) of the database to `BACKUP_HOST_DIR` (default
+`/srv/jantrik-backups`) as `jantrik-<UTC time>.dump`, checked and with a `.sha256` file; then it
+deletes backups older than `BACKUP_KEEP_DAYS` (default 14) and writes `LAST_SUCCESS`. The files
+are private (mode 600) and belong to `BACKUP_UID:BACKUP_GID`, the deploy user, so its own cron
+jobs can copy them away.
+
+Create the folder once, outside the git checkout (a `git clean` there would delete it), owned by
+the deploy user, and put that user's ids in the settings file:
+
+```bash
+sudo mkdir -p /srv/jantrik-backups && sudo chown "$(id -u):$(id -g)" /srv/jantrik-backups
+chmod 700 /srv/jantrik-backups
+id -u; id -g          # BACKUP_UID and BACKUP_GID in deploy/.env.prod
+```
 
 Every night, from the deploy user's crontab (`crontab -e`):
 
@@ -278,13 +343,17 @@ Every night, from the deploy user's crontab (`crontab -e`):
   is a placeholder hook: run on a machine with your storage tool, `backup.sh` runs it with the
   file as `$1`, e.g. `rclone copy "$1" offsite:jantrik-backups/`. The `backup` container has no
   such tool, so on this setup copy from the host after the cron job instead (e.g. a second cron
-  line `rclone copy /srv/jantrik/deploy/backups offsite:jantrik-backups`). Pick the storage
-  (the owner's decision).
+  line `rclone copy /srv/jantrik-backups offsite:jantrik-backups`, as the same user). Pick the
+  storage (the owner's decision).
 - **Not in a backup:** the roles (they belong to the cluster: `create-roles.sh` makes them first
   on a new server), the settings file (keep it in the password manager), and Redis. Redis keeps
-  sessions' revocations, rate-limit counters, OTP codes and the job queues; its AOF file on the
-  `redis-data` volume survives restarts. Losing it signs nobody out wrongly but drops queued jobs
-  and pending OTPs.
+  the revoked-session markers, the roles-cache versions, rate-limit counters, OTP codes, platform
+  login challenges, held SMS and the job queues; its AOF file on the `redis-data` volume survives
+  restarts. **Losing Redis** (a deleted volume, a new server) lets a revoked access token work
+  again until it expires (up to 15 minutes), may serve someone's old roles until their cache
+  entry is rebuilt, and drops queued jobs, held SMS and pending codes. After a restore on a new
+  server, treat it like a security event: ask admins to sign out everywhere if a revocation
+  mattered.
 
 ## 13. Restore
 
@@ -297,7 +366,7 @@ templates, a file that fails its checksum.
 
 ```bash
 deploy/compose.sh up -d postgres redis            # the roles and an empty database
-# copy the backup file into deploy/backups/, then:
+# copy the backup file (and its .sha256) into BACKUP_HOST_DIR, then:
 deploy/compose.sh run --rm --entrypoint sh backup /jantrik/backup/restore.sh /backups/<file>.dump jantrik
 deploy/compose.sh run --rm migrate                # brings the restored database up to this version
 deploy/compose.sh up -d
@@ -351,10 +420,12 @@ roles, backup and restore", on a fresh cluster set up by `create-roles.sh` with 
 - **Disk:** `df -h /` and `docker system df`; old images pile up after upgrades
   (`docker image prune` removes unused ones). Database size:
   `deploy/compose.sh exec postgres psql -U postgres -c "SELECT pg_size_pretty(pg_database_size('jantrik'))"`.
-- **Redis memory:** `deploy/compose.sh exec redis redis-cli info memory`. It never evicts a key:
-  when the server's memory runs out, writes fail loudly instead of losing sessions or jobs.
-- **Backups:** alert when `deploy/backups/LAST_SUCCESS` is older than a day, e.g. in cron:
-  `0 9 * * * find /srv/jantrik/deploy/backups/LAST_SUCCESS -mmin -1500 | grep -q . || <send an alert>`.
+- **Redis memory:** `deploy/compose.sh exec redis redis-cli info memory` (`used_memory_human`
+  against `maxmemory_human`). It never evicts a key: at `REDIS_MAXMEMORY` writes fail with an
+  OOM error (logins, jobs and rate limits stop working) instead of silently losing sessions or
+  jobs. Raise it, and the server's memory, before it gets close.
+- **Backups:** alert when `LAST_SUCCESS` in the backup folder is older than a day, e.g. in cron:
+  `0 9 * * * find /srv/jantrik-backups/LAST_SUCCESS -mmin -1500 | grep -q . || <send an alert>`.
 - **Certificates:** Caddy renews them; `deploy/compose.sh logs caddy | grep -i error` if a site
   shows a certificate warning.
 
@@ -366,10 +437,15 @@ To use a provider's Postgres 16 instead of the `postgres` service:
    admin user (it needs CREATEROLE and CREATEDB; it gives itself SET-only membership of the owner
    role to create the database):
 
+   Put the passwords in a private file rather than on the command line (where they would land in
+   the shell history and the process list):
+
    ```bash
-   PGHOST=<host> PGPORT=5432 PGUSER=<admin> PGPASSWORD=<admin password> PGSSLMODE=require \
-   DB_OWNER_PASSWORD=... DB_APP_PASSWORD=... DB_PLATFORM_PASSWORD=... DB_INGEST_PASSWORD=... \
-   sh deploy/postgres/create-roles.sh
+   install -m 600 /dev/null roles.env
+   nano roles.env      # PGHOST=..., PGPORT=5432, PGUSER=<admin>, PGPASSWORD=..., PGSSLMODE=require,
+                       # DB_OWNER_PASSWORD=..., DB_APP_PASSWORD=..., DB_PLATFORM_PASSWORD=..., DB_INGEST_PASSWORD=...
+   (set -a && . ./roles.env && sh deploy/postgres/create-roles.sh)
+   shred -u roles.env
    ```
 
 2. Create `deploy/docker-compose.override.yml` on the server (git-ignored; `deploy/compose.sh`
@@ -383,7 +459,7 @@ To use a provider's Postgres 16 instead of the `postgres` service:
 
 ## Checklist
 
-- [ ] DNS for `app.`, `platform.`, `api.`, `device.` points at the server.
+- [ ] DNS for `app.`, `platform.`, `api.`, `device.` points at the server (A records only).
 - [ ] Firewall: only 22, 80, 443 (TCP and UDP) and 4080 open; Postgres and Redis not published.
 - [ ] `deploy/.env.prod` filled with generated values, `chmod 600`, a copy in the password manager.
 - [ ] `deploy/compose.sh ps`: everything healthy; `migrate` exited 0.
@@ -392,17 +468,29 @@ To use a provider's Postgres 16 instead of the `postgres` service:
 - [ ] The first platform admin enrolled their authenticator and stored the backup codes.
 - [ ] A device (or `pnpm device:sim` from a laptop: [devices.md](devices.md)) reaches
       `device.<domain>:4080`.
-- [ ] The backup cron job ran; a backup is copied off the server; the restore drill passed.
+- [ ] `/srv/jantrik-backups` exists, owned by the deploy user; the backup cron job ran; a backup
+      is copied off the server; the restore drill passed.
 - [ ] An uptime check watches the API, the app and port 4080; someone gets its alerts.
 
 ## What needs the owner
 
 - **A provider and a server** (size above), the domain and its DNS.
 - **Real secrets and passwords** (generated on the server, never in the repo).
-- **An SMS gateway** (the backlog): until then `SMS_PROVIDER=none` and every SMS fails, so
-  guardians cannot sign in with an OTP; staff use passwords.
+- **An SMS gateway (a go-live blocker).** Until one is built, `SMS_PROVIDER=none` and every SMS
+  fails. **No institute user can sign in**: guardians sign in with an OTP, and staff too, as no
+  production path sets a staff member's password (invitations and first logins go through an OTP;
+  only the demo seed and the tests set passwords). Only platform admins can sign in. A gateway, or
+  a deliberate password-setting path, must exist before the first institute goes live.
 - **The `Origin` check in `PlatformAuthGuard`** (deployment requirement 1): an auth code change.
   The Caddy rule above is the stopgap.
 - **Off-site backup storage** and **an uptime monitor** of your choice.
+- **Recorded, not built** (decisions-pending.md → Deployment readiness):
+  - a Redis user for the receiver limited to its own keys (today it has full Redis rights, so code
+    run in it could queue jobs the worker trusts);
+  - a start-up check that fails when the app's database login is a superuser or BYPASSRLS (today
+    the env checks refuse the known admin logins by name);
+  - CI does not cover the compose Postgres's first start (initdb), the non-superuser branch of
+    `create-roles.sh` or the image builds (all checked by hand for this release);
+  - IPv6 end to end (an IPv6 compose network, then AAAA records for `app.`, `platform.`, `api.`).
 - **Later:** images built by CI and pushed to a registry (instead of building on the server), and
   a smaller `migrate` image (the Prisma CLI is a devDependency, so it carries the dev tools).

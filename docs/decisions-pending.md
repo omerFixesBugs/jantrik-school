@@ -86,19 +86,24 @@ How the "Deployment requirements (step 11)" below are now covered:
   flags. The `Origin` allowlist in `PlatformAuthGuard` is **not** built (an auth change for the
   owner); meanwhile Caddy refuses `/platform/*` API calls from any other browser origin (D9).
 - **2. Redis:** the production compose runs `--appendonly yes --appendfsync everysec
---maxmemory-policy noeviction` (plus a password, D10).
+--maxmemory-policy noeviction` with a `--maxmemory` (D10), so noeviction applies, plus a password.
 - **3. Roles and deploy order:** `deploy/postgres/create-roles.sh` creates every role before the
   first migration (D7); the compose starts the apps only after the one-shot `migrate` service
   succeeded, and the runbook's upgrade is migrations first, then restart. The optional
   `REVOKE TEMPORARY` hardening is applied in production (D7).
 - **4. The device receiver:** its own service (`node dist/ingest-main.js`) with its own variables
   only (it now refuses to start with any of the API's logins or secrets, D4), port 4080 published
-  as plain HTTP, `INGEST_TRUST_PROXY=false` (`true` refused), `INGEST_PUBLIC_HOST` from
-  `DEVICE_HOST`; `INGEST_IN_PROCESS=true` is refused in production.
+  as plain HTTP (IPv4), `INGEST_TRUST_PROXY=false` fixed in the compose file (D18; `true`
+  refused), `INGEST_PUBLIC_HOST` from `DEVICE_HOST`; `INGEST_IN_PROCESS=true` is refused in
+  production.
 
 D1. **SMS without a gateway.** Every provider refused production, so the API could not start
 there at all. New `SMS_PROVIDER=none`: every send fails, is retried and recorded as FAILED;
-nothing is sent, kept or printed. Guardians' OTP login waits for the real gateway.
+nothing is sent, kept or printed. **Until a gateway exists no institute user can sign in**
+(revised after review): guardians and staff alike need an OTP, as no production path sets a
+staff member's password (invitations and first logins go through an OTP; only the demo seed and
+the tests set passwords). Only platform admins can sign in. A go-live blocker for the owner; no
+password path was built.
 
 - To change: build the gateway provider and set it; `none` can stay for staging servers.
 
@@ -123,8 +128,9 @@ D4. **Production environment checks** (deploy.md → Environment checks): with
 `NODE_ENV=production` the API, the worker and the receiver refuse development SMS providers,
 `TRUST_PROXY`/`INGEST_TRUST_PROXY` `true` or a `/0` range, `INGEST_IN_PROCESS=true`, non-https or
 local CORS origins, example or reused secrets, runtime logins as `jantrik_owner` or `postgres`,
-and `REDIS_URL`/`TRUST_PROXY` left unset; the receiver also refuses any of the API's logins or
-secrets in its environment. The API tests and Playwright's API run with `NODE_ENV=test` (and the
+`REDIS_URL`/`TRUST_PROXY` left unset, an example or short password inside `REDIS_URL`, and
+`DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in their environment (added
+after review); the receiver also refuses any of the API's logins or secrets. The API tests and Playwright's API run with `NODE_ENV=test` (and the
 web app has no env validation), so nothing was relaxed for them and there is no override flag.
 
 - To change: `apps/api/src/config/production-env.ts` (each rule is a few lines with a test).
@@ -132,7 +138,7 @@ web app has no env validation), so nothing was relaxed for them and there is no 
 D5. **`TRUST_PROXY` must be set in production** (the compose sets `1` for Caddy). Its default
 `false` behind a proxy would make every visitor one address for the per-IP rate limits.
 
-- To change: remove it from `API_PRODUCTION_REQUIRED` in `env.ts`.
+- To change: remove it from `API_PRODUCTION_REQUIRED` in `production-env.ts`.
 
 D6. **Example secrets** are recognised by markers (`change-me`, `CHANGE_ME`, `dev-only`,
 `test-only`, `ci-only`, `placeholder`, `example`), and the three secrets must differ.
@@ -165,9 +171,12 @@ the platform's: a stopgap for the `PlatformAuthGuard` `Origin` check (owner).
 - To change: drop the `@platformFromElsewhere` rule once the guard checks the origin; another
   proxy needs the same routing (deploy.md → HTTPS).
 
-D10. **Redis has a password** (`REDIS_PASSWORD`), though only the compose network reaches it.
+D10. **Redis has a password** (`REDIS_PASSWORD`), though only the compose network reaches it,
+and a memory ceiling, `REDIS_MAXMEMORY` (default `512mb`): without one `noeviction` never applies
+and Redis grows until the kernel kills it. At the ceiling writes fail loudly.
 
-- To change: drop `--requirepass` and the password in `REDIS_URL`.
+- To change: drop `--requirepass` and the password in `REDIS_URL`; size `REDIS_MAXMEMORY` to the
+  server (about an eighth of its memory to start, leaving room for the AOF rewrite).
 
 D11. **Next.js standalone output only in the image** (`NEXT_OUTPUT=standalone`, set by the
 Dockerfile): `next start`, which CI's Playwright run uses, refuses standalone output.
@@ -185,6 +194,51 @@ D14. **The `migrate` image carries the dev tools** (about 950 MB): the Prisma CL
 devDependency of `@jantrik/db`, so its deploy includes all of them.
 
 - To change: move `prisma` to `dependencies` (a lockfile change) and deploy with `--prod`.
+
+Added after the review of the PR (2026-11-14):
+
+D15. **`deploy/compose.sh` checks the settings file first** and refuses, for every command, a
+value still holding `CHANGE_ME` or `example.com`, or a `*_PASSWORD` under 24 characters or with
+characters a URL cannot carry. The Postgres superuser and Redis passwords had no other check.
+`create-roles.sh` also checks `POSTGRES_PASSWORD` (when given) and that it differs from the
+roles'.
+
+- To change: the loop at the top of `deploy/compose.sh`.
+
+D16. **The Postgres health check is a query** (the roles and the production database exist,
+over TCP), so a first start whose roles script failed stays unhealthy and the apps never start
+against it. The runbook gives the recovery (rerun the script, or a new volume).
+
+D17. **Backups belong to the deploy user and live outside the checkout:** the `backup` service
+runs as `BACKUP_UID:BACKUP_GID` (default 1000:1000) and writes to `BACKUP_HOST_DIR` (default
+`/srv/jantrik-backups`), so the deploy user's cron jobs can copy the private (600) files away and
+a `git clean` cannot delete them.
+
+- To change: the `backup` service's `user` and volume; or run the cron jobs as root.
+
+D18. **`INGEST_TRUST_PROXY` is fixed to `false`** in the compose file and gone from the
+settings file: nothing proxies port 4080, and a hop count with direct devices trusts the
+client-written `X-Forwarded-For` as much as `true` does.
+
+- To change: only behind a proxy you run in front of port 4080, in
+  `deploy/docker-compose.override.yml`.
+
+D19. **IPv4 only for now:** no AAAA records (never for `device.`). The compose network has no
+IPv6, so Docker would show every IPv6 visitor to the API as one address (one rate-limit bucket);
+port 4080 is published on IPv4 only.
+
+- To change: an IPv6 compose network (checked end to end), then AAAA records for `app.`,
+  `platform.` and `api.`.
+
+Recorded for the owner, not built:
+
+- **A Redis user for the receiver** limited to its own keys (Redis ACL). Today it has full Redis
+  rights, so code run in it could queue jobs the worker trusts.
+- **A start-up check that fails when the app's database login is a superuser or BYPASSRLS** (and
+  the same for the platform and receiver logins). Today the env checks refuse the known admin
+  logins by name, and the platform and receiver logins have their own start-up checks.
+- **CI coverage** of the compose Postgres's first start (initdb), the non-superuser branch of
+  `create-roles.sh` and the image builds (each checked by hand for this PR).
 
 ## Exams and results (step 10)
 
