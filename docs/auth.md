@@ -303,12 +303,18 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
     exist. Otherwise it does nothing and `AuthClient` restores as before.
   - It holds `jantrik-refresh`, reuses a session another tab broadcast while it waited, and
     broadcasts the session it got.
-  - It keeps listening until the hand-over. A logout heard meanwhile beats its own session (that
-    session is not broadcast either), and a later session from another tab (an institute switch)
-    beats anything before it.
+  - It keeps listening until the hand-over. Anything it hears after sending its refresh is newer
+    than that refresh and wins: a logout (which probably revoked the session it got), or another
+    tab's login or institute switch (refreshes take the lock, so a session heard then is one of
+    those). Its own result is then neither used nor broadcast.
+  - Only `AuthClient`'s first restore (`bootstrap()`) takes the result: timer, visibility and
+    401-retry refreshes always go to the API. A session or sign-out that reaches `AuthClient`
+    another way first (a broadcast, a login) drops the hand-over, and anything its own channel
+    heard before the result arrived wins over it.
   - Its 401 is handled exactly like `AuthClient`'s own (sign out everywhere). A network error or
-    5xx makes `AuthClient` restore the usual way. Anything `AuthClient`'s own channel heard
-    before the hand-over wins over the script's result.
+    another status is reported like `AuthClient`'s own too: the "unreachable" screen and retries
+    with backoff, not a second request at once. Only a failure of the script itself (an
+    unreadable answer) makes `AuthClient` refresh at once.
   - **Switch:** `JANTRIK_BOOT_REFRESH=off` (also `false`, `0`, `no`) on the web server leaves
     the script out from the next request on, with no rebuild. Off is the previous behaviour: no
     script, and `AuthClient` and `useMeContext` take their usual path.

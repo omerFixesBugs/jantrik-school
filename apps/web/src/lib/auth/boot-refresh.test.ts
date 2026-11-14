@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { authBody, broadcastSession, installFakeBrowser } from './fake-browser';
+import {
+  authBody,
+  broadcastSession,
+  installFakeBrowser,
+  uninstallFakeBrowser,
+  type Call,
+} from './fake-browser';
 import {
   bootRefreshEnabled,
+  bootRefreshFor,
   bootRefreshScript,
   takeBootMeContext,
   takeBootSession,
@@ -12,10 +19,7 @@ const API = 'http://localhost:4000';
 const run = (followHost = false) => new Function(bootRefreshScript(API, followHost))();
 const context = (tenantId = 't1') => ({ tenant: { id: tenantId, name: 'School' }, labels: {} });
 
-afterEach(() => {
-  delete (globalThis as { __jantrikBoot?: unknown }).__jantrikBoot;
-  vi.unstubAllGlobals();
-});
+afterEach(uninstallFakeBrowser);
 
 describe('the boot refresh script', () => {
   it.each([
@@ -115,15 +119,26 @@ describe('the boot refresh script', () => {
   });
 
   it.each([
-    ['a 5xx', (c: { reply(s: number): void; fail(): void }) => c.reply(503)],
-    ['a network error', (c: { reply(s: number): void; fail(): void }) => c.fail()],
-  ])('%s is an error, left to AuthClient', async (_, answer) => {
+    ['a 5xx', (c: Call) => c.reply(503), 503],
+    ['a 429', (c: Call) => c.reply(429), 429],
+    ['a network error', (c: Call) => c.fail(), 0],
+  ])('%s is an error with its status, for AuthClient to report', async (_, answer, status) => {
     const b = installFakeBrowser();
     run();
     await b.untilCalls(1);
     answer(b.calls[0]!);
-    expect(await takeBootSession()).toMatchObject({ type: 'error' });
+    expect(await takeBootSession()).toMatchObject({ type: 'error', status });
     expect(b.heard).toEqual([]);
+  });
+
+  it('an unreadable answer is the script failing: an error without a status', async () => {
+    const b = installFakeBrowser();
+    run();
+    await b.untilCalls(1);
+    b.calls[0]!.reply(200); // no body
+    const result = await takeBootSession();
+    expect(result).toMatchObject({ type: 'error' });
+    expect(result).not.toHaveProperty('status');
   });
 
   it("reuses another tab's session broadcast while it waited for the lock", async () => {
@@ -202,6 +217,23 @@ describe('the boot refresh script', () => {
     expect(await takeBootMeContext({ accessToken: 'tok-2' }, 't2')).toBeNull();
   });
 
+  it('an institute switch heard while its refresh is on its way beats its own session, which is not broadcast', async () => {
+    const b = installFakeBrowser();
+    run();
+    await b.untilCalls(1);
+    b.otherTab.post({ type: 'session', session: broadcastSession('tok-2', 't2') });
+    await b.settle();
+    b.calls[0]!.reply(200, authBody('tok-1', 't1'));
+    await b.untilCalls(2);
+    expect(b.calls[1]!.init.headers).toMatchObject({ Authorization: 'Bearer tok-2' });
+    expect(await takeBootSession()).toMatchObject({
+      type: 'session',
+      session: { accessToken: 'tok-2', tenant: { id: 't2' } },
+    });
+    // The switching tab is not sent back to the old institute.
+    expect(b.heard).toEqual([]);
+  });
+
   it("another tab's session heard during a failed refresh beats the failure", async () => {
     const b = installFakeBrowser();
     run();
@@ -250,9 +282,21 @@ describe('the boot refresh script', () => {
       '</script>',
     );
   });
+
+  it('ships without its comments and indentation (it is sent twice)', () => {
+    const script = bootRefreshScript(API, false);
+    expect(script).not.toMatch(/^\s*\/\//m);
+    expect(script).not.toMatch(/^[ \t]/m);
+    expect(script.length).toBeLessThan(3000);
+  });
 });
 
 describe('the switch (JANTRIK_BOOT_REFRESH)', () => {
+  it('the layout gets no script when it is off, the script when it is on', () => {
+    expect(bootRefreshFor('off', API, false)).toBeNull();
+    expect(bootRefreshFor(undefined, API, false)).toBe(bootRefreshScript(API, false));
+  });
+
   it.each([undefined, '', 'on', 'true', '1'])('%s: on', (value) => {
     expect(bootRefreshEnabled(value)).toBe(true);
   });

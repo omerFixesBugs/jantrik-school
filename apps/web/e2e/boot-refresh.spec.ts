@@ -75,22 +75,43 @@ test('two tabs opened together: the refreshes never overlap and the session surv
     await expect(tab.getByTestId('institute-name')).toHaveText(DEMO.shaplaName);
   }
 
-  // Each refresh ran alone (the Web Lock): one ended before the next started.
-  const spans = await Promise.all(
-    calls
-      .flatMap((c) => c.refreshes)
-      .map(async (r) => {
-        await r.response();
-        const t = r.timing();
-        return { start: t.startTime, end: t.startTime + t.responseEnd };
-      }),
+  const refreshes = calls.flatMap((c) => c.refreshes);
+  expect(refreshes.length).toBeGreaterThanOrEqual(1);
+
+  // No refresh token was presented twice. (The API would not notice within its 30 s retry
+  // window, so read what each request sent.)
+  const seen = await Promise.all(
+    refreshes.map(async (r) => {
+      const response = await r.response();
+      const t = r.timing();
+      return {
+        token: /jantrik_rt=([^;]+)/.exec((await r.allHeaders())['cookie'] ?? '')?.[1]?.slice(0, 12),
+        status: response?.status(),
+        start: t.startTime,
+        end: t.startTime + t.responseEnd,
+      };
+    }),
   );
-  spans.sort((a, b) => a.start - b.start);
-  for (let i = 1; i < spans.length; i++) {
-    expect(spans[i]!.start).toBeGreaterThanOrEqual(spans[i - 1]!.end);
+  const report = JSON.stringify(seen);
+  expect(
+    seen.every((s) => s.token),
+    report,
+  ).toBe(true);
+  const inOrder = [...seen].sort((a, b) => a.start - b.start);
+  // A token the API accepted (and so rotated) is never presented again. (After a failed attempt
+  // the same token is still current, so a retry may present it.)
+  const rotated = new Set<string>();
+  for (const s of inOrder) {
+    expect(rotated.has(s.token!), report).toBe(false);
+    if (s.status === 200) rotated.add(s.token!);
   }
 
-  // No refresh token was presented twice (that would revoke the session): reloading still works.
+  // Each refresh ran alone (the Web Lock): one ended before the next started.
+  for (let i = 1; i < inOrder.length; i++) {
+    expect(inOrder[i]!.start, report).toBeGreaterThanOrEqual(inOrder[i - 1]!.end);
+  }
+
+  // And the session still works after both.
   await tabs[0]!.reload();
   await expect(tabs[0]!.getByTestId('institute-name')).toHaveText(DEMO.shaplaName);
 });

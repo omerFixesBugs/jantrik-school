@@ -35,10 +35,23 @@ export interface FakeBrowser {
   untilCalls(n: number): Promise<void>;
 }
 
+/** Deliveries still queued by the current fake: cancelled when a test ends or a new fake starts. */
+let pending: ReturnType<typeof setTimeout>[] = [];
+
+/** Undo installFakeBrowser: drop queued deliveries, restore the globals. */
+export function uninstallFakeBrowser(): void {
+  pending.forEach(clearTimeout);
+  pending = [];
+  delete (globalThis as { __jantrikBoot?: unknown }).__jantrikBoot;
+  vi.unstubAllGlobals();
+}
+
 export function installFakeBrowser(
   opts: { hint?: boolean; locks?: boolean; channel?: boolean } = {},
 ): FakeBrowser {
   const { hint = true, locks = true, channel = true } = opts;
+  pending.forEach(clearTimeout);
+  pending = [];
 
   // ── cookies ──
   const jar = new Map<string, string>();
@@ -89,7 +102,7 @@ export function installFakeBrowser(
       if (this !== other) heard.push(copy);
       for (const ch of open) {
         if (ch !== this && ch.name === this.name) {
-          setTimeout(() => ch.listeners.forEach((l) => l({ data: copy })), 0);
+          pending.push(setTimeout(() => ch.listeners.forEach((l) => l({ data: copy })), 0));
         }
       }
     }

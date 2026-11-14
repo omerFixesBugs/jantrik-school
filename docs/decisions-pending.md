@@ -344,12 +344,29 @@ while building it (`perf/step-12-boot-refresh`):
   `0` or `no` turn it off; anything else, or unset, is on). The production compose passes it to
   the web container; `deploy/compose.sh up -d web` applies a change with no rebuild.
   - To change: `bootRefreshEnabled` in `apps/web/src/lib/auth/boot-refresh.ts`.
-- **B3. Who wins at the hand-over:** a logout heard from another tab beats the script's own
-  session (and that session is not broadcast); another tab's session heard later (an institute
-  switch, a login) beats anything before it, including the script's own 401 or network error;
-  anything `AuthClient`'s own channel heard before it took the result over beats the result. In
-  the plan's words "the boot result is checked against a logout broadcast"; the other two rules
-  keep a tab that was still loading in step with the others.
+- **B3. Who wins at the hand-over:** anything the script hears after sending its refresh beats
+  that refresh's result, which is then neither used nor broadcast: a logout (it probably revoked
+  the session), or another tab's login or institute switch (refreshes take the lock, so a
+  session heard then is one of those). Anything `AuthClient`'s own channel heard before it took
+  the result over beats the result, and a session that reaches `AuthClient` before its restore
+  drops the hand-over. In the plan's words "the boot result is checked against a logout
+  broadcast"; the other rules keep a tab that was still loading in step with the others (the
+  review found an institute switch heard mid-refresh sent the switching tab back).
+- **B7. Failures are reported like AuthClient's own:** a network error or another status from
+  the boot refresh shows "unreachable" and retries with backoff (no second request at once, so a
+  429's wait or an overloaded API is respected). Only the script's own failure (an unreadable
+  answer) makes `AuthClient` refresh at once.
+- **B8. Not done: `keepalive` on the refresh.** A refresh aborted after the API rotated the token
+  but before the cookie arrived (the tab closed mid-load) leaves the old token in the browser;
+  presented again after 30 s it revokes the session. That was already true of `AuthClient`'s
+  refresh; the boot refresh runs in the first second of a load, when people abandon more often.
+  `fetch(…, { keepalive: true })` would let the browser finish it, but keepalive with a CORS
+  preflight is not dependable on every browser the app targets, so it is in backlog.md →
+  Performance for a check on real phones first.
+- **B9. The hand-over global (`window.__jantrikBoot`) is a plain property.** Replacing it needs
+  script in the page, which could already broadcast a session on the BroadcastChannel or call
+  `/auth/refresh` itself; a frozen property would also stop the tests from running the script
+  more than once.
 - **B4. The early `/me/context` is used only for the exact session it was fetched with** (same
   access token) **and the page's institute;** otherwise the shell fetches it as before. A tab
   that was still loading during an institute switch therefore opens on the new institute, with

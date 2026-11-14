@@ -108,17 +108,23 @@ export class AuthClient {
 
   /** Restore the session from the refresh cookie (first load, reload). */
   bootstrap(): Promise<Session | null> {
-    return this.session ? Promise.resolve(this.session) : this.refresh();
+    if (this.session) return Promise.resolve(this.session);
+    if (this.inflight) return this.inflight;
+    // The boot script's refresh (boot-refresh.ts), started while the JavaScript downloaded: only
+    // this restore takes it, once. Without it (switched off, a public page, a client-side
+    // navigation) this is the restore as it always was.
+    const boot = takeBootSession();
+    if (!boot) return this.refresh();
+    this.inflight = this.fromBoot(boot).finally(() => {
+      this.inflight = null;
+    });
+    return this.inflight;
   }
 
   /** Refresh the access token, serialised across tabs. Resolves null when signed out. */
   refresh(): Promise<Session | null> {
     if (this.inflight) return this.inflight;
-    // The boot script's refresh (boot-refresh.ts), started while the JavaScript downloaded: the
-    // first restore takes it, once. Without it (switched off, a public page, a client-side
-    // navigation) this is the refresh as it always was.
-    const boot = takeBootSession();
-    this.inflight = (boot ? this.fromBoot(boot) : this.refreshUnderLock()).finally(() => {
+    this.inflight = this.refreshUnderLock().finally(() => {
       this.inflight = null;
     });
     return this.inflight;
@@ -153,8 +159,8 @@ export class AuthClient {
 
   /**
    * The boot script's outcome, taken over as if this client had refreshed itself. The script took
-   * the same lock, followed the same reuse rule and already broadcast its session, so nothing is
-   * broadcast again.
+   * the same lock and followed the same reuse rule, and the session it hands over was broadcast
+   * already (by the script, or by the tab it heard it from), so nothing is broadcast again.
    */
   private async fromBoot(boot: Promise<BootResult>): Promise<Session | null> {
     const result = await boot.catch((): BootResult => ({ type: 'error', at: Date.now() }));
@@ -174,9 +180,22 @@ export class AuthClient {
         this.emit({ type: 'signed-out' });
         return null;
       default:
-        // A network error or another status: restore the usual way (retries, "unreachable").
-        return this.refreshUnderLock();
+        // The script itself failed: refresh now.
+        if (result.status === undefined) return this.refreshUnderLock();
+        // A network error or another status: thrown as refreshUnderLock would, so AuthProvider
+        // shows "unreachable" and retries with backoff (no second request at once).
+        if (result.status === 0) throw new NetworkError();
+        throw await toApiError(new Response(null, { status: result.status }));
     }
+  }
+
+  /**
+   * A session or a sign-out reached this client another way (a broadcast, a login, its own
+   * refresh): a boot result not taken yet is out of date. Taking it also closes the script's
+   * channel.
+   */
+  private dropBoot(): void {
+    void takeBootSession()?.catch(() => undefined);
   }
 
   /** POST a login endpoint (`/auth/otp/verify`, `/auth/login`) with `client: 'web'`. */
@@ -289,6 +308,7 @@ export class AuthClient {
   // ── internals ──
 
   private adopt(session: Session, opts: { broadcast: boolean }): Session {
+    this.dropBoot();
     this.session = session;
     setHintCookie(true);
     this.scheduleRefresh();
@@ -327,6 +347,7 @@ export class AuthClient {
   }
 
   private clear(): void {
+    this.dropBoot();
     this.session = null;
     clearTimeout(this.timer);
     setHintCookie(false);

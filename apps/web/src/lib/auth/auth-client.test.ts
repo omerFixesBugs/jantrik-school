@@ -1,11 +1,36 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, NetworkError } from '../api/errors';
 import { AuthClient, type AuthEvent } from './auth-client';
 import { bootRefreshScript, type BootHandover, type BootResult } from './boot-refresh';
-import { authBody, broadcastSession, installFakeBrowser, type FakeBrowser } from './fake-browser';
+import {
+  authBody,
+  broadcastSession,
+  installFakeBrowser,
+  uninstallFakeBrowser,
+  type Call,
+  type FakeBrowser,
+} from './fake-browser';
 
 const API = 'http://localhost:4000';
 const runBootScript = () => new Function(bootRefreshScript(API, false))();
 const refreshes = (b: FakeBrowser) => b.calls.filter((c) => c.url === `${API}/auth/refresh`);
+
+/** A hand-over whose result the test settles later; taken once, like the script's. */
+function lateHandover(): (result: BootResult) => void {
+  let resolve!: (result: BootResult) => void;
+  const result = new Promise<BootResult>((r) => (resolve = r));
+  let taken = false;
+  const handover: BootHandover = {
+    session: () => {
+      if (taken) return null;
+      taken = true;
+      return result;
+    },
+    me: () => null,
+  };
+  window.__jantrikBoot = handover;
+  return resolve;
+}
 
 function client() {
   const c = new AuthClient();
@@ -14,10 +39,7 @@ function client() {
   return { c, events };
 }
 
-afterEach(() => {
-  delete (globalThis as { __jantrikBoot?: unknown }).__jantrikBoot;
-  vi.unstubAllGlobals();
-});
+afterEach(uninstallFakeBrowser);
 
 describe('AuthClient without the boot script (switched off, public pages): as before', () => {
   it('restores with its own refresh, broadcasts it and sets the hint', async () => {
@@ -101,17 +123,70 @@ describe('AuthClient taking over the boot refresh', () => {
     expect(refreshes(b)).toHaveLength(1);
   });
 
-  it('after a boot network error or 5xx it restores the usual way', async () => {
+  it.each([
+    ['a network error', (c: Call) => c.fail(), NetworkError],
+    ['a 503', (c: Call) => c.reply(503), ApiError],
+  ])(
+    'a boot refresh ending in %s is reported as its own would be; the retry goes to the API',
+    async (_, answer, error) => {
+      const b = installFakeBrowser();
+      runBootScript();
+      await b.untilCalls(1);
+      answer(b.calls[0]!);
+      const { c } = client();
+      await expect(c.bootstrap()).rejects.toBeInstanceOf(error); // → "unreachable", backoff
+      await b.settle();
+      expect(refreshes(b)).toHaveLength(1); // no second request at once
+      const retried = c.bootstrap();
+      await b.untilCalls(2);
+      refreshes(b)[1]!.reply(200, authBody('tok-2'));
+      expect(await retried).toMatchObject({ accessToken: 'tok-2' });
+    },
+  );
+
+  it('a failure of the script itself (an unreadable answer): its own refresh at once', async () => {
     const b = installFakeBrowser();
     runBootScript();
     await b.untilCalls(1);
-    b.calls[0]!.fail();
+    b.calls[0]!.reply(200); // no body
     const { c } = client();
     const restored = c.bootstrap();
     await b.untilCalls(2);
-    expect(b.calls[1]!.url).toBe(`${API}/auth/refresh`);
     b.calls[1]!.reply(200, authBody('tok-2'));
     expect(await restored).toMatchObject({ accessToken: 'tok-2' });
+  });
+
+  it('a session that reaches it before its restore drops the hand-over: later refreshes go to the API', async () => {
+    const b = installFakeBrowser();
+    const { c } = client(); // created during the first render
+    runBootScript();
+    await b.untilCalls(1);
+    b.calls[0]!.reply(200, authBody('tok-1'));
+    await b.settle(); // the script's broadcast reaches the client before its restore effect runs
+    expect(c.getSession()).toMatchObject({ accessToken: 'tok-1' });
+    expect(window.__jantrikBoot!.session()).toBeNull(); // dropped (and its channel closed)
+    expect(await c.bootstrap()).toMatchObject({ accessToken: 'tok-1' });
+
+    // The scheduled refresh (or a 401's retry) reaches the API, never a stale hand-over.
+    const before = refreshes(b).length;
+    const again = c.refresh();
+    await b.settle();
+    expect(refreshes(b)).toHaveLength(before + 1);
+    refreshes(b).at(-1)!.reply(200, authBody('tok-2'));
+    expect(await again).toMatchObject({ accessToken: 'tok-2' });
+  });
+
+  it("two restores at once (React's double effect in development) share one hand-over", async () => {
+    const b = installFakeBrowser();
+    runBootScript();
+    await b.untilCalls(1);
+    const { c } = client();
+    const first = c.bootstrap();
+    const second = c.bootstrap();
+    b.calls[0]!.reply(200, authBody('tok-1'));
+    expect(await first).toMatchObject({ accessToken: 'tok-1' });
+    expect(await second).toMatchObject({ accessToken: 'tok-1' });
+    expect(refreshes(b)).toHaveLength(1);
   });
 
   it('a boot "logout" (another tab signed out) signs this tab out without broadcasting', async () => {
@@ -132,12 +207,7 @@ describe('AuthClient taking over the boot refresh', () => {
     const b = installFakeBrowser();
     // A hand-over whose result arrives late, after this tab's client already heard a logout
     // (the two channels of one tab receive a message as separate tasks).
-    let resolve!: (r: BootResult) => void;
-    const handover: BootHandover = {
-      session: () => new Promise<BootResult>((r) => (resolve = r)),
-      me: () => null,
-    };
-    window.__jantrikBoot = handover;
+    const resolve = lateHandover();
     const { c, events } = client();
     const restored = c.bootstrap();
     b.otherTab.post({ type: 'logout' });
@@ -150,11 +220,7 @@ describe('AuthClient taking over the boot refresh', () => {
 
   it("another tab's session heard before the hand-over is the one kept", async () => {
     const b = installFakeBrowser();
-    let resolve!: (r: BootResult) => void;
-    window.__jantrikBoot = {
-      session: () => new Promise<BootResult>((r) => (resolve = r)),
-      me: () => null,
-    };
+    const resolve = lateHandover();
     const { c } = client();
     const restored = c.bootstrap();
     b.otherTab.post({ type: 'session', session: broadcastSession('tok-2', 't2') });
