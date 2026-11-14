@@ -686,9 +686,9 @@ describe('ingest functions', () => {
             data: { tenantId: a, serialNo: old.serialNo, name: 'New gate', direction: 'IN' },
           });
           // The admin's transaction id: the call below waits for exactly this one.
-          const [{ xid }] = await tx.$queryRaw<{ xid: string }[]>`
+          const [own] = await tx.$queryRaw<{ xid: string }[]>`
             SELECT pg_current_xact_id()::xid::text AS xid`;
-          registered(xid);
+          registered(own!.xid);
           await go;
           return replacement;
         },
