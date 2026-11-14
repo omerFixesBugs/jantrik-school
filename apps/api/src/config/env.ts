@@ -76,6 +76,11 @@ export const envSchema = z
      */
     SMS_PROVIDER: z.enum(['console', 'memory', 'outbox', 'none']).default('console'),
     /**
+     * Process the queues' jobs in this process (default). `false` for an API next to a separate
+     * worker process (`worker-main.js`), which must keep it on.
+     */
+    QUEUE_WORKERS: z.stringbool().default(true),
+    /**
      * Tests only: a fixed "today" (YYYY-MM-DD) for every calendar date the API works out (the
      * end-to-end suite sets it; `todayIn` in @jantrik/shared reads it). Timestamps stay real.
      * Refused in any other NODE_ENV.
