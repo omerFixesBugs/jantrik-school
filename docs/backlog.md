@@ -131,8 +131,6 @@ are left out.
     staff member's punches made before their ID was set build no staff day (the feed's "set an ID"
     invites exactly this); it heals on their next punch that day. Students are fine (arrivals read
     raw punches).
-  - Drop an id from `devices:tenants` whose institute no longer exists (M7): retention logs a
-    failure for it every night and the tick skips it silently.
   - A tick duration metric before many schools turn auto-mark on (M8): every held-back section is
     re-evaluated each minute for an hour (punch lock and `idsOnDevices`), in one sequential job over
     all institutes. Fine at today's size.

@@ -142,11 +142,17 @@ export class DevicesProcessor extends WorkerHost implements OnModuleInit {
 
   /**
    * Retention for every institute listed for devices, ATTENDANCE on or not (data minimisation).
-   * One failing stops none of the rest; it stays listed and is visited again the next day.
+   * One failing stops none of the rest; it stays listed and is visited again the next day. An
+   * institute that no longer exists leaves the list (the tick and this job skip it from then on).
    */
   async expireAll(): Promise<void> {
     for (const tenantId of await this.redis.zrange(DEVICES_TENANTS_KEY, 0, -1)) {
       try {
+        if (!(await this.runner.run(tenantId, () => this.retention.instituteExists()))) {
+          await this.redis.zrem(DEVICES_TENANTS_KEY, tenantId);
+          this.logger.warn(`Institute ${tenantId} no longer exists: no longer listed for devices`);
+          continue;
+        }
         await this.expire(tenantId);
       } catch (error) {
         // Not the message: database errors can contain row values.

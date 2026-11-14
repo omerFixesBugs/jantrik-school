@@ -568,7 +568,8 @@ OWNER/ADMIN, under Attendance → Staff (`/attendance/staff`).
 - **Raw punches** are kept for the institute's `punch_retention_days` (setting, default 730,
   30–3650). The daily `expire-punches` job (00:40 Asia/Dhaka) visits every institute in
   `devices:tenants`, attendance on or not, each in its own transactions, and deletes punches whose
-  day is before today − that setting, oldest first, 5000 per transaction.
+  day is before today − that setting, oldest first, 5000 per transaction. An institute that no
+  longer exists is taken off `devices:tenants` instead (a warning names it).
 - **The database floor:** the app can never delete a punch from the last 30 days (restrictive
   policy `retention_only`, by the database's own date, so it can be a day behind the institute's).
   Raw columns can never be updated.

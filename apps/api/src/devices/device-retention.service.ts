@@ -21,6 +21,16 @@ export class DeviceRetentionService {
   ) {}
 
   /**
+   * Whether the job's institute still exists (its own row, read in its context). An institute
+   * that is gone has nothing left to process or delete.
+   */
+  async instituteExists(): Promise<boolean> {
+    const [row] = await this.db.tx.$queryRaw<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM tenants WHERE id = app_current_tenant_id()`;
+    return (row?.n ?? 0) > 0;
+  }
+
+  /**
    * Up to `limit` punches from before today − `punch_retention_days`, oldest first; how many were
    * deleted. The database never lets the app delete a punch from the last 30 days (policy
    * `retention_only`, by its own current_date, which can be a day behind the institute's today).

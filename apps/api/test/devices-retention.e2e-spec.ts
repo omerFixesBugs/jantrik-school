@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import { addDays, dateFromDb, todayIn, type IsoDate } from '@jantrik/shared';
 import type { Job } from 'bullmq';
@@ -281,6 +282,22 @@ describe('device retention (expire-punches)', () => {
     expect(lines).toContain(`Device retention failed for ${broken.id}: Error`);
     expect(lines.join('\n')).not.toContain('a row value');
     expect(await h.redis.zscore(DEVICES_TENANTS_KEY, broken.id)).not.toBeNull();
+  });
+
+  it('an institute that no longer exists leaves the list, with no error; the others stay', async () => {
+    const fine = await createTenant(h, { modules: ['ATTENDANCE'] });
+    const gone = randomUUID();
+    const errors = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const warnings = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await list(gone, fine.id);
+
+    await runJob();
+    expect(await h.redis.zscore(DEVICES_TENANTS_KEY, gone)).toBeNull();
+    expect(await h.redis.zscore(DEVICES_TENANTS_KEY, fine.id)).not.toBeNull();
+    expect(errors).not.toHaveBeenCalled();
+    expect(warnings.mock.calls.map((c) => String(c[0]))).toContain(
+      `Institute ${gone} no longer exists: no longer listed for devices`,
+    );
   });
 
   it('the database refuses the app deleting a punch from the last 30 days (policy retention_only)', async () => {
