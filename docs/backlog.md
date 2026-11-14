@@ -215,14 +215,16 @@ interleaved, with `apps/web/perf/measure.mjs`. Step 12 (day run of 2026-11-13, P
   (210 KB). Tried and not kept: not preloading Noto Sans Bengali and starting both Bangla faces
   when the app hydrates (interleaved, the medians were equal or up to 0.8 s worse on the four
   pages measured, the ranges overlapping).
+- **CORS preflights cached for 2 h** (part B of [plans/step-12-auth.md](plans/step-12-auth.md),
+  approved 2026-11-14): repeated calls skip the `OPTIONS` round trip; the first load is unchanged.
 
 Still open:
 
 ### 1. The session and data waterfall (the largest part left)
 
 After the JavaScript, the refresh, `GET /me/context` and the page's requests run one after
-another, each with a CORS preflight. The plan to start the session earlier, cache preflights and
-(later) serve the API on the app's origin is in [plans/step-12-auth.md](plans/step-12-auth.md),
+another, each with a CORS preflight on a cold load. The plan to start the session earlier (A) and
+(later) serve the API on the app's origin (C) is in [plans/step-12-auth.md](plans/step-12-auth.md),
 waiting for the owner (auth change).
 
 ### 2. After the first screen

@@ -32,6 +32,11 @@ export function configureApp(app: INestApplication): void {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Jantrik-Client', 'X-Jantrik-Tenant'],
     // Lets the web app show a countdown for 429 responses.
     exposedHeaders: ['Retry-After'],
+    // Every call from the web app is preflighted (another origin, Authorization or
+    // X-Jantrik-Client); browsers may reuse the answer for 2 h (Chrome's ceiling) instead of 5 s.
+    // A narrower CORS_ORIGINS reaches tabs that already cached an answer up to 2 h later
+    // (docs/plans/step-12-auth.md, part B).
+    maxAge: 7200,
   });
   app.enableShutdownHooks();
 }

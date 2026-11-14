@@ -1,10 +1,12 @@
 # Step 12: start the session sooner (a plan for the owner's review)
 
-**Status: plan only, not implemented.** The owner asked on 2026-11-13 for the "start the session
-refresh earlier" idea to be written up for review, not built. Everything here touches auth
-(`apps/web/src/lib/auth/auth-client.ts`, the refresh cookie, CORS), so it needs approval first
-(CLAUDE.md). The rest of step 12 (smaller JavaScript, translations per route, the size budget)
-is in PR #9 and changes no auth code.
+**Status: B approved and built (2026-11-14); A and C still a plan.** The owner asked on
+2026-11-13 for the "start the session refresh earlier" idea to be written up for review, not
+built. Everything here touches auth (`apps/web/src/lib/auth/auth-client.ts`, the refresh cookie,
+CORS), so it needs approval first (CLAUDE.md). On 2026-11-14 the owner approved part B as written
+(`maxAge: 7200`); it is in PR #9 with a test (`apps/api/test/cors.e2e-spec.ts`). The rest of
+step 12 (smaller JavaScript, translations per route, the size budget, the fonts) changes no auth
+code.
 
 ## Why
 
@@ -50,7 +52,7 @@ that promise to `useMeContext` as its first data (same query key), so step 3 ove
 so the page's own requests start right after hydration: about two to four round trips (plus
 their preflights) off the critical path on slow 4G, roughly 0.5-1 s on the budget pages.
 
-### B. Cache CORS preflights
+### B. Cache CORS preflights (approved and built, 2026-11-14)
 
 `app.enableCors({ maxAge: 7200 })` (Chrome honours at most 2 h). Repeated calls to the same URL
 in a session (polling, refetches, coming back to a page) skip the `OPTIONS` round trip. It does
@@ -83,7 +85,7 @@ plus two-tab and logout-race cases; the step 12 A/B before and after, interleave
 ## What the owner decides
 
 1. A (boot refresh): yes / no; with or without the early `/me/context`.
-2. B (preflight cache, 2 h): yes / no, or a shorter time.
+2. B (preflight cache, 2 h): **yes, 2 h** (2026-11-14; built in PR #9).
 3. C (same-origin API): now, with the deployment, or not.
 
 ## Numbers

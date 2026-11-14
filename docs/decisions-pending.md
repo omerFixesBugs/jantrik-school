@@ -326,7 +326,10 @@ Decided while the owner was away (each one in PR #9, which is not merged):
     deliberate change).
 - **P7. The "start the session refresh earlier" idea is not built:** the plan is in
   [plans/step-12-auth.md](plans/step-12-auth.md), with the CORS preflight cache and the
-  same-origin API as related options. No auth, CORS or database change is in PR #9.
+  same-origin API as related options. Of these the owner approved part B on 2026-11-14: the API
+  lets browsers cache its CORS preflight answers for 2 h (`maxAge: 7200` in
+  `apps/api/src/app.setup.ts`, with a test). Parts A and C are still open. No other auth, CORS or
+  database change is in PR #9.
 
 ## Devices and staff attendance (step 11)
 
