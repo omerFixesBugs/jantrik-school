@@ -1,7 +1,7 @@
 import { isoDateSchema } from '@jantrik/shared';
 import { z } from 'zod';
 import { ingestReceiverFields, positiveInt } from './ingest-env.js';
-import { apiProductionProblems, formatProblems, missingInProduction } from './production-env.js';
+import { apiEnvironmentProblems, apiProductionProblems, formatProblems } from './production-env.js';
 
 /** The receiver runs inside the API unless told otherwise; production runs it as its own process. */
 const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_ENV: string }) =>
@@ -178,20 +178,15 @@ export const envSchema = z
 
 export type Env = z.infer<typeof envSchema>;
 
-/**
- * Production must set these itself: their defaults (Redis on localhost, no proxy in front) suit a
- * developer's machine only.
- */
-export const API_PRODUCTION_REQUIRED = ['REDIS_URL', 'TRUST_PROXY'] as const;
-
 export function validateEnv(config: Record<string, unknown>): Env {
   const result = envSchema.safeParse(config);
-  const missing =
-    config['NODE_ENV'] === 'production' ? missingInProduction(config, API_PRODUCTION_REQUIRED) : [];
-  if (!result.success || missing.length > 0) {
+  // What the environment holds: the variables production must set, none of the database's
+  // admin secrets (production-env.ts).
+  const given = config['NODE_ENV'] === 'production' ? apiEnvironmentProblems(config) : [];
+  if (!result.success || given.length > 0) {
     const errors = [
       ...(result.success ? [] : [z.prettifyError(result.error)]),
-      ...(missing.length > 0 ? [formatProblems(missing)] : []),
+      ...(given.length > 0 ? [formatProblems(given)] : []),
     ];
     throw new Error(`Invalid environment variables:\n${errors.join('\n')}`);
   }

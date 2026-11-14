@@ -89,6 +89,73 @@ export function missingInProduction(
     .map((key) => ({ path: key, message: `${key} must be set in production` }));
 }
 
+/** Of `keys`, those the environment holds (non-empty), each refused with `why`. */
+function givenInProduction(
+  config: Record<string, unknown>,
+  keys: readonly string[],
+  why: (key: string) => string,
+): EnvProblem[] {
+  return keys
+    .filter((key) => typeof config[key] === 'string' && (config[key] as string) !== '')
+    .map((key) => ({ path: key, message: why(key) }));
+}
+
+/** At least this long: `openssl rand -hex 24` gives 48 characters. */
+const MIN_PASSWORD = 24;
+
+/**
+ * A password inside a URL (REDIS_URL) that is an example value or short. A URL without one is
+ * allowed: Redis reached only on a private network (the production compose always sets one).
+ */
+export function urlPasswordProblem(path: string, url: string): EnvProblem | null {
+  let password: string;
+  try {
+    password = decodeURIComponent(new URL(url).password);
+  } catch {
+    return null;
+  }
+  if (password === '') return null;
+  if (password.length < MIN_PASSWORD || isPlaceholderSecret(password)) {
+    return {
+      path,
+      message: `${path} holds an example password or one under ${MIN_PASSWORD} characters: generate one (openssl rand -hex 24)`,
+    };
+  }
+  return null;
+}
+
+/**
+ * The schema owner's and the cluster superuser's credentials, and the roles' raw passwords: only
+ * Postgres itself and the migrate step get them, never a running service.
+ */
+export const DATABASE_ADMIN_SECRETS = [
+  'DATABASE_MIGRATION_URL',
+  'POSTGRES_PASSWORD',
+  'DB_OWNER_PASSWORD',
+  'DB_APP_PASSWORD',
+  'DB_PLATFORM_PASSWORD',
+  'DB_INGEST_PASSWORD',
+] as const;
+
+/**
+ * Production must set these itself: their defaults (Redis on localhost, no proxy in front) suit a
+ * developer's machine only.
+ */
+export const API_PRODUCTION_REQUIRED = ['REDIS_URL', 'TRUST_PROXY'] as const;
+
+/** The API's (and the worker's) production rules on what its environment holds (raw). */
+export function apiEnvironmentProblems(config: Record<string, unknown>): EnvProblem[] {
+  return [
+    ...missingInProduction(config, API_PRODUCTION_REQUIRED),
+    ...givenInProduction(
+      config,
+      DATABASE_ADMIN_SECRETS,
+      (key) =>
+        `${key} must not be given to the API or the worker in production (only Postgres and the migrate step use it)`,
+    ),
+  ];
+}
+
 /** The API values checked in production (env.ts, before its defaults are filled in). */
 export interface ApiProductionEnv {
   SMS_PROVIDER: string;
@@ -96,6 +163,7 @@ export interface ApiProductionEnv {
   INGEST_TRUST_PROXY: string;
   INGEST_IN_PROCESS?: boolean | undefined;
   CORS_ORIGINS: string[];
+  REDIS_URL: string;
   JWT_ACCESS_SECRET: string;
   OTP_PEPPER: string;
   PLATFORM_TOTP_KEY?: string | undefined;
@@ -161,12 +229,15 @@ export function apiProductionProblems(env: ApiProductionEnv): EnvProblem[] {
     const problem = databaseUrlProblem(key, url);
     if (problem) problems.push(problem);
   }
+  const redis = urlPasswordProblem('REDIS_URL', env.REDIS_URL);
+  if (redis) problems.push(redis);
   return problems;
 }
 
 /** The device receiver's values checked in production (ingest-env.ts). */
 export interface ReceiverProductionEnv {
   DATABASE_INGEST_URL: string;
+  REDIS_URL: string;
   INGEST_TRUST_PROXY: string;
 }
 
@@ -200,18 +271,23 @@ export function receiverProductionProblems(env: ReceiverProductionEnv): EnvProbl
     'jantrik_platform_app',
   ]);
   if (problem) problems.push(problem);
+  const redis = urlPasswordProblem('REDIS_URL', env.REDIS_URL);
+  if (redis) problems.push(redis);
   return problems;
 }
 
 /** The receiver's production rules on what its environment holds (raw, before parsing). */
 export function receiverEnvironmentProblems(config: Record<string, unknown>): EnvProblem[] {
-  const given = API_ONLY_SECRETS.filter(
-    (key) => typeof config[key] === 'string' && (config[key] as string) !== '',
-  ).map((key) => ({
-    path: key,
-    message: `${key} must not be given to the device receiver in production (it is the API's)`,
-  }));
-  return [...missingInProduction(config, ['REDIS_URL']), ...given];
+  const refused = [...new Set<string>([...API_ONLY_SECRETS, ...DATABASE_ADMIN_SECRETS])];
+  return [
+    ...missingInProduction(config, ['REDIS_URL']),
+    ...givenInProduction(
+      config,
+      refused,
+      (key) =>
+        `${key} must not be given to the device receiver in production (it belongs to the API or the database)`,
+    ),
+  ];
 }
 
 /** Problems in the format of zod's prettifyError, so both read alike in the log. */

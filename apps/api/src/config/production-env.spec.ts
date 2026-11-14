@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { envSchema, validateEnv } from './env.js';
 import { validateIngestEnv } from './ingest-env.js';
-import { API_ONLY_SECRETS, trustsAnyClient, unsafeOrigin } from './production-env.js';
+import {
+  API_ONLY_SECRETS,
+  DATABASE_ADMIN_SECRETS,
+  trustsAnyClient,
+  unsafeOrigin,
+} from './production-env.js';
 
 // Every production rule (docs/deploy.md → Environment checks): refused in production, and the
 // same settings still accepted where development and the tests use them.
@@ -12,7 +17,7 @@ const api = {
   NODE_ENV: 'production',
   DATABASE_URL: 'postgresql://jantrik_app:pw@db:5432/jantrik',
   DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:pw@db:5432/jantrik',
-  REDIS_URL: 'redis://:pw@redis:6379',
+  REDIS_URL: `redis://:${'f3'.repeat(24)}@redis:6379`,
   TRUST_PROXY: '1',
   CORS_ORIGINS: 'https://app.jantrik.com.bd,https://platform.jantrik.com.bd',
   JWT_ACCESS_SECRET: 'q7Hk'.repeat(10),
@@ -26,7 +31,7 @@ const api = {
 const receiver = {
   NODE_ENV: 'production',
   DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:pw@db:5432/jantrik',
-  REDIS_URL: 'redis://:pw@redis:6379',
+  REDIS_URL: `redis://:${'f3'.repeat(24)}@redis:6379`,
   QUEUE_PREFIX: 'jantrik',
 };
 
@@ -184,6 +189,24 @@ describe('production env: the API and the worker', () => {
     ).toBe('');
   });
 
+  it('refuses an example or short Redis password; a URL without one is allowed', () => {
+    for (const password of ['CHANGE_ME_openssl_rand_hex_24', 'short', 'x'.repeat(23)]) {
+      expect(apiError({ ...api, REDIS_URL: `redis://:${password}@redis:6379` })).toContain(
+        'REDIS_URL holds an example password or one under 24 characters',
+      );
+    }
+    expect(apiError({ ...api, REDIS_URL: `redis://:${'a1'.repeat(24)}@redis:6379` })).toBe('');
+    expect(apiError({ ...api, REDIS_URL: 'redis://redis:6379' })).toBe('');
+  });
+
+  it("refuses the database's admin secrets in its environment (owner URL, superuser and role passwords)", () => {
+    for (const key of DATABASE_ADMIN_SECRETS) {
+      expect(apiError({ ...api, [key]: 'a1'.repeat(24) })).toContain(
+        `${key} must not be given to the API or the worker in production`,
+      );
+    }
+  });
+
   it('keeps the rules that were there: Secure cookie, no DEV_LAN, no test date, keys and host', () => {
     expect(apiError({ ...api, COOKIE_SECURE: 'false' })).toMatch(/COOKIE_SECURE/);
     expect(apiError({ ...api, DEV_LAN: 'true' })).toMatch(/DEV_LAN/);
@@ -232,6 +255,24 @@ describe('production env: the device receiver', () => {
     }
     // An empty value is not a secret given.
     expect(receiverError({ ...receiver, DATABASE_URL: '' })).toBe('');
+  });
+
+  it("refuses the database's admin secrets too", () => {
+    for (const key of DATABASE_ADMIN_SECRETS) {
+      expect(receiverError({ ...receiver, [key]: 'a1'.repeat(24) })).toContain(
+        `${key} must not be given to the device receiver in production`,
+      );
+    }
+  });
+
+  it('refuses an example or short Redis password', () => {
+    expect(
+      receiverError({
+        ...receiver,
+        REDIS_URL: 'redis://:CHANGE_ME_openssl_rand_hex_24@redis:6379',
+      }),
+    ).toContain('REDIS_URL holds an example password');
+    expect(receiverError({ ...receiver, REDIS_URL: `redis://:${'b2'.repeat(24)}@redis` })).toBe('');
   });
 });
 
