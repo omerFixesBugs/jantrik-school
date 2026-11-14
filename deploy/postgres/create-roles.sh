@@ -5,8 +5,9 @@
 #   - The production compose Postgres runs it on its first start (deploy/postgres/initdb).
 #   - By hand, on any Postgres 16 (a managed one too), as an admin with CREATEROLE and CREATEDB,
 #     with the passwords in a private file rather than on the command line (docs/deploy.md):
-#       set -a; . ./roles.env; set +a      # PGHOST, PGUSER, PGPASSWORD and the DB_*_PASSWORD
-#       sh deploy/postgres/create-roles.sh
+#       (set -a && . ./roles.env && sh deploy/postgres/create-roles.sh)
+#     roles.env (mode 600, deleted afterwards) holds PGHOST, PGUSER, PGPASSWORD and DB_*_PASSWORD;
+#     the subshell keeps them out of your shell.
 #
 # Passwords come from the environment only (psql reads them with \getenv, psql 15 or newer).
 # JANTRIK_DB_NAME names the database (default jantrik). Safe to run again: an existing role keeps
@@ -48,8 +49,11 @@ jantrik_create_roles() (
         die "$1 may hold only letters, digits and . _ ~ - (it goes into a URL as it is)"
         ;;
     esac
+    # The example and test markers, as in deploy/compose.sh and production-env.ts.
     case "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" in
-      *change_me* | *change-me* | *changeme* | *dev_password* | *ci_password* | *example* | *placeholder*)
+      *change_me* | *change-me* | *'change me'* | *changeme* | *dev-only* | *dev_only* | \
+        *test-only* | *test_only* | *ci-only* | *ci_only* | *dev_password* | *ci_password* | \
+        *placeholder* | *example*)
         die "$1 is an example value: generate one (openssl rand -hex 24)"
         ;;
     esac
@@ -59,7 +63,8 @@ jantrik_create_roles() (
   check_password DB_PLATFORM_PASSWORD "${DB_PLATFORM_PASSWORD:-}"
   check_password DB_INGEST_PASSWORD "${DB_INGEST_PASSWORD:-}"
   # The superuser's own password when this script is given it (the compose Postgres's first
-  # start): as strong as the others, and none of them.
+  # start): as strong as the others, and none of them. In the compose Postgres the image has set
+  # it already, so deploy/compose.sh checks it before the first start; this is the second check.
   if [ -n "${POSTGRES_PASSWORD:-}" ]; then
     check_password POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
   fi

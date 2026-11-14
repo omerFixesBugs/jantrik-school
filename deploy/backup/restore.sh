@@ -57,6 +57,7 @@ esac
 [ -z "$drop" ] || [ "$drop" = "$target" ] \
   || die "--drop-existing must name the target database again (--drop-existing=$target)"
 [ -f "$file" ] || die "no such file: $file"
+[ -r "$file" ] || die "cannot read $file as user $(id -u): copy backups in as the deploy user (BACKUP_UID)"
 pg_restore --list "$file" > /dev/null 2>&1 || die "$file is not a pg_dump custom-format archive"
 if [ -f "$file.sha256" ]; then
   (cd "$(dirname "$file")" && sha256sum -c "$(basename "$file").sha256" > /dev/null) \
