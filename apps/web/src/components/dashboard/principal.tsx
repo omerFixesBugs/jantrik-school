@@ -21,18 +21,22 @@ import {
   SparklesIcon,
   TrendingDownIcon,
 } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Panel } from '@/components/dashboard/attendance-overview';
 import { DeltaPill } from '@/components/kit/pill';
-import { BarList } from '@/components/charts';
 import { Donut } from '@/components/story-charts';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useLabel } from '@/lib/hooks';
 import { bnGenitive, displayName } from '@/lib/names';
 import { cn } from '@/lib/utils';
+
+// Students by class sits below the first screen and renders when near it (Deferred): the bar
+// chart's code loads then, not with the page (the donut shares story-charts with the KPI tiles).
+const BarList = dynamic(() => import('@/components/charts').then((m) => m.BarList), { ssr: false });
 
 /*
  * The principal's dashboard (docs/design.md → Dashboards): today in one line, what needs them

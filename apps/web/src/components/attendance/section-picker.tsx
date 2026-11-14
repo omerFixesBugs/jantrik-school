@@ -24,17 +24,11 @@ import { Button, ButtonLink } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { listDrafts } from '@/lib/attendance/drafts';
+import { registerHref } from '@/lib/attendance/register-href';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { displayName } from '@/lib/names';
 import { cn } from '@/lib/utils';
-
-export const registerHref = (sectionId: string, periodNo = 0, date?: string) => {
-  const q = new URLSearchParams({ section: sectionId });
-  if (periodNo) q.set('period', String(periodNo));
-  if (date) q.set('date', date);
-  return `/attendance?${q}`;
-};
 
 /** Which register to open: the caller's sections for today (server date), unsent drafts first. */
 export function SectionPicker() {
