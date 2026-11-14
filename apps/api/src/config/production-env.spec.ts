@@ -20,6 +20,7 @@ const api = {
   REDIS_URL: `redis://:${'f3'.repeat(24)}@redis:6379`,
   TRUST_PROXY: '1',
   CORS_ORIGINS: 'https://app.jantrik.com.bd,https://platform.jantrik.com.bd',
+  PLATFORM_ORIGINS: 'https://platform.jantrik.com.bd',
   JWT_ACCESS_SECRET: 'q7Hk'.repeat(10),
   OTP_PEPPER: 'w3Zp'.repeat(10),
   PLATFORM_TOTP_KEY: 'e5Rt'.repeat(10),
@@ -130,6 +131,41 @@ describe('production env: the API and the worker', () => {
     expect(apiError({ ...api, CORS_ORIGINS: undefined })).toMatch(/CORS_ORIGINS/);
     expect(apiError({ ...api, CORS_ORIGINS: ' , ' })).toMatch(/CORS_ORIGINS must list/);
     expect(unsafeOrigin('https://app.jantrik.com.bd')).toBeNull();
+  });
+
+  it('requires PLATFORM_ORIGINS in production: https, not local, and also in CORS_ORIGINS', () => {
+    expect(apiError(api)).toBe('');
+    expect(apiError({ ...api, PLATFORM_ORIGINS: undefined })).toMatch(
+      /PLATFORM_ORIGINS must be set in production/,
+    );
+    expect(apiError({ ...api, PLATFORM_ORIGINS: ' , ' })).toMatch(/PLATFORM_ORIGINS must list/);
+    expect(apiError({ ...api, PLATFORM_ORIGINS: 'http://platform.jantrik.com.bd' })).toMatch(
+      /PLATFORM_ORIGINS must hold https origins only; "http:\/\/platform\.jantrik\.com\.bd" is not https/,
+    );
+    expect(apiError({ ...api, PLATFORM_ORIGINS: 'https://localhost:3000' })).toMatch(
+      /a local address/,
+    );
+    expect(apiError({ ...api, PLATFORM_ORIGINS: 'https://admin.jantrik.com.bd' })).toMatch(
+      /PLATFORM_ORIGINS must also be in CORS_ORIGINS.*https:\/\/admin\.jantrik\.com\.bd/,
+    );
+    expect(apiError({ ...api, PLATFORM_ORIGINS: 'not a url' })).toMatch(/PLATFORM_ORIGINS/);
+  });
+
+  it('normalises PLATFORM_ORIGINS (case, a trailing slash) and keeps the development default', () => {
+    const dev = {
+      DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
+      DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:x@localhost:5432/jantrik',
+      DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@localhost:5432/jantrik',
+      JWT_ACCESS_SECRET: 'x'.repeat(40),
+      OTP_PEPPER: 'y'.repeat(40),
+    };
+    expect(envSchema.parse(dev).PLATFORM_ORIGINS).toEqual(['http://localhost:3000']);
+    expect(
+      envSchema.parse({ ...dev, PLATFORM_ORIGINS: 'HTTPS://Platform.Jantrik.com.bd/' })
+        .PLATFORM_ORIGINS,
+    ).toEqual(['https://platform.jantrik.com.bd']);
+    // A production list in another case or with a slash still matches its CORS entry.
+    expect(apiError({ ...api, PLATFORM_ORIGINS: 'https://PLATFORM.jantrik.com.bd/' })).toBe('');
   });
 
   it('refuses secrets shorter than 32 characters', () => {

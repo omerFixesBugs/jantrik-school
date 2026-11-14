@@ -36,11 +36,19 @@ export async function createPlatformAdmin(
   return { id: admin.id, phone, password, usedSteps: new Set() };
 }
 
-/** Request helpers that send the platform client header (and a cookie, if given). */
+/** The platform web app's origin in the API tests (PLATFORM_ORIGINS in vitest.config.ts). */
+export const TEST_PLATFORM_ORIGIN = 'http://localhost:3000';
+
+/**
+ * Request helpers that send what the platform web app sends: its origin and client header (and
+ * a cookie, if given).
+ */
 export const platform = (h: Harness, cookie?: string) => {
   const ip = randomIp();
   const withHeaders = <T extends { set: (k: string, v: string) => T }>(r: T): T => {
-    r.set('X-Jantrik-Client', PLATFORM_CLIENT).set('X-Forwarded-For', ip);
+    r.set('Origin', TEST_PLATFORM_ORIGIN)
+      .set('X-Jantrik-Client', PLATFORM_CLIENT)
+      .set('X-Forwarded-For', ip);
     return cookie ? r.set('Cookie', cookie) : r;
   };
   return {

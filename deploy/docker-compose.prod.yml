@@ -28,6 +28,8 @@ x-api-env: &api-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
   QUEUE_PREFIX: ${QUEUE_PREFIX:-jantrik}
   CORS_ORIGINS: https://${APP_DOMAIN:?},https://${PLATFORM_DOMAIN:?}
+  # The only origin /platform/* answers (PlatformAuthGuard); Caddy's rule is the second layer.
+  PLATFORM_ORIGINS: https://${PLATFORM_DOMAIN:?}
   # One proxy (Caddy) in front of the API. Never true (the API refuses it).
   TRUST_PROXY: ${TRUST_PROXY:-1}
   COOKIE_SECURE: 'true'
