@@ -1,6 +1,7 @@
 import { isoDateSchema } from '@jantrik/shared';
 import { z } from 'zod';
 import { ingestReceiverFields, positiveInt } from './ingest-env.js';
+import { apiProductionProblems, formatProblems, missingInProduction } from './production-env.js';
 
 /** The receiver runs inside the API unless told otherwise; production runs it as its own process. */
 const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_ENV: string }) =>
@@ -161,6 +162,12 @@ export const envSchema = z
         message: 'COOKIE_SECURE must be true in production',
       });
     }
+    // The other production rules (production-env.ts, docs/deploy.md → Environment checks).
+    if (env.NODE_ENV === 'production') {
+      for (const { path, message } of apiProductionProblems(env)) {
+        ctx.addIssue({ code: 'custom', path: [path], message });
+      }
+    }
   })
   .transform((env) => ({
     ...env,
@@ -171,10 +178,22 @@ export const envSchema = z
 
 export type Env = z.infer<typeof envSchema>;
 
+/**
+ * Production must set these itself: their defaults (Redis on localhost, no proxy in front) suit a
+ * developer's machine only.
+ */
+export const API_PRODUCTION_REQUIRED = ['REDIS_URL', 'TRUST_PROXY'] as const;
+
 export function validateEnv(config: Record<string, unknown>): Env {
   const result = envSchema.safeParse(config);
-  if (!result.success) {
-    throw new Error(`Invalid environment variables:\n${z.prettifyError(result.error)}`);
+  const missing =
+    config['NODE_ENV'] === 'production' ? missingInProduction(config, API_PRODUCTION_REQUIRED) : [];
+  if (!result.success || missing.length > 0) {
+    const errors = [
+      ...(result.success ? [] : [z.prettifyError(result.error)]),
+      ...(missing.length > 0 ? [formatProblems(missing)] : []),
+    ];
+    throw new Error(`Invalid environment variables:\n${errors.join('\n')}`);
   }
   return result.data;
 }

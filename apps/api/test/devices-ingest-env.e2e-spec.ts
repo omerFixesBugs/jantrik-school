@@ -47,12 +47,15 @@ describe('device receiver environment', () => {
     vi.resetModules();
   };
 
-  /** Only the receiver's variables in the environment. */
+  /**
+   * Only the receiver's variables in the environment. Devices connect directly (no proxy): the
+   * tests' INGEST_TRUST_PROXY=true is refused in production.
+   */
   const receiverOnly = (env: Record<string, string>) => {
     for (const key of Object.keys(process.env)) {
       if (apiOnly.includes(key) || /^(DATABASE_|DB_|POSTGRES_)/.test(key)) delete process.env[key];
     }
-    Object.assign(process.env, env);
+    Object.assign(process.env, { INGEST_TRUST_PROXY: 'false' }, env);
     emptyWorkDir();
   };
 
@@ -147,8 +150,8 @@ describe('device receiver environment', () => {
     const port = await freePort();
     const prefix = `jantrik-test-entry-${randomUUID().slice(0, 8)}`;
     // The documented production API: none of the receiver's login, the receiver in its own
-    // process. (NODE_ENV stays test: no SMS provider accepts production yet, so the API itself
-    // cannot start in production until one is built.)
+    // process. (NODE_ENV stays test, with the tests' secrets and SMS provider; the production
+    // rules have their own tests in src/config/production-env.spec.ts.)
     delete process.env['DATABASE_INGEST_URL'];
     Object.assign(process.env, {
       INGEST_IN_PROCESS: 'false',
