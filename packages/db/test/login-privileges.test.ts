@@ -95,6 +95,22 @@ describe('login privileges', () => {
     expect(loginPrivilegeProblems(p)).toEqual([`can become ${role}`]);
   });
 
+  it('checks the login itself, not a role it switched to when connecting', async () => {
+    // A superuser login whose URL sets `-c role=<a plain role>`: the session runs as the plain
+    // role (current_user), and SQL can RESET ROLE back to the superuser at any time.
+    const plain = await tempRole('NOLOGIN');
+    const url = new URL(await tempLogin('SUPERUSER'));
+    url.searchParams.set('options', `-c role=${plain}`);
+    const [row] = await withClient(
+      url.toString(),
+      (c) => c.$queryRaw<{ role: string }[]>`SELECT current_user::text AS role`,
+    );
+    expect(row!.role).toBe(plain);
+    const p = await withClient(url.toString(), readLoginPrivileges);
+    expect(p.login).toBe(url.username);
+    expect(loginPrivilegeProblems(p)).toEqual(['is a superuser']);
+  });
+
   it('refuses a login that can become pg_read_all_data', async () => {
     const url = await tempLogin('', { member: 'pg_read_all_data' });
     const p = await withClient(url, readLoginPrivileges);

@@ -15,7 +15,7 @@ export const PRIVILEGED_PREDEFINED_ROLES = [
 
 /** What a database login can do beyond its grants (docs/database.md → Database roles). */
 export interface LoginPrivileges {
-  /** `current_user` of the connection. */
+  /** `session_user` of the connection: the login, whatever role the session switched to. */
   login: string;
   superuser: boolean;
   bypassRls: boolean;
@@ -26,21 +26,26 @@ export interface LoginPrivileges {
   canBecome: string[];
 }
 
-/** Reads the privileges of the client's own login (one catalog query, no table access). */
+/**
+ * Reads the privileges of the client's own login (one catalog query, no table access). The login
+ * is `session_user`, never `current_user`: a URL's `options=-c role=…` or a role default
+ * (`ALTER ROLE … SET role`) makes the session run as another role, and any SQL can `RESET ROLE`
+ * back to the login.
+ */
 export async function readLoginPrivileges(client: PrismaClient): Promise<LoginPrivileges> {
   const roles = [...PRIVILEGED_PREDEFINED_ROLES];
   const [row] = await client.$queryRaw<
     { login: string; superuser: boolean; bypass_rls: boolean; can_become: string[] }[]
   >`
-    SELECT current_user::text AS login, r.rolsuper AS superuser, r.rolbypassrls AS bypass_rls,
+    SELECT session_user::text AS login, r.rolsuper AS superuser, r.rolbypassrls AS bypass_rls,
            COALESCE(array_agg(o.rolname::text ORDER BY o.rolname)
                     FILTER (WHERE o.rolname IS NOT NULL), '{}') AS can_become
       FROM pg_roles r
       LEFT JOIN pg_roles o
-        ON o.rolname <> current_user
+        ON o.rolname <> session_user
        AND (o.rolsuper OR o.rolbypassrls OR o.rolname::text = ANY (${roles}::text[]))
-       AND pg_has_role(current_user, o.oid, 'MEMBER')
-     WHERE r.rolname = current_user
+       AND pg_has_role(session_user, o.oid, 'MEMBER')
+     WHERE r.rolname = session_user
      GROUP BY r.rolsuper, r.rolbypassrls`;
   if (!row) throw new Error('The login has no pg_roles row');
   return {
