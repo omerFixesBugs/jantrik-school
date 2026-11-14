@@ -579,7 +579,7 @@ P0-3. **(A3) P0's branch starts from the plan branch** (`feature/sprint-1-admiss
 
 P0-4. **(A4) The Redis ACL test adds `+select`** for its throwaway user: the API tests use Redis database 1. The production rules have no `select` (the test asserts it); production URLs name no database.
 
-P0-5. **The receiver's Redis rules are narrower than the plan's starting point:** explicit `eval`/`evalsha` instead of the whole scripting category, no connection category, `-function` (`FUNCTION LOAD`/`FLUSH` are in `@write`), no `SCAN`/`RANDOMKEY`/`DBSIZE` (key names hold phone numbers; found by the automated security review), `multi`/`exec`/`discard` by name for the rate limiter. The test runs every Redis call the receiver makes as that user.
+P0-5. **The receiver's Redis rules are narrower than the plan's starting point:** explicit `eval`/`evalsha` instead of the whole scripting category, no connection category, `-function` (`FUNCTION LOAD`/`FLUSH` are in `@write`), no `SCAN`/`RANDOMKEY`/`DBSIZE` (key names hold phone numbers; found by the automated security review), `multi`/`exec`/`discard` by name for the rate limiter. The test runs every Redis call the receiver makes as that user, its queue add with the receiver's own options (`processPunchesJobOptions`: delayed, one job id per institute, the duplicate path), and the production receiver's boot test logs in as such a user; destructive commands are asked of `ACL DRYRUN`, never run, so a wrong rule cannot flush the Redis the tests share with development.
 
 - To change: `deploy/redis/ingest-user.acl` (and its test, `apps/api/test/redis-acl.e2e-spec.ts`).
 
@@ -588,3 +588,13 @@ P0-6. **The production Redis check never runs a destructive command:** `check-in
 P0-7. **The API test env allows `http://app.test` for CORS** (`apps/api/vitest.config.ts`), standing for the institute app's own origin: the env is validated once when `AppModule` is imported, so the "allowed by CORS, refused by the platform" test cannot set it per file.
 
 P0-8. **Known flaky test, not caused by P0:** `appearance.e2e-spec.ts` → "the owner picks a preset and an accent" once got 403 on `/me/context` for a new owner in the full API suite and passed alone three times. Likely cause: `randomPhone()` draws from 10⁸ numbers and a full run makes thousands of users, so two can share a phone; that user then has two memberships and is not switched into an institute at login. To fix later: unique test phones per run.
+
+P0-9. **The login check reads `session_user`** (the login), never `current_user`: a URL's `options=-c role=…` or a role default (`ALTER ROLE … SET role`) runs the session as another role, which any SQL can `RESET ROLE` away from. Found by the final review; tested with a superuser login that switches role when connecting.
+
+Left by the final review for later (not built, each small):
+
+- **Redis runs as root and its image floats.** `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
+- **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
+- **The receiver's key scope `~<prefix>:devices:*` includes the worker's job schedulers** (the devices tick, expire-punches): code run in the receiver could delete them until the worker restarts and recreates them. Accepted for now (the scope the plan set); narrower read/write key selectors are possible at some cost across BullMQ upgrades.
+- **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
+- **Local Playwright configs** that are not in git (`playwright.alt*.config.ts`, `dbg`, `shots`) set `CORS_ORIGINS` but not `PLATFORM_ORIGINS`: their platform specs now get 403 until they set it.
