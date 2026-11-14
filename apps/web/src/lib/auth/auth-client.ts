@@ -5,7 +5,9 @@ import {
   type AuthTenant,
   type Role,
 } from '@jantrik/shared';
+import { CONFIGURED_API_URL } from '../api/api-url';
 import { NetworkError, SignedOutError, TenantChangedError, toApiError } from '../api/errors';
+import { takeBootSession, type BootResult } from './boot-refresh';
 
 /**
  * Browser session handling. See docs/auth.md → "Web client".
@@ -18,8 +20,6 @@ import { NetworkError, SignedOutError, TenantChangedError, toApiError } from '..
  * - A page remembers the institute it was loaded for. If the session moves to another institute
  *   (switch in another tab), this tab blocks all API calls and asks the user to reload.
  */
-
-const CONFIGURED_API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 /**
  * The API's address. Production builds use NEXT_PUBLIC_API_URL exactly.
@@ -73,6 +73,8 @@ export class AuthClient {
   private pageTenantId: string | null = null;
   /** Set once the session moved to another institute: every API call is refused. */
   private tenantChanged = false;
+  /** Set once this tab's channel heard a session or a logout (see fromBoot). */
+  private heardChannel = false;
 
   constructor() {
     this.channel =
@@ -112,8 +114,19 @@ export class AuthClient {
   /** Refresh the access token, serialised across tabs. Resolves null when signed out. */
   refresh(): Promise<Session | null> {
     if (this.inflight) return this.inflight;
+    // The boot script's refresh (boot-refresh.ts), started while the JavaScript downloaded: the
+    // first restore takes it, once. Without it (switched off, a public page, a client-side
+    // navigation) this is the refresh as it always was.
+    const boot = takeBootSession();
+    this.inflight = (boot ? this.fromBoot(boot) : this.refreshUnderLock()).finally(() => {
+      this.inflight = null;
+    });
+    return this.inflight;
+  }
+
+  private refreshUnderLock(): Promise<Session | null> {
     const startedAt = Date.now();
-    this.inflight = this.withLock(async () => {
+    return this.withLock(async () => {
       // Another tab may have refreshed while we were waiting for the lock.
       const current = this.session;
       if (current && current.receivedAt > startedAt && !this.expiresWithin(90_000)) return current;
@@ -135,10 +148,35 @@ export class AuthClient {
       }
       if (!res.ok) throw await toApiError(res);
       return this.adopt(fromResponse((await res.json()) as AuthResponse), { broadcast: true });
-    }).finally(() => {
-      this.inflight = null;
     });
-    return this.inflight;
+  }
+
+  /**
+   * The boot script's outcome, taken over as if this client had refreshed itself. The script took
+   * the same lock, followed the same reuse rule and already broadcast its session, so nothing is
+   * broadcast again.
+   */
+  private async fromBoot(boot: Promise<BootResult>): Promise<Session | null> {
+    const result = await boot.catch((): BootResult => ({ type: 'error', at: Date.now() }));
+    // What this tab's own channel heard meanwhile (another tab's session or logout, or the boot
+    // script's own broadcast) arrived after the script's view of things, so it wins.
+    if (this.heardChannel) return this.session;
+    switch (result.type) {
+      case 'session':
+        return this.adopt({ ...result.session, receivedAt: result.at }, { broadcast: false });
+      case 'signed-out':
+        // The refresh answered 401: exactly what refreshUnderLock does with one.
+        this.signOutEverywhere();
+        return null;
+      case 'logout':
+        // Another tab signed out while the boot refresh ran: as onMessage does with a logout.
+        this.clear();
+        this.emit({ type: 'signed-out' });
+        return null;
+      default:
+        // A network error or another status: restore the usual way (retries, "unreachable").
+        return this.refreshUnderLock();
+    }
   }
 
   /** POST a login endpoint (`/auth/otp/verify`, `/auth/login`) with `client: 'web'`. */
@@ -273,6 +311,7 @@ export class AuthClient {
   }
 
   private onMessage(message: Message): void {
+    this.heardChannel = true;
     if (message.type === 'logout') {
       this.clear();
       this.emit({ type: 'signed-out' });

@@ -1,12 +1,16 @@
 # Step 12: start the session sooner (a plan for the owner's review)
 
-**Status: B approved and built (2026-11-14); A and C still a plan.** The owner asked on
+**Status: A and B approved and built (2026-11-14); C still a plan.** The owner asked on
 2026-11-13 for the "start the session refresh earlier" idea to be written up for review, not
 built. Everything here touches auth (`apps/web/src/lib/auth/auth-client.ts`, the refresh cookie,
 CORS), so it needs approval first (CLAUDE.md). On 2026-11-14 the owner approved part B as written
-(`maxAge: 7200`); it is in PR #9 with a test (`apps/api/test/cors.e2e-spec.ts`). The rest of
-step 12 (smaller JavaScript, translations per route, the size budget, the fonts) changes no auth
-code.
+(`maxAge: 7200`); it is in PR #9 with a test (`apps/api/test/cors.e2e-spec.ts`). The same day
+the owner approved part A with the early `/me/context`, on conditions: institute app pages only
+(never the platform panel or public pages), a switch that turns it off without code changes,
+nothing at all without Web Locks or BroadcastChannel, every test listed below, and an
+interleaved A/B on the six budget pages. It is built on `perf/step-12-boot-refresh`; how it
+works is in auth.md → Web client. The rest of step 12 (smaller JavaScript, translations per
+route, the size budget, the fonts) changes no auth code.
 
 ## Why
 
@@ -28,7 +32,7 @@ see "Numbers" at the end.
 
 ## The proposal
 
-### A. Start the refresh while the JavaScript downloads
+### A. Start the refresh while the JavaScript downloads (approved and built, 2026-11-14)
 
 An inline script in `<head>` (like the theme and density scripts, so it runs before any bundle)
 starts the refresh at once when the readable `jantrik_signed_in` hint is present:
@@ -84,7 +88,7 @@ plus two-tab and logout-race cases; the step 12 A/B before and after, interleave
 
 ## What the owner decides
 
-1. A (boot refresh): yes / no; with or without the early `/me/context`.
+1. A (boot refresh): **yes, with the early `/me/context`** (2026-11-14), on the conditions in the status above.
 2. B (preflight cache, 2 h): **yes, 2 h** (2026-11-14; built in PR #9).
 3. C (same-origin API): now, with the deployment, or not.
 

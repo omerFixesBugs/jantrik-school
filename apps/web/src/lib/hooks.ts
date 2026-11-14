@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { LOCALE_COOKIE, type Locale } from '@/i18n/config';
 import { ApiError, NetworkError } from './api/errors';
 import { useAuth } from './auth/auth-provider';
+import { takeBootMeContext } from './auth/boot-refresh';
 
 /** Translated, user-facing message for any error thrown by the API client. */
 export function useErrorMessage() {
@@ -57,12 +58,20 @@ export function useSetLocale() {
   );
 }
 
-/** GET /me/context for the selected institute (loaded once per page). */
+/**
+ * GET /me/context for the selected institute (loaded once per page). The first load takes the
+ * one the boot script already fetched (lib/auth/boot-refresh.ts) when it belongs to this very
+ * session and the page's institute.
+ */
 export function useMeContext(enabled = true) {
   const { client, session } = useAuth();
   return useQuery({
     queryKey: ['me-context', session?.tenant?.id],
-    queryFn: () => client.api<MeContext>('/me/context'),
+    queryFn: async () =>
+      (await takeBootMeContext(
+        client.getSession(),
+        client.getPageTenant() ?? client.getSession()?.tenant?.id,
+      )) ?? client.api<MeContext>('/me/context'),
     enabled: enabled && Boolean(session?.tenant),
     staleTime: 5 * 60_000,
   });

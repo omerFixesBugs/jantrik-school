@@ -206,6 +206,10 @@ services:
         NEXT_PUBLIC_API_URL: https://${API_DOMAIN:?}
     image: jantrik-web:${IMAGE_TAG:-local}
     restart: unless-stopped
+    environment:
+      # The boot refresh's switch (docs/auth.md → Web client), read per request: `off` needs no
+      # rebuild, only `deploy/compose.sh up -d web`.
+      JANTRIK_BOOT_REFRESH: ${JANTRIK_BOOT_REFRESH:-on}
     ports:
       - '127.0.0.1:${WEB_HOST_PORT:-3000}:3000'
     logging: *logging

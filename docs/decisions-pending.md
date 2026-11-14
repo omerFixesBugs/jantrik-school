@@ -331,6 +331,35 @@ Decided while the owner was away (each one in PR #9, which is not merged):
   `apps/api/src/app.setup.ts`, with a test). Parts A and C are still open. No other auth, CORS or
   database change is in PR #9.
 
+### The boot refresh (part A of the plan, 2026-11-14)
+
+The owner approved part A with the early `/me/context`, on conditions (plan → Status). Decided
+while building it (`perf/step-12-boot-refresh`):
+
+- **B1. Where it runs:** only the `(app)` layout renders the script, so only a full load of an
+  institute app page. Not `/select-institute`: it is signed in but has no institute yet, and it
+  lives in the `(auth)` group.
+  - To change: render `BootRefreshScript` in another layout.
+- **B2. The switch:** `JANTRIK_BOOT_REFRESH` on the web server, read per request (`off`, `false`,
+  `0` or `no` turn it off; anything else, or unset, is on). The production compose passes it to
+  the web container; `deploy/compose.sh up -d web` applies a change with no rebuild.
+  - To change: `bootRefreshEnabled` in `apps/web/src/lib/auth/boot-refresh.ts`.
+- **B3. Who wins at the hand-over:** a logout heard from another tab beats the script's own
+  session (and that session is not broadcast); another tab's session heard later (an institute
+  switch, a login) beats anything before it, including the script's own 401 or network error;
+  anything `AuthClient`'s own channel heard before it took the result over beats the result. In
+  the plan's words "the boot result is checked against a logout broadcast"; the other two rules
+  keep a tab that was still loading in step with the others.
+- **B4. The early `/me/context` is used only for the exact session it was fetched with** (same
+  access token) **and the page's institute;** otherwise the shell fetches it as before. A tab
+  that was still loading during an institute switch therefore opens on the new institute, with
+  its own context.
+- **B5. No script element on client-side renders:** after a login the app layout renders in the
+  browser, where React never runs a script it creates (and development reports one as an
+  error), so `BootRefreshScript` renders it only in the server HTML and during hydration.
+- **B6. It starts after the CSS:** an inline script waits for the stylesheets in `<head>`
+  (24 KB), so the refresh starts once they arrive, still well before the JavaScript.
+
 ## Devices and staff attendance (step 11)
 
 Rules: [devices.md](devices.md). Owner decisions of 2026-10-24, approved as recommended:

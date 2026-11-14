@@ -311,6 +311,8 @@ deploy/compose.sh ps
 - **Rollback:** migrations only go forward. If a release must be undone after its migrations ran,
   restore the backup you took (below) and start the previous version's images.
 - `NEXT_PUBLIC_API_URL` is baked into the web image: changing `API_DOMAIN` needs a rebuild.
+- `JANTRIK_BOOT_REFRESH=off` in the settings file switches the boot refresh off (docs/auth.md →
+  Web client) without a rebuild: `deploy/compose.sh up -d web`.
 
 ## 12. Backups
 
