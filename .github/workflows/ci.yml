@@ -220,16 +220,8 @@ jobs:
     timeout-minutes: 15
 
     env:
-      # This job's own throwaway passwords (create-roles.sh refuses the shorter ones above).
-      DB_OWNER_PASSWORD: ci0restore0owner0pw0000000000
-      DB_APP_PASSWORD: ci0restore0app0pw00000000000
-      DB_PLATFORM_PASSWORD: ci0restore0platform0pw00000
-      DB_INGEST_PASSWORD: ci0restore0ingest0pw0000000
-      DATABASE_MIGRATION_URL: postgresql://jantrik_owner:ci0restore0owner0pw0000000000@localhost:5432/jantrik
-      DATABASE_URL: postgresql://jantrik_app:ci0restore0app0pw00000000000@localhost:5432/jantrik
-      DATABASE_PLATFORM_URL: postgresql://jantrik_platform_app:ci0restore0platform0pw00000@localhost:5432/jantrik
-      DATABASE_INGEST_URL: postgresql://jantrik_ingest_app:ci0restore0ingest0pw0000000@localhost:5432/jantrik
-      # The superuser of the service container: the scripts' admin login.
+      # The superuser of the service container: the scripts' admin login. The roles' passwords
+      # and URLs are made for each run (first step).
       PGHOST: localhost
       PGUSER: postgres
       PGPASSWORD: postgres
@@ -252,6 +244,37 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+
+      # Fresh random passwords for this run only (as production makes them), instead of fixed
+      # ones that would pass every check forever. They replace the workflow's CI passwords.
+      - name: Throwaway passwords for this run
+        run: |
+          OWNER=$(openssl rand -hex 24)
+          APP=$(openssl rand -hex 24)
+          PLATFORM=$(openssl rand -hex 24)
+          INGEST=$(openssl rand -hex 24)
+          for pw in "$OWNER" "$APP" "$PLATFORM" "$INGEST"; do echo "::add-mask::$pw"; done
+          url() { echo "postgresql://$1:$2@localhost:5432/jantrik"; }
+          {
+            echo "DB_OWNER_PASSWORD=$OWNER"
+            echo "DB_APP_PASSWORD=$APP"
+            echo "DB_PLATFORM_PASSWORD=$PLATFORM"
+            echo "DB_INGEST_PASSWORD=$INGEST"
+            echo "DATABASE_MIGRATION_URL=$(url jantrik_owner "$OWNER")"
+            echo "DATABASE_URL=$(url jantrik_app "$APP")"
+            echo "DATABASE_PLATFORM_URL=$(url jantrik_platform_app "$PLATFORM")"
+            echo "DATABASE_INGEST_URL=$(url jantrik_ingest_app "$INGEST")"
+          } >> "$GITHUB_ENV"
+
+      - name: Check the passwords are this run's
+        run: |
+          for v in "$DB_OWNER_PASSWORD" "$DB_APP_PASSWORD" "$DB_PLATFORM_PASSWORD" "$DB_INGEST_PASSWORD"; do
+            [ "${#v}" -eq 48 ] || { echo "a DB_*_PASSWORD is not this run's"; exit 1; }
+          done
+          case "$DATABASE_URL" in
+            *"$DB_APP_PASSWORD"*) ;;
+            *) echo "DATABASE_URL is not this run's"; exit 1 ;;
+          esac
 
       # pg_dump must match the server (16): a newer one writes settings Postgres 16 refuses.
       - name: Postgres 16 client tools
