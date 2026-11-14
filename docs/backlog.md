@@ -138,8 +138,6 @@ are left out.
     all institutes. Fine at today's size.
   - A review that does not change whether a punch counts keeps a stale outcome (e.g. REJECT of a
     processed HELD punch stays HELD): informational only, counting reads the flags and the review.
-  - A test that the tick skips an institute with ATTENDANCE off that has leftover punches (the
-    process-punches job's skip is tested).
   - The arrival rule is written twice (the cutoff and the recompute): one shared rule; they agree
     today.
   - Entry and exit SMS have no "today" check: `sendsSms` compares when a punch arrived with when
