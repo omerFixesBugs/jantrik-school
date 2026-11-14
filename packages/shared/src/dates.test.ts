@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   localDateOf,
   localTimeOf,
+  secondsOfDay,
   timeZoneOffsetMinutes,
   todayAt,
   todayIn,
@@ -146,5 +147,15 @@ describe('wallClockToUtc refuses times that do not exist', () => {
     expect(wallClockToUtc('2028-02-29T08:00:00', 'Asia/Dhaka').toISOString()).toBe(
       '2028-02-29T02:00:00.000Z',
     );
+  });
+});
+
+describe('secondsOfDay', () => {
+  it('reads HH:MM and HH:MM:SS as seconds since midnight', () => {
+    expect(secondsOfDay('00:00')).toBe(0);
+    expect(secondsOfDay('08:10')).toBe(29_400);
+    expect(secondsOfDay('08:10:00')).toBe(29_400);
+    expect(secondsOfDay('08:10:01')).toBe(29_401);
+    expect(secondsOfDay('23:59:59')).toBe(86_399);
   });
 });

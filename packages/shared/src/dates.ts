@@ -166,6 +166,12 @@ export function localDateOf(instant: Date, timeZone: string): IsoDate {
   return todayIn(timeZone, instant);
 }
 
+/** Seconds since midnight of a time of day, `HH:MM` or `HH:MM:SS` (08:10 → 29400). */
+export function secondsOfDay(time: string): number {
+  const [h = 0, m = 0, s = 0] = time.split(':').map(Number);
+  return h * 3600 + m * 60 + s;
+}
+
 /** The wall-clock time of an instant in a timezone, `HH:MM:SS`. */
 export function localTimeOf(instant: Date, timeZone: string): string {
   const p = clockParts(timeZone, instant);

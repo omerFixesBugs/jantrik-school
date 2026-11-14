@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { addDays, localDateOf, timeZoneOffsetMinutes, wallClockToUtc } from './dates.js';
+import {
+  addDays,
+  localDateOf,
+  secondsOfDay,
+  timeZoneOffsetMinutes,
+  wallClockToUtc,
+} from './dates.js';
 import type { IsoDate } from './dates.js';
 import { toAsciiDigits } from './digits.js';
 import { formatTime } from './format.js';
@@ -513,23 +519,18 @@ export function movementOf(punch: DayPunch, day: readonly DayPunch[]): 'ENTRY' |
 // ---------------------------------------------------------------------------------------------
 // Student arrival and closing the register
 
-const toSeconds = (hhmm: string): number => {
-  const [h = 0, m = 0, s = 0] = hhmm.split(':').map(Number);
-  return h * 3600 + m * 60 + s;
-};
-
 /** LATE iff the first IN is strictly after shift start + grace (08:10:00 is on time at grace 10). */
 export function arrivalStatus(
   firstIn: string,
   shiftStart: string,
   graceMin: number,
 ): 'PRESENT' | 'LATE' {
-  return toSeconds(firstIn) > toSeconds(shiftStart) + graceMin * 60 ? 'LATE' : 'PRESENT';
+  return secondsOfDay(firstIn) > secondsOfDay(shiftStart) + graceMin * 60 ? 'LATE' : 'PRESENT';
 }
 
 /** When a shift's register may be closed: its start + cutoff minutes, at most 23:59:59. */
 export function cutoffTime(shiftStart: string, cutoffMin: number): string {
-  const total = toSeconds(shiftStart) + cutoffMin * 60;
+  const total = secondsOfDay(shiftStart) + cutoffMin * 60;
   if (total >= 86_400) return '23:59:59';
   const two = (n: number) => String(n).padStart(2, '0');
   return `${two(Math.floor(total / 3600))}:${two(Math.floor((total % 3600) / 60))}:${two(total % 60)}`;

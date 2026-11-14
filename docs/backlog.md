@@ -221,9 +221,8 @@ are left out.
   - The local `jantrik` database holds test data from the step's visual checks (a switched-off
     device, default IDs, punches, addresses, a device register, a manual staff day): a reseed with
     the owner's approval clears it.
-  - Style: the duplicated `toSeconds` helpers (`devices.ts`, `staff-attendance.ts`, `dates.ts`) and
-    long comment lines in `ci.yml`; `packages/db/test/env.ts` throws at import without the ingest
-    login, as for the platform one (CI sets both).
+  - Style: `packages/db/test/env.ts` throws at import without the ingest login, as for the
+    platform one (CI sets both).
 
 ## Performance: reach the 3-second budget (from step 9)
 
