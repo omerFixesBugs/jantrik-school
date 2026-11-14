@@ -71,8 +71,10 @@ export const envSchema = z
     /**
      * `console` logs codes (development only); `memory` keeps them in-process (API tests);
      * `outbox` pushes them to a Redis list that Playwright reads (e2e). Never in production.
+     * `none`: no gateway yet, every SMS fails (and is recorded as failed); production until a real
+     * gateway is built.
      */
-    SMS_PROVIDER: z.enum(['console', 'memory', 'outbox']).default('console'),
+    SMS_PROVIDER: z.enum(['console', 'memory', 'outbox', 'none']).default('console'),
     /**
      * Tests only: a fixed "today" (YYYY-MM-DD) for every calendar date the API works out (the
      * end-to-end suite sets it; `todayIn` in @jantrik/shared reads it). Timestamps stay real.
