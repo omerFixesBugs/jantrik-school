@@ -17,21 +17,27 @@ const SECTION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 /**
  * The filter a link opens with: `unmapped=1` (people without an ID) and `section=<id>` (the
- * today page's "give IDs"), plus a search (an unknown ID from the feed). Students first.
+ * today page's "give IDs"), `kind=staff` (the staff list; students otherwise), plus a search (an
+ * unknown ID from the feed).
  */
 export function peopleFilterFromUrl(params: URLSearchParams, query: string): PeopleFilter {
   const section = params.get('section') ?? '';
   return {
-    kind: 'STUDENT',
+    kind: params.get('kind') === 'staff' ? 'STAFF' : 'STUDENT',
     unmappedOnly: params.get('unmapped') === '1',
     sectionId: SECTION_ID.test(section) ? section : '',
     query,
   };
 }
 
-/** The URL's parameters for a filter: "without an ID" and the students' section stay in it. */
+/**
+ * The URL's parameters for a filter: the staff list, "without an ID" and the students' section
+ * stay in it, so a reload shows the same list.
+ */
 export function peopleFilterUrl(params: URLSearchParams, f: PeopleFilter): URLSearchParams {
   const next = new URLSearchParams(params);
+  if (f.kind === 'STAFF') next.set('kind', 'staff');
+  else next.delete('kind');
   if (f.unmappedOnly) next.set('unmapped', '1');
   else next.delete('unmapped');
   if (f.kind === 'STUDENT' && f.sectionId) next.set('section', f.sectionId);
