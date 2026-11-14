@@ -1,7 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
-import { DEVICES_QUEUE } from '../src/devices/devices.constants.js';
+import {
+  DEVICES_QUEUE,
+  PROCESS_PUNCHES_JOB,
+  processPunchesJobOptions,
+} from '../src/devices/devices.constants.js';
 import { RateLimiter } from '../src/redis/rate-limiter.service.js';
 import { createIngestAclUser, ingestAclRules as rules } from './support/redis-acl.js';
 
@@ -73,24 +77,36 @@ describe('the receiver Redis user (deploy/redis/ingest-user.acl)', () => {
     await asUser.multi().lpush(refusedList, '{}').ltrim(refusedList, 0, 99).exec();
     expect(await asUser.set(`ingest:refused-log:SN${prefix}`, '1', 'EX', 60, 'NX')).toBe('OK');
 
-    const job = await queue(DEVICES_QUEUE, asUser).add('process-punches', { tenantId: 't' });
-    // Review focus 4: the worker's full-rights view sees an ordinary waiting job.
+    // The receiver's own add (ingest.service.ts): delayed, one job id per institute, so a second
+    // upload in the delay meets the duplicate path.
+    const tenantId = `t-${prefix}`;
+    const devices = queue(DEVICES_QUEUE, asUser);
+    const job = await devices.add(
+      PROCESS_PUNCHES_JOB,
+      { tenantId },
+      processPunchesJobOptions(tenantId),
+    );
+    const again = await devices.add(
+      PROCESS_PUNCHES_JOB,
+      { tenantId },
+      processPunchesJobOptions(tenantId),
+    );
+    expect(again.id).toBe(job.id);
+    // Review focus 4: the worker's full-rights view sees the delayed job, and its later life works.
     const seen = await queue(DEVICES_QUEUE, admin).getJob(job.id!);
-    expect(await seen?.getState()).toBe('waiting');
-    expect(seen?.data).toEqual({ tenantId: 't' });
+    expect(await seen?.getState()).toBe('delayed');
+    expect(seen?.data).toEqual({ tenantId });
+    await seen!.promote();
+    expect(await seen!.getState()).toBe('waiting');
   });
 
   it.each([
-    ['FLUSHALL', () => asUser.flushall()],
     ['KEYS', () => asUser.keys('*')],
     ['CONFIG GET', () => asUser.config('GET', 'maxmemory')],
     ['another key (an OTP limit)', () => asUser.get('rl:otp-phone-day:+8801700000000')],
     ['writing another key', () => asUser.set('otp:x', '1')],
     ['ACL LIST', () => asUser.call('ACL', 'LIST')],
-    ['SCRIPT FLUSH', () => asUser.script('FLUSH')],
-    ['a script that flushes', () => asUser.eval("return redis.call('flushall')", 0)],
     ['a script that reads another key', () => asUser.eval("return redis.call('get', 'otp:x')", 0)],
-    ['SHUTDOWN', () => asUser.call('SHUTDOWN', 'NOSAVE')],
     // Key names are not filtered by the key patterns, and some hold phone numbers
     // (rl:otp-phone-day:<phone>, sms:outbox:<phone>): no listing of the keyspace.
     ['SCAN', () => asUser.scan('0')],
@@ -101,10 +117,16 @@ describe('the receiver Redis user (deploy/redis/ingest-user.acl)', () => {
     await expect(attempt()).rejects.toThrow(refused);
   });
 
-  it('the rules refuse commands Redis may also refuse for everyone (DEBUG, MODULE, REPLICAOF)', async () => {
-    // Redis answers DEBUG "not allowed" before looking at the ACL, which would hide what the
-    // rules say; ACL DRYRUN asks the rules themselves.
+  it('the rules refuse destructive and server-wide commands (asked of the ACL, never run)', async () => {
+    // ACL DRYRUN asks the rules without running the command: a wrong rule must not flush or shut
+    // down the Redis these tests share with development. It also sees past Redis refusing DEBUG
+    // for everyone before looking at the ACL.
     for (const command of [
+      ['FLUSHALL'],
+      ['FLUSHDB'],
+      ['SHUTDOWN', 'NOSAVE'],
+      ['SCRIPT', 'FLUSH'],
+      ['SWAPDB', '0', '1'],
       ['DEBUG', 'SLEEP', '0'],
       ['MODULE', 'LIST'],
       ['REPLICAOF', 'NO', 'ONE'],

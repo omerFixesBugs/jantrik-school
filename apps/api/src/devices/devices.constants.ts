@@ -1,3 +1,4 @@
+import type { JobsOptions } from 'bullmq';
 import type { Redis } from 'ioredis';
 
 /** The queue the device receiver (src/ingest) feeds and the API's devices worker reads. */
@@ -22,6 +23,19 @@ export interface ProcessPunchesJob {
  * custom job ids, hence the dash.
  */
 export const processPunchesJobId = (tenantId: string): string => `punches-${tenantId}`;
+
+/**
+ * How the receiver queues an institute's processing after an upload (ingest.service.ts): one job
+ * per institute, a second upload within the delay meets the waiting one. Shared with the test that
+ * runs the receiver's Redis calls under its ACL user (test/redis-acl.e2e-spec.ts).
+ */
+export const processPunchesJobOptions = (tenantId: string) =>
+  ({
+    jobId: processPunchesJobId(tenantId),
+    delay: 1000,
+    removeOnComplete: true,
+    removeOnFail: 50,
+  }) satisfies JobsOptions;
 
 /**
  * Institutes with devices (ZSET, score = when last added), for the minute tick and the daily
