@@ -25,8 +25,9 @@ coverage/
 !.env.example
 !deploy/.env.prod.example
 
-# production backups (deploy/compose.sh run --rm backup)
+# production backups and a server's own compose overrides (docs/deploy.md)
 deploy/backups/
+deploy/docker-compose.override.yml
 
 # logs
 *.log
