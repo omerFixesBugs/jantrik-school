@@ -330,6 +330,9 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
 | `SMS_PROVIDER`       | `console` in development, `memory` in API tests, `outbox` (Redis list `sms:outbox:<phone>`) for Playwright; all refused in production |
 | rate-limit variables | see `.env.example`                                                                                                                    |
 
+In production `SMS_PROVIDER=none` stands in until a gateway is built: every SMS fails and is
+recorded as failed. What else production refuses: [deploy.md](deploy.md) → Environment checks.
+
 Demo staff accounts from `pnpm db:seed` use the password `Jantrik@2026` (development only; the
 seed refuses to run when `NODE_ENV=production`, and no API endpoint sets passwords). Demo
 guardians log in with OTP, e.g. `01811000101`.

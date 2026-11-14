@@ -34,6 +34,7 @@ import { TenancyModule } from './tenancy/tenancy.module.js';
 import { PlatformAuthGuard } from './platform/platform-auth.guard.js';
 import { PlatformContextInterceptor } from './platform/platform-context.interceptor.js';
 import { PlatformModule } from './platform/platform.module.js';
+import { QueueWorkers } from './queue-workers.js';
 import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.js';
 
 @Module({
@@ -52,6 +53,8 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
         connection: { url: config.get('REDIS_URL', { infer: true }) },
         prefix: config.get('QUEUE_PREFIX', { infer: true }),
       }),
+      // QueueWorkers starts the workers, unless QUEUE_WORKERS=false (a separate worker process).
+      extraOptions: { manualRegistration: true },
     }),
     RedisModule,
     PrismaModule,
@@ -87,6 +90,7 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
     { provide: APP_INTERCEPTOR, useClass: PlatformContextInterceptor },
     { provide: APP_FILTER, useClass: PrismaErrorFilter },
+    QueueWorkers,
   ],
 })
 export class AppModule {}

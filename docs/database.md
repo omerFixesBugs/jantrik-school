@@ -39,7 +39,8 @@ the template.
 The roles and databases (`jantrik`, `jantrik_test`) are created by
 [`docker/postgres/init/01-roles.sh`](../docker/postgres/init/01-roles.sh). That script only runs
 on an empty volume, so after changing it run `docker compose down -v && docker compose up -d`.
-In production, infrastructure creates the same roles.
+In production, [`deploy/postgres/create-roles.sh`](../deploy/postgres/create-roles.sh) creates
+the same roles and the production database only ([deploy.md](deploy.md)).
 
 **Existing local volume created before these roles/databases existed?** Add them once instead of
 wiping (each statement errors harmlessly if the object already exists):

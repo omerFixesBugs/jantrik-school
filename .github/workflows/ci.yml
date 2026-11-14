@@ -209,3 +209,123 @@ jobs:
           name: playwright-report
           path: apps/web/playwright-report
           retention-days: 7
+
+  # The production database path (docs/deploy.md): the roles script on an empty cluster, the
+  # migrations and templates as production applies them, then a backup restored into a scratch
+  # database and compared with its source (deploy/backup/restore-check.sh).
+  backup-restore:
+    name: Production roles, backup and restore
+    runs-on: ubuntu-24.04
+    # Normally about 3 minutes.
+    timeout-minutes: 15
+
+    env:
+      # The superuser of the service container: the scripts' admin login. The roles' passwords
+      # and URLs are made for each run (first step).
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+          TZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fresh random passwords for this run only (as production makes them), instead of fixed
+      # ones that would pass every check forever. They replace the workflow's CI passwords.
+      - name: Throwaway passwords for this run
+        run: |
+          OWNER=$(openssl rand -hex 24)
+          APP=$(openssl rand -hex 24)
+          PLATFORM=$(openssl rand -hex 24)
+          INGEST=$(openssl rand -hex 24)
+          for pw in "$OWNER" "$APP" "$PLATFORM" "$INGEST"; do echo "::add-mask::$pw"; done
+          url() { echo "postgresql://$1:$2@localhost:5432/jantrik"; }
+          {
+            echo "DB_OWNER_PASSWORD=$OWNER"
+            echo "DB_APP_PASSWORD=$APP"
+            echo "DB_PLATFORM_PASSWORD=$PLATFORM"
+            echo "DB_INGEST_PASSWORD=$INGEST"
+            echo "DATABASE_MIGRATION_URL=$(url jantrik_owner "$OWNER")"
+            echo "DATABASE_URL=$(url jantrik_app "$APP")"
+            echo "DATABASE_PLATFORM_URL=$(url jantrik_platform_app "$PLATFORM")"
+            echo "DATABASE_INGEST_URL=$(url jantrik_ingest_app "$INGEST")"
+          } >> "$GITHUB_ENV"
+
+      - name: Check the passwords are this run's
+        run: |
+          for v in "$DB_OWNER_PASSWORD" "$DB_APP_PASSWORD" "$DB_PLATFORM_PASSWORD" "$DB_INGEST_PASSWORD"; do
+            [ "${#v}" -eq 48 ] || { echo "a DB_*_PASSWORD is not this run's"; exit 1; }
+          done
+          case "$DATABASE_URL" in
+            *"$DB_APP_PASSWORD"*) ;;
+            *) echo "DATABASE_URL is not this run's"; exit 1 ;;
+          esac
+
+      # pg_dump must match the server (16): a newer one writes settings Postgres 16 refuses.
+      - name: Postgres 16 client tools
+        run: |
+          if ! pg_dump --version | grep -q ' 16\.'; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client-16
+            echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+          fi
+
+      - name: Check the client versions
+        run: |
+          for tool in psql pg_dump pg_restore; do
+            "$tool" --version
+            "$tool" --version | grep -q ' 16\.' || { echo "$tool is not version 16"; exit 1; }
+          done
+
+      - name: Lint the deploy scripts
+        run: shellcheck deploy/compose.sh deploy/postgres/*.sh deploy/postgres/initdb/*.sh deploy/backup/*.sh
+
+      - name: Check the production compose file
+        run: docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod.example config --quiet
+
+      - name: Create the roles and the production database (create-roles.sh)
+        run: sh deploy/postgres/create-roles.sh
+
+      # Version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Build the db package
+        run: pnpm --filter "@jantrik/db..." run build
+
+      - name: Migrations and templates, as production applies them
+        run: |
+          pnpm db:deploy
+          node packages/db/dist/cli/seed-templates.js
+
+      # Demo institutes, so the copy has rows to compare and RLS to check.
+      - name: Demo data
+        run: pnpm db:seed
+
+      - name: Back up, restore into a scratch database, compare
+        run: sh deploy/backup/restore-check.sh jantrik

@@ -178,6 +178,9 @@ the receiver is its own process and gets **only its own variables** (`NODE_ENV`,
 `DATABASE_INGEST_URL`, `REDIS_URL`, `QUEUE_PREFIX`, `INGEST_PORT`, `INGEST_TRUST_PROXY` and the
 limits), never the API's logins or secrets; the API needs `INGEST_PUBLIC_HOST` there.
 
+Deploying to a server (Docker images, the production compose stack, database roles, the
+production environment checks, backups and restores): [docs/deploy.md](docs/deploy.md).
+
 ## Notes
 
 - **pnpm build scripts**: pnpm only runs dependency install scripts that are allow-listed in
