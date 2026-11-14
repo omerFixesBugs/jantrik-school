@@ -597,6 +597,12 @@ describe('device receiver', () => {
     ).rejects.toThrow();
     const ok = await fetch(url, { method: 'POST', headers, body: 'x'.repeat(60_000) });
     expect([ok.status, await ok.text()]).toEqual([200, 'OK']);
+    // The edge: exactly 64 KB is drained and answered, one byte more is cut.
+    const edge = await fetch(url, { method: 'POST', headers, body: 'x'.repeat(65_536) });
+    expect([edge.status, await edge.text()]).toEqual([200, 'OK']);
+    await expect(
+      fetch(url, { method: 'POST', headers, body: 'x'.repeat(65_537) }),
+    ).rejects.toThrow();
   });
 
   describe('the first address is trusted only within 24 hours of registration', () => {

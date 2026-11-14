@@ -333,6 +333,7 @@ describe('parseDeviceCmdResults and parseInfo', () => {
     const body = [
       `ID=${'9'.repeat(400)}&Return=0`, // Number() would give Infinity
       'ID=9007199254740993&Return=0', // past 2^53: would round to ...992
+      'ID=9007199254740992&Return=0', // exactly 2^53: not a safe integer
       `ID=1&Return=${'9'.repeat(400)}`,
       'ID=2&Return=2147483648',
       'ID=3&Return=-2147483649',

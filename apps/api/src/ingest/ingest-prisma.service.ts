@@ -114,10 +114,11 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
       }, this.checkTimeoutMs);
     });
     try {
+      // The race handles the query's rejection too: one that fails after the timeout is not an
+      // unhandled rejection (tested).
       return await Promise.race([query, timeout]);
     } finally {
       clearTimeout(timer);
-      void query.catch(() => undefined);
     }
   }
 
