@@ -92,8 +92,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # Same script Docker runs locally on first start: creates the roles (jantrik_owner,
-      # jantrik_app, jantrik_platform_app, jantrik_ingest_app and the function owners) and the jantrik, jantrik_test
-      # and jantrik_e2e databases.
+      # jantrik_app, jantrik_platform_app, jantrik_ingest_app and the function owners) and the
+      # jantrik, jantrik_test and jantrik_e2e databases.
       - name: Create database roles and databases
         run: sh docker/postgres/init/01-roles.sh
         env:
@@ -172,8 +172,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # Same script Docker runs locally on first start: creates the roles (jantrik_owner,
-      # jantrik_app, jantrik_platform_app, jantrik_ingest_app and the function owners) and the jantrik, jantrik_test
-      # and jantrik_e2e databases.
+      # jantrik_app, jantrik_platform_app, jantrik_ingest_app and the function owners) and the
+      # jantrik, jantrik_test and jantrik_e2e databases.
       - name: Create database roles and databases
         run: sh docker/postgres/init/01-roles.sh
         env:
