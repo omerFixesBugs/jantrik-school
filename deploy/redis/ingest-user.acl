@@ -14,6 +14,9 @@ resetchannels
 -@dangerous
 # FUNCTION LOAD, FLUSH, DELETE and RESTORE are @write: never server-side code that outlives the call.
 -function
+# SCAN, RANDOMKEY and DBSIZE read the whole keyspace: key patterns do not filter the names they
+# return, and some names hold phone numbers (rl:otp-phone-day:<phone>, sms:outbox:<phone>).
+-scan -randomkey -dbsize
 # INFO is dangerous by category, but ioredis's ready check and BullMQ's version check need it.
 +info
 # The rate limiter and the refused-serials list write in MULTI/EXEC transactions.

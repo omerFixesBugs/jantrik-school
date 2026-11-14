@@ -123,6 +123,12 @@ describe('the receiver Redis user (deploy/redis/ingest-user.acl)', () => {
     ['a script that flushes', () => asUser.eval("return redis.call('flushall')", 0)],
     ['a script that reads another key', () => asUser.eval("return redis.call('get', 'otp:x')", 0)],
     ['SHUTDOWN', () => asUser.call('SHUTDOWN', 'NOSAVE')],
+    // Key names are not filtered by the key patterns, and some hold phone numbers
+    // (rl:otp-phone-day:<phone>, sms:outbox:<phone>): no listing of the keyspace.
+    ['SCAN', () => asUser.scan('0')],
+    ['RANDOMKEY', () => asUser.randomkey()],
+    ['DBSIZE', () => asUser.dbsize()],
+    ['a script that scans', () => asUser.eval("return redis.call('scan', '0')", 0)],
   ])('refuses %s', async (_case, attempt) => {
     await expect(attempt()).rejects.toThrow(refused);
   });

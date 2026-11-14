@@ -36,5 +36,8 @@ refused KEYS '*'
 refused CONFIG GET maxmemory
 refused FUNCTION FLUSH
 refused PUBLISH anything x
+refused SCAN 0
+refused RANDOMKEY
+refused DBSIZE
 
 echo 'check-ingest-acl: jantrik_ingest reaches its own keys only and no dangerous command'
