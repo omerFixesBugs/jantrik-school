@@ -49,6 +49,14 @@ API returns nothing about an institute's students, guardians or attendance beyon
   - An opaque 32-byte token. Only its SHA-256 is stored (`platform_sessions`).
   - It travels in the cookie `jantrik_ps`: httpOnly, Secure, SameSite=Strict, `Path=/platform`.
   - The browser never holds a token.
+- **Only from the platform's own web origin** (`PLATFORM_ORIGINS`, `https://platform.<domain>` in
+  production): any other `Origin`, or none, gets 403 `PLATFORM_ORIGIN_REFUSED`, checked before
+  everything else on every `/platform/*` route, the login included. The institute app is allowed
+  by CORS and shares the cookie's site (`api.` and `app.` are one site), so without this an XSS in
+  the institute app could use a platform session from an admin's browser. Caddy refuses other
+  origins too, as a second layer ([deploy.md](deploy.md) → HTTPS). If the API is ever served from
+  the platform's own origin (step 12, part C), same-origin GETs carry no `Origin`, and the check
+  must also accept `Sec-Fetch-Site: same-origin`.
 - **Every request sends `X-Jantrik-Client: platform`** (otherwise 403). With SameSite=Strict this
   is the CSRF defence, the same as for the institute refresh cookie.
 - **Short:** 30 minutes idle, 8 hours at most.
@@ -59,7 +67,7 @@ API returns nothing about an institute's students, guardians or attendance beyon
   - Institute bearer tokens are ignored on `/platform/*` (401).
   - The platform cookie is ignored on institute routes (401).
   - `@PlatformRoute()` makes the institute guards skip a route. `PlatformAuthGuard` checks the
-    header and the session. `PlatformContextInterceptor` runs the handler in one transaction with
+    origin, the header and the session. `PlatformContextInterceptor` runs the handler in one transaction with
     `app.platform_session` (the token hash) set.
 
 ## Database access

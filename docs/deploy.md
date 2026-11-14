@@ -13,7 +13,7 @@ the repo's [`Dockerfile`](../Dockerfile):
 | Service    | What it is                                                                | Reached from                            |
 | ---------- | ------------------------------------------------------------------------- | --------------------------------------- |
 | `postgres` | PostgreSQL 16. On its first start it creates the roles and the database   | the other services only                 |
-| `redis`    | Redis with persistence (AOF) and no eviction                              | the other services only                 |
+| `redis`    | Redis with persistence (AOF), no eviction, and the receiver's own user    | the other services only                 |
 | `migrate`  | One shot: the migrations, then the institute types and templates          | runs and exits before the apps start    |
 | `api`      | The API (`node dist/main.js`)                                             | Caddy; `127.0.0.1:4000` on the server   |
 | `worker`   | The queue jobs (SMS, imports, fees, exams, devices): the API without HTTP | nothing (no port)                       |
@@ -100,8 +100,10 @@ Fill in every value of `deploy/.env.prod` (git-ignored, never commit it):
 
 - **Domains:** `APP_DOMAIN`, `API_DOMAIN`, `PLATFORM_DOMAIN`, `DEVICE_HOST` (a domain or the
   server's fixed IP), `ACME_EMAIL` (Let's Encrypt's expiry warnings).
-- **Passwords** (Postgres superuser, the four roles, Redis): `openssl rand -hex 24` each. Letters
-  and digits only, because they go into connection URLs as they are. Postgres takes the
+- **Passwords** (Postgres superuser, the four roles, Redis's two users: `REDIS_PASSWORD` for the
+  API and the worker, `REDIS_INGEST_PASSWORD` for the device receiver's own user):
+  `openssl rand -hex 24` each, all different. Letters and digits only, because they go into
+  connection URLs as they are. Postgres takes the
   superuser's and the roles' passwords on its **first start only** (below).
 - **Redis memory:** `REDIS_MAXMEMORY` (default `512mb`, about an eighth of a 4 GB server). Redis
   refuses writes beyond it rather than evicting anything, so watch it (Monitoring) and raise it
@@ -144,7 +146,8 @@ The API and the worker refuse:
 | `DEV_LAN=true`                                                                                                                                                                                               | development only (LAN CORS, cookie without Secure)                                                                                                                                                       |
 | `JANTRIK_TEST_TODAY` set                                                                                                                                                                                     | tests only (a fixed "today")                                                                                                                                                                             |
 | `TRUST_PROXY` (or `INGEST_TRUST_PROXY`) `true` or a `/0` range                                                                                                                                               | Express would believe any client's `X-Forwarded-For`: anyone could pose as any address, or a new one per request past every per-address limit. Use a hop count (`1` behind Caddy) or the proxy's address |
-| `TRUST_PROXY` or `REDIS_URL` not set                                                                                                                                                                         | their defaults (no proxy; Redis on localhost) suit a laptop. Behind Caddy, `TRUST_PROXY=false` would rate-limit everyone as one address                                                                  |
+| `TRUST_PROXY`, `REDIS_URL` or `PLATFORM_ORIGINS` not set                                                                                                                                                     | their defaults (no proxy; Redis on localhost; the platform on `http://localhost:3000`) suit a laptop. Behind Caddy, `TRUST_PROXY=false` would rate-limit everyone as one address                         |
+| `PLATFORM_ORIGINS` empty, with an origin that is not https or is local, or with one missing from `CORS_ORIGINS`                                                                                              | `/platform/*` answers only the platform's own web origin (`PlatformAuthGuard`, deployment requirement 1); the browser's preflight needs it in `CORS_ORIGINS` too                                         |
 | `INGEST_IN_PROCESS=true`                                                                                                                                                                                     | the receiver is its own process, without the API's logins (deployment requirement 4)                                                                                                                     |
 | `CORS_ORIGINS` with `http://`, localhost, `127.0.0.1`, `[::1]`, `0.0.0.0`, `*.localhost` or `*`; or empty                                                                                                    | the API answers browsers with credentials only from the real https origins                                                                                                                               |
 | a secret under 32 characters                                                                                                                                                                                 | too short to resist guessing                                                                                                                                                                             |
@@ -164,12 +167,21 @@ The device receiver refuses:
 | `INGEST_TRUST_PROXY` `true` or a `/0` range                                                                                                         | a client could claim a school's trusted address and receive its commands                                                                  |
 | `DATABASE_INGEST_URL` as `jantrik_owner`, `postgres`, `jantrik_app` or `jantrik_platform_app`                                                       | its own login only                                                                                                                        |
 | `REDIS_URL` not set, or with an example or short password                                                                                           | as for the API                                                                                                                            |
+| `REDIS_URL` not logging in as `jantrik_ingest`                                                                                                      | Redis's default user could queue jobs the worker trusts; `jantrik_ingest` reaches only the receiver's keys and queue (§ 10a)              |
 | `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                                             | as for the API                                                                                                                            |
 
-Beyond these, the API checks at start-up that its platform login can run the platform functions
-and its main login cannot, and the receiver that its login cannot read a table
-([devices.md](devices.md)). The database passwords are checked by `compose.sh` and the roles
-script (next step).
+Beyond these, every service checks its database login at start-up, against the database itself:
+
+- **No login may be a superuser, have BYPASSRLS, or be able to become such a role** (nor
+  `pg_read_all_data`, `pg_write_all_data` or the server file and program roles): the API and the
+  worker (`DATABASE_URL`), the platform module (`DATABASE_PLATFORM_URL`) and the receiver
+  (`DATABASE_INGEST_URL`). Fail closed: while the database does not answer, the check is asked
+  again for about 3 minutes, then the service exits ([database.md](database.md) → Database roles).
+- The platform login can run the platform functions and the main login cannot.
+- The receiver's login cannot read a table, and its statements stop after 5 s
+  (`statement_timeout`, [devices.md](devices.md)).
+
+The database passwords are checked by `compose.sh` and the roles script (next step).
 
 ## 7. First start
 
@@ -283,15 +295,33 @@ same way.
 - **`platform.`** serves only the web app's `/platform` pages and its assets (`/_next/*`); `/`
   goes to `/platform`, everything else is 404 (deployment requirement 1).
 - **`api.`** serves the API. A browser request to `/platform/*` whose `Origin` is not
-  `https://platform.<your-domain>` gets 403 from Caddy. This is a stopgap: the requirement asks
-  for the same `Origin` allowlist check inside `PlatformAuthGuard`, an auth change left to the
-  owner. Until then, keep this rule if you replace Caddy with another proxy.
+  `https://platform.<your-domain>` gets 403 from Caddy. The API refuses it too
+  (`PlatformAuthGuard`, `PLATFORM_ORIGINS`): Caddy's rule is the second layer (decision S27),
+  keep it if you replace Caddy with another proxy.
 - Caddy replaces any `X-Forwarded-For` a client sends with the address it sees, so
   `TRUST_PROXY=1` gives the API each visitor's real address.
 
 **Another proxy (nginx, a provider's load balancer):** route the three names the same way, add the
 `Origin` rule, overwrite `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For
 $remote_addr;`), set `TRUST_PROXY` to the number of proxies, and leave port 4080 out of it.
+
+## 10a. Redis users
+
+Redis has two users ([`deploy/redis/start-redis.sh`](../deploy/redis/start-redis.sh)):
+
+- **The default user** (`REDIS_PASSWORD`): the API and the worker.
+- **`jantrik_ingest`** (`REDIS_INGEST_PASSWORD`): the device receiver, which is open to the
+  internet without a login. It reaches only its own keys (`ingest:*`, `rl:ingest-*`) and the
+  `devices` queue, with no Pub/Sub, no dangerous, SCRIPT or FUNCTION commands, and no listing of
+  the keyspace (`SCAN`, `RANDOMKEY`, `DBSIZE`: key names hold phone numbers)
+  ([`deploy/redis/ingest-user.acl`](../deploy/redis/ingest-user.acl)). So code run in the
+  receiver cannot queue a job on another queue the worker trusts (an SMS, an import), read OTP
+  counters, or flush Redis.
+
+After a deploy, check it:
+`deploy/compose.sh exec -T redis sh /usr/local/etc/jantrik-redis/check-ingest-acl.sh`. It writes
+one of the user's own keys (gone after 5 s) and asks Redis's ACL (`ACL DRYRUN`) about the rest, so
+it never runs a destructive command. CI runs the same check on the production compose file.
 
 ## 11. Upgrades
 
@@ -313,6 +343,15 @@ deploy/compose.sh ps
 - `NEXT_PUBLIC_API_URL` is baked into the web image: changing `API_DOMAIN` needs a rebuild.
 - `JANTRIK_BOOT_REFRESH=off` in the settings file switches the boot refresh off (docs/auth.md →
   Web client) without a rebuild: `deploy/compose.sh up -d web`.
+- **A server set up before sprint 1's P0** (the platform origin, the receiver's Redis user and
+  5 s limit):
+  1. add `REDIS_INGEST_PASSWORD` (`openssl rand -hex 24`, not the same as `REDIS_PASSWORD`) to
+     the settings file (`PLATFORM_ORIGINS` needs nothing: the compose file sets it from
+     `PLATFORM_DOMAIN`);
+  2. optionally, as the Postgres superuser (the receiver's pool already sends the same limit):
+     `ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s';`
+  3. upgrade as above (`up -d` restarts Redis with the new user), then run the Redis check
+     (§ 10a).
 
 ## 12. Backups
 
@@ -474,6 +513,7 @@ To use a provider's Postgres 16 instead of the `postgres` service:
 - [ ] `deploy/compose.sh ps`: everything healthy; `migrate` exited 0.
 - [ ] `https://api.<domain>/health` is ok; the app and the platform log-in pages load over HTTPS.
 - [ ] `https://app.<domain>/platform` redirects to `platform.`.
+- [ ] The receiver's Redis user passes its check (§ 10a).
 - [ ] The first platform admin enrolled their authenticator and stored the backup codes.
 - [ ] A device (or `pnpm device:sim` from a laptop: [devices.md](devices.md)) reaches
       `device.<domain>:4080`.
@@ -490,14 +530,11 @@ To use a provider's Postgres 16 instead of the `postgres` service:
   production path sets a staff member's password (invitations and first logins go through an OTP;
   only the demo seed and the tests set passwords). Only platform admins can sign in. A gateway, or
   a deliberate password-setting path, must exist before the first institute goes live.
-- **The `Origin` check in `PlatformAuthGuard`** (deployment requirement 1): an auth code change.
-  The Caddy rule above is the stopgap.
 - **Off-site backup storage** and **an uptime monitor** of your choice.
+- **Done in sprint 1, P0:** the `Origin` check in `PlatformAuthGuard` (Caddy's rule stays as a
+  second layer), the receiver's own Redis user, the start-up check that refuses a database login
+  that is a superuser or bypasses RLS, and the receiver's 5 s query limit.
 - **Recorded, not built** (decisions-pending.md → Deployment readiness):
-  - a Redis user for the receiver limited to its own keys (today it has full Redis rights, so code
-    run in it could queue jobs the worker trusts);
-  - a start-up check that fails when the app's database login is a superuser or BYPASSRLS (today
-    the env checks refuse the known admin logins by name);
   - CI does not cover the compose Postgres's first start (initdb), the non-superuser branch of
     `create-roles.sh` or the image builds (all checked by hand for this release);
   - IPv6 end to end (an IPv6 compose network, then AAAA records for `app.`, `platform.`, `api.`).
