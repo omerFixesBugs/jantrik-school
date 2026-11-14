@@ -1,5 +1,24 @@
 import { createServer, type Socket } from 'node:net';
-import { IngestPrismaService, errorLabel, ingestRefusalStatus } from './ingest-prisma.service.js';
+import type { createPrismaClient } from '@jantrik/db';
+import {
+  INGEST_POOL,
+  IngestPrismaService,
+  errorLabel,
+  ingestRefusalStatus,
+} from './ingest-prisma.service.js';
+
+/** The arguments of each createPrismaClient call (the real one still builds the client). */
+const created = vi.hoisted(() => [] as unknown[][]);
+vi.mock('@jantrik/db', async (importOriginal) => {
+  const real = await importOriginal<{ createPrismaClient: typeof createPrismaClient }>();
+  return {
+    ...real,
+    createPrismaClient: (...args: Parameters<typeof createPrismaClient>) => {
+      created.push(args);
+      return real.createPrismaClient(...args);
+    },
+  };
+});
 
 type Check = { resolve: boolean; students: boolean; punches: boolean };
 const PASS: Check = { resolve: true, students: false, punches: false };
@@ -91,6 +110,13 @@ describe('IngestPrismaService startup check', () => {
     expect(total).toBeLessThanOrEqual(190_000);
     // Each check may take 10 s: a start that never gets an answer fails within about 6 minutes.
     expect(real.checkTimeoutMs).toBe(10_000);
+  });
+
+  it("builds the receiver's pool with a connection timeout no longer than a check, and keep-alive", () => {
+    created.length = 0;
+    new IngestPrismaService({ get: () => 'postgresql://x@localhost/db' } as never);
+    expect(created).toEqual([['postgresql://x@localhost/db', INGEST_POOL]]);
+    expect(INGEST_POOL).toEqual({ connectionTimeoutMillis: 10_000, keepAlive: true });
   });
 
   it('asks again while the database is not reachable, then checks as usual', async () => {

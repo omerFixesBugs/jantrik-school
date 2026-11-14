@@ -1,7 +1,21 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createPrismaClient, type PrismaClient } from '@jantrik/db';
+import { createPrismaClient, type PoolOptions, type PrismaClient } from '@jantrik/db';
 import type { IngestEnv } from '../config/ingest-env.js';
+
+/** How long one start-up check, or opening one connection, may take. */
+const STARTUP_CHECK_TIMEOUT_MS = 10_000;
+
+/**
+ * The receiver's connection pool: opening a connection fails after the check's time limit instead
+ * of waiting forever (a check that timed out while connecting does not keep its attempt in the
+ * pool), and TCP keep-alive notices a database that went away. Queries themselves have no time
+ * limit yet (decision #79 in docs/decisions-pending.md).
+ */
+export const INGEST_POOL: PoolOptions = {
+  connectionTimeoutMillis: STARTUP_CHECK_TIMEOUT_MS,
+  keepAlive: true,
+};
 
 /**
  * The device receiver's own database login (DATABASE_INGEST_URL, role jantrik_ingest_app). It may
@@ -25,7 +39,7 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
    * database that accepts the connection and never answers would otherwise hang the start. The
    * check answers in milliseconds on a working database.
    */
-  checkTimeoutMs = 10_000;
+  checkTimeoutMs = STARTUP_CHECK_TIMEOUT_MS;
 
   constructor(config: ConfigService<IngestEnv, true>) {
     const url = config.get('DATABASE_INGEST_URL', { infer: true });
@@ -35,7 +49,7 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
           'See docs/database.md.',
       );
     }
-    this.client = createPrismaClient(url);
+    this.client = createPrismaClient(url, INGEST_POOL);
   }
 
   /**
