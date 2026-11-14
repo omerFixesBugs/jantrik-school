@@ -581,6 +581,24 @@ describe('device receiver', () => {
     });
   });
 
+  it('devicecmd from an address the device does not trust is read only up to 64 KB, then cut', async () => {
+    const t = await institute();
+    const dev = await addDevice(t.id);
+    // The first address a device ever calls from is the one it trusts.
+    await ingestHttp(h)
+      .get(`/iclock/getrequest?SN=${dev.serialNo}`)
+      .set('X-Forwarded-For', randomIp())
+      .expect(200);
+    const url = `${h.baseUrl}/iclock/devicecmd?SN=${dev.serialNo}`;
+    const headers = { 'X-Forwarded-For': randomIp(), 'Content-Type': 'text/plain' };
+    // Well under the 2 MB drain limit, but past the 64 KB a trusted answer may have.
+    await expect(
+      fetch(url, { method: 'POST', headers, body: 'x'.repeat(200 * 1024) }),
+    ).rejects.toThrow();
+    const ok = await fetch(url, { method: 'POST', headers, body: 'x'.repeat(60_000) });
+    expect([ok.status, await ok.text()]).toEqual([200, 'OK']);
+  });
+
   describe('the first address is trusted only within 24 hours of registration', () => {
     const queueUpsert = (tenantId: string, deviceId: string, pin: string) =>
       inTenant(tenantId, (tx) =>

@@ -213,6 +213,7 @@ body limits follow. Counts are per minute unless shown, kept in Redis, and confi
 | ATTLOG body (413)                                                                                  | 512 KB and 10 000 lines            | `INGEST_MAX_ATTLOG_BYTES`         |
 | Other uploads drained, then the connection is closed                                               | 2 MB                               | `INGEST_MAX_DRAIN_BYTES`          |
 | A devicecmd body (413)                                                                             | 64 KB                              |                                   |
+| A devicecmd body from an address the device does not trust: drained, then the connection is closed | 64 KB                              |                                   |
 | Server: headers / whole request / idle connection / connections at once                            | 10 s / 30 s / 5 s / 1000           |                                   |
 
 - **"An address"** is an IPv4 address, or an IPv6 address's /64 (one home or host usually holds

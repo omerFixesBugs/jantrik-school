@@ -139,8 +139,11 @@ export class IngestController {
   async commandResults(@Req() req: Request, @Res() res: Response): Promise<void> {
     const device = await this.admit(req, res);
     if (!device) return;
-    // Answers from an address the device does not trust are dropped unread.
-    if (!device.ipTrusted) return this.drain(req, res);
+    // Answers from an address the device does not trust are dropped unread, and never read past
+    // the cap a trusted answer has (a longer body closes the connection).
+    if (!device.ipTrusted) {
+      return this.drain(req, res, Math.min(MAX_DEVICECMD_BYTES, this.drainBytes));
+    }
     const { ended, body } = await readBody(req, MAX_DEVICECMD_BYTES, this.drainBytes);
     if (!ended) return;
     if (body === null) return reply(res, 413, 'ERROR');
@@ -181,8 +184,9 @@ export class IngestController {
     }
   }
 
-  private async drain(req: Request, res: Response): Promise<void> {
-    const { ended } = await readBody(req, 0, this.drainBytes);
+  /** Reads the body off the socket unseen (up to `max` bytes, then closes) and answers `OK`. */
+  private async drain(req: Request, res: Response, max = this.drainBytes): Promise<void> {
+    const { ended } = await readBody(req, 0, max);
     if (ended) reply(res, 200, 'OK');
   }
 }
