@@ -148,9 +148,8 @@ are left out.
   - The Redis trusted mark is per /64, and the untrusted-budget peek and the refused-address brake
     can overshoot under concurrent requests: still charged after `ingest_resolve`; the overshoot is
     small.
-  - Some INSERT grants are table-wide (the app could supply its own `device_commands.seq`), and the
-    unique-violation tests match the word "unique" rather than the constraint's name: hardening, no
-    exploit path found.
+  - Some INSERT grants are table-wide (the app could supply its own `device_commands.seq`):
+    hardening, no exploit path found.
   - In development a receiver that refuses to start stops the API too (fail-loud accepted).
   - The isolation code scan misses indirect imports, and the biometric sentinel's database scan
     sees only rows visible under the device institute's RLS: the receiver's start-up check covers

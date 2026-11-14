@@ -130,7 +130,7 @@ describe('staff_attendance_days: tenant isolation and rules', () => {
   it('one row per person per day', async () => {
     await expect(
       asA((tx) => tx.staffAttendanceDay.create({ data: manualDay('2026-10-20') })),
-    ).rejects.toThrow(/unique/i);
+    ).rejects.toThrow(/staff_attendance_days_tenant_id_user_id_date_key/);
   });
 
   it('checks reject bad values', async () => {

@@ -291,7 +291,7 @@ describe('device tables: tenant isolation', () => {
         }),
       );
     const deviceA = await add(a.tenantId);
-    await expect(add(b.tenantId)).rejects.toThrow(/unique/i);
+    await expect(add(b.tenantId)).rejects.toThrow(/attendance_devices_active_serial/);
     await add(b.tenantId, false);
     await add(a.tenantId, false);
     await withTenant(app, a.tenantId, (tx) =>
@@ -303,7 +303,7 @@ describe('device tables: tenant isolation', () => {
       withTenant(app, a.tenantId, (tx) =>
         tx.attendanceDevice.update({ where: { id: deviceA.id }, data: { isActive: true } }),
       ),
-    ).rejects.toThrow(/unique/i);
+    ).rejects.toThrow(/attendance_devices_active_serial/);
   });
 
   it('one device ID belongs to one person of an institute, student or staff', async () => {
@@ -313,19 +313,23 @@ describe('device tables: tenant isolation', () => {
       );
     // 101 is A's student's: refused for a staff member and for another student.
     await expect(map({ deviceUserId: '101', staffUserId: a.staffUserId })).rejects.toThrow(
-      /unique/i,
+      /device_people_tenant_id_device_user_id_key/,
     );
     const other = await withTenant(app, a.tenantId, (tx) =>
       tx.student.create({
         data: { tenantId: a.tenantId, studentCode: `S-${randomUUID().slice(0, 8)}`, nameEn: 'S2' },
       }),
     );
-    await expect(map({ deviceUserId: '101', studentId: other.id })).rejects.toThrow(/unique/i);
+    await expect(map({ deviceUserId: '101', studentId: other.id })).rejects.toThrow(
+      /device_people_tenant_id_device_user_id_key/,
+    );
     // One ID per person.
-    await expect(map({ deviceUserId: '102', studentId: a.studentId })).rejects.toThrow(/unique/i);
+    await expect(map({ deviceUserId: '102', studentId: a.studentId })).rejects.toThrow(
+      /device_people_one_per_student/,
+    );
     await map({ deviceUserId: '9001', staffUserId: a.staffUserId });
     await expect(map({ deviceUserId: '9002', staffUserId: a.staffUserId })).rejects.toThrow(
-      /unique/i,
+      /device_people_one_per_staff/,
     );
     // B's student has 101 too: IDs are per institute.
     const personB = await withTenant(app, b.tenantId, (tx) =>
