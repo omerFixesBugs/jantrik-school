@@ -42,9 +42,11 @@ export function unsafeOrigin(origin: string): string | null {
 
 /**
  * Marks of example, development and test values (.env.example, deploy/.env.prod.example, CI and
- * the test configs): a secret carrying one was copied, not generated.
+ * the test configs): a secret carrying one was copied, not generated. The same list as
+ * deploy/compose.sh and deploy/postgres/create-roles.sh.
  */
-const PLACEHOLDER = /change[-_ ]?me|dev[-_]only|test[-_]only|ci[-_]only|placeholder|example/i;
+const PLACEHOLDER =
+  /change[-_ ]?me|dev[-_]only|test[-_]only|ci[-_]only|dev_password|ci_password|placeholder|example/i;
 
 export const isPlaceholderSecret = (value: string): boolean => PLACEHOLDER.test(value);
 
@@ -108,20 +110,22 @@ const MIN_PASSWORD = 24;
  * allowed: Redis reached only on a private network (the production compose always sets one).
  */
 export function urlPasswordProblem(path: string, url: string): EnvProblem | null {
-  let password: string;
+  let passwords: string[];
   try {
-    password = decodeURIComponent(new URL(url).password);
+    const parsed = new URL(url);
+    // ioredis also takes the password from the query string (?password=).
+    passwords = [decodeURIComponent(parsed.password), parsed.searchParams.get('password') ?? ''];
   } catch {
     return null;
   }
-  if (password === '') return null;
-  if (password.length < MIN_PASSWORD || isPlaceholderSecret(password)) {
-    return {
-      path,
-      message: `${path} holds an example password or one under ${MIN_PASSWORD} characters: generate one (openssl rand -hex 24)`,
-    };
-  }
-  return null;
+  const weak = passwords.some(
+    (p) => p !== '' && (p.length < MIN_PASSWORD || isPlaceholderSecret(p)),
+  );
+  if (!weak) return null;
+  return {
+    path,
+    message: `${path} holds an example password or one under ${MIN_PASSWORD} characters: generate one (openssl rand -hex 24)`,
+  };
 }
 
 /**

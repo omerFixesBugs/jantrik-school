@@ -151,6 +151,8 @@ describe('production env: the API and the worker', () => {
       'ci-only-otp-pepper-0123456789abcdefghijklmno',
       'CHANGE_ME_generate_with_openssl_rand_base64_48',
       'placeholder-placeholder-placeholder-1234',
+      'app_dev_password_0123456789abcdefghijklmn',
+      'owner_ci_password_0123456789abcdefghijklm',
     ];
     for (const value of copied) expect(value).toMatch(/.{32}/);
     for (const key of ['JWT_ACCESS_SECRET', 'OTP_PEPPER', 'PLATFORM_TOTP_KEY']) {
@@ -197,6 +199,13 @@ describe('production env: the API and the worker', () => {
     }
     expect(apiError({ ...api, REDIS_URL: `redis://:${'a1'.repeat(24)}@redis:6379` })).toBe('');
     expect(apiError({ ...api, REDIS_URL: 'redis://redis:6379' })).toBe('');
+    // ioredis reads ?password= too.
+    expect(apiError({ ...api, REDIS_URL: 'redis://redis:6379/0?password=short' })).toContain(
+      'REDIS_URL holds an example password',
+    );
+    expect(apiError({ ...api, REDIS_URL: `redis://redis:6379?password=${'c4'.repeat(24)}` })).toBe(
+      '',
+    );
   });
 
   it("refuses the database's admin secrets in its environment (owner URL, superuser and role passwords)", () => {
