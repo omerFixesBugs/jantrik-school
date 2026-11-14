@@ -279,6 +279,10 @@ does not fall to Plus Jakarta Sans as design.md says. Options: self-host only th
 (next/font/local, OFL licence; Latin letters then render in Jakarta, a visible change), or keep
 fewer weights. Decisions P2 in [decisions-pending.md](decisions-pending.md).
 
+Tried and not kept (2026-11-14): not preloading Noto Sans Bengali and starting both Bangla faces
+when the app hydrates instead. Against the branch, interleaved, the medians were equal or up to
+0.8 s worse on the four pages measured (the ranges overlap), so the preload stays.
+
 ### 4. API calls worth a look (not on the critical path today)
 
 Server time of every call the budget pages make was 12-107 ms, except:
