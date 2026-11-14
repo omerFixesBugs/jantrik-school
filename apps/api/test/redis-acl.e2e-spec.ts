@@ -1,36 +1,20 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { DEVICES_QUEUE } from '../src/devices/devices.constants.js';
 import { RateLimiter } from '../src/redis/rate-limiter.service.js';
+import { createIngestAclUser, ingestAclRules as rules } from './support/redis-acl.js';
 
 // The device receiver logs in to Redis as jantrik_ingest (production compose): its own keys and
 // its queue only. The rules live in one file, read here and by deploy/redis/start-redis.sh. This
 // test applies them to a throwaway user on the test Redis and runs everything the receiver does
 // with Redis as that user, then checks what it must not do.
 
-const RULES_FILE = path.resolve(import.meta.dirname, '../../../deploy/redis/ingest-user.acl');
-
-/** The rules file's ACL rules, with `{prefix}` replaced (comment lines and blank lines dropped). */
-function rules(prefix: string): string[] {
-  return readFileSync(RULES_FILE, 'utf8')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line !== '' && !line.startsWith('#'))
-    .join(' ')
-    .split(/\s+/)
-    .map((rule) => rule.replaceAll('{prefix}', prefix));
-}
-
 const refused = /NOPERM|no permissions/i;
 
 describe('the receiver Redis user (deploy/redis/ingest-user.acl)', () => {
   const url = new URL(process.env['REDIS_URL'] ?? 'redis://localhost:6379/1');
-  const db = Number(url.pathname.slice(1) || 0);
   const user = `jantrik_ingest_test_${randomBytes(4).toString('hex')}`;
-  const password = randomBytes(24).toString('hex');
   const prefix = `p0acl${randomBytes(3).toString('hex')}`;
   let admin: Redis;
   let asUser: Redis;
@@ -38,25 +22,9 @@ describe('the receiver Redis user (deploy/redis/ingest-user.acl)', () => {
 
   beforeAll(async () => {
     admin = new Redis(url.toString());
-    // `+select` only here: the tests use Redis database 1; production URLs name none (A4).
-    await admin.call(
-      'ACL',
-      'SETUSER',
-      user,
-      'reset',
-      'on',
-      `>${password}`,
-      ...rules(prefix),
-      '+select',
-    );
-    asUser = new Redis({
-      host: url.hostname,
-      port: Number(url.port || 6379),
-      db,
-      username: user,
-      password,
-      maxRetriesPerRequest: 1,
-    });
+    // `+select` only in the tests: they use Redis database 1; production URLs name none (A4).
+    const login = await createIngestAclUser(admin, url.toString(), user, prefix);
+    asUser = new Redis(login.url, { maxRetriesPerRequest: 1 });
     // Connected and authenticated as the user (the receiver never sends PING).
     expect(await asUser.exists(`ingest:none-${prefix}`)).toBe(0);
   });

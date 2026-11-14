@@ -12,6 +12,7 @@ import { Redis } from 'ioredis';
 import { envSchema } from '../src/config/env.js';
 import { ingestEnvSchema } from '../src/config/ingest-env.js';
 import { createTenant } from './support/harness.js';
+import { createIngestAclUser } from './support/redis-acl.js';
 
 // The stand-alone device receiver starts from its own variables (src/config/ingest-env.ts): in
 // production it is given none of the API's logins or secrets. And the API with the receiver in its
@@ -78,10 +79,21 @@ describe('device receiver environment', () => {
     );
     await prisma.$disconnect();
 
+    // In production the receiver logs in to Redis as jantrik_ingest only (production-env.ts): a
+    // user with the production rules (deploy/redis/ingest-user.acl), so the device's request runs
+    // under them end to end. Removed in `finally`.
+    const admin = new Redis(saved['REDIS_URL']!);
+    const login = await createIngestAclUser(
+      admin,
+      saved['REDIS_URL']!,
+      'jantrik_ingest',
+      saved['QUEUE_PREFIX']!,
+    );
+
     receiverOnly({
       NODE_ENV: 'production',
       DATABASE_INGEST_URL: saved['DATABASE_INGEST_URL']!,
-      REDIS_URL: saved['REDIS_URL']!,
+      REDIS_URL: login.url,
       QUEUE_PREFIX: saved['QUEUE_PREFIX']!,
     });
     for (const key of [
@@ -108,6 +120,8 @@ describe('device receiver environment', () => {
       expect(config.get('INGEST_PER_IP_PER_MIN')).toBe(1200);
     } finally {
       await app.close();
+      await admin.call('ACL', 'DELUSER', 'jantrik_ingest');
+      admin.disconnect();
     }
   });
 
