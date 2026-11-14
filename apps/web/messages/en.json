@@ -88,6 +88,7 @@
   },
   "nav": {
     "dashboard": "Dashboard",
+    "students": "{student} list",
     "classesAndSections": "{classLevel} & {section}",
     "attendance": "Attendance",
     "fees": "Fees",

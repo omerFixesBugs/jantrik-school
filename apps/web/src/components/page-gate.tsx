@@ -38,12 +38,7 @@ export function PageGate({ page, children }: { page: NavKey; children: ReactNode
 
 /** Placeholder for modules that are not built yet. */
 export function ComingSoon({ title }: { title: string }) {
-  const t = useTranslations();
-  return (
-    <Notice
-      icon={HammerIcon}
-      title={`${title}: ${t('common.comingSoon')}`}
-      text={t('comingSoon.text')}
-    />
-  );
+  const t = useTranslations('comingSoon');
+  const tCommon = useTranslations('common');
+  return <Notice icon={HammerIcon} title={`${title}: ${tCommon('comingSoon')}`} text={t('text')} />;
 }
