@@ -171,8 +171,6 @@ are left out.
     all waiting upserts, a 1 MB file of blank lines parsed before the row cap, `MISSING_COLUMNS`
     overstating, a 413 without a code; and coverage gaps (concurrent writers, removal of an unheld
     ID, the import branch of the audit lookup).
-  - The people page loses the staff view on reload with `unmapped=1`, and the not-on-device text
-    tells teachers to give IDs (they cannot open that screen).
 - **Registers and close from device**
   - The close-from-device confirm counts active absent students while the register also marks the
     inactive ones ABSENT ("2" vs "6"), and the card shows "10 students" next to "4/6": show "+N

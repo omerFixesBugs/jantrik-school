@@ -76,7 +76,8 @@ export function DeviceHeldBack({
   const reason = (() => {
     switch (device.state) {
       case 'NOT_ON_DEVICE':
-        return t('deviceNotOnDevice', {
+        // Giving IDs is for owners and admins only (the people screen is theirs).
+        return t(isAdmin ? 'deviceNotOnDeviceAdmin' : 'deviceNotOnDevice', {
           count: formatCount(device.notOnDevice, locale),
           n: device.notOnDevice,
         });

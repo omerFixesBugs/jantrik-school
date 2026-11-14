@@ -24,3 +24,24 @@ describe.each(['bn', 'en'])('%s: the today page says who took each register', (l
     expect(reports(locale)['takenBy']).toContain('{time}');
   });
 });
+
+describe.each([
+  ['bn', 'আইডি দিয়ে'],
+  ['en', 'give IDs'],
+])('%s: a register held back for students not on a device', (locale, giveIds) => {
+  it('tells teachers to take it by hand, owners and admins also to give IDs', () => {
+    // Teachers cannot open the people screen, so their text never sends them there.
+    expect(reports(locale)['deviceNotOnDevice']).not.toContain(giveIds);
+    expect(reports(locale)['deviceNotOnDeviceAdmin']).toContain(giveIds);
+  });
+});
+
+describe('the held-back reason picks its text by role', () => {
+  it('owners and admins get the text with "give IDs", teachers the other', () => {
+    const source = readFileSync(
+      path.join(root, 'src/components/attendance/today-device.tsx'),
+      'utf8',
+    );
+    expect(source).toContain("t(isAdmin ? 'deviceNotOnDeviceAdmin' : 'deviceNotOnDevice'");
+  });
+});
