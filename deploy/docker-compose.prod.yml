@@ -62,10 +62,17 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres:/jantrik/postgres:ro
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
-    # Over TCP: during its first start Postgres runs the init scripts on a socket only, so the
-    # check passes once the roles and the database exist.
+    # Healthy only once the roles and the production database are set up: a query over TCP (a
+    # first start runs its init scripts on a socket only), so a first start whose roles script
+    # failed never looks ready (docs/deploy.md → First start, when it fails).
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U postgres -d $${JANTRIK_DB_NAME}']
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U postgres -d "$$JANTRIK_DB_NAME" -XAtc
+          "SELECT has_schema_privilege('jantrik_app', 'public', 'USAGE')
+          AND EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_ingest_app')"
+          | grep -qx t
       interval: 5s
       timeout: 5s
       retries: 30
@@ -75,15 +82,19 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     # Deployment requirement 2: never evict a key, and keep every write (AOF, fsync each second).
+    # At REDIS_MAXMEMORY, writes fail loudly (noeviction) instead of Redis growing until the
+    # kernel kills it.
     command:
       - sh
       - -c
       - >-
         exec redis-server --appendonly yes --appendfsync everysec
-        --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"
+        --maxmemory "$$REDIS_MAXMEMORY" --maxmemory-policy noeviction
+        --requirepass "$$REDIS_PASSWORD"
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?}
       REDISCLI_AUTH: ${REDIS_PASSWORD:?}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-512mb}
     volumes:
       - redis-data:/data
     healthcheck:
@@ -157,8 +168,10 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
       QUEUE_PREFIX: ${QUEUE_PREFIX:-jantrik}
       INGEST_PORT: '4080'
-      # Devices connect directly. Behind a proxy: a hop count or its address, never true.
-      INGEST_TRUST_PROXY: ${INGEST_TRUST_PROXY:-false}
+      # Devices connect directly, so every X-Forwarded-For is a client's own words: trust none.
+      # Only behind a proxy you run in front of port 4080 set its hop count or address, in
+      # deploy/docker-compose.override.yml (docs/deploy.md → Attendance devices).
+      INGEST_TRUST_PROXY: 'false'
     # Plain HTTP, open to the schools' devices.
     ports:
       - '${INGEST_BIND:-0.0.0.0}:${INGEST_HOST_PORT:-4080}:4080'
@@ -214,10 +227,12 @@ services:
     logging: *logging
 
   # Not started by `up`: deploy/compose.sh run --rm backup (a cron job, docs/deploy.md). Writes
-  # a pg_dump to BACKUP_HOST_DIR as the superuser (the only login that reads past row security).
+  # a pg_dump to BACKUP_HOST_DIR as the superuser (the only login that reads past row security),
+  # owned by BACKUP_UID:BACKUP_GID (the deploy user, so its cron job can copy the files away).
   backup:
     image: postgres:16-alpine
     profiles: ['tools']
+    user: '${BACKUP_UID:-1000}:${BACKUP_GID:-1000}'
     entrypoint: ['sh', '/jantrik/backup/backup.sh']
     environment:
       PGHOST: postgres
@@ -230,7 +245,8 @@ services:
     volumes:
       - ./backup:/jantrik/backup:ro
       - ./postgres:/jantrik/postgres:ro
-      - ${BACKUP_HOST_DIR:-./backups}:/backups
+      # Outside the git checkout (git clean would delete it); create it first, owned by that user.
+      - ${BACKUP_HOST_DIR:-/srv/jantrik-backups}:/backups
     depends_on:
       postgres:
         condition: service_healthy
