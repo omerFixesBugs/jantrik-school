@@ -21,6 +21,15 @@ die() {
 usage() {
   die "usage: restore.sh [--drop-existing=<db>] <file.dump> <db>"
 }
+# A lower-case database name (letters, digits, _), checked as a whole with case: grep would check
+# line by line, and the name goes into SQL.
+db_name_ok() {
+  lower=abcdefghijklmnopqrstuvwxyz
+  case "$1" in
+    '' | [!"$lower"_]* | *[!"$lower"0123456789_]*) return 1 ;;
+  esac
+  [ "${#1}" -le 63 ]
+}
 
 here=$(cd "$(dirname "$0")" && pwd)
 setup_sql="$here/../postgres/database-setup.sql"
@@ -40,7 +49,7 @@ done
 file=$1
 target=$2
 
-printf '%s' "$target" | grep -Eq '^[a-z_][a-z0-9_]{0,62}$' \
+db_name_ok "$target" \
   || die "the database name must be lower-case letters, digits and _ (got '$target')"
 case "$target" in
   postgres | template0 | template1) die "refusing to restore into $target" ;;
@@ -52,6 +61,8 @@ pg_restore --list "$file" > /dev/null 2>&1 || die "$file is not a pg_dump custom
 if [ -f "$file.sha256" ]; then
   (cd "$(dirname "$file")" && sha256sum -c "$(basename "$file").sha256" > /dev/null) \
     || die "$file does not match its checksum ($file.sha256)"
+else
+  echo "restore: WARNING: no $file.sha256 next to it; the file is not checked against its checksum" >&2
 fi
 
 # psql on the maintenance database (or another with -d), one value per line, stop on any error.
@@ -96,6 +107,8 @@ sql -d "$target" -f "$setup_sql"
 # migration may change one). pg_restore's own CREATE EXTENSION IF NOT EXISTS then does nothing.
 for ext in $(pg_restore --list "$file" | awk '$4 == "EXTENSION" && $5 == "-" { print $6 }'); do
   [ "$ext" = plpgsql ] && continue
+  # A name from the file goes into SQL: plain names only (pg_restore creates any other itself).
+  db_name_ok "$ext" || continue
   sql -d "$target" -c 'SET ROLE jantrik_owner' -c "CREATE EXTENSION IF NOT EXISTS \"$ext\"" \
     || echo "restore: $ext could not be created as jantrik_owner; pg_restore creates it" >&2
 done

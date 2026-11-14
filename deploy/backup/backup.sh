@@ -18,6 +18,9 @@
 # The roles are not in a backup (they belong to the cluster): a restore needs
 # deploy/postgres/create-roles.sh first (deploy/backup/restore.sh checks).
 set -eu
+# A failing pg_restore in a pipe fails the pipe (busybox ash and dash have it; older shells skip).
+# shellcheck disable=SC3040 # POSIX.1-2024 has it; the check keeps older shells working
+if (set -o pipefail) 2> /dev/null; then set -o pipefail; fi
 
 die() {
   echo "backup: $*" >&2
@@ -42,7 +45,7 @@ trap 'rm -f "$tmp"' EXIT
 pg_dump --format=custom --no-password --file="$tmp" "$db"
 
 # Readable, and holds the migrations table: not an empty or a foreign database. (grep reads it
-# all: with -q it would stop early, and pg_restore would complain of a broken pipe.)
+# all: with -q it would stop early, and pg_restore would fail on a broken pipe.)
 pg_restore --list "$tmp" | grep 'TABLE DATA public _prisma_migrations' > /dev/null \
   || die "the dump of $db has no _prisma_migrations data: not a migrated Jantrik database?"
 mv "$tmp" "$dir/$name"

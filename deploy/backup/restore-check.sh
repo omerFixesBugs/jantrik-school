@@ -21,10 +21,20 @@ die() {
   exit 1
 }
 
+# A lower-case database name (letters, digits, _), checked as a whole with case: grep would check
+# line by line, and the name goes into SQL.
+db_name_ok() {
+  lower=abcdefghijklmnopqrstuvwxyz
+  case "$1" in
+    '' | [!"$lower"_]* | *[!"$lower"0123456789_]*) return 1 ;;
+  esac
+  [ "${#1}" -le 63 ]
+}
+
 here=$(cd "$(dirname "$0")" && pwd)
 [ $# -eq 1 ] || die "usage: restore-check.sh <source-db>"
 src=$1
-printf '%s' "$src" | grep -Eq '^[a-z_][a-z0-9_]{0,62}$' || die "bad database name '$src'"
+db_name_ok "$src" || die "bad database name '$src'"
 
 scratch="jantrik_restorecheck_$(date -u +%Y%m%d%H%M%S)_$$"
 case "$scratch" in
