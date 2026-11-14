@@ -351,11 +351,14 @@ while building it (`perf/step-12-boot-refresh`):
   the result over beats the result, and a session that reaches `AuthClient` before its restore
   drops the hand-over. In the plan's words "the boot result is checked against a logout
   broadcast"; the other rules keep a tab that was still loading in step with the others (the
-  review found an institute switch heard mid-refresh sent the switching tab back).
-- **B7. Failures are reported like AuthClient's own:** a network error or another status from
-  the boot refresh shows "unreachable" and retries with backoff (no second request at once, so a
-  429's wait or an overloaded API is respected). Only the script's own failure (an unreadable
-  answer) makes `AuthClient` refresh at once.
+  review found an institute switch heard mid-refresh sent the switching tab back). A client
+  React builds and then throws away can take the hand-over the same way; the kept client then
+  refreshes the usual way (safe, only slower).
+- **B7. HTTP failures are reported like AuthClient's own:** a 429 or 5xx from the boot refresh
+  shows "unreachable" and retries with backoff (no second request at once, so a 429's wait or an
+  overloaded API is respected). A network error, seconds old by the time `AuthClient` looks and
+  no load on the API, or a failure of the script itself (an unreadable answer) makes
+  `AuthClient` refresh at once.
 - **B8. Not done: `keepalive` on the refresh.** A refresh aborted after the API rotated the token
   but before the cookie arrived (the tab closed mid-load) leaves the old token in the browser;
   presented again after 30 s it revokes the session. That was already true of `AuthClient`'s

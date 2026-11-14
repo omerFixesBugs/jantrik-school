@@ -595,9 +595,34 @@ What is deferred today:
   backdrop filter, hover lifts only on hover-capable pointers.
 - **Theme CSS** is inlined once (under 28 KB) so there is no theme request and no flash.
 
-What is left to reach 3 s is in backlog.md → Performance: above all the session and data
-waterfall (the plan in plans/step-12-auth.md, an auth change that needs the owner's approval),
-then the dashboard's second batch and the render after `/me/context`.
+### The boot refresh (2026-11-14): main against `perf/step-12-boot-refresh`
+
+Part A of plans/step-12-auth.md (auth.md → Web client): the refresh and `/me/context` start
+while the JavaScript downloads. Same method (`apps/web/perf/measure.mjs`, 6 interleaved pairs,
+medians with the range), main (`f98e388`) and the branch against one API and a scratch database
+seeded with the e2e day. The API ran with high OTP and login rate limits for the run (each run
+signs in again; the same for both builds).
+
+| Page                      | Interactive, main  | Interactive, branch | Refresh sent | `/me/context` answered | Page's first request |
+| ------------------------- | ------------------ | ------------------- | ------------ | ---------------------- | -------------------- |
+| Owner dashboard           | 6.26 s (6.03–6.45) | 5.82 s (5.64–5.93)  | 3.32 → 0.68  | 3.77 → 1.20            | 4.28 → 3.77          |
+| Students                  | 5.42 s (5.36–5.64) | 5.11 s (4.93–5.52)  | 3.24 → 0.68  | 3.70 → 1.21            | 4.17 → 3.77          |
+| Take attendance (teacher) | 5.19 s (5.10–5.42) | 4.78 s (4.66–4.95)  | 3.15 → 0.68  | 3.60 → 1.20            | 3.94 → 3.50          |
+| Fees counter (accountant) | 4.37 s (4.22–4.98) | 3.84 s (3.79–4.23)  | 3.24 → 0.68  | 3.68 → 1.20            | (none)               |
+| Marks entry (teacher)     | 4.82 s (4.72–4.93) | 4.46 s (4.31–4.60)  | 3.17 → 0.69  | 3.61 → 1.21            | 3.94 → 3.58          |
+| Guardian dashboard        | 5.36 s (5.29–5.50) | 5.10 s (4.92–5.16)  | 3.22 → 0.69  | 3.65 → 1.20            | 4.03 → 3.68          |
+
+The last three columns are medians in seconds after the navigation starts. Interactive comes
+0.26–0.53 s sooner on every page, beyond the spread on four (owner dashboard, take attendance,
+marks entry, guardian dashboard); the fees counter's ranges touch (one slow run on each side) and
+the students page's overlap. The session and `/me/context` are now ready about 2.5 s before the
+app has hydrated, so the page's first request waits only for the JavaScript and hydration
+(3.5–3.8 s). The HTML is 2 KB larger (the script, in the HTML and the React payload) and the
+JavaScript 1–2 KB. **Still no page at 3 s:** the fees counter is closest at 3.84 s.
+
+What is left to reach 3 s is in backlog.md → Performance: above all the JavaScript and hydration
+before a page's first request (3.5–3.8 s), then the dashboard's second batch and the render after
+`/me/context`, and later the same-origin API (plans/step-12-auth.md, part C).
 
 ## Copy
 

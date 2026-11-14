@@ -277,6 +277,13 @@ describe('the boot refresh script', () => {
     expect(b.calls[0]!.url).toBe('http://192.168.0.20:4000/auth/refresh');
   });
 
+  it('a `$` in the API address is taken literally', async () => {
+    const b = installFakeBrowser();
+    new Function(bootRefreshScript("https://api.example/$&$'x", false))();
+    await b.untilCalls(1);
+    expect(b.calls[0]!.url).toBe("https://api.example/$&$'x/auth/refresh");
+  });
+
   it('keeps the configuration inside the script tag', () => {
     expect(bootRefreshScript('https://api.example/</script><script>x()', false)).not.toContain(
       '</script>',

@@ -180,11 +180,11 @@ export class AuthClient {
         this.emit({ type: 'signed-out' });
         return null;
       default:
-        // The script itself failed: refresh now.
-        if (result.status === undefined) return this.refreshUnderLock();
-        // A network error or another status: thrown as refreshUnderLock would, so AuthProvider
-        // shows "unreachable" and retries with backoff (no second request at once).
-        if (result.status === 0) throw new NetworkError();
+        // A network error (status 0) seconds ago, or the script itself failed (no status): the
+        // network may be back by now and neither put load on the API, so refresh now.
+        if (!result.status) return this.refreshUnderLock();
+        // Another status (429, 5xx): thrown as refreshUnderLock would, so AuthProvider shows
+        // "unreachable" and retries with backoff instead of a second request at once.
         throw await toApiError(new Response(null, { status: result.status }));
     }
   }

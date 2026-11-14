@@ -311,10 +311,10 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
     401-retry refreshes always go to the API. A session or sign-out that reaches `AuthClient`
     another way first (a broadcast, a login) drops the hand-over, and anything its own channel
     heard before the result arrived wins over it.
-  - Its 401 is handled exactly like `AuthClient`'s own (sign out everywhere). A network error or
-    another status is reported like `AuthClient`'s own too: the "unreachable" screen and retries
-    with backoff, not a second request at once. Only a failure of the script itself (an
-    unreadable answer) makes `AuthClient` refresh at once.
+  - Its 401 is handled exactly like `AuthClient`'s own (sign out everywhere). Another status
+    (429, 5xx) is reported like `AuthClient`'s own too: the "unreachable" screen and retries with
+    backoff, not a second request at once. After a network error (seconds earlier, early in the
+    load) or a failure of the script itself, `AuthClient` refreshes at once.
   - **Switch:** `JANTRIK_BOOT_REFRESH=off` (also `false`, `0`, `no`) on the web server leaves
     the script out from the next request on, with no rebuild. Off is the previous behaviour: no
     script, and `AuthClient` and `useMeContext` take their usual path.

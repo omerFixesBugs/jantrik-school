@@ -31,8 +31,8 @@ export type BootResult =
   /** Another tab signed out meanwhile. */
   | { type: 'logout'; at: number }
   /**
-   * `status`: the refresh's HTTP status, 0 for a network error; AuthClient reports either as its
-   * own refresh would. No status: the script itself failed, AuthClient refreshes at once.
+   * `status`: the refresh's HTTP status, which AuthClient reports as its own refresh would; 0 for
+   * a network error and none when the script itself failed, after which AuthClient refreshes.
    */
   | { type: 'error'; status?: number; at: number };
 
@@ -85,7 +85,7 @@ export function bootRefreshScript(apiUrl: string, followHost: boolean): string {
   const config = JSON.stringify({ api: apiUrl, follow: followHost }).replace(/</g, '\\u003c');
   return BOOT_SCRIPT_SOURCE.replace(/^[ \t]*\/\/.*\r?\n/gm, '')
     .replace(/^[ \t]+/gm, '')
-    .replace('__CONFIG__', config);
+    .replace('__CONFIG__', () => config); // a function: `$` in the URL is not a pattern
 }
 
 const BOOT_SCRIPT_SOURCE = `(function (c) {

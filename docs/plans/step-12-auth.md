@@ -112,3 +112,9 @@ moves the refresh (and optionally `/me/context`) into the time the JavaScript do
 these numbers the pages would show their content about 0.4-0.7 s sooner. The rest of the gap to
 3 s is the JavaScript itself (about 285-310 KB on slow 4G) and, on the owner dashboard, the
 second batch of requests after the content (backlog.md → Performance).
+
+**After part A** (built, 2026-11-14; interleaved A/B against main, design.md → Performance
+budget): the refresh is sent at 0.68 s and `/me/context` answered by 1.20 s on every page; the
+page's first request comes 0.35-0.5 s sooner (3.50-3.77 s), now waiting only for the JavaScript
+and hydration; interactive is 0.26-0.53 s sooner, beyond the spread on four of the six pages, a
+little under the 0.4-0.7 s estimated for content.

@@ -217,15 +217,24 @@ interleaved, with `apps/web/perf/measure.mjs`. Step 12 (day run of 2026-11-13, P
   pages measured, the ranges overlapping).
 - **CORS preflights cached for 2 h** (part B of [plans/step-12-auth.md](plans/step-12-auth.md),
   approved 2026-11-14): repeated calls skip the `OPTIONS` round trip; the first load is unchanged.
+- **The boot refresh** (part A, approved 2026-11-14 with the early `/me/context`): the refresh is
+  sent at 0.7 s and `/me/context` answered by 1.2 s instead of after hydration (3.2-3.8 s);
+  interactive 0.26-0.53 s sooner on every budget page (design.md → Performance budget).
 
 Still open:
 
-### 1. The session and data waterfall (the largest part left)
+### 1. The JavaScript and hydration before a page's first request (the largest part left)
 
-After the JavaScript, the refresh, `GET /me/context` and the page's requests run one after
-another, each with a CORS preflight on a cold load. The plan to start the session earlier (A) and
-(later) serve the API on the app's origin (C) is in [plans/step-12-auth.md](plans/step-12-auth.md),
-waiting for the owner (auth change).
+With the session and `/me/context` ready by 1.2 s, every budget page's own first request still
+waits for its JavaScript (285-310 KB gzip on slow 4G) and hydration: 3.5-3.8 s. Section 4 lists
+the smaller scripts left; past that, the same-origin API (part C of
+[plans/step-12-auth.md](plans/step-12-auth.md), with the deployment) removes the remaining
+preflights.
+
+Also for the boot refresh (decision B8): `keepalive: true` on the refresh (the script's and
+`AuthClient`'s), so a refresh cut off when someone closes the tab mid-load still stores the
+rotated cookie. Check first that keepalive requests with a CORS preflight work on the phones and
+browsers the app targets (Android Chrome and WebView, Samsung Internet, iOS Safari).
 
 ### 2. After the first screen
 

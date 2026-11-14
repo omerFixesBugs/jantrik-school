@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, NetworkError } from '../api/errors';
+import { ApiError } from '../api/errors';
 import { AuthClient, type AuthEvent } from './auth-client';
 import { bootRefreshScript, type BootHandover, type BootResult } from './boot-refresh';
 import {
@@ -123,18 +123,17 @@ describe('AuthClient taking over the boot refresh', () => {
     expect(refreshes(b)).toHaveLength(1);
   });
 
-  it.each([
-    ['a network error', (c: Call) => c.fail(), NetworkError],
-    ['a 503', (c: Call) => c.reply(503), ApiError],
-  ])(
-    'a boot refresh ending in %s is reported as its own would be; the retry goes to the API',
-    async (_, answer, error) => {
+  it.each([503, 429])(
+    'a boot %i is reported as its own refresh would report it; the retry goes to the API',
+    async (status) => {
       const b = installFakeBrowser();
       runBootScript();
       await b.untilCalls(1);
-      answer(b.calls[0]!);
+      b.calls[0]!.reply(status);
       const { c } = client();
-      await expect(c.bootstrap()).rejects.toBeInstanceOf(error); // → "unreachable", backoff
+      const failed = c.bootstrap();
+      await expect(failed).rejects.toBeInstanceOf(ApiError); // → "unreachable", backoff
+      await expect(failed).rejects.toMatchObject({ status });
       await b.settle();
       expect(refreshes(b)).toHaveLength(1); // no second request at once
       const retried = c.bootstrap();
@@ -144,14 +143,18 @@ describe('AuthClient taking over the boot refresh', () => {
     },
   );
 
-  it('a failure of the script itself (an unreadable answer): its own refresh at once', async () => {
+  it.each([
+    ['a boot network error (the network may be back by now)', (c: Call) => c.fail()],
+    ['a failure of the script itself (an unreadable answer)', (c: Call) => c.reply(200)],
+  ])('%s: its own refresh at once', async (_, answer) => {
     const b = installFakeBrowser();
     runBootScript();
     await b.untilCalls(1);
-    b.calls[0]!.reply(200); // no body
+    answer(b.calls[0]!);
     const { c } = client();
     const restored = c.bootstrap();
     await b.untilCalls(2);
+    expect(b.calls[1]!.url).toBe(`${API}/auth/refresh`);
     b.calls[1]!.reply(200, authBody('tok-2'));
     expect(await restored).toMatchObject({ accessToken: 'tok-2' });
   });
