@@ -262,3 +262,29 @@ Recorded during step 8; to be done when the production setup is built.
      `DATABASE_INGEST_URL`, `INGEST_PORT`, `INGEST_TRUST_PROXY`, and the limits
      `INGEST_PER_IP_PER_MIN`, `INGEST_PER_DEVICE_PER_MIN`, `INGEST_PER_DEVICE_ALL_PER_MIN`,
      `INGEST_REFUSED_PER_IP_PER_10MIN`, `INGEST_MAX_ATTLOG_BYTES`, `INGEST_MAX_DRAIN_BYTES`.
+
+## Backlog fixes (day run 2026-11-13)
+
+Taken without the owner during the unattended backlog run (branch `chore/backlog-fixes`, PR #7).
+Each is a small default; how to change it is given.
+
+69. **The receiver's start-up check gives each attempt 10 s** (`StartupCheckTimeout`, then retried like any other failure). The check answers in milliseconds on a working database; with the existing waits (about 3 minutes) a database that never answers fails the start within about 6 minutes.
+    - To change: `checkTimeoutMs` in `apps/api/src/ingest/ingest-prisma.service.ts`.
+70. **The fees setup's switch-off confirm for a bKash/Nagad number reads "নম্বর বন্ধ করুন" / "Turn off number"** (the menu item stays "বন্ধ করুন" / "Turn off"). English was not ambiguous ("Close" vs "Turn off") but follows the Bangla, so both say what is switched off.
+    - To change: `numbers.deactivateConfirm` in `apps/web/messages/fees/setup.{bn,en}.json`.
+71. **`wallClockToUtc` refuses a date or time that does not exist** (2026-02-30, 24:00:00) with its usual "Not a wall-clock time" error, rather than moving it to another day. Every caller already passes real times; the simulator CLI now refuses `--from 25:00` instead of using 01:00 the next day.
+    - To change: the check in `packages/shared/src/dates.ts`.
+72. **The entry and exit SMS cut a long name by grapheme cluster** (`Intl.Segmenter`, code points where it is missing) and drop a trailing hasant, zero-width joiner or space. Only names too long for two segments are cut.
+    - To change: `nameLetters` / `cutName` in `packages/shared/src/devices.ts`.
+73. **A devicecmd body from an address the device does not trust is cut at 64 KB by closing the connection** (as every drain past its limit is), not answered 413: nothing is answered to an untrusted address's command results anyway.
+    - To change: `commandResults` in `apps/api/src/ingest/ingest.controller.ts`.
+74. **The device hardening migration (`20261113000000_devices_hardening`)**: the reviewer CHECK goes one way only (`reviewed_by_id` needs a `review`; a review without a reviewer stays allowed, as today: requiring one would be a new rule); the serial number index is a plain index on all rows (the table is small; a partial `WHERE NOT is_active` index would also serve); the CHECKs are validated at once (not `NOT VALID`): no app path writes a violating row, so only hand-made data in a local database could make the migration fail, and then that row must be fixed first. The migration is not wrapped in a transaction by Prisma: on such a failure the policy is already created; drop it, fix the row, `prisma migrate resolve --rolled-back 20261113000000_devices_hardening`, deploy again.
+    - To change: a later migration.
+75. **The today page's line for a device register a person changed drops the time** ("ডিভাইস থেকে নেওয়া; {name} বদলেছেন"), rather than labelling it as the register's last change: the person's own time is not stored apart from the device's later changes.
+    - To change: `reports.takenByDeviceEdited` in `apps/web/messages/{bn,en}.json`.
+76. **Teachers' text for a register held back because students are not on a device ends "হাতে হাজিরা নিন।" / "Take it by hand."**, without "ask an admin to give IDs" (owners and admins keep the give-IDs advice and link).
+    - To change: `reports.deviceNotOnDevice` (teachers) and `reports.deviceNotOnDeviceAdmin` in `apps/web/messages/{bn,en}.json`.
+77. **The device people page keeps the staff list in the URL as `kind=staff`** (students need no parameter), next to `unmapped=1` and `section`.
+    - To change: `peopleFilterFromUrl` / `peopleFilterUrl` in `apps/web/src/lib/devices/people.ts`.
+78. **An institute that no longer exists leaves `devices:tenants` during the nightly retention job** (once a day, not every minute in the tick), found by its own `tenants` row being gone in its context, with a warning naming it. A failing or switched-off institute stays listed as before.
+    - To change: `expireAll` in `apps/api/src/devices/devices.processor.ts`.
