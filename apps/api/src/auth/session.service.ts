@@ -7,6 +7,7 @@ import type { Redis } from 'ioredis';
 import { apiError } from '../common/api-error.js';
 import { revokedSessionKey } from '../common/revocation.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { REDIS_CALL_TIMEOUT_MS, withRedisDeadline } from '../redis/redis-deadline.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { ACCESS_TOKEN_TTL_SEC } from './token.service.js';
 
@@ -24,7 +25,25 @@ export const REFRESH_LOCK_WAIT_MS = 10_000;
 /** The lock expires on its own after this long, should its holder die (longer than the wait). */
 export const REFRESH_LOCK_TTL_MS = 15_000;
 /** A Redis call on the refresh path that takes longer counts as Redis unavailable (503). */
-export const REDIS_TIMEOUT_MS = 2_000;
+export const REDIS_TIMEOUT_MS = REDIS_CALL_TIMEOUT_MS;
+/**
+ * The rotation's transaction may wait this long for a connection and run this long (Prisma's
+ * maxWait and timeout), so a holder knows the latest moment it can still finish inside its lock.
+ */
+export const COMMIT_TIMEOUT_MS = 3_000;
+/** Slack kept between the end of the commit and the lock's expiry. */
+const LOCK_MARGIN_MS = 500;
+
+/**
+ * Inside the lock: `fence()` throws 503 REFRESH_BUSY when storing the answer and committing could
+ * outlast the lock (another refresh could then take it); nothing has been stored or committed yet.
+ */
+export interface RefreshLock {
+  fence(): void;
+}
+
+/** How a rotation's commit ended. */
+export type CommitOutcome = 'committed' | 'rotated-meanwhile' | 'session-revoked';
 
 /** A valid, unused refresh token (SessionService.inspect), ready to be rotated. */
 export interface FreshToken {
@@ -67,8 +86,12 @@ const RELEASE_LOCK =
 export class SessionService {
   /** How long a second refresh of the same token waits for the lock (tests shorten it). */
   refreshLockWaitMs = REFRESH_LOCK_WAIT_MS;
+  /** How long the lock lives (tests shorten it). */
+  refreshLockTtlMs = REFRESH_LOCK_TTL_MS;
   /** How long a Redis call on the refresh path may take (tests shorten it). */
   redisTimeoutMs = REDIS_TIMEOUT_MS;
+  /** The rotation transaction's limits (tests shorten them). */
+  commitTimeoutMs = COMMIT_TIMEOUT_MS;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -108,28 +131,51 @@ export class SessionService {
    * `refreshLockWaitMs`, then 503 REFRESH_BUSY; Redis failing or silent gives 503
    * REFRESH_UNAVAILABLE. Neither changes anything (docs/auth.md → Tokens and sessions).
    */
-  async withRefreshLock<T>(rawToken: string, fn: () => Promise<T>): Promise<T> {
+  async withRefreshLock<T>(rawToken: string, fn: (lock: RefreshLock) => Promise<T>): Promise<T> {
     const key = lockKey(sha256(rawToken));
     const holder = randomBytes(16).toString('hex');
+    const ttl = this.refreshLockTtlMs;
     const deadline = Date.now() + this.refreshLockWaitMs;
+    let sentAt: number;
     for (;;) {
-      const taken = await this.redisCall(() =>
-        this.redis.set(key, holder, 'PX', REFRESH_LOCK_TTL_MS, 'NX'),
-      );
+      // The lock counts from before the request was sent: it may have been taken any time after.
+      sentAt = performance.now();
+      let taken: string | null;
+      try {
+        taken = await this.redisCall(() => this.redis.set(key, holder, 'PX', ttl, 'NX'));
+      } catch (error) {
+        // The SET may still be applied later (sent, reply too late): queue the release behind it
+        // on the same connection, so such a lock never outlives this request.
+        this.release(key, holder);
+        throw error;
+      }
       if (taken === 'OK') break;
       if (Date.now() >= deadline) {
         throw apiError(503, 'REFRESH_BUSY', 'Another refresh of this session is in progress');
       }
       await sleep(25);
     }
+    // Storing the answer and committing can take this long in the worst case.
+    const finishing = this.redisTimeoutMs + 2 * this.commitTimeoutMs + LOCK_MARGIN_MS;
+    const lock: RefreshLock = {
+      fence: () => {
+        if (performance.now() - sentAt > ttl - finishing) {
+          throw apiError(503, 'REFRESH_BUSY', 'The refresh took too long, try again');
+        }
+      },
+    };
     try {
-      return await fn();
+      return await fn(lock);
     } finally {
-      // Only our own lock; a failure here leaves it to expire (REFRESH_LOCK_TTL_MS).
-      await this.redisCall(() => this.redis.eval(RELEASE_LOCK, 1, key, holder)).catch(
-        () => undefined,
-      );
+      // Sent, not awaited: the answer does not wait for it, and a failure leaves the lock to
+      // expire on its own.
+      this.release(key, holder);
     }
+  }
+
+  /** Deletes the lock if `holder` still has it; never throws, never waits. */
+  private release(key: string, holder: string): void {
+    void this.redis.eval(RELEASE_LOCK, 1, key, holder).catch(() => undefined);
   }
 
   /**
@@ -163,55 +209,61 @@ export class SessionService {
   }
 
   /**
-   * Rotates a fresh token to `newRefreshToken` (after its answer was stored). False when the token
-   * was rotated meanwhile, which the lock prevents for every refresh; 401 then, no revocation.
+   * Rotates a fresh token to `newRefreshToken`, after its answer was stored, with `rotatedAt`
+   * taken before that store (so the stored answer outlives the 30-second window):
+   * - `committed`;
+   * - `rotated-meanwhile`: the token is already rotated, which only a lost lock allows; nothing
+   *   changes (the caller answers 503, never 401);
+   * - `session-revoked`: the session was revoked meanwhile (a logout, a reuse); everything is
+   *   rolled back (the caller answers 401).
+   * `staleTenantId`: clear the session's institute only if it is still this one (one the user can
+   * no longer select), so an institute switch made meanwhile stays.
    */
   async commitRotation(
     token: FreshToken,
     newRefreshToken: string,
     meta: SessionMeta,
-    opts: { clearActiveTenant: boolean },
-  ): Promise<boolean> {
-    const now = new Date();
+    opts: { rotatedAt: Date; staleTenantId: string | null },
+  ): Promise<CommitOutcome> {
+    const now = opts.rotatedAt;
     const expiresAt = inSeconds(REFRESH_TTL_SEC);
-    return withContext(this.prisma.client, { userId: token.userId }, async (tx) => {
-      const { count } = await tx.refreshToken.updateMany({
-        where: { id: token.tokenId, rotatedAt: null },
-        data: { rotatedAt: now },
-      });
-      if (count === 0) return false;
-      await tx.refreshToken.create({
-        data: {
-          userId: token.userId,
-          sessionId: token.sessionId,
-          tokenHash: sha256(newRefreshToken),
-          expiresAt,
+    try {
+      return await withContext(
+        this.prisma.client,
+        { userId: token.userId },
+        async (tx) => {
+          const { count } = await tx.refreshToken.updateMany({
+            where: { id: token.tokenId, rotatedAt: null },
+            data: { rotatedAt: now },
+          });
+          if (count === 0) return 'rotated-meanwhile';
+          await tx.refreshToken.create({
+            data: {
+              userId: token.userId,
+              sessionId: token.sessionId,
+              tokenHash: sha256(newRefreshToken),
+              expiresAt,
+            },
+          });
+          const live = await tx.session.updateMany({
+            where: { id: token.sessionId, revokedAt: null },
+            data: { lastUsedAt: now, expiresAt, ip: meta.ip, userAgent: meta.userAgent },
+          });
+          if (live.count === 0) throw new SessionRevokedMeanwhile();
+          if (opts.staleTenantId) {
+            await tx.session.updateMany({
+              where: { id: token.sessionId, activeTenantId: opts.staleTenantId },
+              data: { activeTenantId: null },
+            });
+          }
+          return 'committed';
         },
-      });
-      await tx.session.update({
-        where: { id: token.sessionId },
-        data: {
-          lastUsedAt: now,
-          expiresAt,
-          ip: meta.ip,
-          userAgent: meta.userAgent,
-          // Tenant suspended or membership removed since: continue without a tenant.
-          ...(opts.clearActiveTenant ? { activeTenantId: null } : {}),
-        },
-      });
-      return true;
-    });
-  }
-
-  /** The tenant a fresh token's session had selected (read as its user). */
-  async activeTenantOf(token: FreshToken): Promise<string | null> {
-    const s = await withContext(this.prisma.client, { userId: token.userId }, (tx) =>
-      tx.session.findUniqueOrThrow({
-        where: { id: token.sessionId },
-        select: { activeTenantId: true },
-      }),
-    );
-    return s.activeTenantId;
+        { maxWait: this.commitTimeoutMs, timeout: this.commitTimeoutMs },
+      );
+    } catch (error) {
+      if (error instanceof SessionRevokedMeanwhile) return 'session-revoked';
+      throw error;
+    }
   }
 
   /**
@@ -233,21 +285,8 @@ export class SessionService {
   }
 
   /** A Redis call on the refresh path: failing or silent past `redisTimeoutMs` → 503. */
-  private async redisCall<T>(op: () => Promise<T>): Promise<T> {
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error('Redis did not answer in time')),
-        this.redisTimeoutMs,
-      );
-    });
-    try {
-      return await Promise.race([op(), timeout]);
-    } catch {
-      throw apiError(503, 'REFRESH_UNAVAILABLE', 'Sessions are unavailable, try again shortly');
-    } finally {
-      clearTimeout(timer);
-    }
+  private redisCall<T>(op: () => Promise<T>): Promise<T> {
+    return withRedisDeadline(op, this.redisTimeoutMs, 'REFRESH_UNAVAILABLE');
   }
 
   async revoke(sessionId: string, userId: string, reason: SessionRevokeReason): Promise<void> {
@@ -257,8 +296,11 @@ export class SessionService {
         data: { revokedAt: new Date(), revokeReason: reason },
       }),
     );
-    // Access tokens of this session stop working immediately, not when they expire.
-    await this.redis.set(revokedSessionKey(sessionId), '1', 'EX', ACCESS_TOKEN_TTL_SEC);
+    // Access tokens of this session stop working immediately, not when they expire. The
+    // revocation above stands whatever Redis does; a failure here is a 503, never a hang.
+    await this.redisCall(() =>
+      this.redis.set(revokedSessionKey(sessionId), '1', 'EX', ACCESS_TOKEN_TTL_SEC),
+    );
   }
 
   private async findToken(tokenHash: string): Promise<TokenRow | undefined> {
@@ -290,9 +332,16 @@ export class SessionService {
     const response = answerFor(opened, row.session_id);
     if (!response?.refreshToken) return undefined;
 
-    // The replacement must still be unused and the session alive.
+    // The replacement must belong to this session, still be unused, and the session be alive.
     const replacement = await this.findToken(sha256(response.refreshToken));
-    if (!replacement || replacement.rotated_at || replacement.revoked_at) return undefined;
+    if (
+      !replacement ||
+      replacement.session_id !== row.session_id ||
+      replacement.rotated_at ||
+      replacement.revoked_at
+    ) {
+      return undefined;
+    }
     return response;
   }
 }
@@ -302,19 +351,15 @@ export function newRefreshToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-/**
- * The answer in an opened sealed value, if it belongs to `sessionId`. A value written before the
- * answer named its session (the previous release, gone 30 s after the deploy) is the answer
- * itself; it was readable only with the same token.
- */
+/** The answer in an opened sealed value, if it is one and names `sessionId`. */
 function answerFor(opened: unknown, sessionId: string): AuthResponse | undefined {
   if (!opened || typeof opened !== 'object') return undefined;
-  if ((opened as { v?: unknown }).v === 2) {
-    const sealed = opened as SealedAnswer;
-    return sealed.sessionId === sessionId ? sealed.response : undefined;
-  }
-  return opened as AuthResponse;
+  const sealed = opened as Partial<SealedAnswer>;
+  return sealed.v === 2 && sealed.sessionId === sessionId ? sealed.response : undefined;
 }
+
+/** Thrown inside the rotation's transaction to roll it back: the session was revoked meanwhile. */
+class SessionRevokedMeanwhile extends Error {}
 
 function inSeconds(seconds: number): Date {
   return new Date(Date.now() + seconds * 1000);

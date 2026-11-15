@@ -3,7 +3,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { withContext } from '@jantrik/db';
 import type { AuthResponse } from '@jantrik/shared';
 import {
+  COMMIT_TIMEOUT_MS,
   REDIS_TIMEOUT_MS,
+  REFRESH_LOCK_TTL_MS,
   REFRESH_LOCK_WAIT_MS,
   SessionService,
 } from '../src/auth/session.service.js';
@@ -167,8 +169,33 @@ describe('refresh tokens: rotation, grace window, reuse detection', () => {
       vi.restoreAllMocks();
       const s = sessions();
       s.refreshLockWaitMs = REFRESH_LOCK_WAIT_MS;
+      s.refreshLockTtlMs = REFRESH_LOCK_TTL_MS;
       s.redisTimeoutMs = REDIS_TIMEOUT_MS;
+      s.commitTimeoutMs = COMMIT_TIMEOUT_MS;
     });
+
+    const lockOf = (raw: string) => `rt:lock:${sha256(raw)}`;
+
+    /** Waits until no lock is held on these tokens (the release is sent, not awaited). */
+    const noLocks = (...raws: string[]) =>
+      vi.waitFor(
+        async () => {
+          for (const raw of raws) {
+            if (await h.redis.exists(lockOf(raw))) throw new Error(`lock held: ${lockOf(raw)}`);
+          }
+        },
+        { timeout: 3000, interval: 20 },
+      );
+
+    /** Runs `then` while the answer is being built (inside the lock, before anything is stored). */
+    function duringBuild(then: () => Promise<void>) {
+      const tokens = h.app.get(TokenService);
+      const real = tokens.signAccess.bind(tokens);
+      vi.spyOn(tokens, 'signAccess').mockImplementationOnce(async (...args) => {
+        await then();
+        return real(...args);
+      });
+    }
 
     /** The answer for retries is stored `ms` later than it would be. */
     function slowAnswer(ms: number) {
@@ -249,11 +276,105 @@ describe('refresh tokens: rotation, grace window, reuse detection', () => {
     it('leaves no lock behind: after a success, a 401 and an error inside', async () => {
       const first = await login();
       await refresh(first.refreshToken!).expect(200);
-      await refresh('y'.repeat(43)).expect(401);
+      const unknown = 'y'.repeat(43);
+      await refresh(unknown).expect(401);
       const other = await login();
       vi.spyOn(h.app.get(TokenService), 'signAccess').mockRejectedValueOnce(new Error('boom'));
       await refresh(other.refreshToken!).expect(500);
-      expect(await h.redis.keys('rt:lock:*')).toEqual([]);
+      await noLocks(first.refreshToken!, unknown, other.refreshToken!);
+    });
+
+    it('a lock whose release fails still answers; the lock then expires on its own', async () => {
+      const first = await login();
+      // A short lock (with short limits, so the fence still leaves room to finish).
+      const s = sessions();
+      s.refreshLockTtlMs = 2000;
+      s.redisTimeoutMs = 200;
+      s.commitTimeoutMs = 300;
+      vi.spyOn(h.redis, 'eval').mockRejectedValue(new Error('Connection is closed.'));
+      const res = await refresh(first.refreshToken!).expect(200);
+      vi.restoreAllMocks();
+      await noLocks(first.refreshToken!);
+      await refresh(res.body.refreshToken).expect(200);
+    });
+
+    it('a holder too slow to finish inside its lock gives up with 503 and rotates nothing', async () => {
+      // The lock would expire before the commit could end: rather than risk a second refresh
+      // taking it meanwhile, the slow one stops before storing or committing anything.
+      const first = await login();
+      const s = sessions();
+      s.refreshLockTtlMs = 2000;
+      s.redisTimeoutMs = 200;
+      s.commitTimeoutMs = 500;
+      duringBuild(() => sleep(700));
+      const res = await refresh(first.refreshToken!).expect(503);
+      expect(res.body.code).toBe('REFRESH_BUSY');
+      expect(await rotatedAt(first.userId, first.refreshToken!)).toBeNull();
+      expect((await session(first.userId, first.accessToken)).revokedAt).toBeNull();
+      await refresh(first.refreshToken!).expect(200);
+    });
+
+    it('a commit that finds the token already rotated (the lock was lost) answers 503, not 401', async () => {
+      const first = await login();
+      // Someone outside the lock rotates the token while this refresh builds its answer.
+      duringBuild(async () => {
+        await withContext(h.prisma, { userId: first.userId }, (tx) =>
+          tx.refreshToken.update({
+            where: { tokenHash: sha256(first.refreshToken!) },
+            data: { rotatedAt: new Date() },
+          }),
+        );
+      });
+      const res = await refresh(first.refreshToken!).expect(503);
+      expect(res.body.code).toBe('REFRESH_BUSY');
+      expect((await session(first.userId, first.accessToken)).revokedAt).toBeNull();
+    });
+
+    it('a session revoked while the answer is built (a logout) gets 401 and no new pair', async () => {
+      const first = await login();
+      duringBuild(async () => {
+        await http(h).post('/auth/logout').set(bearer(first.accessToken)).expect(204);
+      });
+      const res = await refresh(first.refreshToken!).expect(401);
+      expect(res.body.refreshToken).toBeUndefined();
+      expect(await rotatedAt(first.userId, first.refreshToken!)).toBeNull();
+    });
+
+    it('clearing a stale institute never undoes an institute switch made meanwhile', async () => {
+      const first = await login();
+      const sid = JSON.parse(Buffer.from(first.accessToken.split('.')[1]!, 'base64url').toString())
+        .sid as string;
+      // The session points at an institute the user cannot select any more...
+      const elsewhere = (await createTenant(h)).id;
+      await withContext(h.prisma, { userId: first.userId }, (tx) =>
+        tx.session.update({ where: { id: sid }, data: { activeTenantId: elsewhere } }),
+      );
+      // ...and while the refresh builds its answer, the user switches to their own institute.
+      duringBuild(async () => {
+        await withContext(h.prisma, { userId: first.userId }, (tx) =>
+          tx.session.update({ where: { id: sid }, data: { activeTenantId: tenantId } }),
+        );
+      });
+      await refresh(first.refreshToken!).expect(200);
+      const s = await withContext(h.prisma, { userId: first.userId }, (tx) =>
+        tx.session.findUniqueOrThrow({ where: { id: sid } }),
+      );
+      expect(s.activeTenantId).toBe(tenantId);
+    });
+
+    it('the stored answer outlives the database window (both 30 s, from the rotation time)', async () => {
+      const first = await login();
+      const s = sessions();
+      const real = s.storeGrace.bind(s);
+      // A slow store: the time taken must not shorten the answer's life against the window.
+      vi.spyOn(s, 'storeGrace').mockImplementation(async (...args) => {
+        await real(...args);
+        await sleep(60);
+      });
+      await refresh(first.refreshToken!).expect(200);
+      const pttl = await h.redis.pttl(`rt:grace:${sha256(first.refreshToken!)}`);
+      const rotated = (await rotatedAt(first.userId, first.refreshToken!))!;
+      expect(Date.now() + pttl).toBeGreaterThanOrEqual(rotated.getTime() + 30_000);
     });
 
     it('a failure while building the answer rotates nothing: the same token then works', async () => {
@@ -298,10 +419,70 @@ describe('refresh tokens: rotation, grace window, reuse detection', () => {
         expect(await rotatedAt(first.userId, first.refreshToken!)).toBeNull();
       });
 
+      it('a lock request that times out but is applied later is released, not left held', async () => {
+        const first = await login();
+        sessions().redisTimeoutMs = 200;
+        // The SET reaches Redis (the lock is taken) but its reply comes too late.
+        const real = h.redis.set.bind(h.redis);
+        vi.spyOn(h.redis, 'set').mockImplementation(((key: string, ...rest: unknown[]) => {
+          const sent = (real as (...a: unknown[]) => Promise<unknown>)(key, ...rest);
+          return key.startsWith('rt:lock:') ? sleep(400).then(() => sent) : sent;
+        }) as never);
+        const res = await refresh(first.refreshToken!).expect(503);
+        expect(res.body.code).toBe('REFRESH_UNAVAILABLE');
+        vi.restoreAllMocks();
+        await noLocks(first.refreshToken!);
+        await refresh(first.refreshToken!).expect(200);
+      });
+
+      it('the rate-limit check cannot reach Redis: 503 SERVICE_UNAVAILABLE, nothing touched', async () => {
+        const first = await login();
+        const failing = {
+          set: () => failing,
+          incr: () => failing,
+          ttl: () => failing,
+          get: () => failing,
+          exec: () => Promise.reject(new Error('Connection is closed.')),
+        };
+        vi.spyOn(h.redis, 'multi').mockReturnValue(failing as never);
+        const res = await refresh(first.refreshToken!).expect(503);
+        expect(res.body.code).toBe('SERVICE_UNAVAILABLE');
+        vi.restoreAllMocks();
+        expect(await rotatedAt(first.userId, first.refreshToken!)).toBeNull();
+        await refresh(first.refreshToken!).expect(200);
+      });
+
+      it('the rate-limit check gets no answer from Redis: 503 within the time limit', async () => {
+        const first = await login();
+        const silent = {
+          set: () => silent,
+          incr: () => silent,
+          ttl: () => silent,
+          get: () => silent,
+          exec: () => new Promise(() => undefined),
+        };
+        vi.spyOn(h.redis, 'multi').mockReturnValue(silent as never);
+        const started = Date.now();
+        const res = await refresh(first.refreshToken!).expect(503);
+        expect(res.body.code).toBe('SERVICE_UNAVAILABLE');
+        expect(Date.now() - started).toBeLessThan(5000);
+      });
+
+      it('reuse is still revoked when the revoked-session marker cannot be written: 503', async () => {
+        const first = await login();
+        const second = (await refresh(first.refreshToken!).expect(200)).body as AuthResponse;
+        await refresh(second.refreshToken!).expect(200); // the replacement is used
+        breakSet('revoked:sid:', 'fail');
+        await refresh(first.refreshToken!).expect(503);
+        const s = await session(first.userId, second.accessToken);
+        expect(s.revokeReason).toBe('REUSE_DETECTED'); // theft detection as before
+      });
+
       it('the answer cannot be stored: 503, nothing rotated, the same token then works', async () => {
         const first = await login();
         breakSet('rt:grace:', 'fail');
-        await refresh(first.refreshToken!).expect(503);
+        const res = await refresh(first.refreshToken!).expect(503);
+        expect(res.body.code).toBe('REFRESH_UNAVAILABLE');
         expect(await rotatedAt(first.userId, first.refreshToken!)).toBeNull();
         vi.restoreAllMocks();
         await refresh(first.refreshToken!).expect(200);
@@ -351,9 +532,44 @@ describe('refresh tokens: rotation, grace window, reuse detection', () => {
         // Session one's stored answer, copied under session two's old-token key.
         const sealed = (await h.redis.get(`rt:grace:${sha256(one.refreshToken!)}`))!;
         await h.redis.set(`rt:grace:${sha256(two.refreshToken!)}`, sealed, 'EX', 30);
-        const res = await refresh(two.refreshToken!);
-        expect(res.body.refreshToken).not.toBe(oneAnswer.refreshToken);
+        const res = await refresh(two.refreshToken!).expect(401);
+        expect(res.body.refreshToken).toBeUndefined();
         expect(res.body.accessToken).toBeUndefined();
+        // No usable answer for a rotated token: reuse, as always.
+        expect((await session(two.userId, two.accessToken)).revokeReason).toBe('REUSE_DETECTED');
+        expect((await session(one.userId, oneAnswer.accessToken)).revokedAt).toBeNull();
+      });
+
+      it('an answer naming another session is no answer (sealed with the right token)', async () => {
+        const one = await login();
+        const two = await login();
+        const oneAnswer = (await refresh(one.refreshToken!).expect(200)).body as AuthResponse;
+        await refresh(two.refreshToken!).expect(200);
+        const oneSid = JSON.parse(
+          Buffer.from(one.accessToken.split('.')[1]!, 'base64url').toString(),
+        ).sid as string;
+        // Readable with two's old token, but naming session one.
+        await sessions().storeGrace(two.refreshToken!, oneSid, oneAnswer);
+        const res = await refresh(two.refreshToken!).expect(401);
+        expect(res.body.refreshToken).toBeUndefined();
+      });
+
+      it('an answer whose replacement belongs to another session is no answer', async () => {
+        const one = await login();
+        const two = await login();
+        const oneAnswer = (await refresh(one.refreshToken!).expect(200)).body as AuthResponse;
+        const twoAnswer = (await refresh(two.refreshToken!).expect(200)).body as AuthResponse;
+        const twoSid = JSON.parse(
+          Buffer.from(two.accessToken.split('.')[1]!, 'base64url').toString(),
+        ).sid as string;
+        // Naming session two, but handing out session one's (unused) replacement token.
+        await sessions().storeGrace(two.refreshToken!, twoSid, {
+          ...twoAnswer,
+          refreshToken: oneAnswer.refreshToken,
+        });
+        const res = await refresh(two.refreshToken!).expect(401);
+        expect(res.body.refreshToken).toBeUndefined();
+        expect((await session(one.userId, oneAnswer.accessToken)).revokedAt).toBeNull();
       });
     });
   });
