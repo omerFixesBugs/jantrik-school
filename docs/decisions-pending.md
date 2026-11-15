@@ -622,3 +622,29 @@ R-6. **The global rate-limit guard answers 503 `SERVICE_UNAVAILABLE`** when Redi
 - To change: `apps/api/src/common/guards.ts` → `RateLimitGuard`, `apps/api/src/redis/redis-deadline.ts`.
 
 R-7. **Smaller changes from the final review:** the rotation time is taken before the answer is stored (the stored answer outlives the database's 30-second window); a session revoked while a refresh builds its answer rolls the rotation back (401, no new pair); a stale institute is cleared only if the session still has it (an institute switch made meanwhile stays); the revoked-session marker on the reuse path is bounded like the other Redis calls (503; the database revocation stands); the lock's release is sent without delaying the answer, and a lock request that timed out is released behind itself.
+
+## Sprint 1, P1: staff set their own password (2026-11-15)
+
+Plan: [plans/sprint-1-p1-staff-password.md](plans/sprint-1-p1-staff-password.md), approved by the owner with P1-A to P1-E and one addition to P1-D.
+
+P1-A. **The routes need the current institute and a staff role there** (`OWNER`, `ADMIN`, `TEACHER`, `ACCOUNTANT`, `STAFF`), so each change is audited in that institute. Someone who is staff elsewhere switches institute first; a guardian gets 403 and no menu item.
+
+P1-B. **The app login may update only some columns of `users`:** `locale`, `color_scheme`, `name_bn`, `password_hash`, `password_changed_at`, `updated_at`. No app code can change a login's phone, email or global name.
+
+- To change: a migration granting the column (`GRANT UPDATE (<column>) ON users TO jantrik_app`), and `packages/db/test/users-rls.test.ts`.
+
+P1-C. **Passwords are NFC-normalised** before hashing and verifying (the API and the platform-admin CLI), so a Bangla password typed on another keyboard still matches. Existing hashes are unaffected (the demo password is ASCII).
+
+P1-D. **The rules:** 10 to 128 code points; not containing the person's phone number in any written form; not containing the name (4 letters or more) of an institute they are an active member of (the owner's addition); not on the common-password list (SecLists' 10,000 most common, MIT, plus jantrik/bangladesh/password variants), checked on the server only.
+
+- To change: `PASSWORD_RULES` and `passwordProblems` in `packages/shared/src/password.ts`; the list in `apps/api/src/auth/common-passwords.txt`.
+
+P1-E. **Password codes cost Jantrik, as login codes do** (`platform_sms_logs`), not the institute's SMS budget.
+
+P1-F. **Each code purpose has its own 60-second cooldown; the 15-minute and daily caps are shared** (a change to the plan, which shared the cooldown too). With a shared cooldown, a staff member who has just signed in with a code would always wait up to a minute before the password code could be sent: the first thing most of them do. The SMS cost is still bounded by the shared caps (5 per 15 minutes, 10 a day, for both purposes together).
+
+- To change: `cooldownKey` in `apps/api/src/auth/otp.service.ts` (one key for both purposes shares it again).
+
+P1-G. **The rules are checked before the code** (a change to the plan's order, which verified the code first): a refused password, e.g. one on the common list that the form cannot check, does not use up the code, so the person does not need another SMS. Nothing secret is revealed by checking the rules first: the route needs a signed-in staff member, and the rules are public.
+
+P1-H. **`GET /me/password` also returns the person's own phone** (an addition to the plan), so the form can check the phone rule as they type. It is their own number, returned only to them.

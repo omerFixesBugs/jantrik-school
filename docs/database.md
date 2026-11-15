@@ -159,6 +159,14 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
     until they accept.
   - **Updatable:** your own row only. One person can belong to several tenants, so staff of
     tenant A must not edit them.
+  - **Only some columns (sprint 1 P1-B):** `jantrik_app` may update `locale`, `color_scheme`,
+    `name_bn`, `password_hash`, `password_changed_at` and `updated_at`, and nothing else. The
+    login identifiers (`phone`, `email`) and the global `name` are out of the app's reach, so no
+    app code (or injection) can change how a person signs in. Tests that need another column set
+    it through the owner role, as that user.
+  - **`password_changed_at`:** when the person last set their password themselves (null: never,
+    or only by the seed). Written only by `PasswordSettingsService`, with `password_hash`
+    ([auth.md](auth.md) → Setting a password).
   - **No INSERT or DELETE for the app.** Create people with `findOrCreateUser(tx, phone, name)`,
     which needs a tenant context. It returns only the id, so a person from another tenant stays
     hidden until they get a membership here.

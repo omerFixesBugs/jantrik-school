@@ -17,6 +17,13 @@ the API log (`SMS_PROVIDER=console`).
 | Guardian        | `01811000101` | OTP only        | father of two Shapla students (Tasnim, Tahmid)                                    |
 | Guardian        | `01811000102` | OTP only        | mother of Tasnim (Shapla)                                                         |
 
+**Setting a password (staff only).** Sign in as any staff account above (with the code or the
+demo password), open the user menu → "পাসওয়ার্ড" / "Password", send the code (it is printed in the
+API log), then type it and the new password twice. The new password must be 10 to 128 characters
+and must not contain the phone number, the institute's name or a common password. Your other
+sessions of that account are signed out; this browser stays signed in. Guardians have no such
+menu item: they sign in with a code only.
+
 ## Platform (Jantrik staff, `/platform`)
 
 | Who            | Phone / email                            | Login                               |
