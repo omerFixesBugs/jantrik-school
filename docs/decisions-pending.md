@@ -598,3 +598,17 @@ Left by the final review for later (not built, each small):
 - **The receiver's key scope `~<prefix>:devices:*` includes the worker's job schedulers** (the devices tick, expire-punches): code run in the receiver could delete them until the worker restarts and recreates them. Accepted for now (the scope the plan set); narrower read/write key selectors are possible at some cost across BullMQ upgrades.
 - **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
 - **Local Playwright configs** that are not in git (`playwright.alt*.config.ts`, `dbg`, `shots`) set `CORS_ORIGINS` but not `PLATFORM_ORIGINS`: their platform specs now get 403 until they set it.
+
+## The refresh race fix (2026-11-15)
+
+Plan: [plans/fix-refresh-race.md](plans/fix-refresh-race.md), approved by the owner with conditions.
+
+R-1. **Refreshes of one token are serialised by a Redis lock** (`rt:lock:<hash>`): a second refresh waits up to 10 s (`REFRESH_LOCK_WAIT_MS`), then 503 `REFRESH_BUSY`; the lock expires after 15 s should its holder die.
+
+- To change: the constants in `apps/api/src/auth/session.service.ts`.
+
+R-2. **The answer is stored before the rotation is committed**, and every Redis call on the refresh path has a 2 s limit (`REDIS_TIMEOUT_MS`): a Redis failure or silence is 503 `REFRESH_UNAVAILABLE` and leaves the token unrotated, never a sign-out or a revocation (the owner's condition 2). A stored answer whose rotation then failed is never served: an answer is read only for a token the database shows rotated.
+
+R-3. **The stored answer names its session** (`{v: 2, sessionId, response}`, inside the encryption). One that cannot be opened with the presented token, or names another session, is no answer, so the token counts as reused, as a missing answer always did. A value written by the previous release (no session named) is still accepted for its last 30 s after the deploy, so no retry across the deploy signs anyone out.
+
+R-4. **B8 is unchanged** (the owner's decision): a refresh lost when a tab closes during load, presented again more than 30 s later, is still revoked as reuse.

@@ -105,12 +105,30 @@ rotates it:
 | any other rotated token                                     | **reuse detected**: the whole session is revoked; its refresh and access tokens stop working   |
 | unknown, expired, or revoked session                        | `401`                                                                                          |
 
-The retry window works by caching the issued response in Redis for 30 s. It is AES-256-GCM
-encrypted with a key derived from the _old_ token, so only someone holding that token can read
-it.
+The retry window works by caching the issued response in Redis:
 
-Two simultaneous refreshes from two browser tabs still look like a retry and get the same pair,
-but only within 30 s. The web client should still serialise refreshes.
+- for at most 30 s;
+- under the old token's SHA-256 (`rt:grace:<hash>`);
+- AES-256-GCM encrypted with a key derived from the _old_ token, so only someone holding that
+  token can read it;
+- naming its session, which is checked when it is read back.
+
+**Refreshes of one token never overlap** (`docs/plans/fix-refresh-race.md`). A page that lost a
+refresh's answer (navigated away mid-request) makes the next page present the old token again
+while the first refresh may still be running. So each refresh takes a lock on its token in Redis
+(`rt:lock:<hash>`) and, inside it, works in this order:
+
+1. what the token is: fresh, a retry within 30 s (the same answer again), or reuse (revoke);
+2. build the whole answer;
+3. store it for retries;
+4. only then commit the rotation.
+
+A second refresh of the same token waits for the lock (up to 10 s, then **503 `REFRESH_BUSY`**)
+and then finds the first one's stored answer: a retry, never reuse. A failure before step 4
+leaves the token unrotated, so the client's retry rotates it normally. If Redis fails or does
+not answer within 2 s, the refresh answers **503 `REFRESH_UNAVAILABLE`** and changes nothing. A
+503 is never a sign-out: the web client shows "unreachable" and retries. Two tabs refreshing at
+once get the same pair; the web client still serialises refreshes (Web Locks) to save requests.
 
 **Where the refresh token lives:**
 
