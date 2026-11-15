@@ -107,18 +107,20 @@ export class PasswordSettingsService {
       where: { id: principal.userId },
       data: { passwordHash, passwordChangedAt: now },
     });
+    // Every other live session, in one statement (an expired one can do nothing: no refresh, and
+    // no access token outlives its session).
     const others = (
-      await tx.session.findMany({
-        where: { userId: principal.userId, revokedAt: null, NOT: { id: principal.sessionId } },
+      await tx.session.updateManyAndReturn({
+        where: {
+          userId: principal.userId,
+          revokedAt: null,
+          expiresAt: { gt: now },
+          NOT: { id: principal.sessionId },
+        },
+        data: { revokedAt: now, revokeReason: 'PASSWORD_CHANGED' },
         select: { id: true },
       })
     ).map((s) => s.id);
-    if (others.length > 0) {
-      await tx.session.updateMany({
-        where: { id: { in: others }, revokedAt: null },
-        data: { revokedAt: now, revokeReason: 'PASSWORD_CHANGED' },
-      });
-    }
     await this.audit.record({
       entity: 'user_password',
       entityId: principal.userId,

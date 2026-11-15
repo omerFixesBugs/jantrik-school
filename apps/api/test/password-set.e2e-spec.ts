@@ -440,6 +440,32 @@ describe('staff set their own password', () => {
     });
   });
 
+  it('an already expired session is left as it is (it can do nothing anyway)', async () => {
+    const t = await teacher();
+    await passTime(t.phone, t.userId);
+    const old = await otpLogin(h, t.phone);
+    const oldSession = (
+      await withContext(h.prisma, { userId: t.userId }, (tx) =>
+        tx.session.findMany({ where: { revokedAt: null }, orderBy: { createdAt: 'desc' } }),
+      )
+    )[0]!;
+    await withContext(h.prisma, { userId: t.userId }, (tx) =>
+      tx.session.update({
+        where: { id: oldSession.id },
+        data: { expiresAt: new Date(Date.now() - 1000) },
+      }),
+    );
+    await refresh(old.refreshToken!).expect(401); // expired: no use
+
+    const code = await codeFor(t.login.accessToken, t.phone);
+    await setPassword(t.login.accessToken, code, GOOD).expect(204);
+    const after = await withContext(h.prisma, { userId: t.userId }, (tx) =>
+      tx.session.findUniqueOrThrow({ where: { id: oldSession.id } }),
+    );
+    expect(after.revokedAt).toBeNull();
+    expect(await h.redis.exists(`revoked:sid:${oldSession.id}`)).toBe(0);
+  });
+
   it('never writes the password or the code to the logs', async () => {
     const t = await teacher();
     const writes: string[] = [];
