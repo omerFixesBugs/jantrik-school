@@ -84,9 +84,11 @@ describe('staff set their own password', () => {
   describe('a teacher with no password', () => {
     it('reads the status, gets a code by SMS, sets the password and signs in with it', async () => {
       const t = await teacher();
+      // Their own phone too, so the form can check the rules as they type.
       expect((await status(t.login.accessToken).expect(200)).body).toEqual({
         hasPassword: false,
         changedAt: null,
+        phone: t.phone,
       });
 
       const before = h.sms.sentTo(t.phone).length;
@@ -206,6 +208,7 @@ describe('staff set their own password', () => {
       expect((await status(t.login.accessToken)).body).toEqual({
         hasPassword: false,
         changedAt: null,
+        phone: t.phone,
       });
     });
 

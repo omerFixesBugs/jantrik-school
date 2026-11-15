@@ -79,6 +79,8 @@ export interface PasswordStatus {
   hasPassword: boolean;
   /** ISO time the person last set it themselves; null if never. */
   changedAt: string | null;
+  /** The person's own phone (E.164), so the form can check the rules as they type. */
+  phone: string;
 }
 
 /** `POST /me/password/code` (202). */

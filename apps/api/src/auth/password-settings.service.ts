@@ -51,11 +51,12 @@ export class PasswordSettingsService {
   async status(principal: Principal): Promise<PasswordStatus> {
     const user = await this.db.tx.user.findUniqueOrThrow({
       where: { id: principal.userId },
-      select: { passwordHash: true, passwordChangedAt: true },
+      select: { passwordHash: true, passwordChangedAt: true, phone: true },
     });
     return {
       hasPassword: user.passwordHash !== null,
       changedAt: user.passwordChangedAt?.toISOString() ?? null,
+      phone: user.phone,
     };
   }
 
