@@ -197,6 +197,14 @@ describe('password login', () => {
       await login(phone, keyboardB).expect(200);
     });
 
+    it('any password that can be set signs in, even typed decomposed into 384 code points', async () => {
+      const composed = '각'.repeat(128); // 128 Hangul syllables: the most a password may have
+      const decomposed = composed.normalize('NFD'); // each one 3 code points
+      expect([...decomposed].length).toBe(384);
+      const phone = await setThroughTheApi(composed);
+      await login(phone, decomposed).expect(200);
+    });
+
     it('and the other way round', async () => {
       const phone = await setThroughTheApi(keyboardA);
       await login(phone, keyboardB).expect(200);
