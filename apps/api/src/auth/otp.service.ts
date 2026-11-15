@@ -114,7 +114,10 @@ export class OtpService {
       return undefined;
     }
 
-    await this.burn(phone, purpose); // single use
+    // Single use, also when two requests race with the same code: only the one that deletes it
+    // gets through.
+    if ((await this.redis.del(codeKey(phone, purpose))) !== 1) return undefined;
+    await this.redis.del(attemptsKey(phone, purpose));
     return findUserForLogin(this.prisma.client, { phone });
   }
 

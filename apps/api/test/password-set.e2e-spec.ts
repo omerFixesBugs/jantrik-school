@@ -1,5 +1,6 @@
 import { provisionTenant, withContext, withTenant } from '@jantrik/db';
 import { toBanglaDigits, type AuthResponse, type MembershipSummary } from '@jantrik/shared';
+import { OtpService } from '../src/auth/otp.service.js';
 import {
   addMember,
   bearer,
@@ -219,6 +220,33 @@ describe('staff set their own password', () => {
       const again = await setPassword(t.login.accessToken, code, GOOD_2).expect(422);
       expect(again.body).toMatchObject({ code: 'PASSWORD_CODE_INVALID' });
       await passwordLogin(t.phone, GOOD).expect(200);
+    });
+
+    it('is single use even when two requests race with it (login codes too)', async () => {
+      const otp = h.app.get(OtpService);
+      for (const purpose of ['password', 'login'] as const) {
+        const { phone } = await addMember(h, tenantId, { roles: ['TEACHER'] });
+        const before = h.sms.sentTo(phone).length;
+        await otp.request(phone, randomIp(), purpose);
+        const code = await waitForOtp(h, phone, before);
+        const results = await Promise.all([
+          otp.verify(phone, code, randomIp(), purpose),
+          otp.verify(phone, code, randomIp(), purpose),
+        ]);
+        expect(results.filter(Boolean), purpose).toHaveLength(1);
+      }
+    });
+
+    it('two PUTs with the same code at once: one sets the password, the other is refused', async () => {
+      const t = await teacher();
+      const code = await codeFor(t.login.accessToken, t.phone);
+      const statuses = (
+        await Promise.all([
+          setPassword(t.login.accessToken, code, GOOD),
+          setPassword(t.login.accessToken, code, GOOD_2),
+        ])
+      ).map((r) => r.status);
+      expect(statuses.sort()).toEqual([204, 422]);
     });
 
     it('expires', async () => {
