@@ -48,6 +48,8 @@ GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 -- functions and nothing else: no table grants and NOT a member of jantrik_app, so a device
 -- request can never read an institute's rows. Schema USAGE comes from a migration.
 CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD :'ingest_pw';
+-- Its statements stop after 5 s (decision #79); the receiver's pool sends the same limit.
+ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s';
 
 CREATE DATABASE jantrik OWNER jantrik_owner;
 CREATE DATABASE jantrik_test OWNER jantrik_owner;

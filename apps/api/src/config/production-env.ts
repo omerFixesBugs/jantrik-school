@@ -24,6 +24,19 @@ export function trustsAnyClient(value: string): boolean {
 
 const LOCAL_HOST = /^(localhost|127(\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0|\[::\])$/i;
 
+/**
+ * A browser origin as browsers send it in `Origin` (scheme, lower-case host, port when not the
+ * default; no path or trailing slash), or null when `value` is not a URL with an origin.
+ */
+export function normaliseOrigin(value: string): string | null {
+  try {
+    const origin = new URL(value).origin;
+    return origin === 'null' ? null : origin;
+  } catch {
+    return null;
+  }
+}
+
 /** Why a browser origin may not be allowed in production, or null when it may. */
 export function unsafeOrigin(origin: string): string | null {
   if (origin === '*') return 'a wildcard';
@@ -142,10 +155,10 @@ export const DATABASE_ADMIN_SECRETS = [
 ] as const;
 
 /**
- * Production must set these itself: their defaults (Redis on localhost, no proxy in front) suit a
- * developer's machine only.
+ * Production must set these itself: their defaults (Redis on localhost, no proxy in front, the
+ * platform on http://localhost:3000) suit a developer's machine only.
  */
-export const API_PRODUCTION_REQUIRED = ['REDIS_URL', 'TRUST_PROXY'] as const;
+export const API_PRODUCTION_REQUIRED = ['REDIS_URL', 'TRUST_PROXY', 'PLATFORM_ORIGINS'] as const;
 
 /** The API's (and the worker's) production rules on what its environment holds (raw). */
 export function apiEnvironmentProblems(config: Record<string, unknown>): EnvProblem[] {
@@ -167,6 +180,8 @@ export interface ApiProductionEnv {
   INGEST_TRUST_PROXY: string;
   INGEST_IN_PROCESS?: boolean | undefined;
   CORS_ORIGINS: string[];
+  /** Normalised by env.ts. */
+  PLATFORM_ORIGINS: string[];
   REDIS_URL: string;
   JWT_ACCESS_SECRET: string;
   OTP_PEPPER: string;
@@ -216,6 +231,27 @@ export function apiProductionProblems(env: ApiProductionEnv): EnvProblem[] {
       add('CORS_ORIGINS', `CORS_ORIGINS must hold https origins only; "${origin}" is ${why}`);
     }
   }
+  if (env.PLATFORM_ORIGINS.length === 0) {
+    add(
+      'PLATFORM_ORIGINS',
+      "PLATFORM_ORIGINS must list the platform's web origin (https://platform.<domain>)",
+    );
+  }
+  const cors = new Set(env.CORS_ORIGINS.map((o) => normaliseOrigin(o) ?? o));
+  for (const origin of env.PLATFORM_ORIGINS) {
+    const why = unsafeOrigin(origin);
+    if (why) {
+      add(
+        'PLATFORM_ORIGINS',
+        `PLATFORM_ORIGINS must hold https origins only; "${origin}" is ${why}`,
+      );
+    } else if (!cors.has(origin)) {
+      add(
+        'PLATFORM_ORIGINS',
+        `PLATFORM_ORIGINS must also be in CORS_ORIGINS (the browser's preflight needs it): ${origin}`,
+      );
+    }
+  }
   const secrets = SECRETS.filter((key) => env[key] !== undefined);
   for (const key of secrets) {
     if (isPlaceholderSecret(env[key]!)) {
@@ -258,6 +294,21 @@ export const API_ONLY_SECRETS = [
   'PLATFORM_TOTP_KEY',
 ] as const;
 
+/**
+ * The device receiver's Redis user: its own keys and its queue only (deploy/redis/ingest-user.acl,
+ * defined by the production compose from REDIS_INGEST_PASSWORD).
+ */
+export const INGEST_REDIS_USER = 'jantrik_ingest';
+
+/** The user a redis:// URL logs in as ('' for none, i.e. Redis's default user). */
+function redisUser(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url).username);
+  } catch {
+    return '';
+  }
+}
+
 /** The receiver's production rules on its parsed values. */
 export function receiverProductionProblems(env: ReceiverProductionEnv): EnvProblem[] {
   const problems: EnvProblem[] = [];
@@ -275,6 +326,12 @@ export function receiverProductionProblems(env: ReceiverProductionEnv): EnvProbl
     'jantrik_platform_app',
   ]);
   if (problem) problems.push(problem);
+  if (redisUser(env.REDIS_URL) !== INGEST_REDIS_USER) {
+    problems.push({
+      path: 'REDIS_URL',
+      message: `REDIS_URL must log in as ${INGEST_REDIS_USER}, the receiver's own Redis user (redis://${INGEST_REDIS_USER}:<REDIS_INGEST_PASSWORD>@redis:6379): the default user could queue jobs the worker trusts`,
+    });
+  }
   const redis = urlPasswordProblem('REDIS_URL', env.REDIS_URL);
   if (redis) problems.push(redis);
   return problems;

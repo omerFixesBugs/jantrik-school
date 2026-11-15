@@ -3,6 +3,7 @@ import { PrismaClient } from './generated/prisma/client.js';
 
 export { PrismaClient };
 export * from './generated/prisma/client.js';
+export * from './login-privileges.js';
 export * from './platform/context.js';
 export * from './platform/secrets.js';
 export * from './platform/totp.js';
@@ -26,6 +27,11 @@ export interface PoolOptions {
    * the operating system's default (about 2 hours on Linux and Windows).
    */
   keepAliveInitialDelayMillis?: number;
+  /**
+   * Milliseconds a statement may run before the server cancels it (error 57014; default: no
+   * limit). Sent when each connection opens, so the server enforces it.
+   */
+  statement_timeout?: number;
 }
 
 /** Create a Prisma client bound to the given Postgres connection string. */

@@ -1,5 +1,5 @@
 import { createServer, type Socket } from 'node:net';
-import type { createPrismaClient } from '@jantrik/db';
+import type { createPrismaClient, LoginPrivileges } from '@jantrik/db';
 import {
   INGEST_POOL,
   IngestPrismaService,
@@ -20,13 +20,28 @@ vi.mock('@jantrik/db', async (importOriginal) => {
   };
 });
 
-type Check = { resolve: boolean; students: boolean; punches: boolean };
-const PASS: Check = { resolve: true, students: false, punches: false };
+type Check = { resolve: boolean; students: boolean; punches: boolean; statement_timeout?: string };
+const PASS: Check = { resolve: true, students: false, punches: false, statement_timeout: '5s' };
 /** A check that never answers (a database that took the connection and went quiet). */
 const HANG = 'hang' as const;
+/** A login with no privileges beyond its grants (readLoginPrivileges' row). */
+const SAFE: LoginPrivileges = {
+  login: 'jantrik_ingest_app',
+  superuser: false,
+  bypassRls: false,
+  canBecome: [],
+};
 
-/** The service with the privilege check answering each call in turn (a row, or a failure). */
+/**
+ * The service with its start-up check answering each call in turn (a row, or a failure).
+ * `queryRaw` is the check query; the privilege query (pg_roles) answers `privileges` (SAFE by
+ * default) through its own mock, so the check's call counts keep their meaning.
+ */
 function service(...answers: (Check | Error | typeof HANG)[]) {
+  return serviceWith(SAFE, ...answers);
+}
+
+function serviceWith(privileges: LoginPrivileges, ...answers: (Check | Error | typeof HANG)[]) {
   const warn = vi.fn();
   const log = vi.fn();
   const queryRaw = vi.fn();
@@ -39,14 +54,28 @@ function service(...answers: (Check | Error | typeof HANG)[]) {
           : Promise.resolve([a]),
     );
   }
+  const privilegeQuery = vi.fn(() =>
+    Promise.resolve([
+      {
+        login: privileges.login,
+        superuser: privileges.superuser,
+        bypass_rls: privileges.bypassRls,
+        can_become: privileges.canBecome,
+      },
+    ]),
+  );
+  const $queryRaw = (strings: TemplateStringsArray, ...values: unknown[]) =>
+    strings.join('').includes('pg_roles')
+      ? privilegeQuery()
+      : (queryRaw as (...a: unknown[]) => Promise<unknown>)(strings, ...values);
   const s = Object.create(IngestPrismaService.prototype) as IngestPrismaService;
   Object.assign(s, {
-    client: { $queryRaw: queryRaw },
+    client: { $queryRaw },
     logger: { warn, log },
     retryDelaysMs: [0, 0, 0],
     checkTimeoutMs: 50,
   });
-  return { s, warn, log, queryRaw };
+  return { s, warn, log, queryRaw, privilegeQuery };
 }
 
 /** The database server not answering, as the driver adapter reports it. */
@@ -120,7 +149,28 @@ describe('IngestPrismaService startup check', () => {
       connectionTimeoutMillis: 10_000,
       keepAlive: true,
       keepAliveInitialDelayMillis: 30_000,
+      statement_timeout: 5000,
     });
+  });
+
+  it("builds the receiver's pool with a 5 s statement timeout (decision #79)", () => {
+    expect(INGEST_POOL.statement_timeout).toBe(5000);
+  });
+
+  it('refuses to start, at once, when the login runs without the 5 s limit', async () => {
+    const { s, queryRaw } = service({ ...PASS, statement_timeout: '0' }, PASS);
+    await expect(s.onModuleInit()).rejects.toThrow(/statement_timeout.*5s.*got 0/);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a receiver login that can become a superuser role', async () => {
+    const { s } = serviceWith({ ...SAFE, canBecome: ['postgres'] }, PASS);
+    await expect(s.onModuleInit()).rejects.toThrow(/DATABASE_INGEST_URL.*can become postgres/);
+  });
+
+  it('refuses a superuser receiver login', async () => {
+    const { s } = serviceWith({ ...SAFE, login: 'postgres', superuser: true }, PASS);
+    await expect(s.onModuleInit()).rejects.toThrow(/DATABASE_INGEST_URL.*postgres is a superuser/);
   });
 
   it('asks again while the database is not reachable, then checks as usual', async () => {

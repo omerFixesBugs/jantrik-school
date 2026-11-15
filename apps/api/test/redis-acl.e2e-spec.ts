@@ -1,0 +1,157 @@
+import { randomBytes } from 'node:crypto';
+import { Queue } from 'bullmq';
+import { Redis } from 'ioredis';
+import {
+  DEVICES_QUEUE,
+  PROCESS_PUNCHES_JOB,
+  processPunchesJobOptions,
+} from '../src/devices/devices.constants.js';
+import { RateLimiter } from '../src/redis/rate-limiter.service.js';
+import { createIngestAclUser, ingestAclRules as rules } from './support/redis-acl.js';
+
+// The device receiver logs in to Redis as jantrik_ingest (production compose): its own keys and
+// its queue only. The rules live in one file, read here and by deploy/redis/start-redis.sh. This
+// test applies them to a throwaway user on the test Redis and runs everything the receiver does
+// with Redis as that user, then checks what it must not do.
+
+const refused = /NOPERM|no permissions/i;
+
+describe('the receiver Redis user (deploy/redis/ingest-user.acl)', () => {
+  const url = new URL(process.env['REDIS_URL'] ?? 'redis://localhost:6379/1');
+  const user = `jantrik_ingest_test_${randomBytes(4).toString('hex')}`;
+  const prefix = `p0acl${randomBytes(3).toString('hex')}`;
+  let admin: Redis;
+  let asUser: Redis;
+  const queues: Queue[] = [];
+
+  beforeAll(async () => {
+    admin = new Redis(url.toString());
+    // `+select` only in the tests: they use Redis database 1; production URLs name none (A4).
+    const login = await createIngestAclUser(admin, url.toString(), user, prefix);
+    asUser = new Redis(login.url, { maxRetriesPerRequest: 1 });
+    // Connected and authenticated as the user (the receiver never sends PING).
+    expect(await asUser.exists(`ingest:none-${prefix}`)).toBe(0);
+  });
+
+  afterAll(async () => {
+    for (const q of queues) await q.close();
+    asUser.disconnect();
+    await admin.call('ACL', 'DELUSER', user);
+    const keys = [
+      ...(await admin.keys(`${prefix}:*`)),
+      ...(await admin.keys(`rl:ingest-*${prefix}*`)),
+      ...(await admin.keys(`ingest:*${prefix}*`)),
+    ];
+    if (keys.length > 0) await admin.del(...keys);
+    admin.disconnect();
+  });
+
+  const queue = (name: string, connection: Redis) => {
+    const q = new Queue(name, { connection, prefix });
+    queues.push(q);
+    return q;
+  };
+
+  it('the production rules name no database switch and no Pub/Sub channel', () => {
+    const list = rules('jantrik');
+    expect(list.join(' ')).not.toMatch(/select/i);
+    expect(list.some((r) => r.startsWith('&'))).toBe(false);
+    expect(list).toContain('resetchannels');
+    expect(list).toContain('~jantrik:devices:*');
+  });
+
+  it('runs everything the receiver does with Redis', async () => {
+    const ip = `203.0.113.${prefix}`;
+    const limiter = new RateLimiter(asUser);
+    expect((await limiter.hit({ key: `ingest-ip:${ip}`, limit: 10, windowSec: 60 })).allowed).toBe(
+      true,
+    );
+    expect((await limiter.peek(`ingest-refused-ip:${ip}`)).count).toBe(0);
+    await limiter.hit({ key: `ingest-sn:SN${prefix}:${ip}`, limit: 10, windowSec: 60 });
+    await limiter.hit({ key: `ingest-sn:SN${prefix}:untrusted`, limit: 10, windowSec: 60 });
+    await limiter.hit({ key: `ingest-refused-ip:${ip}`, limit: 10, windowSec: 600 });
+
+    expect(await asUser.set(`ingest:trusted:SN${prefix}:${ip}`, '1', 'EX', 60)).toBe('OK');
+    expect(await asUser.exists(`ingest:trusted:SN${prefix}:${ip}`)).toBe(1);
+    const refusedList = `ingest:refused-${prefix}`;
+    await asUser.multi().lpush(refusedList, '{}').ltrim(refusedList, 0, 99).exec();
+    expect(await asUser.set(`ingest:refused-log:SN${prefix}`, '1', 'EX', 60, 'NX')).toBe('OK');
+
+    // The receiver's own add (ingest.service.ts): delayed, one job id per institute, so a second
+    // upload in the delay meets the duplicate path.
+    const tenantId = `t-${prefix}`;
+    const devices = queue(DEVICES_QUEUE, asUser);
+    const job = await devices.add(
+      PROCESS_PUNCHES_JOB,
+      { tenantId },
+      processPunchesJobOptions(tenantId),
+    );
+    const again = await devices.add(
+      PROCESS_PUNCHES_JOB,
+      { tenantId },
+      processPunchesJobOptions(tenantId),
+    );
+    expect(again.id).toBe(job.id);
+    // Review focus 4: the worker's full-rights view sees the delayed job, and its later life works.
+    const seen = await queue(DEVICES_QUEUE, admin).getJob(job.id!);
+    expect(await seen?.getState()).toBe('delayed');
+    expect(seen?.data).toEqual({ tenantId });
+    await seen!.promote();
+    expect(await seen!.getState()).toBe('waiting');
+  });
+
+  it.each([
+    ['KEYS', () => asUser.keys('*')],
+    ['CONFIG GET', () => asUser.config('GET', 'maxmemory')],
+    ['another key (an OTP limit)', () => asUser.get('rl:otp-phone-day:+8801700000000')],
+    ['writing another key', () => asUser.set('otp:x', '1')],
+    ['ACL LIST', () => asUser.call('ACL', 'LIST')],
+    ['a script that reads another key', () => asUser.eval("return redis.call('get', 'otp:x')", 0)],
+    // Key names are not filtered by the key patterns, and some hold phone numbers
+    // (rl:otp-phone-day:<phone>, sms:outbox:<phone>): no listing of the keyspace.
+    ['SCAN', () => asUser.scan('0')],
+    ['RANDOMKEY', () => asUser.randomkey()],
+    ['DBSIZE', () => asUser.dbsize()],
+    ['a script that scans', () => asUser.eval("return redis.call('scan', '0')", 0)],
+  ])('refuses %s', async (_case, attempt) => {
+    await expect(attempt()).rejects.toThrow(refused);
+  });
+
+  it('the rules refuse destructive and server-wide commands (asked of the ACL, never run)', async () => {
+    // ACL DRYRUN asks the rules without running the command: a wrong rule must not flush or shut
+    // down the Redis these tests share with development. It also sees past Redis refusing DEBUG
+    // for everyone before looking at the ACL.
+    for (const command of [
+      ['FLUSHALL'],
+      ['FLUSHDB'],
+      ['SHUTDOWN', 'NOSAVE'],
+      ['SCRIPT', 'FLUSH'],
+      ['SWAPDB', '0', '1'],
+      ['DEBUG', 'SLEEP', '0'],
+      ['MODULE', 'LIST'],
+      ['REPLICAOF', 'NO', 'ONE'],
+      ['MIGRATE', 'h', '1', 'ingest:x', '0', '1'],
+      // Server-side code that would outlive the connection, and the scripts cache.
+      ['FUNCTION', 'LOAD', "#!lua name=x\nredis.register_function('f', function() return 1 end)"],
+      ['FUNCTION', 'FLUSH'],
+      ['SCRIPT', 'LOAD', 'return 1'],
+      ['PUBLISH', 'anything', 'x'],
+    ]) {
+      expect(String(await admin.call('ACL', 'DRYRUN', user, ...command))).toMatch(refused);
+    }
+    expect(await admin.call('ACL', 'DRYRUN', user, 'GET', 'ingest:x')).toBe('OK');
+  });
+
+  it('refuses another queue (the SMS queue the worker trusts)', async () => {
+    await expect(queue('sms', asUser).add('send', { smsLogId: 'x' })).rejects.toThrow(refused);
+  });
+
+  it('refuses Pub/Sub', async () => {
+    const sub = asUser.duplicate();
+    try {
+      await expect(sub.subscribe('anything')).rejects.toThrow(refused);
+    } finally {
+      sub.disconnect();
+    }
+  });
+});

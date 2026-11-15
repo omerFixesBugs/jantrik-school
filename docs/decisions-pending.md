@@ -238,11 +238,11 @@ port 4080 is published on IPv4 only.
 
 Recorded for the owner, not built:
 
-- **A Redis user for the receiver** limited to its own keys (Redis ACL). Today it has full Redis
-  rights, so code run in it could queue jobs the worker trusts.
+- **A Redis user for the receiver** limited to its own keys (Redis ACL). _Built in sprint 1, P0_
+  (`jantrik_ingest`, deploy.md → Redis users).
 - **A start-up check that fails when the app's database login is a superuser or BYPASSRLS** (and
-  the same for the platform and receiver logins). Today the env checks refuse the known admin
-  logins by name, and the platform and receiver logins have their own start-up checks.
+  the same for the platform and receiver logins). _Built in sprint 1, P0_ (database.md →
+  Database roles).
 - **CI coverage** of the compose Postgres's first start (initdb), the non-superuser branch of
   `create-roles.sh`, `deploy/compose.sh`'s settings check and the image builds (each checked by
   hand for this PR). The CI restore job makes fresh random passwords each run.
@@ -561,3 +561,40 @@ Each is a small default; how to change it is given.
     - To change: `expireAll` in `apps/api/src/devices/devices.processor.ts`.
 79. **Open for the owner: a time limit on the receiver's live database calls, and its pool size.** The receiver's pool (`INGEST_POOL` in `apps/api/src/ingest/ingest-prisma.service.ts`) now gives up getting a connection after 10 s, which covers both opening one and waiting for a free one while all 10 (node-postgres' default `max`) are busy: with more than 10 device calls in flight and a wait over 10 s, the waiting requests fail with 500 and the devices send them again (nothing is lost). TCP keep-alive probes an idle connection after 30 s (`keepAliveInitialDelayMillis`; without it the operating system waits about 2 hours). A device request's query still has no time limit: a database that answers the connection and then hangs a query keeps that request, and its pool connection, waiting. Not changed here: a `statement_timeout` or the driver's `query_timeout` would bound every `ingest_*` call, and the value must leave room for the largest upload (10 000 lines take about 2 s to store) under load. Defaults until decided: no query limit and a pool of 10, as before.
     - To decide: a value (e.g. 15–30 s) for `statement_timeout` on the `jantrik_ingest_app` role (`ALTER ROLE … SET statement_timeout`, a migration) or `query_timeout` in `INGEST_POOL`; and whether the receiver needs more than 10 connections (`max` in `INGEST_POOL`, within the database's `max_connections`) once many schools' devices call at once.
+    - **_Decided by the owner (sprint 1, 2026-11-14): 5 s._** Built in P0: `statement_timeout: 5000` in `INGEST_POOL` (sent when a connection opens, enforced by the server) and `ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s'` in both role scripts (not a migration: `jantrik_owner` cannot alter another role). The receiver refuses to start unless its login shows `5s`. An upload cut by the limit stores nothing and its resend stores each punch once (tested). The pool size stays 10.
+
+## Sprint 1, P0: security follow-ups (2026-11-15)
+
+Plan: [plans/sprint-1-p0-security.md](plans/sprint-1-p0-security.md), approved by the owner with A1–A4.
+
+P0-1. **(A1) The login check refuses more than superuser and BYPASSRLS:** also a login that can become `pg_read_all_data`, `pg_write_all_data`, `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program`, which pass every grant the platform and receiver isolation rely on.
+
+- To change: `PRIVILEGED_PREDEFINED_ROLES` in `packages/db/src/login-privileges.ts`.
+
+P0-2. **(A2) Fail closed means waiting for the database:** the API, the worker and the platform module now check their login at start-up and exit after about 3 minutes of retries when the database never answers (they used to start and fail per request; the platform module only warned). `pnpm dev` without Docker running exits after about 3 minutes with a message naming `DATABASE_URL`.
+
+- To change: `STARTUP_RETRY_DELAYS_MS` in `apps/api/src/common/startup-check.ts`.
+
+P0-3. **(A3) P0's branch starts from the plan branch** (`feature/sprint-1-admission`), so the sprint plan and P0's plan travel in P0's PR.
+
+P0-4. **(A4) The Redis ACL test adds `+select`** for its throwaway user: the API tests use Redis database 1. The production rules have no `select` (the test asserts it); production URLs name no database.
+
+P0-5. **The receiver's Redis rules are narrower than the plan's starting point:** explicit `eval`/`evalsha` instead of the whole scripting category, no connection category, `-function` (`FUNCTION LOAD`/`FLUSH` are in `@write`), no `SCAN`/`RANDOMKEY`/`DBSIZE` (key names hold phone numbers; found by the automated security review), `multi`/`exec`/`discard` by name for the rate limiter. The test runs every Redis call the receiver makes as that user, its queue add with the receiver's own options (`processPunchesJobOptions`: delayed, one job id per institute, the duplicate path), and the production receiver's boot test logs in as such a user; destructive commands are asked of `ACL DRYRUN`, never run, so a wrong rule cannot flush the Redis the tests share with development.
+
+- To change: `deploy/redis/ingest-user.acl` (and its test, `apps/api/test/redis-acl.e2e-spec.ts`).
+
+P0-6. **The production Redis check never runs a destructive command:** `check-ingest-acl.sh` proves the login with one write to the user's own key (expires in 5 s) and asks `ACL DRYRUN` (as the default user) about everything the user must not do.
+
+P0-7. **The API test env allows `http://app.test` for CORS** (`apps/api/vitest.config.ts`), standing for the institute app's own origin: the env is validated once when `AppModule` is imported, so the "allowed by CORS, refused by the platform" test cannot set it per file.
+
+P0-8. **Known flaky test, not caused by P0:** `appearance.e2e-spec.ts` → "the owner picks a preset and an accent" once got 403 on `/me/context` for a new owner in the full API suite and passed alone three times. Likely cause: `randomPhone()` draws from 10⁸ numbers and a full run makes thousands of users, so two can share a phone; that user then has two memberships and is not switched into an institute at login. To fix later: unique test phones per run.
+
+P0-9. **The login check reads `session_user`** (the login), never `current_user`: a URL's `options=-c role=…` or a role default (`ALTER ROLE … SET role`) runs the session as another role, which any SQL can `RESET ROLE` away from. Found by the final review; tested with a superuser login that switches role when connecting.
+
+Left by the final review for later (not built, each small):
+
+- **Redis runs as root and its image floats.** `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
+- **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
+- **The receiver's key scope `~<prefix>:devices:*` includes the worker's job schedulers** (the devices tick, expire-punches): code run in the receiver could delete them until the worker restarts and recreates them. Accepted for now (the scope the plan set); narrower read/write key selectors are possible at some cost across BullMQ upgrades.
+- **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
+- **Local Playwright configs** that are not in git (`playwright.alt*.config.ts`, `dbg`, `shots`) set `CORS_ORIGINS` but not `PLATFORM_ORIGINS`: their platform specs now get 403 until they set it.

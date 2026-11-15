@@ -33,10 +33,10 @@
 
 {$API_DOMAIN} {
 	import common
-	# Until PlatformAuthGuard checks the Origin itself (an auth change for the owner,
-	# docs/deploy.md): a browser may call /platform/* only from the platform's own origin, so a
-	# script on the institute app's origin cannot use an admin's platform cookie. Requests without
-	# an Origin header (no browser) pass; the session cookie still decides.
+	# A browser may call /platform/* only from the platform's own origin, so a script on the
+	# institute app's origin cannot use an admin's platform cookie. The API refuses any other
+	# origin itself (PlatformAuthGuard, PLATFORM_ORIGINS), requests without an Origin included;
+	# this rule is the second layer in front of it (decision S27, docs/deploy.md → HTTPS).
 	@platformFromElsewhere {
 		path /platform /platform/*
 		header Origin *

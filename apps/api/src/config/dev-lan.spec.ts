@@ -10,7 +10,11 @@ const base = {
 };
 
 /** What every production environment also needs (production-env.spec.ts tests these rules). */
-const prodRest = { SMS_PROVIDER: 'none', CORS_ORIGINS: 'https://app.example.com' };
+const prodRest = {
+  SMS_PROVIDER: 'none',
+  CORS_ORIGINS: 'https://app.example.com,https://platform.example.com',
+  PLATFORM_ORIGINS: 'https://platform.example.com',
+};
 
 describe('env: loosened settings never leave development', () => {
   it('DEV_LAN is accepted only in development', () => {

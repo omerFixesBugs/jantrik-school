@@ -351,6 +351,7 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
 | `JWT_ACCESS_SECRET`  | at least 32 characters                                                                                                                                        |
 | `OTP_PEPPER`         | at least 32 characters                                                                                                                                        |
 | `CORS_ORIGINS`       | comma-separated allowlist; browsers may cache a preflight's answer for 2 h (`maxAge` in `app.setup.ts`), so a narrower list reaches open tabs up to 2 h later |
+| `PLATFORM_ORIGINS`   | the platform web app's origins: the only ones `/platform/*` answers (each also in `CORS_ORIGINS`); default `http://localhost:3000`, required in production    |
 | `COOKIE_SECURE`      | Secure flag on the refresh cookie                                                                                                                             |
 | `TRUST_PROXY`        | Express `trust proxy`; set it behind a load balancer so client IPs are right                                                                                  |
 | `INGEST_*`           | the device receiver: port, public host and port for the setup guide, `INGEST_TRUST_PROXY`, limits ([devices.md](devices.md))                                  |
@@ -371,6 +372,9 @@ one-time backup codes), never SMS. Its own session is an httpOnly cookie `jantri
 `/platform`: 30 minutes idle, 8 hours at most. It has its own guard and audit log.
 
 - Institute tokens never work there, and the platform cookie never works on institute routes.
+- Only the platform's own web origin may call it (`PLATFORM_ORIGINS`): the institute app is in
+  `CORS_ORIGINS` too and shares the cookie's site, so CORS alone would let an XSS there use a
+  platform session.
 - Platform admins are not `users`.
 
 See [platform.md](platform.md).

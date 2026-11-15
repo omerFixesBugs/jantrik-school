@@ -5,7 +5,8 @@ import { ingestEnvSchema, validateIngestEnv } from './ingest-env.js';
 const receiver = {
   NODE_ENV: 'production',
   DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@db/jantrik',
-  REDIS_URL: 'redis://redis:6379',
+  // Its own Redis user (deploy/redis/ingest-user.acl).
+  REDIS_URL: 'redis://jantrik_ingest@redis:6379',
   QUEUE_PREFIX: 'jantrik',
 };
 

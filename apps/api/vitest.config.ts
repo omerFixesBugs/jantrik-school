@@ -61,7 +61,11 @@ export default defineConfig({
       // The test harness boots the device receiver itself.
       INGEST_IN_PROCESS: 'false',
       INGEST_TRUST_PROXY: 'true',
-      CORS_ORIGINS: 'http://localhost:3000',
+      // http://app.test stands for the institute app on its own origin: CORS allows it, the
+      // platform routes must not (platform-auth.e2e-spec.ts → the Origin check). The env is
+      // validated once, when AppModule is imported, so this cannot be set per test file.
+      CORS_ORIGINS: 'http://localhost:3000,http://app.test',
+      PLATFORM_ORIGINS: 'http://localhost:3000',
     },
   },
 });

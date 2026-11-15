@@ -1,5 +1,6 @@
 import { totpCode, totpStep, type PrismaClient } from '@jantrik/db';
 import {
+  PLATFORM_CLIENT,
   todayIn,
   type PlatformAdminInfo,
   type PlatformAuditEntry,
@@ -21,6 +22,7 @@ import {
   ownerClient,
   platform,
   platformLogin,
+  TEST_PLATFORM_ORIGIN,
 } from './support/platform.js';
 
 // Step 8, part 1: platform admins (Jantrik's own staff). Password + TOTP (authenticator app),
@@ -184,11 +186,69 @@ describe('platform auth', () => {
       .set('X-Jantrik-Client', 'platform')
       .expect(401);
     // Platform requests must come from the platform app (CSRF defence), cookie or not.
-    await http(h).get('/platform/auth/me').set('Cookie', cookie).expect(403);
+    const noClient = await http(h)
+      .get('/platform/auth/me')
+      .set('Origin', TEST_PLATFORM_ORIGIN)
+      .set('Cookie', cookie)
+      .expect(403);
+    expect(noClient.body.code).toBe('PLATFORM_CLIENT_REQUIRED');
     await http(h)
       .post('/platform/auth/login')
+      .set('Origin', TEST_PLATFORM_ORIGIN)
       .send({ identifier: admin.phone, password: admin.password })
       .expect(403);
+  });
+
+  describe("only the platform's own origin (PLATFORM_ORIGINS)", () => {
+    it('refuses a platform login without an Origin: 403 PLATFORM_ORIGIN_REFUSED', async () => {
+      const admin = await createPlatformAdmin(owner);
+      const res = await http(h)
+        .post('/platform/auth/login')
+        .set('X-Jantrik-Client', PLATFORM_CLIENT)
+        .send({ identifier: admin.phone, password: admin.password })
+        .expect(403);
+      expect(res.body.code).toBe('PLATFORM_ORIGIN_REFUSED');
+    });
+
+    it('refuses a session route from an unlisted origin even with a live cookie', async () => {
+      const { cookie } = await platformLogin(h, await createPlatformAdmin(owner));
+      for (const origin of ['https://elsewhere.example', 'null', 'http://localhost:3001']) {
+        const res = await platform(h, cookie)
+          .get('/platform/auth/me')
+          .set('Origin', origin)
+          .expect(403);
+        expect(res.body.code).toBe('PLATFORM_ORIGIN_REFUSED');
+      }
+      await platform(h, cookie).get('/platform/auth/me').expect(200);
+    });
+
+    it('refuses before the session lookup: a junk cookie from a refused origin gets 403, not 401', async () => {
+      await platform(h, `jantrik_ps=${'x'.repeat(40)}`)
+        .get('/platform/auth/me')
+        .set('Origin', 'null')
+        .expect(403);
+      await platform(h, `jantrik_ps=${'x'.repeat(40)}`)
+        .get('/platform/auth/me')
+        .expect(401);
+    });
+
+    it("refuses the institute app's origin, which CORS allows (review focus 1)", async () => {
+      // The premise: the browser's preflight from the institute app passes...
+      const preflight = await http(h)
+        .options('/platform/auth/me')
+        .set('Origin', 'http://app.test')
+        .set('Access-Control-Request-Method', 'GET')
+        .set('Access-Control-Request-Headers', 'x-jantrik-client')
+        .expect(204);
+      expect(preflight.headers['access-control-allow-origin']).toBe('http://app.test');
+      // ...so the platform session must be refused by the API itself.
+      const { cookie } = await platformLogin(h, await createPlatformAdmin(owner));
+      const res = await platform(h, cookie)
+        .get('/platform/auth/me')
+        .set('Origin', 'http://app.test')
+        .expect(403);
+      expect(res.body.code).toBe('PLATFORM_ORIGIN_REFUSED');
+    });
   });
 
   it('short sessions: idle and absolute expiry, logout and disabling end them at once', async () => {

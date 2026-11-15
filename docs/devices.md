@@ -162,8 +162,15 @@ screen. Devices that support HTTPS can use a TLS proxy in front of the receiver'
   `ingest_store_punches`, `ingest_take_commands` and `ingest_command_results`. None takes a
   tenant or device id: each takes the serial number, finds and locks the device itself, and
   scopes every query by that device. Details: [database.md](database.md) → Devices.
-- **Startup check.** The receiver refuses to start unless its login can run `ingest_resolve` and
-  cannot read `students` or `device_punches` (so `DATABASE_URL` pasted by mistake fails): a check
+- **Own Redis user.** In production the receiver logs in to Redis as `jantrik_ingest` (and
+  refuses any other user): its own keys (`ingest:*`, `rl:ingest-*`) and the `devices` queue only,
+  no Pub/Sub, no dangerous, SCRIPT or FUNCTION commands and no listing of the keyspace, so code run
+  in it cannot queue a job the worker trusts on another queue
+  ([deploy.md](deploy.md) → Redis users).
+- **Startup check.** The receiver refuses to start unless its login can run `ingest_resolve`,
+  cannot read `students` or `device_punches` (so `DATABASE_URL` pasted by mistake fails), runs
+  with the 5 s statement limit, and is not a superuser, BYPASSRLS or able to become such a role
+  (the same check as the API's logins, [database.md](database.md) → Database roles): a check
   that answers otherwise stops the start at once. A check that fails (the database not reachable
   yet, or not migrated yet, e.g. 42501: the e2e run starts the API before its global setup
   migrates the e2e database) is asked again after 1, 2, 4 and 8 s, then every 15 s, about 3
@@ -173,8 +180,10 @@ screen. Devices that support HTTPS can use a TLS proxy in front of the receiver'
   instead of hanging. The receiver's pool (at most 10 connections) also gives up getting a
   connection after 10 s: opening one, and waiting for a free one, so with more than 10 device
   calls in flight a request that waits longer fails with 500 and the device sends it again. TCP
-  keep-alive probes an idle connection after 30 s. Queries themselves have no time limit yet
-  (decision #79). Inside the API (development, e2e) the API is already listening meanwhile and
+  keep-alive probes an idle connection after 30 s. Every statement stops after 5 s (decision #79,
+  `statement_timeout` sent by the pool and set on the role): the largest upload (10 000 lines)
+  takes about 2 s to store, and one cut by the limit stores nothing (one statement, rolled back),
+  so the device's resend stores each punch once. Inside the API (development, e2e) the API is already listening meanwhile and
   the receiver comes up once the check passes; a receiver that finally refuses stops the API too.
 - **Code scan.** [`ingest-isolation.spec.ts`](../apps/api/src/ingest/ingest-isolation.spec.ts)
   fails if receiver code imports the API's database access, or if anything outside the receiver

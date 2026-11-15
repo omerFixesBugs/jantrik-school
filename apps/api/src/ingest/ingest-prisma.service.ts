@@ -1,10 +1,28 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createPrismaClient, type PoolOptions, type PrismaClient } from '@jantrik/db';
+import {
+  createPrismaClient,
+  loginPrivilegeProblems,
+  readLoginPrivileges,
+  type PoolOptions,
+  type PrismaClient,
+} from '@jantrik/db';
+import {
+  STARTUP_CHECK_TIMEOUT_MS,
+  STARTUP_RETRY_DELAYS_MS,
+  databaseError,
+  errorLabel,
+  runStartupCheck,
+  startupErrorLabel,
+} from '../common/startup-check.js';
 import type { IngestEnv } from '../config/ingest-env.js';
 
-/** How long one start-up check, or opening one connection, may take. */
-const STARTUP_CHECK_TIMEOUT_MS = 10_000;
+export { errorLabel };
+
+/** How long one of the receiver's statements may run (decision #79): 5 s. */
+const STATEMENT_TIMEOUT_MS = 5_000;
+/** The same limit as Postgres shows it (`current_setting('statement_timeout')`). */
+const STATEMENT_TIMEOUT_SETTING = '5s';
 
 /**
  * The receiver's connection pool (node-postgres, at most 10 connections):
@@ -14,13 +32,17 @@ const STARTUP_CHECK_TIMEOUT_MS = 10_000;
  *   waiting requests fail (500); devices send again, nothing is lost.
  * - TCP keep-alive probes an idle connection after 30 s, so a database host that went away is
  *   noticed in minutes, not the operating system's 2 hours.
- * Queries themselves have no time limit yet, and the pool size is node-postgres' default (decision
- * #79 in docs/decisions-pending.md).
+ * - Every statement stops after 5 s (decision #79, the owner's choice): sent when a connection
+ *   opens, enforced by the server (and set on the role too, deploy/postgres/create-roles.sh). The
+ *   largest upload (10 000 lines) takes about 2 s to store; one cut by the limit stores nothing
+ *   (one statement), the device gets 500 and sends it again.
+ * The pool size is node-postgres' default (10).
  */
 export const INGEST_POOL: PoolOptions = {
   connectionTimeoutMillis: STARTUP_CHECK_TIMEOUT_MS,
   keepAlive: true,
   keepAliveInitialDelayMillis: 30_000,
+  statement_timeout: STATEMENT_TIMEOUT_MS,
 };
 
 /**
@@ -39,7 +61,7 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
    * database may not be reachable yet, or not migrated yet (the e2e run starts the API before its
    * global setup migrates the database).
    */
-  retryDelaysMs = [1000, 2000, 4000, 8000, ...Array<number>(11).fill(15000)];
+  retryDelaysMs: readonly number[] = STARTUP_RETRY_DELAYS_MS;
   /**
    * How long one start-up check may take before it counts as failed (and is asked again): a
    * database that accepts the connection and never answers would otherwise hang the start. The
@@ -60,72 +82,52 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Starts only when the check passes: the login runs ingest_resolve and reads neither students
-   * nor punches (e.g. not DATABASE_URL pasted by mistake). A check that answers otherwise stops the
-   * start at once. A check that fails (no connection, an error such as 42501 before the migrations
-   * ran, or no answer within `checkTimeoutMs`) is asked again with backoff, one log line each with
-   * the error's codes, and still failing after the last wait stops the start. When the receiver
-   * runs inside the API, the API is already listening meanwhile; the receiver comes up when the
-   * check passes.
+   * nor punches (e.g. not DATABASE_URL pasted by mistake), its statements stop after 5 s, and it
+   * is not a superuser, BYPASSRLS, or able to become such a role. A check that answers otherwise
+   * stops the start at once. A check that fails (no connection, an error such as 42501 before the
+   * migrations ran, or no answer within `checkTimeoutMs`) is asked again with backoff, one log
+   * line each with the error's codes, and still failing after the last wait stops the start. When
+   * the receiver runs inside the API, the API is already listening meanwhile; the receiver comes
+   * up when the check passes.
    */
   async onModuleInit(): Promise<void> {
-    for (let attempt = 0; ; attempt++) {
-      let row: StartupCheck | undefined;
-      try {
-        [row] = await this.check();
-      } catch (error) {
-        const raw = databaseError(error)?.kind;
-        const kind = typeof raw === 'string' && /^[A-Za-z]{1,60}$/.test(raw) ? raw : undefined;
-        const label = [errorLabel(error), kind].filter(Boolean).join(' ');
-        const delay = this.retryDelaysMs[attempt];
-        if (delay === undefined) {
-          throw new Error(
-            `Could not check the device receiver's database login (DATABASE_INGEST_URL): ` +
-              `${label}. The receiver does not start unchecked.`,
+    await runStartupCheck({
+      run: async () => {
+        const [row] = await this.client.$queryRaw<StartupCheck[]>`
+          SELECT has_function_privilege(
+                   'public.ingest_resolve(text, inet, timestamptz, text, integer, text)', 'EXECUTE'
+                 ) AS resolve,
+                 has_table_privilege('public.students', 'SELECT') AS students,
+                 has_table_privilege('public.device_punches', 'SELECT') AS punches,
+                 current_setting('statement_timeout') AS statement_timeout`;
+        return { row, privileges: await readLoginPrivileges(this.client) };
+      },
+      verdict: ({ row, privileges }) => {
+        if (row?.resolve !== true || row.students !== false || row.punches !== false) {
+          return (
+            'DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): it runs ' +
+            'the ingest_* functions and reads no table. See docs/database.md.'
           );
         }
-        this.logger.warn(
-          `Start-up check failed (${label}): the database may not be ready yet; ` +
-            `checking again in ${delay / 1000} s`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
-      }
-      if (row?.resolve === true && row.students === false && row.punches === false) {
-        if (attempt > 0) this.logger.log('Start-up check passed');
-        return;
-      }
-      throw new Error(
-        'DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): it runs ' +
-          'the ingest_* functions and reads no table. See docs/database.md.',
-      );
-    }
-  }
-
-  /**
-   * One start-up check, failed with a `StartupCheckTimeout` error when it has no answer within
-   * `checkTimeoutMs`. A query that answers after that is ignored (its late failure too).
-   */
-  private async check(): Promise<StartupCheck[]> {
-    const query = (async () =>
-      this.client.$queryRaw<StartupCheck[]>`
-        SELECT has_function_privilege(
-                 'public.ingest_resolve(text, inet, timestamptz, text, integer, text)', 'EXECUTE'
-               ) AS resolve,
-               has_table_privilege('public.students', 'SELECT') AS students,
-               has_table_privilege('public.device_punches', 'SELECT') AS punches`)();
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(Object.assign(new Error('No answer in time'), { name: 'StartupCheckTimeout' }));
-      }, this.checkTimeoutMs);
+        if (row.statement_timeout !== STATEMENT_TIMEOUT_SETTING) {
+          return (
+            `The device receiver's statements must stop after 5 s (statement_timeout ` +
+            `${STATEMENT_TIMEOUT_SETTING}), got ${String(row.statement_timeout)} (decision #79).`
+          );
+        }
+        const problems = loginPrivilegeProblems(privileges);
+        return problems.length === 0
+          ? true
+          : `DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): ` +
+              `${privileges.login} ${problems.join(', ')}. See docs/database.md.`;
+      },
+      retryDelaysMs: this.retryDelaysMs,
+      checkTimeoutMs: this.checkTimeoutMs,
+      logger: this.logger,
+      what: "the device receiver's database login (DATABASE_INGEST_URL)",
+      unchecked: 'The receiver does not start unchecked.',
+      label: startupErrorLabel,
     });
-    try {
-      // The race handles the query's rejection too: one that fails after the timeout is not an
-      // unhandled rejection (tested).
-      return await Promise.race([query, timeout]);
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -133,20 +135,12 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-type StartupCheck = { resolve: boolean; students: boolean; punches: boolean };
-
-/**
- * What the driver says about a failed query: the database's error code (e.g. P0001 for RAISE,
- * 23514 for a CHECK) and message, or the kind of failure (e.g. DatabaseNotReachable).
- */
-function databaseError(
-  error: unknown,
-): { code?: unknown; message?: unknown; kind?: unknown } | undefined {
-  const meta = (error as { meta?: { driverAdapterError?: { cause?: unknown } } } | null)?.meta;
-  const cause = meta?.driverAdapterError?.cause as
-    { originalCode?: unknown; originalMessage?: unknown; kind?: unknown } | undefined;
-  return cause && { code: cause.originalCode, message: cause.originalMessage, kind: cause.kind };
-}
+type StartupCheck = {
+  resolve: boolean;
+  students: boolean;
+  punches: boolean;
+  statement_timeout: string;
+};
 
 /**
  * The device's answer when an ingest function refused its input (`RAISE EXCEPTION 'INGEST_…'`):
@@ -157,17 +151,4 @@ export function ingestRefusalStatus(error: unknown): 400 | 413 | null {
   if (db?.code !== 'P0001' || typeof db.message !== 'string') return null;
   if (!/^INGEST_[A-Z_]+$/.test(db.message)) return null;
   return db.message.startsWith('INGEST_TOO_MANY_') ? 413 : 400;
-}
-
-/**
- * What may be logged about an error: its name and codes only. Messages are never logged: a
- * CHECK failure's detail repeats the row (tenant and device ids), and others echo device input.
- */
-export function errorLabel(error: unknown): string {
-  const token = (v: unknown) =>
-    typeof v === 'string' && /^[A-Za-z0-9_]{1,60}$/.test(v) ? v : undefined;
-  const e = error as { name?: unknown; code?: unknown } | null;
-  return [token(e?.name) ?? 'Error', token(e?.code), token(databaseError(error)?.code)]
-    .filter(Boolean)
-    .join(' ');
 }

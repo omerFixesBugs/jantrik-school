@@ -2,6 +2,7 @@ import { createServer, type Socket } from 'node:net';
 import type * as AdapterPg from '@prisma/adapter-pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPrismaClient } from '../src/index.js';
+import { INGEST_URL } from './env.js';
 
 /** What each PrismaPg was built with (the real adapter still does the work). */
 const configs = vi.hoisted(() => [] as unknown[]);
@@ -38,6 +39,28 @@ describe('createPrismaClient pool options', () => {
         keepAliveInitialDelayMillis: 30_000,
       },
     ]);
+  });
+
+  it('passes statement_timeout to node-postgres', () => {
+    configs.length = 0;
+    createPrismaClient('postgresql://u:p@127.0.0.1:1/x', { statement_timeout: 5000 });
+    expect(configs).toEqual([
+      { connectionString: 'postgresql://u:p@127.0.0.1:1/x', statement_timeout: 5000 },
+    ]);
+  });
+
+  it('the server enforces statement_timeout: a longer query is cancelled (57014)', async () => {
+    const client = createPrismaClient(INGEST_URL, { statement_timeout: 200 });
+    try {
+      const [row] = await client.$queryRaw<{ t: string }[]>`
+        SELECT current_setting('statement_timeout') AS t`;
+      expect(row!.t).toBe('200ms');
+      await expect(client.$queryRaw`SELECT pg_sleep(1)`).rejects.toThrow(
+        /57014|canceling statement/,
+      );
+    } finally {
+      await client.$disconnect();
+    }
   });
 
   describe('against a server that accepts and never answers', () => {

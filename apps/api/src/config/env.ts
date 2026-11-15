@@ -1,7 +1,12 @@
 import { isoDateSchema } from '@jantrik/shared';
 import { z } from 'zod';
 import { ingestReceiverFields, positiveInt } from './ingest-env.js';
-import { apiEnvironmentProblems, apiProductionProblems, formatProblems } from './production-env.js';
+import {
+  apiEnvironmentProblems,
+  apiProductionProblems,
+  formatProblems,
+  normaliseOrigin,
+} from './production-env.js';
 
 /** The receiver runs inside the API unless told otherwise; production runs it as its own process. */
 const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_ENV: string }) =>
@@ -31,6 +36,29 @@ export const envSchema = z
           .map((o) => o.trim())
           .filter(Boolean),
       ),
+    /**
+     * The platform web app's origins (comma-separated): the only browser origins /platform/*
+     * answers (PlatformAuthGuard). Each must also be in CORS_ORIGINS. Normalised (lower-case
+     * host, no trailing slash). Required in production (https://platform.<domain>).
+     */
+    PLATFORM_ORIGINS: z
+      .string()
+      .default('http://localhost:3000')
+      .transform((v, ctx) => {
+        const origins: string[] = [];
+        for (const entry of v
+          .split(',')
+          .map((o) => o.trim())
+          .filter(Boolean)) {
+          const origin = normaliseOrigin(entry);
+          if (origin === null) {
+            ctx.addIssue({ code: 'custom', message: `PLATFORM_ORIGINS: "${entry}" is not a URL` });
+            return z.NEVER;
+          }
+          origins.push(origin);
+        }
+        return origins;
+      }),
     /** Express "trust proxy": false, true, a hop count, or a list of subnets. */
     TRUST_PROXY: z.string().default('false'),
     DATABASE_URL: z.string().min(1),

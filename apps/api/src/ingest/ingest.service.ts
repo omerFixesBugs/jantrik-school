@@ -27,7 +27,7 @@ import type { IngestEnv } from '../config/ingest-env.js';
 import {
   DEVICES_QUEUE,
   PROCESS_PUNCHES_JOB,
-  processPunchesJobId,
+  processPunchesJobOptions,
   type ProcessPunchesJob,
 } from '../devices/devices.constants.js';
 import { RateLimiter } from '../redis/rate-limiter.service.js';
@@ -379,12 +379,7 @@ export class IngestService {
       await this.queue.add(
         PROCESS_PUNCHES_JOB,
         { tenantId: stored.tenant_id },
-        {
-          jobId: processPunchesJobId(stored.tenant_id),
-          delay: 1000,
-          removeOnComplete: true,
-          removeOnFail: 50,
-        },
+        processPunchesJobOptions(stored.tenant_id),
       );
     }
     return { lines: parsed.lines };

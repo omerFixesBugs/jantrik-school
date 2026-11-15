@@ -30,6 +30,9 @@ env:
   DATABASE_MIGRATION_URL: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
   DATABASE_URL_TEST: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_test
   DATABASE_MIGRATION_URL_TEST: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
+  # The service container's superuser on the test database: the login privilege tests create
+  # their own roles with it (packages/db/test/login-privileges.test.ts).
+  DATABASE_SUPERUSER_URL_TEST: postgresql://postgres:postgres@localhost:5432/jantrik_test
   REDIS_URL: redis://localhost:6379
   REDIS_URL_TEST: redis://localhost:6379/1
   # Playwright end-to-end tests: seeded jantrik_e2e database, Redis DB 2.
@@ -298,10 +301,26 @@ jobs:
           done
 
       - name: Lint the deploy scripts
-        run: shellcheck deploy/compose.sh deploy/postgres/*.sh deploy/postgres/initdb/*.sh deploy/backup/*.sh
+        run: shellcheck deploy/compose.sh deploy/postgres/*.sh deploy/postgres/initdb/*.sh deploy/backup/*.sh deploy/redis/*.sh
 
       - name: Check the production compose file
         run: docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod.example config --quiet
+
+      # The production Redis as the compose file starts it, with this run's passwords: the device
+      # receiver's user exists and reaches its own keys only (deploy/redis/check-ingest-acl.sh).
+      - name: Redis ACL user for the receiver (production compose)
+        run: |
+          REDIS_PASSWORD=$(openssl rand -hex 24)
+          REDIS_INGEST_PASSWORD=$(openssl rand -hex 24)
+          echo "::add-mask::$REDIS_PASSWORD"
+          echo "::add-mask::$REDIS_INGEST_PASSWORD"
+          export REDIS_PASSWORD REDIS_INGEST_PASSWORD
+          compose="docker compose -p redis-acl-check -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod.example"
+          $compose up -d --wait redis
+          status=0
+          $compose exec -T redis sh /usr/local/etc/jantrik-redis/check-ingest-acl.sh || status=$?
+          $compose down -v
+          exit "$status"
 
       - name: Create the roles and the production database (create-roles.sh)
         run: sh deploy/postgres/create-roles.sh
