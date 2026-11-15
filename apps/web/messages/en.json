@@ -42,6 +42,7 @@
     "password": "Password",
     "signIn": "Sign in",
     "signingIn": "Signing in…",
+    "passwordHint": "No password yet? Sign in with a code, then set one from your menu.",
     "brandHeadline": "Running a school, madrasa or coaching centre, made simple",
     "brandText": "Attendance, fees, exam results and guardian SMS, all in one place.",
     "pointLanguage": "In Bangla and English",
@@ -84,7 +85,8 @@
     "schemeSystem": "Same as the device",
     "schemeToLight": "Switch to light",
     "schemeSaveFailed": "Your light/dark choice could not be saved. Try again.",
-    "schemeToDark": "Switch to dark"
+    "schemeToDark": "Switch to dark",
+    "password": "Password"
   },
   "nav": {
     "dashboard": "Dashboard",

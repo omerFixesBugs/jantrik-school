@@ -382,6 +382,7 @@ function PasswordForm({ onDone }: { onDone: (s: Session) => void }) {
       <Button type="submit" size="lg" disabled={busy || blocked || !identifier || !password}>
         {busy ? t('signingIn') : t('signIn')}
       </Button>
+      <p className="text-muted-foreground text-sm">{t('passwordHint')}</p>
     </form>
   );
 }

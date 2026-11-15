@@ -3,9 +3,9 @@ import {
   PASSWORD_RULES,
   normalizePassword,
   passwordProblems,
-  setPasswordSchema,
   type PasswordProblem,
 } from './password.js';
+import { setPasswordSchema } from './password-schema.js';
 
 describe('password rules (S26, P1-C, P1-D)', () => {
   it('counts code points after NFC: a Bangla password typed decomposed equals the composed one', () => {

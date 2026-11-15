@@ -115,6 +115,9 @@ export const ROUTE_MESSAGES = {
     'setup',
   ],
 
+  /** The person's own account (the password page). */
+  account: ['account'],
+
   setup: ['appearance', 'setup'],
   setupWelcome: ['attendanceSettings', 'dashboard', 'onboarding', 'staff'],
   staff: ['setup', 'staff'],
