@@ -244,6 +244,8 @@ enum SessionRevokeReason {
   LOGOUT
   REUSE_DETECTED
   ADMIN
+  /// The person set a new password: their other sessions end.
+  PASSWORD_CHANGED
 
   @@map("session_revoke_reason")
 }
@@ -533,18 +535,20 @@ model TemplateLabel {
 
 /// A person, global across tenants. Their roles per tenant are memberships.
 model User {
-  id           String      @id @default(uuid(7)) @db.Uuid
+  id                String      @id @default(uuid(7)) @db.Uuid
   /// E.164 Bangladeshi mobile, e.g. +8801712345678 (CHECK constraint in SQL).
-  phone        String      @unique
-  email        String?     @unique
-  name         String
+  phone             String      @unique
+  email             String?     @unique
+  name              String
   /// Name in Bangla script, shown in the Bangla UI; falls back to `name`.
-  nameBn       String?     @map("name_bn")
-  passwordHash String?     @map("password_hash")
-  locale       Locale      @default(bn)
-  colorScheme  ColorScheme @default(SYSTEM) @map("color_scheme")
-  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  nameBn            String?     @map("name_bn")
+  passwordHash      String?     @map("password_hash")
+  /// When the person last set their password themselves (null: never, or only by the seed).
+  passwordChangedAt DateTime?   @map("password_changed_at") @db.Timestamptz(3)
+  locale            Locale      @default(bn)
+  colorScheme       ColorScheme @default(SYSTEM) @map("color_scheme")
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   memberships Membership[]
   students    Student[]

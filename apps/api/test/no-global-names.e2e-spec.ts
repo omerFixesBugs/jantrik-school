@@ -13,6 +13,7 @@ import {
   type Harness,
 } from './support/harness.js';
 import { createIngestHarness, type IngestHarness } from './support/ingest.js';
+import { ownerClient } from './support/platform.js';
 import { school, type School } from './support/school.js';
 
 // Decision #5: a person's global row (users.name / name_bn / email) never leaves the API for
@@ -66,9 +67,15 @@ describe('global names never leave the API', () => {
       await tx.membership.create({ data: { tenantId: elsewhere, userId: id, role: 'GUARDIAN' } });
       return id;
     });
-    await withContext(h.prisma, { userId }, (tx) =>
-      tx.user.update({ where: { id: userId }, data: { email: SECRET.email } }),
-    );
+    // The app login may not write email (P1-B), so the owner role sets it, as that user.
+    const owner = ownerClient();
+    try {
+      await withContext(owner, { userId }, (tx) =>
+        tx.user.update({ where: { id: userId }, data: { email: SECRET.email } }),
+      );
+    } finally {
+      await owner.$disconnect();
+    }
 
     // Here they become a guardian (admission, typed names), ...
     const { yearId, classLevelId } = await withTenant(h.prisma, s.tenantId, async (tx) => ({
