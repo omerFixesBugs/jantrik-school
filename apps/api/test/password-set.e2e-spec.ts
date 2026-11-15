@@ -440,7 +440,7 @@ describe('staff set their own password', () => {
     });
   });
 
-  it('an already expired session is left as it is (it can do nothing anyway)', async () => {
+  it('an expired session is revoked too (a refresh that began before it expired could still extend it)', async () => {
     const t = await teacher();
     await passTime(t.phone, t.userId);
     const old = await otpLogin(h, t.phone);
@@ -462,8 +462,8 @@ describe('staff set their own password', () => {
     const after = await withContext(h.prisma, { userId: t.userId }, (tx) =>
       tx.session.findUniqueOrThrow({ where: { id: oldSession.id } }),
     );
-    expect(after.revokedAt).toBeNull();
-    expect(await h.redis.exists(`revoked:sid:${oldSession.id}`)).toBe(0);
+    expect(after.revokeReason).toBe('PASSWORD_CHANGED');
+    expect(await h.redis.exists(`revoked:sid:${oldSession.id}`)).toBe(1);
   });
 
   it('never writes the password or the code to the logs', async () => {

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import {
   normalizePassword,
   passwordProblems,
@@ -16,7 +16,7 @@ import { RateLimiter } from '../redis/rate-limiter.service.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { REDIS_CALL_TIMEOUT_MS, withRedisDeadline } from '../redis/redis-deadline.js';
 import { Db } from '../tenancy/db.service.js';
-import { isCommonPassword } from './common-passwords.js';
+import { isCommonPassword, loadCommonPasswords } from './common-passwords.js';
 import { listMemberships } from './login-lookup.js';
 import { OTP_TTL_SEC, OtpService } from './otp.service.js';
 import { PasswordService } from './password.service.js';
@@ -37,7 +37,7 @@ export function phoneHint(phone: string): string {
  * (password-writes.spec.ts).
  */
 @Injectable()
-export class PasswordSettingsService {
+export class PasswordSettingsService implements OnModuleInit {
   constructor(
     private readonly db: Db,
     private readonly context: RequestContext,
@@ -47,6 +47,11 @@ export class PasswordSettingsService {
     private readonly audit: AuditService,
     @Inject(REDIS) private readonly redis: Redis,
   ) {}
+
+  /** The common-password list is read at start-up: a missing file stops the API from starting. */
+  onModuleInit(): void {
+    loadCommonPasswords();
+  }
 
   async status(principal: Principal): Promise<PasswordStatus> {
     const user = await this.db.tx.user.findUniqueOrThrow({
@@ -107,14 +112,14 @@ export class PasswordSettingsService {
       where: { id: principal.userId },
       data: { passwordHash, passwordChangedAt: now },
     });
-    // Every other live session, in one statement (an expired one can do nothing: no refresh, and
-    // no access token outlives its session).
+    // Every other session not yet revoked, in one statement, whatever its expiry: a refresh
+    // that passed its check just before the session expired may still commit (and extend it);
+    // a revoked session makes that commit roll back.
     const others = (
       await tx.session.updateManyAndReturn({
         where: {
           userId: principal.userId,
           revokedAt: null,
-          expiresAt: { gt: now },
           NOT: { id: principal.sessionId },
         },
         data: { revokedAt: now, revokeReason: 'PASSWORD_CHANGED' },

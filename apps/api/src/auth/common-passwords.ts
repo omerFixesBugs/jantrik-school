@@ -1,14 +1,18 @@
 import { readFileSync } from 'node:fs';
 
 /**
- * The common-password list (sprint 1 P1-D), read once on first use. The file sits next to this
- * module, in src/ and (copied by `nest build`, see nest-cli.json) in dist/. Server side only:
- * it never reaches the web bundle.
+ * The common-password list (sprint 1 P1-D). The file sits next to this module, in src/ and
+ * (copied by `nest build`, see nest-cli.json) in dist/. PasswordSettingsService reads it at
+ * start-up, so a missing file stops the API from starting rather than failing a request.
+ * Server side only: it never reaches the web bundle.
  */
+const LIST = new URL('./common-passwords.txt', import.meta.url);
+
 let list: ReadonlySet<string> | undefined;
 
-function load(): ReadonlySet<string> {
-  const text = readFileSync(new URL('./common-passwords.txt', import.meta.url), 'utf8');
+/** The list's entries, lower-cased (lines starting with # are comments). Throws if unreadable. */
+export function readCommonPasswords(from: URL = LIST): ReadonlySet<string> {
+  const text = readFileSync(from, 'utf8');
   return new Set(
     text
       .split(/\r?\n/)
@@ -17,8 +21,13 @@ function load(): ReadonlySet<string> {
   );
 }
 
+/** Read the list now (at start-up) rather than on the first check. */
+export function loadCommonPasswords(): void {
+  list ??= readCommonPasswords();
+}
+
 /** Whether a (normalised) password is on the list, ignoring case. */
 export function isCommonPassword(password: string): boolean {
-  list ??= load();
+  list ??= readCommonPasswords();
   return list.has(password.toLowerCase());
 }
