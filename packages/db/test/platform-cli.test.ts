@@ -157,6 +157,15 @@ describe('platform admin CLI', () => {
     });
   });
 
+  it('hashes the password NFC-normalised, as the API verifies it', async () => {
+    const phone = randomPhone();
+    const decomposed = 'café au lait, sıl vous plaît';
+    await runPlatformAdminCli(['create', '--phone', local(phone), '--name', 'NFC'], io(decomposed));
+    const admin = await owner.platformAdmin.findUniqueOrThrow({ where: { phone } });
+    expect(await verify(admin.passwordHash, decomposed.normalize('NFC'))).toBe(true);
+    expect(await verify(admin.passwordHash, decomposed)).toBe(false);
+  });
+
   it('flags are strict: unknown flags and --flag=value are refused, never ignored', async () => {
     const phone = local(randomPhone());
     await expect(

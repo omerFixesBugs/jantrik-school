@@ -1,11 +1,14 @@
-import { withContext } from '@jantrik/db';
+import { withContext, withTenant } from '@jantrik/db';
 import {
   addMember,
+  bearer,
   createHarness,
   createTenant,
   http,
+  otpLogin,
   randomIp,
   randomPhone,
+  waitForOtp,
   type Harness,
 } from './support/harness.js';
 
@@ -118,5 +121,86 @@ describe('password login', () => {
     const output = writes.join('');
     expect(output).not.toContain(PASSWORD);
     expect(output).not.toContain('wrong-secret-pass');
+  });
+
+  describe('only staff sign in with a password (guardians stay on codes)', () => {
+    const invalid = async () => (await login(randomPhone(), PASSWORD).expect(401)).body;
+
+    it('a teacher whose membership was disabled: the same 401 as a wrong password; codes still work for their other membership', async () => {
+      const elsewhere = (await createTenant(h)).id;
+      const { phone, userId } = await addMember(h, tenantId, {
+        roles: ['TEACHER'],
+        password: PASSWORD,
+      });
+      await addMember(h, elsewhere, { phone, roles: ['GUARDIAN'] });
+      await login(phone, PASSWORD).expect(200);
+
+      await withTenant(h.prisma, tenantId, (tx) =>
+        tx.membership.updateMany({ where: { userId }, data: { status: 'DISABLED' } }),
+      );
+      const res = await login(phone, PASSWORD).expect(401);
+      expect(res.body).toEqual(await invalid());
+
+      const byCode = await otpLogin(h, phone);
+      expect(byCode.tenant?.id).toBe(elsewhere);
+      expect(byCode.roles).toEqual(['GUARDIAN']);
+    });
+
+    it('a guardian with a password hash: the same 401', async () => {
+      const { phone } = await addMember(h, tenantId, { roles: ['GUARDIAN'], password: PASSWORD });
+      const res = await login(phone, PASSWORD).expect(401);
+      expect(res.body).toEqual(await invalid());
+    });
+
+    it('a failed staff check counts as a failed attempt (the per-account limit still applies)', async () => {
+      const { phone } = await addMember(h, tenantId, { roles: ['GUARDIAN'], password: PASSWORD });
+      for (let i = 0; i < 5; i++) await login(phone, PASSWORD).expect(401);
+      await login(phone, PASSWORD).expect(429);
+    });
+  });
+
+  describe('passwords are compared NFC-normalised (P1-C)', () => {
+    // The same Bangla password from two keyboards: য় as one code point or as য + nukta, and ো as
+    // one vowel sign or as ে + া.
+    const keyboardA = 'ভালো পাখি য়াত্রা ১২';
+    const keyboardB = 'ভালো পাখি য়াত্রা ১২';
+
+    /** Set the password through PUT /me/password, as the person does. */
+    const setThroughTheApi = async (password: string) => {
+      const { phone } = await addMember(h, tenantId, { roles: ['TEACHER'] });
+      const me = await otpLogin(h, phone);
+      const before = h.sms.sentTo(phone).length;
+      await http(h)
+        .post('/me/password/code')
+        .set('X-Forwarded-For', randomIp())
+        .set(bearer(me.accessToken))
+        .send({})
+        .expect(202);
+      const code = await waitForOtp(h, phone, before);
+      await http(h)
+        .put('/me/password')
+        .set('X-Forwarded-For', randomIp())
+        .set(bearer(me.accessToken))
+        .send({ code, password })
+        .expect(204);
+      return phone;
+    };
+
+    it('the two forms differ as strings', () => {
+      expect(keyboardA).not.toBe(keyboardB);
+      expect(keyboardA.normalize('NFC')).toBe(keyboardB.normalize('NFC'));
+    });
+
+    it('set from one keyboard, signs in from the other', async () => {
+      const phone = await setThroughTheApi(keyboardB);
+      await login(phone, keyboardA).expect(200);
+      await login(phone, keyboardB).expect(200);
+    });
+
+    it('and the other way round', async () => {
+      const phone = await setThroughTheApi(keyboardA);
+      await login(phone, keyboardB).expect(200);
+      await login(phone, keyboardA).expect(200);
+    });
   });
 });
