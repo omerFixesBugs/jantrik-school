@@ -124,10 +124,27 @@ while the first refresh may still be running. So each refresh takes a lock on it
 4. only then commit the rotation.
 
 A second refresh of the same token waits for the lock (up to 10 s, then **503 `REFRESH_BUSY`**)
-and then finds the first one's stored answer: a retry, never reuse. A failure before step 4
-leaves the token unrotated, so the client's retry rotates it normally. If Redis fails or does
-not answer within 2 s, the refresh answers **503 `REFRESH_UNAVAILABLE`** and changes nothing. A
-503 is never a sign-out: the web client shows "unreachable" and retries. Two tabs refreshing at
+and then finds the first one's stored answer: a retry, never reuse.
+
+- **A failure before step 4** leaves the token unrotated, so the client's retry rotates it
+  normally.
+- **The lock lives 15 s, and a refresh never outlives it.** Before step 3 it checks that storing
+  and committing can still finish inside its lock (Redis 2 s each call, the commit's transaction
+  at most 3 s waiting and 3 s running). If not, it stops with 503 `REFRESH_BUSY` before changing
+  anything. A commit that still finds the token rotated, which only a lost lock allows, is also
+  503, never 401.
+- **A session revoked while the answer is built** (a logout) rolls the commit back: 401, and no
+  new pair.
+- **An institute that can no longer be selected** is cleared only if the session still has it,
+  so an institute switch made meanwhile stays.
+- **Redis unavailable:** if Redis fails or does not answer within 2 s, the refresh answers
+  **503 `REFRESH_UNAVAILABLE`** and changes nothing. So does a lock request that timed out: its
+  release is queued behind it.
+- **Every route, not just refresh:** the global rate-limit check answers **503
+  `SERVICE_UNAVAILABLE`** when Redis fails or is silent past 2 s, instead of hanging or failing
+  with a 500.
+
+A 503 is never a sign-out: the web client shows "unreachable" and retries. Two tabs refreshing at
 once get the same pair; the web client still serialises refreshes (Web Locks) to save requests.
 
 **Where the refresh token lives:**
