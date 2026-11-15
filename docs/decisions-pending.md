@@ -635,7 +635,7 @@ P1-B. **The app login may update only some columns of `users`:** `locale`, `colo
 
 P1-C. **Passwords are NFC-normalised** before hashing and verifying (the API and the platform-admin CLI), so a Bangla password typed on another keyboard still matches. Existing hashes are unaffected (the demo password is ASCII).
 
-P1-D. **The rules:** 10 to 128 code points; not containing the person's phone number in any written form; not containing the name (4 letters or more) of an institute they are an active member of (the owner's addition); not on the common-password list (SecLists' 10,000 most common, MIT, plus jantrik/bangladesh/password variants), checked on the server only.
+P1-D. **The rules:** 10 to 128 code points; not containing the person's phone number in any written form; not containing the whole name (4 characters or more) of an institute they are an active member of (the owner's addition); not on the common-password list (SecLists' 10,000 most common, MIT, plus jantrik/bangladesh/password variants), checked on the server only.
 
 - To change: `PASSWORD_RULES` and `passwordProblems` in `packages/shared/src/password.ts`; the list in `apps/api/src/auth/common-passwords.txt`.
 
@@ -648,3 +648,11 @@ P1-F. **Each code purpose has its own 60-second cooldown; the 15-minute and dail
 P1-G. **The rules are checked before the code** (a change to the plan's order, which verified the code first): a refused password, e.g. one on the common list that the form cannot check, does not use up the code, so the person does not need another SMS. Nothing secret is revealed by checking the rules first: the route needs a signed-in staff member, and the rules are public.
 
 P1-H. **`GET /me/password` also returns the person's own phone** (an addition to the plan), so the form can check the phone rule as they type. It is their own number, returned only to them.
+
+P1-I. **Open, for the owner: catch part of an institute's name too?** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widens the rule you set, so it is not built.
+
+- To change: `passwordProblems` in `packages/shared/src/password.ts` (the server and the form share it).
+
+P1-J. **Follow-up, for the owner: hide `users.password_hash` from the app login.** Real staff hashes now exist, and `jantrik_app` may still SELECT every column of the users it can see (itself, and the members of the current institute, through `users_visible`). An injection in a request could read co-members' hashes (argon2id, so slow to attack, but still). The fix: revoke SELECT on that column from `jantrik_app` and read `hasPassword` through a definer function, as the login already does; every full-row read of `users` in the app and the tests must then name its columns. A database and security change, so it needs a plan and your approval first.
+
+P1-K. **Fixed from the review** (each with a test that failed first): a code is single use even when two requests race with it (login codes too); the phone rule ignores every punctuation mark and symbol between the digits; the other sessions are revoked in one statement; the common-password list is read at start-up; password login accepts up to 512 code points (a 128-character password typed decomposed); the wrong-code message asks to check the code before sending a new one. Kept as they are: the staff check after a correct password costs one extra query (it only confirms a password the caller already has); the login page's hint sits under the password tab, which guardians do not use.

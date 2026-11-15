@@ -35,7 +35,8 @@ Code lives in [`apps/api/src/auth`](../apps/api/src/auth) and
 
 **OTP storage.** Codes are never stored in plain text. Redis holds
 `HMAC-SHA256(OTP_PEPPER, phone:code)` with a 5-minute TTL, plus an attempt counter. The 5th wrong
-attempt deletes the code. A successful verify deletes it too (single use).
+attempt deletes the code. A successful verify deletes it too (single use): only the request
+that deletes it gets through, so two requests racing with the same code cannot both succeed.
 
 A code has a purpose. A login code is under `otp:<phone>`; a password code (below) is under
 `otp:password:<phone>`, with `password:` in the MAC input and its own SMS text. Neither can be
@@ -197,23 +198,28 @@ audited in that institute. Someone who is staff elsewhere switches to that insti
 2. the rules, else `422 PASSWORD_REJECTED` with `problems`:
    - `TOO_SHORT` / `TOO_LONG`: 10 to 128 Unicode code points after NFC;
    - `HAS_PHONE`: the person's 10-digit national number, in any form (`01…`, `+880…`, Bangla
-     digits, with spaces, dashes or dots);
-   - `HAS_INSTITUTE_NAME`: the name of any institute they are an active member of (as a guardian
-     too), ignoring case and spaces; names under 4 letters are skipped;
+     digits, split by spaces, punctuation or symbols);
+   - `HAS_INSTITUTE_NAME`: the whole name of any institute they are an active member of (as a
+     guardian too), ignoring case and spaces; names under 4 characters (code points) are skipped;
    - `TOO_COMMON`: on the list in `apps/api/src/auth/common-passwords.txt` (SecLists' 10,000 most
      common, MIT; plus jantrik, bangladesh and password with digits and years). Server only;
 3. the code, else `422 PASSWORD_CODE_INVALID` (wrong, expired or used). Checking the rules first
    means a refused password does not use the code up.
 
-On success, in one transaction: `users.password_hash` and `password_changed_at`, every other live
-session revoked with `PASSWORD_CHANGED`, and an audit row (`user_password`, `UPDATE`, no values).
+On success, in one transaction: `users.password_hash` and `password_changed_at`, every other
+session not yet revoked (expired ones too: a refresh that passed its check just before its session
+expired may still commit, and only a revoked session makes it roll back) revoked with
+`PASSWORD_CHANGED` in one `UPDATE … RETURNING`, and an audit row (`user_password`, `UPDATE`, no
+values).
 After commit, those sessions' ids go on the Redis revocation list, so their access tokens stop at
 once (a Redis failure there is logged; their refresh fails anyway). The current session, and so
 every tab of this browser, stays signed in. The password and the code never reach logs, answers,
 audit rows or Redis (the code only as its HMAC).
 
 Password codes cost Jantrik, as login codes do (`platform_sms_logs`), not the institute's SMS
-budget. `PasswordSettingsService` is the only code that writes `users.password_hash`
+budget. The common-password list is read at start-up: without it the API does not start.
+Password login accepts up to 512 code points, as many as a settable password can have when typed
+decomposed. `PasswordSettingsService` is the only code that writes `users.password_hash`
 (`password-writes.spec.ts` checks it).
 
 ## Tenants
