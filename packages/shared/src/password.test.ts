@@ -52,6 +52,10 @@ describe('password rules (S26, P1-C, P1-D)', () => {
     'my-01711-000002!',
     'x+880 1711 000002y',
     '1711.000.002 pass',
+    '(01711)000002x',
+    '01711_000002ab',
+    '017/1100/0002 ok',
+    '০১৭১১–০০০০০২ dash',
   ])('refuses a password containing the phone number: %s', (pw) =>
     expect(passwordProblems(pw, about)).toContain('HAS_PHONE'),
   );

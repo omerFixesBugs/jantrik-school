@@ -6,8 +6,11 @@ import { toAsciiDigits } from './digits.js';
  */
 export const PASSWORD_RULES = { min: 10, max: 128 } as const;
 
-/** Institute names shorter than this (without spaces) are not checked: they would refuse most passwords. */
-const MIN_NAME_LETTERS = 4;
+/**
+ * Institute names shorter than this (in characters, i.e. code points, without spaces) are not
+ * checked: such a short name would refuse many passwords.
+ */
+const MIN_NAME_LENGTH = 4;
 
 /** `TOO_COMMON` is added by the server, which holds the common-password list. */
 export type PasswordProblem = 'TOO_SHORT' | 'TOO_LONG' | 'HAS_PHONE' | 'HAS_INSTITUTE_NAME';
@@ -45,15 +48,16 @@ export function passwordProblems(
   if (length < PASSWORD_RULES.min) problems.push('TOO_SHORT');
   if (length > PASSWORD_RULES.max) problems.push('TOO_LONG');
 
-  // The phone in any form: 01…, +8801…, 8801…, Bangla digits, with spaces, dashes or dots.
+  // The phone in any form: 01…, +8801…, 8801…, Bangla digits, split by spaces, punctuation or
+  // symbols (dashes, dots, brackets, slashes, underscores…).
   const national = nationalNumber(about.phone);
-  const passwordDigits = toAsciiDigits(password).replace(/[\s.+-]/g, '');
+  const passwordDigits = toAsciiDigits(password).replace(/[\p{P}\p{S}\s]/gu, '');
   if (national && passwordDigits.includes(national)) problems.push('HAS_PHONE');
 
   const passwordText = comparable(password);
   const hasName = about.instituteNames.some((name) => {
     const n = comparable(name);
-    return [...n].length >= MIN_NAME_LETTERS && passwordText.includes(n);
+    return [...n].length >= MIN_NAME_LENGTH && passwordText.includes(n);
   });
   if (hasName) problems.push('HAS_INSTITUTE_NAME');
   return problems;
