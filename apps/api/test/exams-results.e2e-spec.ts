@@ -460,45 +460,52 @@ describe('results: publish, tabulation, report cards, remarks', () => {
     e = (await http(h).post(`/exams/${e.id}/open`).set(bearer(t.tokens.admin)).expect(200))
       .body as ExamDetail;
     const ec = e.classes[0]!;
-    // Marks and locked sheets straight into the database (the API path is tested above).
-    await withTenant(h.prisma, t.tenantId, async (tx) => {
-      const candidates = await tx.examCandidate.findMany({
-        where: { examId: e.id },
-        select: { studentId: true, sectionId: true },
-      });
-      const comps = await tx.examSubjectComponent.findMany({
-        where: { examSubjectId: { in: ec.subjects.map((x) => x.id) } },
-        select: { id: true, examSubjectId: true, fullMarks: true },
-      });
-      const rows = candidates.flatMap((c, i) =>
-        comps.map((comp) => ({
-          tenantId: t.tenantId,
-          examId: e.id,
-          examSubjectId: comp.examSubjectId,
-          componentId: comp.id,
-          studentId: c.studentId,
-          scoreH: Math.round(comp.fullMarks * (40 + (i % 60))),
-        })),
-      );
-      for (let i = 0; i < rows.length; i += 5000)
-        await tx.examMark.createMany({ data: rows.slice(i, i + 5000) });
-      const now = new Date();
-      await tx.examMarkSheet.createMany({
-        data: ec.subjects.flatMap((es) =>
-          [t.sections.six, t.sections.sixB].map((sectionId) => ({
+    // Marks and locked sheets straight into the database (the API path is tested above). The
+    // bulk insert is setup, not what is measured: it gets its own time limit, since Prisma's
+    // default 5 s was exceeded when every package's tests run at once.
+    await withTenant(
+      h.prisma,
+      t.tenantId,
+      async (tx) => {
+        const candidates = await tx.examCandidate.findMany({
+          where: { examId: e.id },
+          select: { studentId: true, sectionId: true },
+        });
+        const comps = await tx.examSubjectComponent.findMany({
+          where: { examSubjectId: { in: ec.subjects.map((x) => x.id) } },
+          select: { id: true, examSubjectId: true, fullMarks: true },
+        });
+        const rows = candidates.flatMap((c, i) =>
+          comps.map((comp) => ({
             tenantId: t.tenantId,
             examId: e.id,
-            examSubjectId: es.id,
-            classLevelId: t.class6,
-            sectionId,
-            status: 'LOCKED' as const,
-            submittedAt: now,
-            lockedAt: now,
-            version: 1,
+            examSubjectId: comp.examSubjectId,
+            componentId: comp.id,
+            studentId: c.studentId,
+            scoreH: Math.round(comp.fullMarks * (40 + (i % 60))),
           })),
-        ),
-      });
-    });
+        );
+        for (let i = 0; i < rows.length; i += 5000)
+          await tx.examMark.createMany({ data: rows.slice(i, i + 5000) });
+        const now = new Date();
+        await tx.examMarkSheet.createMany({
+          data: ec.subjects.flatMap((es) =>
+            [t.sections.six, t.sections.sixB].map((sectionId) => ({
+              tenantId: t.tenantId,
+              examId: e.id,
+              examSubjectId: es.id,
+              classLevelId: t.class6,
+              sectionId,
+              status: 'LOCKED' as const,
+              submittedAt: now,
+              lockedAt: now,
+              version: 1,
+            })),
+          ),
+        });
+      },
+      { timeout: 60_000 },
+    );
     const started = Date.now();
     const r = (
       await http(h)
