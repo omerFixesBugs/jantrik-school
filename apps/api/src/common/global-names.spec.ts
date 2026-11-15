@@ -6,7 +6,11 @@ import path from 'node:path';
 // institute keeps itself: guardians, students, staff_profiles. This scan keeps it that way.
 const SRC = path.resolve(import.meta.dirname, '..');
 const SCHEMA = path.resolve(import.meta.dirname, '../../../../packages/db/prisma/schema.prisma');
-const SELF_ONLY = new Set(['auth/auth.service.ts', 'auth/login-lookup.ts']);
+const SELF_ONLY = new Set([
+  'auth/auth.service.ts',
+  'auth/login-lookup.ts',
+  'auth/password-settings.service.ts',
+]);
 
 /** Every relation field that points at User (from the schema, so new ones are covered). */
 export function userRelations(schema: string): string[] {

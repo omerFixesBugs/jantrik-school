@@ -4,7 +4,7 @@ import { hash, verify } from '@node-rs/argon2';
 // Argon2id (the library default) with OWASP-recommended parameters: 19 MiB, 2 iterations.
 const OPTIONS = { memoryCost: 19_456, timeCost: 2, parallelism: 1 };
 
-/** Password hashing. There is deliberately no endpoint that sets a password yet. */
+/** Password hashing. Passwords are set only by PasswordSettingsService (PUT /me/password). */
 @Injectable()
 export class PasswordService {
   private dummyHash?: Promise<string>;
