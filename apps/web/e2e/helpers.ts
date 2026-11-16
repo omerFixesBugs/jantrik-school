@@ -193,3 +193,21 @@ export async function api<T>(
   expect(res.ok, `${init.method ?? 'GET'} ${path} → ${res.status}`).toBe(true);
   return (await res.json()) as T;
 }
+
+/** A 1 × 1 PNG: the API re-encodes it like any upload (sprint 1 P2). */
+export const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+/** Gives a student a photo through the API (multipart), as an admin would. */
+export async function apiUploadPhoto(token: string, studentId: string): Promise<void> {
+  const form = new FormData();
+  form.append('file', new Blob([TINY_PNG], { type: 'image/png' }), 'photo.png');
+  const res = await fetch(`${API_URL}/students/${studentId}/photo`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  expect(res.ok, `PUT /students/${studentId}/photo → ${res.status}`).toBe(true);
+}

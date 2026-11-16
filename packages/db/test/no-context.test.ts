@@ -60,14 +60,14 @@ describe('RLS: no tenant context means no rows', () => {
     }
   });
 
-  it('a pooled connection does not leak the previous tenant (SET LOCAL + empty setting)', async () => {
+  it('a pooled connection does not leak the previous context (SET LOCAL + empty setting)', async () => {
     const single = singleConnectionAppClient();
     try {
       expect(await withTenant(single, tenantId, (tx) => tx.student.count())).toBe(1);
 
       // Same physical connection: the setting is now '' (not NULL) — must still mean "nothing".
       const [setting] = await single.$queryRaw<{ value: string | null }[]>`
-        SELECT current_setting('app.tenant_id', true) AS value`;
+        SELECT current_setting('app.context', true) AS value`;
       expect(setting?.value).toBe('');
       expect(await single.student.count()).toBe(0);
     } finally {

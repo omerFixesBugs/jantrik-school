@@ -1,24 +1,65 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { PrismaPg } from '@prisma/adapter-pg';
 import {
-  PrismaClient,
   createPrismaClient,
   hashPlatformToken,
+  loadRequestContextKeyAsOwner,
   provisionTenant,
+  requestContextKey,
+  setRequestContextKeySource,
+  signRequestContext,
   withTenant,
+  type PrismaClient,
   type ProvisionTenantInput,
   type Tenant,
+  type TenantTx,
 } from '../src/index.js';
-import { APP_URL, INGEST_URL, OWNER_URL, PLATFORM_URL } from './env.js';
+import { APP_URL, INGEST_URL, LOGIN_URL, OWNER_URL, PLATFORM_URL } from './env.js';
+import { phoneSource } from './test-phones.js';
+
+// Every test file signs its institute contexts with the test database's key (P1-J8), read once
+// per file as the schema owner (the API reads it through the password-login login instead).
+setRequestContextKeySource(async () => {
+  const owner = createPrismaClient(OWNER_URL, { max: 1 });
+  try {
+    return await loadRequestContextKeyAsOwner(owner);
+  } finally {
+    await owner.$disconnect();
+  }
+});
+
+/**
+ * Sign and set an institute context inside a transaction that is already open, for tests that
+ * switch role first (SET LOCAL ROLE jantrik_ingest). The app opens contexts with withContext only.
+ */
+export async function setSignedContext(
+  tx: TenantTx,
+  context: { tenantId?: string | null; userId?: string | null },
+): Promise<void> {
+  const key = await requestContextKey();
+  const [here] = await tx.$queryRaw<{ pid: string; started: string }[]>`
+    SELECT pg_backend_pid()::text AS pid,
+           (extract(epoch FROM now()) * 1000000)::bigint::text AS started`;
+  const value = signRequestContext(key, {
+    tenantId: context.tenantId ?? null,
+    userId: context.userId ?? null,
+    pid: here!.pid,
+    startedMicros: here!.started,
+  });
+  await tx.$executeRaw`SELECT set_config('app.context', ${value}, true)`;
+}
 
 export const appClient = (): PrismaClient => createPrismaClient(APP_URL);
 
-/** A random valid Bangladeshi mobile number (E.164). */
-export const randomPhone = (): string =>
-  `+88017${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
+/**
+ * A valid Bangladeshi mobile number (E.164) that no other test user of this database has, in this
+ * run or an earlier one (`test-phones.ts`; the API tests draw from +88013, these from +88014).
+ */
+export const randomPhone: () => string = phoneSource('+88014', APP_URL);
 export const ownerClient = (): PrismaClient => createPrismaClient(OWNER_URL);
 /** The API platform module's role: the only one that may run the platform_* functions. */
 export const platformClient = (): PrismaClient => createPrismaClient(PLATFORM_URL);
+/** The password login's login (P1-J): only auth_find_user_for_password_login. */
+export const loginClient = (): PrismaClient => createPrismaClient(LOGIN_URL);
 /** The device receiver's login: no table grants, only the ingest_* functions. */
 export const ingestClient = (): PrismaClient => createPrismaClient(INGEST_URL);
 
@@ -52,7 +93,7 @@ export async function newPlatformSession(
 
 /** App-role client with a single pooled connection, to test connection reuse. */
 export const singleConnectionAppClient = (): PrismaClient =>
-  new PrismaClient({ adapter: new PrismaPg({ connectionString: APP_URL, max: 1 }) });
+  createPrismaClient(APP_URL, { max: 1 });
 
 export async function createTenant(
   app: PrismaClient,

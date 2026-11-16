@@ -4,6 +4,7 @@ import { envSchema } from './env.js';
 const base = {
   DATABASE_URL: 'postgresql://x@localhost/jantrik',
   DATABASE_PLATFORM_URL: 'postgresql://p@localhost/jantrik',
+  DATABASE_LOGIN_URL: 'postgresql://l@localhost/jantrik',
   DATABASE_INGEST_URL: 'postgresql://i@localhost/jantrik',
   JWT_ACCESS_SECRET: 'x'.repeat(40),
   OTP_PEPPER: 'y'.repeat(40),

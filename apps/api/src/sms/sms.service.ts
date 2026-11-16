@@ -121,8 +121,11 @@ export class SmsProcessor extends WorkerHost {
     if (status === 'SENT') {
       try {
         // platform_settings has exactly one row (the app may read only the rate column).
-        const [rate] = await this.prisma.client.$queryRaw<{ paisa: number }[]>`
-          SELECT sms_cost_per_segment_paisa AS paisa FROM platform_settings`;
+        // In a transaction and schema-qualified, like every app query (P1-J8 review).
+        const [rate] = await this.prisma.client.$transaction(
+          (tx) => tx.$queryRaw<{ paisa: number }[]>`
+            SELECT sms_cost_per_segment_paisa AS paisa FROM public.platform_settings`,
+        );
         costPaisa = rate ? segments * rate.paisa : null;
       } catch (e) {
         // Without the rate the row is still logged (no cost) rather than lost.

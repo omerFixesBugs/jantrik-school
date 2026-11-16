@@ -110,7 +110,7 @@ describe('student search (trigram indexes + search_student_ids)', () => {
     expect(underscore).toEqual([]);
   });
 
-  it('tenant comes only from app.tenant_id: the same call follows the context, nothing without it', async () => {
+  it('tenant comes only from the signed context: the same call follows it, nothing without it', async () => {
     // Give the other tenant a student with the same code.
     await withTenant(app, otherTenantId, (tx) =>
       tx.student.create({

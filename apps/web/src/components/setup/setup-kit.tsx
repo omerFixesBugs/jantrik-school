@@ -34,7 +34,15 @@ import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 
 export type SetupTab =
-  'years' | 'classes' | 'shifts' | 'subjects' | 'groups' | 'labels' | 'studentCode' | 'appearance';
+  | 'years'
+  | 'classes'
+  | 'shifts'
+  | 'subjects'
+  | 'groups'
+  | 'labels'
+  | 'studentCode'
+  | 'profile'
+  | 'appearance';
 
 const TABS: { key: SetupTab; href: string }[] = [
   { key: 'years', href: '/setup' },
@@ -44,6 +52,8 @@ const TABS: { key: SetupTab; href: string }[] = [
   { key: 'groups', href: '/setup/groups' },
   { key: 'labels', href: '/setup/labels' },
   { key: 'studentCode', href: '/setup/student-code' },
+  // The institute's names, contact, head, logo, signature and seal (sprint 1 P2).
+  { key: 'profile', href: '/setup/profile' },
   // The institute's look is the owner's choice (shown to owners only).
   { key: 'appearance', href: '/setup/appearance' },
 ];
@@ -65,6 +75,7 @@ export function SetupTabs({ active }: { active: SetupTab }) {
     groups: label('study_group', 'Group'),
     labels: t('tabLabels'),
     studentCode: t('tabStudentCode', { student: label('student', 'Student', { inText: true }) }),
+    profile: t('tabProfile'),
     appearance: t('tabAppearance'),
   };
   return (

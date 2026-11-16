@@ -24,8 +24,8 @@ the repo's [`Dockerfile`](../Dockerfile):
 
 Start order (Docker enforces it): `postgres` and `redis` healthy → `migrate` finished without an
 error → `api`, `worker`, `receiver`. Only `migrate` gets the owner role's password; the API and
-the worker log in as `jantrik_app` and `jantrik_platform_app`, the receiver as
-`jantrik_ingest_app` and gets none of the API's secrets.
+the worker log in as `jantrik_app`, `jantrik_platform_app` and `jantrik_login_app` (the password
+login only), the receiver as `jantrik_ingest_app` and gets none of the API's secrets.
 
 ## 1. A server
 
@@ -100,11 +100,14 @@ Fill in every value of `deploy/.env.prod` (git-ignored, never commit it):
 
 - **Domains:** `APP_DOMAIN`, `API_DOMAIN`, `PLATFORM_DOMAIN`, `DEVICE_HOST` (a domain or the
   server's fixed IP), `ACME_EMAIL` (Let's Encrypt's expiry warnings).
-- **Passwords** (Postgres superuser, the four roles, Redis's two users: `REDIS_PASSWORD` for the
+- **Passwords** (Postgres superuser, the five roles, Redis's two users: `REDIS_PASSWORD` for the
   API and the worker, `REDIS_INGEST_PASSWORD` for the device receiver's own user):
   `openssl rand -hex 24` each, all different. Letters and digits only, because they go into
   connection URLs as they are. Postgres takes the
   superuser's and the roles' passwords on its **first start only** (below).
+- **Stored images:** `FILE_STORAGE_PER_TENANT_MB` (optional, default 1024): each institute's
+  total for photos, logos, signatures and seals, which live in the database
+  ([files.md](files.md)). Over it, uploads get 413 `STORAGE_FULL`.
 - **Redis memory:** `REDIS_MAXMEMORY` (default `512mb`, about an eighth of a 4 GB server). Redis
   refuses writes beyond it rather than evicting anything, so watch it (Monitoring) and raise it
   before it fills.
@@ -153,7 +156,7 @@ The API and the worker refuse:
 | a secret under 32 characters                                                                                                                                                                                 | too short to resist guessing                                                                                                                                                                             |
 | a secret with an example marker (`change-me`, `CHANGE_ME`, `dev-only`, `test-only`, `ci-only`, `dev_password`, `ci_password`, `placeholder`, `example`; the same list as `compose.sh` and `create-roles.sh`) | copied from `.env.example`, `deploy/.env.prod.example`, CI or a test config, not generated                                                                                                               |
 | two of `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY` equal                                                                                                                                          | one leak would open two doors                                                                                                                                                                            |
-| `DATABASE_URL`, `DATABASE_PLATFORM_URL` or `DATABASE_INGEST_URL` logging in as `jantrik_owner` or `postgres`, or naming no login                                                                             | the owner and the superuser are not subject to the database's protections the app relies on                                                                                                              |
+| `DATABASE_URL`, `DATABASE_PLATFORM_URL`, `DATABASE_LOGIN_URL` or `DATABASE_INGEST_URL` logging in as `jantrik_owner` or `postgres`, or naming no login                                                       | the owner and the superuser are not subject to the database's protections the app relies on                                                                                                              |
 | a password in `REDIS_URL` under 24 characters or with an example marker                                                                                                                                      | the published example would open Redis (its queues and sessions) to anything on the network. A URL without a password is allowed (Redis on a private network)                                            |
 | `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                                                                                                      | the owner's and the superuser's credentials and the roles' raw passwords belong to Postgres and the migrate step only                                                                                    |
 | `PLATFORM_TOTP_KEY` missing                                                                                                                                                                                  | the platform admins' 2FA secrets need their own key                                                                                                                                                      |
@@ -161,23 +164,24 @@ The API and the worker refuse:
 
 The device receiver refuses:
 
-| Setting                                                                                                                                             | Why                                                                                                                                       |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| any of `DATABASE_URL`, `DATABASE_PLATFORM_URL`, `DATABASE_MIGRATION_URL`, `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY` in its environment | it is open to the internet without a login: code run in it must find no login that can choose an institute and no key that signs sessions |
-| `INGEST_TRUST_PROXY` `true` or a `/0` range                                                                                                         | a client could claim a school's trusted address and receive its commands                                                                  |
-| `DATABASE_INGEST_URL` as `jantrik_owner`, `postgres`, `jantrik_app` or `jantrik_platform_app`                                                       | its own login only                                                                                                                        |
-| `REDIS_URL` not set, or with an example or short password                                                                                           | as for the API                                                                                                                            |
-| `REDIS_URL` not logging in as `jantrik_ingest`                                                                                                      | Redis's default user could queue jobs the worker trusts; `jantrik_ingest` reaches only the receiver's keys and queue (§ 10a)              |
-| `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                                             | as for the API                                                                                                                            |
+| Setting                                                                                                                                                                   | Why                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| any of `DATABASE_URL`, `DATABASE_PLATFORM_URL`, `DATABASE_LOGIN_URL`, `DATABASE_MIGRATION_URL`, `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY` in its environment | it is open to the internet without a login: code run in it must find no login that can choose an institute and no key that signs sessions |
+| `INGEST_TRUST_PROXY` `true` or a `/0` range                                                                                                                               | a client could claim a school's trusted address and receive its commands                                                                  |
+| `DATABASE_INGEST_URL` as `jantrik_owner`, `postgres`, `jantrik_app`, `jantrik_platform_app` or `jantrik_login_app`                                                        | its own login only                                                                                                                        |
+| `REDIS_URL` not set, or with an example or short password                                                                                                                 | as for the API                                                                                                                            |
+| `REDIS_URL` not logging in as `jantrik_ingest`                                                                                                                            | Redis's default user could queue jobs the worker trusts; `jantrik_ingest` reaches only the receiver's keys and queue (§ 10a)              |
+| `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                                                                   | as for the API                                                                                                                            |
 
 Beyond these, every service checks its database login at start-up, against the database itself:
 
-- **No login may be a superuser, have BYPASSRLS, or be able to become such a role** (nor
-  `pg_read_all_data`, `pg_write_all_data` or the server file and program roles): the API and the
-  worker (`DATABASE_URL`), the platform module (`DATABASE_PLATFORM_URL`) and the receiver
-  (`DATABASE_INGEST_URL`). Fail closed: while the database does not answer, the check is asked
+- **No login may be a superuser, have BYPASSRLS, REPLICATION or CREATEROLE, or be able to become
+  such a role** (nor `pg_read_all_data`, `pg_write_all_data` or the server file and program roles): the API and the
+  worker (`DATABASE_URL`), the platform module (`DATABASE_PLATFORM_URL`), the password login
+  (`DATABASE_LOGIN_URL`) and the receiver (`DATABASE_INGEST_URL`). Fail closed: while the database does not answer, the check is asked
   again for about 3 minutes, then the service exits ([database.md](database.md) → Database roles).
 - The platform login can run the platform functions and the main login cannot.
+- The password login's login can run the password lookup and the main login cannot (P1-J).
 - The receiver's login cannot read a table, and its statements stop after 5 s
   (`statement_timeout`, [devices.md](devices.md)).
 
@@ -203,7 +207,8 @@ the script on its first start (an empty volume) with the passwords from the sett
 
 - creates `jantrik_owner` (owns the schema, runs migrations; not a superuser, so forced row-level
   security applies to it), `jantrik_app` (the API), `jantrik_platform_app` (the API's platform
-  module), `jantrik_ingest_app` (the receiver), and the function owners `jantrik_auth`,
+  module), `jantrik_ingest_app` (the receiver), `jantrik_login_app` (the password login only:
+  the one role that may look up a password hash), and the function owners `jantrik_auth`,
   `jantrik_search`, `jantrik_platform`, `jantrik_ingest` (no login; the owner may `SET ROLE` to
   them but never inherits them), exactly as `docker/postgres/init/01-roles.sh` does for
   development ([database.md](database.md) → Database roles);
@@ -242,7 +247,7 @@ land in the shell history and the process list), then restart the services:
 
 ```bash
 deploy/compose.sh exec -u postgres postgres psql
-#   \password jantrik_app        (or jantrik_platform_app, jantrik_ingest_app, jantrik_owner, postgres)
+#   \password jantrik_app        (or jantrik_platform_app, jantrik_login_app, jantrik_ingest_app, jantrik_owner, postgres)
 ```
 
 **Check it:**
@@ -340,6 +345,12 @@ deploy/compose.sh ps
 
 - **Rollback:** migrations only go forward. If a release must be undone after its migrations ran,
   restore the backup you took (below) and start the previous version's images.
+- **Redis is pinned to one exact version** (`redis:7.4.11-alpine`, the same in this compose file,
+  the development `docker-compose.yml` and CI; a test checks they agree). A newer Redis comes
+  with a release that changes the three tags together, after reading Redis's release notes; at
+  the upgrade, `up -d` pulls the new tag and restarts Redis on the same volume (AOF: no data is
+  lost; queued jobs wait a few seconds). Between releases, a patched rebuild of the same tag is
+  taken with `deploy/compose.sh pull redis && deploy/compose.sh up -d redis`.
 - `NEXT_PUBLIC_API_URL` is baked into the web image: changing `API_DOMAIN` needs a rebuild.
 - `JANTRIK_BOOT_REFRESH=off` in the settings file switches the boot refresh off (docs/auth.md →
   Web client) without a rebuild: `deploy/compose.sh up -d web`.
@@ -352,6 +363,64 @@ deploy/compose.sh ps
      `ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s';`
   3. upgrade as above (`up -d` restarts Redis with the new user), then run the Redis check
      (§ 10a).
+- **A server set up before sprint 1's P1-J** (the password login's own database login,
+  `jantrik_login_app`). Its migration refuses to run until the role exists, and the role script
+  that creates it is the **new** one, so the order matters:
+
+  ```bash
+  cd /srv/jantrik
+  deploy/compose.sh run --rm backup                 # a backup first
+  git fetch && git checkout <new tag or commit>     # the new create-roles.sh and compose file
+  nano deploy/.env.prod                             # add DB_LOGIN_PASSWORD (openssl rand -hex 24,
+                                                    # unlike every other password)
+  deploy/compose.sh up -d postgres                  # Postgres gets the new password; data stays
+  deploy/compose.sh exec -u postgres postgres sh /jantrik/postgres/create-roles.sh
+                                                    # creates only what is missing
+  deploy/compose.sh build
+  deploy/compose.sh run --rm migrate
+  deploy/compose.sh up -d
+  ```
+
+  - `DATABASE_LOGIN_URL` needs nothing: the compose file builds it from `DB_LOGIN_PASSWORD`.
+  - **If `migrate` stopped with "create the role jantrik_login_app first"**, nothing was changed:
+    create the role as above, mark the migration rolled back, and run it again:
+    `deploy/compose.sh run --rm migrate node_modules/.bin/prisma migrate resolve --rolled-back 20261116000000_users_password_hash_hidden`,
+    then `deploy/compose.sh run --rm migrate`. (On a development machine:
+    `pnpm --filter @jantrik/db exec prisma migrate resolve --rolled-back 20261116000000_users_password_hash_hidden`,
+    then `pnpm db:deploy`.) Every statement of that migration can run again, so the same
+    recovery works after a failure half-way.
+  - **Between `migrate` and `up -d`** the old API still running fails every whole-row read of
+    `users` (the session refresh, `/auth/me`) and both logins (its lookup asks for a column the
+    function no longer returns), until it restarts. Nothing is lost: a refresh that fails is
+    retried by the browser, and nobody is signed out. Run the last two commands together.
+
+- **The upgrade to sprint 1's P1-J8** (the signed request context) needs no new setting and no
+  new role (after P1-J's). Its migration makes the database's own context key and revokes
+  TEMPORARY on the database from PUBLIC (production's setup did already). **Stop the API and the
+  worker before `migrate`:**
+
+  ```bash
+  cd /srv/jantrik
+  deploy/compose.sh run --rm backup                 # a backup first
+  git fetch && git checkout <new tag or commit>
+  deploy/compose.sh build
+  deploy/compose.sh stop api worker                 # nothing old may run against the new schema
+  deploy/compose.sh run --rm migrate
+  deploy/compose.sh up -d
+  ```
+
+  - **Why stop them first:** an old API or worker running after `migrate` sets settings the
+    database no longer believes, so it reads no institute data. It is not harmless: it would
+    cache empty roles and modules (5 minutes of 403s; this release reads a new cache generation,
+    so the new API ignores those), mark today's dues as generated without generating them (also a
+    new key now), skip institutes in the device jobs, and leave a student import queued until the
+    daily sweep. With both stopped, requests fail only while they are down (the web app retries).
+  - In production the new API refuses to start until the migration has run ("Could not read the
+    request context key through DATABASE_LOGIN_URL … Run the database migrations").
+  - Every statement of the migration can run again: after a failure half-way,
+    `prisma migrate resolve --rolled-back 20261117000000_verified_request_context`, then
+    `migrate` again (the key it made the first time is kept).
+  - **Rotating the key:** [database.md](database.md) → The request context.
 
 ## 12. Backups
 
@@ -361,6 +430,12 @@ a `pg_dump` (custom format) of the database to `BACKUP_HOST_DIR` (default
 deletes backups older than `BACKUP_KEEP_DAYS` (default 14) and writes `LAST_SUCCESS`. The files
 are private (mode 600) and belong to `BACKUP_UID:BACKUP_GID`, the deploy user, so its own cron
 jobs can copy them away.
+
+**Images are in the database** ([files.md](files.md)): every student photo, logo, signature and
+seal is in the dump. Expect about 100 MB more per 2 000 photos (photos are at most 200 KB, usually
+about half that; JPEGs do not compress further). Size the backup folder and the off-site copy for
+it, and watch the dump's size (Monitoring). If it grows past what the backup window allows, the
+files move to a bucket (decision S7) without changing the app.
 
 Create the folder once, outside the git checkout (a `git clean` there would delete it), owned by
 the deploy user, and put that user's ids in the settings file:
@@ -491,7 +566,8 @@ To use a provider's Postgres 16 instead of the `postgres` service:
    ```bash
    install -m 600 /dev/null roles.env
    nano roles.env      # PGHOST=..., PGPORT=5432, PGUSER=<admin>, PGPASSWORD=..., PGSSLMODE=require,
-                       # DB_OWNER_PASSWORD=..., DB_APP_PASSWORD=..., DB_PLATFORM_PASSWORD=..., DB_INGEST_PASSWORD=...
+                       # DB_OWNER_PASSWORD=..., DB_APP_PASSWORD=..., DB_PLATFORM_PASSWORD=..., DB_INGEST_PASSWORD=...,
+                       # DB_LOGIN_PASSWORD=...
    (set -a && . ./roles.env && sh deploy/postgres/create-roles.sh)
    shred -u roles.env
    ```
@@ -533,7 +609,8 @@ To use a provider's Postgres 16 instead of the `postgres` service:
 - **Off-site backup storage** and **an uptime monitor** of your choice.
 - **Done in sprint 1, P0:** the `Origin` check in `PlatformAuthGuard` (Caddy's rule stays as a
   second layer), the receiver's own Redis user, the start-up check that refuses a database login
-  that is a superuser or bypasses RLS, and the receiver's 5 s query limit.
+  that is a superuser or bypasses RLS (since 2026-11-16 also REPLICATION and CREATEROLE), and the
+  receiver's 5 s query limit.
 - **Recorded, not built** (decisions-pending.md → Deployment readiness):
   - CI does not cover the compose Postgres's first start (initdb), the non-superuser branch of
     `create-roles.sh` or the image builds (all checked by hand for this release);

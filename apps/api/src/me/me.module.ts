@@ -2,14 +2,18 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  NotFoundException,
   Get,
   HttpCode,
+  Inject,
   Injectable,
   Module,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Req,
+  Res,
 } from '@nestjs/common';
 import {
   acceptInvitationSchema,
@@ -24,11 +28,14 @@ import {
   type StaffInvitation,
   type ColorScheme,
 } from '@jantrik/shared';
+import type { Request, Response } from 'express';
 import { appearanceOf } from '../appearance/appearance.module.js';
 import { listMemberships } from '../auth/login-lookup.js';
 import { CurrentUser, RequireModule, Roles, UserScoped } from '../common/decorators.js';
 import type { Principal } from '../common/request-context.js';
 import { zodDto } from '../common/zod.js';
+import { FILE_STORE, type FileStore } from '../files/file-store.js';
+import { sendStoredImage } from '../files/files.module.js';
 import { Db } from '../tenancy/db.service.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 
@@ -136,7 +143,7 @@ export class MeService {
             studentCode: true,
             nameBn: true,
             nameEn: true,
-            photoUrl: true,
+            photoFileId: true,
             status: true,
             enrolments: {
               where: { academicYearId: year?.id ?? '00000000-0000-0000-0000-000000000000' },
@@ -153,11 +160,28 @@ export class MeService {
     });
     // A person can be linked twice to one child (two guardian records); show the child once.
     const seen = new Set<string>();
-    return links.flatMap(({ relation, student: { enrolments, ...s } }) => {
+    return links.flatMap(({ relation, student: { enrolments, photoFileId, ...s } }) => {
       if (seen.has(s.id)) return [];
       seen.add(s.id);
-      return [{ ...s, relation, enrolment: enrolments[0] ?? null }];
+      return [{ ...s, photoId: photoFileId, relation, enrolment: enrolments[0] ?? null }];
     });
+  }
+
+  /**
+   * The photo's file id of one of the caller's own children (GET /me/children/:id/photo); 404 for
+   * any other student, as GET /me/children lists them (sprint 1 P2, decision F1).
+   */
+  async childPhotoId(principal: Principal, studentId: string): Promise<string | null> {
+    const link = await this.db.tx.studentGuardian.findFirst({
+      where: {
+        studentId,
+        guardian: { userId: principal.userId },
+        student: { deletedAt: null },
+      },
+      select: { student: { select: { photoFileId: true } } },
+    });
+    if (!link) throw new NotFoundException('Student not found');
+    return link.student.photoFileId;
   }
 
   /** The caller's pending (not expired) staff invitations, from the membership definer function. */
@@ -211,7 +235,10 @@ export class MeService {
 
 @Controller('me')
 export class MeController {
-  constructor(private readonly me: MeService) {}
+  constructor(
+    private readonly me: MeService,
+    @Inject(FILE_STORE) private readonly files: FileStore,
+  ) {}
 
   @Get('context')
   context(@CurrentUser() principal: Principal): Promise<MeContext> {
@@ -230,6 +257,19 @@ export class MeController {
   @Roles('GUARDIAN')
   children(@CurrentUser() principal: Principal): Promise<GuardianChild[]> {
     return this.me.children(principal);
+  }
+
+  /** One of the caller's own children's photo (the image, 404 for anyone else's child). */
+  @Get('children/:id/photo')
+  @RequireModule('CORE')
+  @Roles('GUARDIAN')
+  async childPhoto(
+    @CurrentUser() principal: Principal,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    await sendStoredImage(this.files, await this.me.childPhotoId(principal, id), req, res);
   }
 
   /** Pending staff invitations (no institute needs to be selected). */
