@@ -37,6 +37,8 @@ x-api-env: &api-env
   OTP_PEPPER: ${OTP_PEPPER:?}
   PLATFORM_TOTP_KEY: ${PLATFORM_TOTP_KEY:?}
   SMS_PROVIDER: ${SMS_PROVIDER:-none}
+  # Stored images per institute, in MB (docs/files.md).
+  FILE_STORAGE_PER_TENANT_MB: ${FILE_STORAGE_PER_TENANT_MB:-1024}
   # The receiver is its own service below; the API only shows its address in the setup guide.
   INGEST_IN_PROCESS: 'false'
   INGEST_PUBLIC_HOST: ${DEVICE_HOST:?}

@@ -498,6 +498,38 @@ one row per staff member per day (unique `(tenant_id, user_id, date)`), composit
 - Tests: `packages/db/test/staff-attendance-rls.test.ts`; the table list in
   `schema-safety.test.ts`.
 
+### Files and the institute profile (sprint 1 P2)
+
+Images live in the database ([files.md](files.md), decision S7):
+
+- **`stored_files`** (tenant table): one re-encoded image per row (`bytes bytea`), with `kind`
+  (`stored_file_kind`), `mime`, `size_bytes`, `sha256`, `width`, `height`, `created_by_id`.
+  - Grants SELECT, INSERT, DELETE: a file never changes (a replaced image is a new row and the old
+    one is deleted), so there is no `updated_at` either.
+  - CHECKs: the formats per kind (`stored_files_mime`), the size per kind and
+    `size_bytes = octet_length(bytes)` (`stored_files_size`), the hash format and 1–4000 pixels a
+    side. The caps equal `FILE_LIMITS` in `packages/shared/src/files.ts`.
+  - **Only `PostgresFileStore` reads or writes it** (and `stored_file_usage`); the rest of the API
+    goes through the `FileStore` interface. `apps/api/src/files/file-store-access.spec.ts` fails on
+    any other code that names them. Test code may read them.
+  - Selecting a file's row reads its bytes (up to 256 KB): select the columns you need
+    (`meta()` does), never whole rows in a list.
+- **`stored_file_usage`** (tenant table, at most one row per institute, created by the first
+  upload): the running total for the cap. Grants SELECT, INSERT, UPDATE (no DELETE); CHECK both
+  counters ≥ 0. Changed only under the institute's advisory lock, in the same transaction as the
+  file.
+- **`institute_profiles`** (tenant table, at most one row per institute, created on the first save
+  or image): the institute's own names, EIIN, address, contact, head of institute, established
+  year, and `logo_file_id`, `head_signature_file_id`, `seal_file_id`. `tenants.name` stays the name
+  the platform registered. Grants SELECT, INSERT, UPDATE (no DELETE). CHECKs: one name at least,
+  lengths, a 6-digit EIIN, a 5–15 digit phone (optional `+`), e-mail and website shapes, a year
+  1800–2100, and the three images being different files.
+- **`students.photo_file_id`** replaces the never-written `photo_url`.
+- **Every reference to a file is a composite foreign key** (`(tenant_id, x) → stored_files
+(tenant_id, id)`, `ON DELETE RESTRICT ON UPDATE RESTRICT`) and unique, so a row can only point at
+  its own institute's file, a file is used in one place, and a file still in use cannot be deleted.
+- Isolation, grants, CHECKs and keys: `packages/db/test/files-rls.test.ts`.
+
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
 > **In the API, services never call these.** Every authenticated request already runs inside one
