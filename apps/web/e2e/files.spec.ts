@@ -19,16 +19,16 @@ test.describe('files', () => {
   test('the owner fills the institute profile and adds a logo', async ({ page }) => {
     await page.goto('/setup/profile');
     const form = page.getByTestId('institute-profile-form');
-    // A new profile starts with the registered name.
-    await expect(form.getByLabel('নাম (বাংলা)')).toHaveValue(DEMO.shaplaName);
-    await form.getByLabel('EIIN').fill('১০৮১২৩');
-    await form.getByLabel('প্রতিষ্ঠার সাল').fill('১৯৬৫');
+    // A new profile starts with the registered name (fields by id: "নাম (বাংলা)" is also part of
+    // the head's "প্রধানের নাম (বাংলা)").
+    await expect(form.locator('#profile-nameBn')).toHaveValue(DEMO.shaplaName);
+    await form.locator('#profile-eiin').fill('১০৮১২৩');
+    await form.locator('#profile-establishedYear').fill('১৯৬৫');
     await form.getByTestId('profile-save').click();
     await expect(page.getByText('সংরক্ষণ হয়েছে').first()).toBeVisible();
     await page.reload();
-    await expect(page.getByTestId('institute-profile-form').getByLabel('EIIN')).toHaveValue(
-      '108123',
-    );
+    await expect(page.locator('#profile-eiin')).toHaveValue('108123');
+    await expect(page.locator('#profile-establishedYear')).toHaveValue('1965');
 
     const logo = page.getByTestId('image-logo');
     await logo
@@ -45,8 +45,11 @@ test.describe('files', () => {
 
   test("an admin adds a student's photo and sees it on the student's page", async ({ page }) => {
     await page.goto('/students');
-    const first = page.locator('a[href^="/students/"]').first();
-    const href = (await first.getAttribute('href'))!;
+    // A student's own page (not /students/new or /students/import).
+    const student = page.locator('a[href^="/students/0"]').first();
+    await expect(student).toBeVisible();
+    const href = (await student.getAttribute('href'))!;
+    expect(href).toMatch(/^\/students\/[0-9a-f]{8}-[0-9a-f-]{27}$/);
     await page.goto(href);
     const profile = page.getByTestId('student-profile');
     await expect(profile).toBeVisible();
