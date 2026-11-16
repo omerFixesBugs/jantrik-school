@@ -1,4 +1,4 @@
-import type { PrismaClient } from '../generated/prisma/client.js';
+import type { PrismaClient } from '../client.js';
 import type { TenantTx, TxOptions } from '../tenancy/context.js';
 
 const TOKEN_HASH_RE = /^[0-9a-f]{64}$/;

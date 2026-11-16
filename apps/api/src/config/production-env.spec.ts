@@ -17,6 +17,7 @@ const api = {
   NODE_ENV: 'production',
   DATABASE_URL: 'postgresql://jantrik_app:pw@db:5432/jantrik',
   DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:pw@db:5432/jantrik',
+  DATABASE_LOGIN_URL: 'postgresql://jantrik_login_app:pw@db:5432/jantrik',
   REDIS_URL: `redis://:${'f3'.repeat(24)}@redis:6379`,
   TRUST_PROXY: '1',
   CORS_ORIGINS: 'https://app.jantrik.com.bd,https://platform.jantrik.com.bd',
@@ -156,6 +157,7 @@ describe('production env: the API and the worker', () => {
     const dev = {
       DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
       DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:x@localhost:5432/jantrik',
+      DATABASE_LOGIN_URL: 'postgresql://jantrik_login_app:x@localhost:5432/jantrik',
       DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@localhost:5432/jantrik',
       JWT_ACCESS_SECRET: 'x'.repeat(40),
       OTP_PEPPER: 'y'.repeat(40),
@@ -209,7 +211,12 @@ describe('production env: the API and the worker', () => {
   });
 
   it('refuses the schema owner, the superuser and a URL without a login for the runtime logins', () => {
-    for (const key of ['DATABASE_URL', 'DATABASE_PLATFORM_URL', 'DATABASE_INGEST_URL']) {
+    for (const key of [
+      'DATABASE_URL',
+      'DATABASE_PLATFORM_URL',
+      'DATABASE_LOGIN_URL',
+      'DATABASE_INGEST_URL',
+    ]) {
       for (const user of ['jantrik_owner', 'postgres']) {
         expect(apiError({ ...api, [key]: `postgresql://${user}:pw@db:5432/jantrik` })).toContain(
           `${key} must not log in as ${user} in production`,
@@ -343,6 +350,7 @@ describe('production env: development and tests are not affected', () => {
       NODE_ENV: 'test',
       DATABASE_URL: 'postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_e2e',
       DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:p@localhost:5432/jantrik_e2e',
+      DATABASE_LOGIN_URL: 'postgresql://jantrik_login_app:l@localhost:5432/jantrik_e2e',
       DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:i@localhost:5432/jantrik_e2e',
       INGEST_IN_PROCESS: 'true',
       INGEST_TRUST_PROXY: 'true',
@@ -362,6 +370,7 @@ describe('production env: development and tests are not affected', () => {
     const dev = {
       DATABASE_URL: 'postgresql://jantrik_app:app_dev_password@localhost:5432/jantrik',
       DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:p@localhost:5432/jantrik',
+      DATABASE_LOGIN_URL: 'postgresql://jantrik_login_app:l@localhost:5432/jantrik',
       DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:i@localhost:5432/jantrik',
       ...Object.fromEntries(
         Object.entries(envFile('.env.example')).filter(([k]) =>

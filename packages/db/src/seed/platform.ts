@@ -1,5 +1,5 @@
 import { hash } from '@node-rs/argon2';
-import type { PrismaClient } from '../generated/prisma/client.js';
+import type { PrismaClient } from '../client.js';
 import { DEMO_STAFF_PASSWORD } from './demo.js';
 
 /** The development platform admin (docs/demo-accounts.md). Production uses `pnpm platform:admin`. */

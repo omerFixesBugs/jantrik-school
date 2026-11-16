@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import type { Env } from '../config/env.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
+import { LoginPrismaService } from './login-prisma.service.js';
 import { OtpService } from './otp.service.js';
 import { PasswordController } from './password.controller.js';
 import { PasswordSettingsService } from './password-settings.service.js';
@@ -23,6 +24,7 @@ import { TokenService } from './token.service.js';
   controllers: [AuthController, PasswordController],
   providers: [
     AuthService,
+    LoginPrismaService,
     OtpService,
     PasswordService,
     PasswordSettingsService,

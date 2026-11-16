@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '../generated/prisma/client.js';
+import type { PrismaClient, TransactionClient } from '../client.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -13,7 +13,7 @@ export function assertTenantId(tenantId: string): void {
 }
 
 /** Transaction client handed to `withTenant` / `withContext` callbacks. */
-export type TenantTx = Prisma.TransactionClient;
+export type TenantTx = TransactionClient;
 
 /** RLS context: `app.tenant_id` and/or `app.user_id`. Unset means "nothing visible". */
 export interface DbContext {
