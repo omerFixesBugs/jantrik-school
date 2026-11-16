@@ -19,6 +19,7 @@ import {
   findUserForLogin,
   listMemberships,
   listMembershipsFor,
+  passwordMatches,
   type LoginUser,
 } from './login-lookup.js';
 import { OtpService } from './otp.service.js';
@@ -80,8 +81,11 @@ export class AuthService {
     );
 
     const user = await findUserForLogin(this.prisma.client, { phone, email });
-    // Always verify (against a dummy hash if needed) so timing doesn't reveal unknown accounts.
-    const ok = await this.passwords.verify(user?.password_hash, password);
+    // One argon2 hash and one comparison in the database whatever the account (a dummy hash and
+    // the nil user when needed), so timing doesn't reveal unknown accounts. The stored hash never
+    // leaves the database (P1-J).
+    const digest = await this.passwords.loginDigest(user?.password_params, password);
+    const ok = await passwordMatches(this.prisma.client, user?.id, digest);
     if (!user || !ok) throw invalidCredentials();
     // Passwords are for staff (sprint 1 P1): an active staff membership in an open institute.
     // Anyone else gets the same answer as a wrong password, and it counts as a failed attempt.

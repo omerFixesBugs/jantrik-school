@@ -5,7 +5,11 @@ export interface LoginUser {
   id: string;
   name: string;
   locale: 'bn' | 'en';
-  password_hash: string | null;
+  /**
+   * The stored password hash up to its last `$` (argon2id, version, cost, salt), never its digest
+   * (P1-J); null without a usable password.
+   */
+  password_params: string | null;
 }
 
 /** Login lookup through the SECURITY DEFINER function (users RLS hides everyone otherwise). */
@@ -14,9 +18,30 @@ export async function findUserForLogin(
   by: { phone?: string | null; email?: string | null },
 ): Promise<LoginUser | undefined> {
   const rows = await prisma.$queryRaw<LoginUser[]>`
-    SELECT id::text, name, locale::text AS locale, password_hash
+    SELECT id::text, name, locale::text AS locale, password_params
     FROM auth_find_user_for_login(${by.phone ?? null}, ${by.email ?? null})`;
   return rows[0];
+}
+
+/** Stands in for "no such user", so a failed lookup runs the same queries as a real account. */
+const NO_USER = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Whether `digest` (`PasswordService.loginDigest`) is the SHA-256 of the user's stored password
+ * hash. The database compares (`auth_my_password_matches`, scoped by `app.user_id`): the hash
+ * never reaches the API (P1-J).
+ */
+export async function passwordMatches(
+  prisma: PrismaClient,
+  userId: string | undefined,
+  digest: Buffer,
+): Promise<boolean> {
+  const rows = await withContext(
+    prisma,
+    { userId: userId ?? NO_USER },
+    (tx) => tx.$queryRaw<{ ok: boolean }[]>`SELECT auth_my_password_matches(${digest}) AS ok`,
+  );
+  return rows[0]?.ok === true;
 }
 
 interface MembershipRow {
