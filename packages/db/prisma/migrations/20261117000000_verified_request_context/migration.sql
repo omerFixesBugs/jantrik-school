@@ -87,8 +87,9 @@ ALTER FUNCTION auth_context_key() OWNER TO jantrik_auth;
 -- the transaction, a copied string is useless anywhere else. The MACs are compared through
 -- sha256, so the comparison time does not depend on how many bytes match.
 -- PARALLEL RESTRICTED: pg_backend_pid() differs in a parallel worker.
--- EXECUTE for PUBLIC (like app_current_tenant_id()): every login that meets a policy calls it, and
--- it only returns the caller's own verified context.
+-- EXECUTE for every role whose queries meet a policy (the policies call it through
+-- app_current_tenant_id()): the app login, the owner, and the owners of the definer functions. It
+-- only returns the caller's own verified context. Not PUBLIC (no definer function is).
 DROP FUNCTION IF EXISTS app_verified_context();
 CREATE FUNCTION app_verified_context(OUT tenant_id uuid, OUT user_id uuid)
   LANGUAGE plpgsql STABLE PARALLEL RESTRICTED SECURITY DEFINER
@@ -121,8 +122,14 @@ CREATE FUNCTION app_verified_context(OUT tenant_id uuid, OUT user_id uuid)
   END
   $$;
 REVOKE ALL ON FUNCTION app_verified_context() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION app_verified_context() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION app_verified_context()
+  TO jantrik_app, jantrik_search, jantrik_platform, jantrik_ingest;
 ALTER FUNCTION app_verified_context() OWNER TO jantrik_auth;
+-- The owner's own grant: made by the new owner (one made before the change would have been the
+-- old owner's implicit right, which the change hands over).
+SET ROLE jantrik_auth;
+GRANT EXECUTE ON FUNCTION app_verified_context() TO jantrik_owner;
+RESET ROLE;
 
 -- ───────────── The two context functions: same names, owners and grants ─────────────
 -- Every policy and definer function calls these, so they all get the verified values now.

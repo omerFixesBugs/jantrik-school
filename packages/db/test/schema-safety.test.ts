@@ -132,11 +132,13 @@ describe('schema safety net', () => {
   // users.password_hash ("login: function"). Each was checked to return nothing of the hash.
   const PASSWORD_READING_OWNER_FUNCTIONS = [
     'jantrik_app: app_find_or_create_user', // the id only
+    'jantrik_app: app_verified_context', // the caller's own verified institute and person (P1-J8)
     'jantrik_app: auth_find_refresh_token', // the token's session and user ids
     'jantrik_app: auth_find_user_for_login', // id, name, locale
-    'jantrik_app: auth_list_my_memberships', // memberships of app.user_id
-    'jantrik_app: auth_my_password_is_set', // a boolean for app.user_id (P1-J2)
+    'jantrik_app: auth_list_my_memberships', // memberships of the verified person
+    'jantrik_app: auth_my_password_is_set', // a boolean for the verified person (P1-J2)
     'jantrik_app: auth_resolve_tenant', // the institute of a slug
+    'jantrik_login_app: auth_context_key', // the request context key (P1-J8), not the hash
     'jantrik_login_app: auth_find_user_for_password_login', // the hash: the password login only
   ];
   // Whole-row patterns of a users row (u.*, to_jsonb(u), row_to_json(u), ...) in a function body.
@@ -177,13 +179,26 @@ describe('schema safety net', () => {
     fn.startsWith('platform_') || fn === 'app_current_platform_admin_id';
   // So are the device receiver's: no context at all, scoped by the device's serial number.
   const isIngest = (fn: string) => fn.startsWith('ingest_');
+  // And the request context itself (P1-J8): the one reader of app.context, and the key's reader
+  // for the password-login login.
+  const isContext = (fn: string) => fn === 'app_verified_context' || fn === 'auth_context_key';
 
   it('no SECURITY DEFINER function takes a tenant id parameter', async () => {
+    // Parameters it takes: OUT parameters are results (app_verified_context() returns an
+    // institute and a person, it takes none).
     const all = await app.$queryRaw<{ fn: string; args: string }[]>`
       SELECT p.proname AS fn, pg_get_function_arguments(p.oid) AS args
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef`;
-    const rows = all.filter((r) => !isPlatform(r.fn));
+    const rows = all
+      .filter((r) => !isPlatform(r.fn))
+      .map((r) => ({
+        fn: r.fn,
+        args: r.args
+          .split(',')
+          .filter((a) => !/^\s*OUT\s/i.test(a))
+          .join(','),
+      }));
     expect(rows.length).toBeGreaterThan(0);
     const offenders = rows.filter((r) => /tenant/i.test(r.args) || /\buuid\b/i.test(r.args));
     expect(offenders).toEqual([]);
@@ -196,7 +211,7 @@ describe('schema safety net', () => {
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
         AND p.proname <> ALL(${PRE_CONTEXT_AUTH_LOOKUPS})`;
-    const scoped = rows.filter((r) => !isPlatform(r.fn) && !isIngest(r.fn));
+    const scoped = rows.filter((r) => !isPlatform(r.fn) && !isIngest(r.fn) && !isContext(r.fn));
     expect(scoped.map((r) => r.fn).sort()).toEqual([
       'app_find_or_create_user',
       'auth_list_my_memberships',
@@ -204,6 +219,61 @@ describe('schema safety net', () => {
       'search_student_ids',
     ]);
     expect(scoped.filter((r) => !r.scoped)).toEqual([]);
+  });
+
+  // P1-J8: the context functions check a signature, so every policy and function calls them as a
+  // scalar subquery, `(SELECT app_current_tenant_id())`: PostgreSQL then runs them once per
+  // statement (an InitPlan) instead of once per row a scan looks at.
+  const UNWRAPPED_CONTEXT_CALLS = `
+    SELECT 'policy ' || c.relname || '.' || p.polname AS what
+    FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
+    WHERE regexp_replace(coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' ||
+                         coalesce(pg_get_expr(p.polwithcheck, p.polrelid), ''),
+                         $1, '', 'gi') ~ $2
+    UNION ALL
+    SELECT 'function ' || p.proname
+    FROM pg_proc p
+    WHERE p.pronamespace = 'public'::regnamespace
+      AND p.proname NOT IN ('app_current_tenant_id', 'app_current_user_id')
+      AND regexp_replace(p.prosrc, $1, '', 'gi') ~ $2
+    ORDER BY 1`;
+  const WRAPPED_CALL = String.raw`\(\s*SELECT\s+(public\.)?app_current_(tenant|user)_id\(\)(\s+AS\s+app_current_(tenant|user)_id)?\s*\)`;
+  const BARE_CALL = String.raw`app_current_(tenant|user)_id\(\)`;
+
+  it('every policy and function calls the context functions wrapped, once per statement', async () => {
+    expect(
+      await app.$queryRawUnsafe<{ what: string }[]>(
+        UNWRAPPED_CONTEXT_CALLS,
+        WRAPPED_CALL,
+        BARE_CALL,
+      ),
+    ).toEqual([]);
+  });
+
+  it('the wrapped-call check finds an unwrapped call', async () => {
+    const owner = ownerClient();
+    class Rollback extends Error {}
+    let found: unknown;
+    try {
+      await owner.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `CREATE FUNCTION p1j8_probe() RETURNS uuid LANGUAGE sql AS 'SELECT app_current_tenant_id()'`,
+        );
+        await tx.$executeRawUnsafe(
+          'CREATE POLICY p1j8_probe ON students FOR SELECT USING (tenant_id = app_current_tenant_id())',
+        );
+        found = await tx.$queryRawUnsafe(UNWRAPPED_CONTEXT_CALLS, WRAPPED_CALL, BARE_CALL);
+        throw new Rollback();
+      });
+    } catch (error) {
+      if (!(error instanceof Rollback)) throw error;
+    } finally {
+      await owner.$disconnect();
+    }
+    expect(found).toEqual([
+      { what: 'function p1j8_probe' },
+      { what: 'policy students.p1j8_probe' },
+    ]);
   });
 
   // P1-J: only the password login's own login reads a password hash. jantrik_app may read every
@@ -320,8 +390,9 @@ describe('schema safety net', () => {
   });
 
   // The password login's own login: like the receiver's, it reaches the database only through its
-  // one function, never a table, and is a member of no role.
-  it('jantrik_login_app may run only the password lookup, and holds no other privilege', async () => {
+  // two functions (the hash lookup, and since P1-J8 the request context key), never a table, and
+  // is a member of no role.
+  it('jantrik_login_app may run only the password lookup and the context key, and holds no other privilege', async () => {
     const granted = await app.$queryRaw<{ name: string }[]>`
       SELECT c.relname::text AS name
       FROM pg_class c
@@ -337,7 +408,7 @@ describe('schema safety net', () => {
       SELECT p.proname::text
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace
-        AND p.proname <> 'auth_find_user_for_password_login'
+        AND p.proname <> ALL (ARRAY['auth_find_user_for_password_login', 'auth_context_key'])
         AND has_function_privilege('jantrik_login_app', p.oid, 'EXECUTE')
         AND NOT has_function_privilege('public', p.oid, 'EXECUTE')`;
     expect(granted).toEqual([]);
