@@ -50,8 +50,7 @@ describe('promotion: copies into the new year', () => {
           dueDate,
         })
         .expect(201);
-    const first = (await admin.post('/fees/terms/copy', years()).expect(200))
-      .body as FeeCopyResult;
+    const first = (await admin.post('/fees/terms/copy', years()).expect(200)).body as FeeCopyResult;
     expect(first).toEqual({ copied: 3, skipped: 0, outsideYear: 1 });
     const terms = await withTenant(h.prisma, s.tenantId, (tx) =>
       tx.feeTerm.findMany({
@@ -66,8 +65,7 @@ describe('promotion: copies into the new year', () => {
       ['বার্ষিক', '2027-12-20'],
     ]);
     expect(terms[2]!.dueDate.toISOString().slice(0, 10)).toBe('2028-01-10');
-    const again = (await admin.post('/fees/terms/copy', years()).expect(200))
-      .body as FeeCopyResult;
+    const again = (await admin.post('/fees/terms/copy', years()).expect(200)).body as FeeCopyResult;
     expect(again).toEqual({ copied: 0, skipped: 3, outsideYear: 0 });
   });
 
@@ -170,7 +168,12 @@ describe('promotion: copies into the new year', () => {
       });
       const six26 = s.sections[2026][6].ka;
       await tx.sectionTeacher.create({
-        data: { tenantId: s.tenantId, sectionId: six26, userId: s.userIds.teacher, isClassTeacher: true },
+        data: {
+          tenantId: s.tenantId,
+          sectionId: six26,
+          userId: s.userIds.teacher,
+          isClassTeacher: true,
+        },
       });
       await tx.sectionTeacher.create({
         data: { tenantId: s.tenantId, sectionId: six26, userId: left.userId },
@@ -186,7 +189,10 @@ describe('promotion: copies into the new year', () => {
           },
         });
       await tx.subject.update({ where: { id: english!.id }, data: { isActive: false } });
-      await tx.membership.updateMany({ where: { userId: left.userId }, data: { status: 'DISABLED' } });
+      await tx.membership.updateMany({
+        where: { userId: left.userId },
+        data: { status: 'DISABLED' },
+      });
       return { math: math!.id };
     });
     const copy = () =>
@@ -221,7 +227,10 @@ describe('promotion: copies into the new year', () => {
   it('without FEES the fee copies answer 403; teachers and accountants cannot copy', async () => {
     const noFees = await promotionSchool(h, { modules: ['EXAMS'] });
     await api(noFees.tokens.admin)
-      .post('/fees/terms/copy', { fromAcademicYearId: noFees.y2026, toAcademicYearId: noFees.y2027 })
+      .post('/fees/terms/copy', {
+        fromAcademicYearId: noFees.y2026,
+        toAcademicYearId: noFees.y2027,
+      })
       .expect(403);
     await api(noFees.tokens.admin)
       .post('/fees/concessions/copy', {

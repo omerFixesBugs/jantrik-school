@@ -58,7 +58,9 @@ describe('fees across the year: carry-over by not moving', () => {
         await api(s.tokens.admin)
           .post('/students', {
             nameEn: name,
-            guardians: [{ phone: randomPhone(), nameEn: 'Guardian', relation: 'FATHER', isPrimary: true }],
+            guardians: [
+              { phone: randomPhone(), nameEn: 'Guardian', relation: 'FATHER', isPrimary: true },
+            ],
             enrolment: { academicYearId: s.yearId, classLevelId, sectionId, roll: null },
           })
           .expect(201)
@@ -78,7 +80,12 @@ describe('fees across the year: carry-over by not moving', () => {
       frequency: 'MONTHLY',
       dueDay: 10,
     });
-    session = await head({ nameBn: 'সেশন ফি', nameEn: 'Session', kind: 'SESSION', frequency: 'YEARLY' });
+    session = await head({
+      nameBn: 'সেশন ফি',
+      nameEn: 'Session',
+      kind: 'SESSION',
+      frequency: 'YEARLY',
+    });
     admission = await head({
       nameBn: 'ভর্তি ফি',
       nameEn: 'Admission',
@@ -179,9 +186,9 @@ describe('fees across the year: carry-over by not moving', () => {
     await admin.post(`/promotions/${run.id}/apply`, { version }).expect(200);
     await vi.waitFor(
       async () =>
-        expect(
-          ((await admin.get(`/promotions/${run.id}`)).body as PromotionRunDetail).status,
-        ).toBe('APPLIED'),
+        expect(((await admin.get(`/promotions/${run.id}`)).body as PromotionRunDetail).status).toBe(
+          'APPLIED',
+        ),
       { timeout: 20_000, interval: 200 },
     );
     expect(await money()).toEqual(before);
@@ -203,9 +210,8 @@ describe('fees across the year: carry-over by not moving', () => {
     expect(list.totals.previousYearsPaisa).toBe(
       list.rows.reduce((sum, r) => sum + r.previousYearsPaisa, 0),
     );
-    const csv = (
-      await api(s.tokens.accountant).get('/fees/reports/dues/csv?locale=en').expect(200)
-    ).text;
+    const csv = (await api(s.tokens.accountant).get('/fees/reports/dues/csv?locale=en').expect(200))
+      .text;
     expect(csv.split('\r\n')[0]).toContain('Previous years (Tk)');
   });
 
@@ -226,7 +232,11 @@ describe('fees across the year: carry-over by not moving', () => {
     expect(l.upcoming.some((u) => u.headId === admission.id)).toBe(false);
     expect(l.upcoming).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ headId: session.id, periodKey: 'Y', periodStart: next.startDate }),
+        expect.objectContaining({
+          headId: session.id,
+          periodKey: 'Y',
+          periodStart: next.startDate,
+        }),
       ]),
     );
   });
@@ -242,7 +252,10 @@ describe('fees across the year: carry-over by not moving', () => {
       leftOn: s.today,
       deactivated: false,
     });
-    expect(byId.get(s.students[3]!.id)).toMatchObject({ kind: 'NOT_CARRIED_OVER', status: 'ACTIVE' });
+    expect(byId.get(s.students[3]!.id)).toMatchObject({
+      kind: 'NOT_CARRIED_OVER',
+      status: 'ACTIVE',
+    });
     expect(byId.get(gone)).toMatchObject({ kind: 'DEACTIVATED', deactivated: true });
     for (const r of report.rows) expect(r.totalPaisa).toBeGreaterThan(0);
     expect(byId.has(s.students[0]!.id)).toBe(false);
