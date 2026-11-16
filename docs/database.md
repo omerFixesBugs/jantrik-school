@@ -595,8 +595,14 @@ target_class_level_id) → sections (tenant_id, id, academic_year_id, class_leve
   no UPDATE grant at all (the merit exam's figures may be taken again while pending).
 - The policies call the context function wrapped, `(SELECT app_current_tenant_id())`, so it runs
   once per statement.
+- A row's from- and to-enrolment are its own student's, the new one in its run's to-year:
+  `(tenant_id, from_enrolment_id, student_id)` and `(tenant_id, to_enrolment_id, student_id,
+to_year_id)` → `enrolments` (two unique indexes on enrolments, supersets of the key; migration
+  `20261117200200_promotion_review`).
+- A run may be deleted only while none of its rows is applied: DELETE grant plus the restrictive
+  policy `promotion_runs_delete_unapplied` (the service deletes the pending rows first).
 - Deleting a year, class, section or study group that a promotion row still names answers
-  `409 REFERENCE_CONFLICT` (the foreign keys restrict).
+  `409 REFERENCE_CONFLICT` (the foreign keys restrict); deleting the run first frees them.
 - Tests: `packages/db/test/promotion-rls.test.ts`, `students-leaving.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`

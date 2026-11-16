@@ -927,6 +927,25 @@ number_rolls`); each leaver under `student` (old and new status).
   section or group a row names answers `409 REFERENCE_CONFLICT` (the foreign key), as for other
   references the counts do not list.
 
+### P5a after the review (round 1)
+
+What changed is listed in the PR's review comment. Decided alone:
+
+- **P5-a13. No removal of a run-created enrolment.** Correcting a placement (class, section,
+  group) covers a promotion or repeat applied by mistake; leave and return cover someone who
+  should have left. Removing the enrolment would leave its applied row (immutable history,
+  `ENROLLED`) pointing at nothing.
+- **P5-a14. Registers:** a student not ACTIVE without a leaving date (only possible for data set
+  before P5) stays on registers as before; only a leaving date takes someone off, from that day.
+- **P5-a15. A placement change is refused once that year has attendance, an exam roster or fee
+  dues for the student.** The fee dues are counted from the students module (a read of the fees
+  module's table, like the student limit's read of the subscription).
+- **P5-a16. Numbering while runs into the class are not applied** needs an explicit `force` (the
+  wizard asks).
+- **P5-a17. The CI checks job may take 20 minutes** (it takes 8–10 now; at 10 it was cancelled).
+- **P5-a18. Subject choices** are copied and removed through `SubjectChoicesModule` (exams), a
+  module with no imports, so students and promotion can both use it without a cycle.
+
 ### P5b: the wizard, copies and dues markers (stacked PR)
 
 Built in `feature/sprint-1-p5b-promotion-wizard` (on top of P5a). Decided alone:

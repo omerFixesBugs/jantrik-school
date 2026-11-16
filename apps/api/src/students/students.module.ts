@@ -21,6 +21,7 @@ import { searchStudentIds, type Prisma } from '@jantrik/db';
 import {
   addGuardianSchema,
   admissionSchema,
+  changePlacementSchema,
   createEnrolmentSchema,
   guardianLookupQuerySchema,
   leaveSchema,
@@ -48,6 +49,7 @@ import { OwnTransaction, RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import { FILE_STORE, type FileStore } from '../files/file-store.js';
 import { ImageUpload, sendStoredImage, type UploadedImage } from '../files/files.module.js';
+import { SubjectChoicesModule } from '../exams/setup/subject-choices-copier.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
 import { StudentAdminService } from './student-admin.service.js';
@@ -62,6 +64,7 @@ class AddGuardianDto extends zodDto(addGuardianSchema) {}
 class UpdateGuardianLinkDto extends zodDto(updateGuardianLinkSchema) {}
 class TransferDto extends zodDto(transferSchema) {}
 class CreateEnrolmentDto extends zodDto(createEnrolmentSchema) {}
+class ChangePlacementDto extends zodDto(changePlacementSchema) {}
 class StudentSettingsDto extends zodDto(studentSettingsSchema) {}
 class GuardianLookupDto extends zodDto(guardianLookupQuerySchema) {}
 class LeaveDto extends zodDto(leaveSchema) {}
@@ -456,6 +459,17 @@ export class StudentsController {
     return this.admin.enrol(id, dto);
   }
 
+  /** Correct a placement in a year that is not current yet (P5-L). */
+  @Patch(':id/enrolments/:enrolmentId')
+  @Roles('OWNER', 'ADMIN')
+  changePlacement(
+    @Id() id: string,
+    @Param('enrolmentId', ParseUUIDPipe) enrolmentId: string,
+    @Body() dto: ChangePlacementDto,
+  ): Promise<StudentProfile> {
+    return this.admin.changePlacement(id, enrolmentId, dto);
+  }
+
   @Post(':id/deactivate')
   @HttpCode(200)
   @Roles('OWNER', 'ADMIN')
@@ -494,6 +508,7 @@ export class GuardiansController {
 }
 
 @Module({
+  imports: [SubjectChoicesModule],
   controllers: [StudentsController, GuardiansController],
   providers: [
     StudentsService,

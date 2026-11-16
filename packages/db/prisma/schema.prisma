@@ -1157,6 +1157,9 @@ model Enrolment {
   promotionRowsTo   PromotionRunStudent[] @relation("PromotionRowToEnrolment")
 
   @@unique([tenantId, id])
+  /// So a promotion row's enrolments can be checked against its student (and its to-year).
+  @@unique([tenantId, id, studentId])
+  @@unique([tenantId, id, studentId, academicYearId])
   @@unique([tenantId, academicYearId, studentId])
   @@unique([tenantId, sectionId, roll])
   @@index([tenantId, academicYearId, classLevelId, sectionId])
@@ -3386,12 +3389,12 @@ model PromotionRunStudent {
   tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   run              PromotionRun @relation(fields: [tenantId, runId, toYearId], references: [tenantId, id, toYearId], onDelete: Restrict, onUpdate: Restrict)
   student          Student      @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
-  fromEnrolment    Enrolment    @relation("PromotionRowFromEnrolment", fields: [tenantId, fromEnrolmentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  fromEnrolment    Enrolment    @relation("PromotionRowFromEnrolment", fields: [tenantId, fromEnrolmentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
   fromSection      Section?     @relation("PromotionRowFromSection", fields: [tenantId, fromSectionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   targetClassLevel ClassLevel?  @relation(fields: [tenantId, targetClassLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   targetSection    Section?     @relation("PromotionRowTargetSection", fields: [tenantId, targetSectionId, toYearId, targetClassLevelId], references: [tenantId, id, academicYearId, classLevelId], onDelete: Restrict, onUpdate: Restrict)
   targetStudyGroup StudyGroup?  @relation(fields: [tenantId, targetStudyGroupId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
-  toEnrolment      Enrolment?   @relation("PromotionRowToEnrolment", fields: [tenantId, toEnrolmentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  toEnrolment      Enrolment?   @relation("PromotionRowToEnrolment", fields: [tenantId, toEnrolmentId, studentId, toYearId], references: [tenantId, id, studentId, academicYearId], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, runId, studentId])
