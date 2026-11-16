@@ -17,7 +17,9 @@
       "copied": "TrxID copied",
       "copyFailed": "Could not copy. Select the TrxID and copy it.",
       "managersOnlyTitle": "For the owner and admins",
-      "managersOnlyText": "Reminder SMS cost the institute money, so the owner or an admin sends them."
+      "managersOnlyText": "Reminder SMS cost the institute money, so the owner or an admin sends them.",
+      "previousYears": "Previous years",
+      "cardPreviousYears": "{amount} from previous years"
     },
     "submissions": {
       "title": "bKash/Nagad payments to check",
