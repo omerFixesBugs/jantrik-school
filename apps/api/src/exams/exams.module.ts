@@ -84,6 +84,8 @@ import { ExamRosterService } from './marks/exam-roster.service.js';
 import { MarkSheetService } from './marks/mark-sheet.service.js';
 import { ChildResultsService } from './guardian/child-results.service.js';
 import { ExamResultsService } from './results/exam-results.service.js';
+import { ExamResultsReader } from './results/exam-results-reader.js';
+import { SubjectChoicesModule } from './setup/subject-choices-copier.js';
 import { ExamSummaryService } from './results/exam-summary.service.js';
 import { ResultSmsProcessor } from './results/result-sms.processor.js';
 import { EXAMS_QUEUE, ResultSmsService } from './results/result-sms.service.js';
@@ -551,7 +553,12 @@ export class ChildResultsController {
 
 @Module({
   // AttendanceModule: present % for report cards. StudentsModule: StudentAccess (decision #19).
-  imports: [BullModule.registerQueue({ name: EXAMS_QUEUE }), AttendanceModule, StudentsModule],
+  imports: [
+    BullModule.registerQueue({ name: EXAMS_QUEUE }),
+    AttendanceModule,
+    StudentsModule,
+    SubjectChoicesModule,
+  ],
   // Static routes (exams/setup/…, rooms, grading, staff, my-sheets, sheets) are declared before
   // exams/:id so they are never taken for an exam id.
   controllers: [
@@ -578,8 +585,9 @@ export class ChildResultsController {
     ResultSmsProcessor,
     ExamSummaryService,
     ChildResultsService,
+    ExamResultsReader,
   ],
-  // MarkSheetService: test-only routes (rollback checks) inject it.
-  exports: [MarkSheetService],
+  // MarkSheetService: test-only routes (rollback checks) inject it. ExamResultsReader: promotion.
+  exports: [MarkSheetService, ExamResultsReader, SubjectChoicesModule],
 })
 export class ExamsModule {}

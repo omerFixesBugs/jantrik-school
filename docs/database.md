@@ -35,13 +35,16 @@ the template.
 | `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)            | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                                                                                           |
 | `jantrik_ingest`       | Owner of the `ingest_*` functions (the ZKTeco device receiver) | Same rules as `jantrik_auth`, with `TO jantrik_ingest` policies on the device tables and by column on tenants, modules and attendance settings. See "Devices (step 11)" below.                                                                                                                                                                 |
 | `jantrik_ingest_app`   | The device receiver (`DATABASE_INGEST_URL`)                    | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the four `ingest_*` functions (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants. Its statements stop after 5 s (`statement_timeout`, decision #79): set on the role and sent by the receiver's pool. |
+| `jantrik_login_app`    | The password login (`DATABASE_LOGIN_URL`, P1-J)                | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on `auth_find_user_for_password_login`, the one way to a password hash (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants. Used by `AuthService.loginWithPassword` only (`LoginPrismaService`).          |
 
 **Every running service checks its login at start-up** (`readLoginPrivileges` in
 [`packages/db/src/login-privileges.ts`](../packages/db/src/login-privileges.ts)): the API and the
-worker (`jantrik_app`), the platform module (`jantrik_platform_app`) and the receiver
-(`jantrik_ingest_app`) refuse to start when their login is a superuser, has BYPASSRLS, or can
-become (`pg_has_role(…, 'MEMBER')`) a role that is either, or `pg_read_all_data`,
-`pg_write_all_data` or one of the server file and program roles. The check fails closed: while the
+worker (`jantrik_app`), the platform module (`jantrik_platform_app`), the password login
+(`jantrik_login_app`) and the receiver (`jantrik_ingest_app`) refuse to start when their login is a
+superuser, has BYPASSRLS, REPLICATION (a replication connection streams every row, whatever RLS
+says) or CREATEROLE (no runtime login needs it), or can become (`pg_has_role(…, 'MEMBER')`) a role
+that has any of these, or `pg_read_all_data`, `pg_write_all_data` or one of the server file and
+program roles. The check fails closed: while the
 database does not answer, it is asked again for about 3 minutes, then the service exits.
 
 The roles and databases (`jantrik`, `jantrik_test`) are created by
@@ -66,6 +69,7 @@ docker compose exec postgres psql -U postgres \
   -c "GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
   -c "CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'ingest_dev_password'" \
   -c "ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s'" \
+  -c "CREATE ROLE jantrik_login_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'login_dev_password'" \
   -c "CREATE DATABASE jantrik_e2e OWNER jantrik_owner"
 # A volume that already granted jantrik_app to jantrik_platform_app (early step 8): take it back.
 docker compose exec postgres psql -U postgres -c "REVOKE jantrik_app FROM jantrik_platform_app"
@@ -161,12 +165,35 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
     tenant A must not edit them.
   - **Only some columns (sprint 1 P1-B):** `jantrik_app` may update `locale`, `color_scheme`,
     `name_bn`, `password_hash`, `password_changed_at` and `updated_at`, and nothing else. The
-    login identifiers (`phone`, `email`) and the global `name` are out of the app's reach, so no
-    app code (or injection) can change how a person signs in. Tests that need another column set
+    login identifiers (`phone`, `email`) and the global `name` are out of the app's reach: no app
+    code (or injection) can change the phone or email a person signs in with. The password hash is
+    not: an injection can set `app.user_id` to anyone with `set_config` and then write their
+    `password_hash` (or create a session for them), which RLS allows for "your own row"
+    (P1-J8 in decisions-pending). Tests that need another column set
     it through the owner role, as that user.
   - **`password_changed_at`:** when the person last set their password themselves (null: never,
     or only by the seed). Written only by `PasswordSettingsService`, with `password_hash`
     ([auth.md](auth.md) → Setting a password).
+  - **`password_hash` is not readable by the app (P1-J).** `jantrik_app` has SELECT on every
+    other column, granted column by column (a table-level SELECT would cover the hash again), and
+    UPDATE on it (setting a password). Only the password login's own login (`jantrik_login_app`)
+    may look a hash up, through `auth_find_user_for_password_login`.
+    - **A new `users` column needs its own `GRANT SELECT (column) ON users TO jantrik_app`.**
+      Without it the app cannot read the column, and whole-row reads (the refresh, `/me`) fail;
+      `schema-safety.test.ts` fails first: it checks that `jantrik_app` may read every column but
+      the hash.
+    - `schema-safety.test.ts` also checks that no login but the owner may read the hash, pins by
+      name every definer function a runtime login may run whose owner can read it, and refuses
+      any function that returns the hash or a whole users row other than the password lookup.
+    - Every Prisma client omits `passwordHash` (`createPrismaClient`, `CLIENT_OMIT` in
+      `packages/db/src/client.ts`), so whole-row reads and updates never name the column. The
+      package's `PrismaClient` type is that client's, so a read without `select` has no
+      `passwordHash` and `new PrismaClient` from the package does not type-check. Two things are
+      **not** stopped by TypeScript, only by the database: an explicit
+      `select: { passwordHash: true }`, and the generated class, which the package's
+      `export *` still exports at runtime.
+    - A test that needs the hash reads it through the owner, in the user's context, with `select`
+      or `omit: { passwordHash: false }`.
   - **No INSERT or DELETE for the app.** Create people with `findOrCreateUser(tx, phone, name)`,
     which needs a tenant context. It returns only the id, so a person from another tenant stays
     hidden until they get a membership here.
@@ -176,7 +203,14 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   - Each is owned by `jantrik_auth`, pins `search_path = pg_catalog, public, pg_temp` (`pg_temp`
     last, so a temporary table cannot stand in for a real one), and is executable only by
     `jantrik_app`.
-  - `auth_find_user_for_login(phone, email)`
+  - `auth_find_user_for_login(phone, email)`: the user's id, name and locale, no password data
+    (P1-J)
+  - `auth_find_user_for_password_login(phone, email)`: the same plus `password_hash`. **The one
+    exception to "executable only by `jantrik_app`":** only `jantrik_login_app` may run it, and
+    `jantrik_app` may not (P1-J, [auth.md](auth.md) → The API never reads a hash in a request)
+  - `auth_my_password_is_set()`: whether the current user (`app.user_id`) has a password
+    (`GET /me/password`). A request can set `app.user_id` to any id, so this tells an injection
+    whether a given person has a password: yes or no, nothing more
   - `auth_list_my_memberships()`: uses `app.user_id`, with no user parameter. It also returns
     `invited_at`, so the login flow can show pending invitations.
   - `auth_resolve_tenant(slug)`
@@ -497,6 +531,79 @@ one row per staff member per day (unique `(tenant_id, user_id, date)`), composit
   staff role here is OWNER), decided in code.
 - Tests: `packages/db/test/staff-attendance-rls.test.ts`; the table list in
   `schema-safety.test.ts`.
+
+### Files and the institute profile (sprint 1 P2)
+
+Images live in the database ([files.md](files.md), decision S7):
+
+- **`stored_files`** (tenant table): one re-encoded image per row (`bytes bytea`), with `kind`
+  (`stored_file_kind`), `mime`, `size_bytes`, `sha256`, `width`, `height`, `created_by_id`.
+  - Grants SELECT, INSERT, DELETE: a file never changes (a replaced image is a new row and the old
+    one is deleted), so there is no `updated_at` either.
+  - CHECKs: the formats per kind (`stored_files_mime`), the size per kind and
+    `size_bytes = octet_length(bytes)` (`stored_files_size`), the hash format and 1–4000 pixels a
+    side. The caps equal `FILE_LIMITS` in `packages/shared/src/files.ts`.
+  - **Only `PostgresFileStore` reads or writes it** (and `stored_file_usage`); the rest of the API
+    goes through the `FileStore` interface. `apps/api/src/files/file-store-access.spec.ts` fails on
+    any other code that names them. Test code may read them.
+  - Selecting a file's row reads its bytes (up to 256 KB): select the columns you need
+    (`meta()` does), never whole rows in a list.
+- **`stored_file_usage`** (tenant table, at most one row per institute, created by the first
+  upload): the running total for the cap. Grants SELECT, INSERT, UPDATE (no DELETE); CHECK both
+  counters ≥ 0. Changed only under the institute's advisory lock, in the same transaction as the
+  file.
+- **`institute_profiles`** (tenant table, at most one row per institute, created on the first save
+  or image): the institute's own names, EIIN, address, contact, head of institute, established
+  year, and `logo_file_id`, `head_signature_file_id`, `seal_file_id`. `tenants.name` stays the name
+  the platform registered. Grants SELECT, INSERT, UPDATE (no DELETE). CHECKs: one name at least,
+  lengths, a 6-digit EIIN, a 5–15 digit phone (optional `+`), e-mail and website shapes, a year
+  1800–2100, and the three images being different files.
+- **`students.photo_file_id`** replaces the never-written `photo_url`.
+- **Every reference to a file is a composite foreign key with the kind**
+  (`(tenant_id, x, x_kind) → stored_files (tenant_id, id, kind)`, `ON DELETE RESTRICT ON UPDATE
+RESTRICT`) and unique. The kind column is fixed by a CHECK (`students.photo_file_kind` =
+  `STUDENT_PHOTO`; `institute_profiles.logo_file_kind`, `head_signature_file_kind`,
+  `seal_file_kind` = `LOGO`, `SIGNATURE`, `SEAL`). So a row can only point at its own institute's
+  file of the right kind, a file is used in one place, and a file still in use cannot be deleted.
+- Isolation, grants, CHECKs and keys: `packages/db/test/files-rls.test.ts`.
+
+### Promotion (sprint 1 P5)
+
+Rules: [promotion.md](promotion.md). Two tenant tables (forced RLS, composite keys, every foreign
+key `ON UPDATE RESTRICT`), and two columns on `students`:
+
+- **`students.left_on`, `leave_reason`** (leaving is a status, not a deletion). CHECKs: no
+  `left_on` while `status = 'ACTIVE'`; a reason needs a date; at most 500 characters. The
+  app's table-level grants on `students` cover them.
+- **`promotion_runs`** (S I, column-level U): one per `(from_year_id, to_year_id,
+class_level_id)`. No DELETE (history; a draft is emptied, not deleted). The merit exam is
+  checked against the from-year by `(tenant_id, merit_exam_id, from_year_id) → exams (tenant_id,
+id, academic_year_id)` (a new unique index on `exams`). CHECKs: the years differ; MERIT needs
+  an exam; `(status = 'APPLIED') = (applied_at IS NOT NULL)`; a run past DRAFT has who and when;
+  `last_error` is a code (`^[A-Z_]{1,40}$`).
+- **`promotion_run_students`** (S I D, column-level U): one per run and student, and one per
+  to-year and student (a student is in at most one run into a year). A row carries its run's
+  `to_year_id` (`(tenant_id, run_id, to_year_id) → promotion_runs (tenant_id, id, to_year_id)`)
+  so its target section is checked by `(tenant_id, target_section_id, to_year_id,
+target_class_level_id) → sections (tenant_id, id, academic_year_id, class_level_id)` (a new
+  unique index on `sections`): a target can never be a section of another year or class.
+  CHECKs for LEAVE (status not ACTIVE, a date, no target) and PROMOTE/REPEAT (a class, no leaving
+  fields), outcome only with `applied_at`, an enrolment only with an enrolling outcome.
+- **Applied rows never change:** two restrictive policies, `promotion_rows_update_pending` (FOR
+  UPDATE USING `applied_at IS NULL` WITH CHECK `true`, so applying a pending row can still set
+  `applied_at`) and `promotion_rows_delete_pending`. The student, run and snapshot columns have
+  no UPDATE grant at all (the merit exam's figures may be taken again while pending).
+- The policies call the context function wrapped, `(SELECT app_current_tenant_id())`, so it runs
+  once per statement.
+- A row's from- and to-enrolment are its own student's, the new one in its run's to-year:
+  `(tenant_id, from_enrolment_id, student_id)` and `(tenant_id, to_enrolment_id, student_id,
+to_year_id)` → `enrolments` (two unique indexes on enrolments, supersets of the key; migration
+  `20261117200200_promotion_review`).
+- A run may be deleted only while none of its rows is applied: DELETE grant plus the restrictive
+  policy `promotion_runs_delete_unapplied` (the service deletes the pending rows first).
+- Deleting a year, class, section or study group that a promotion row still names answers
+  `409 REFERENCE_CONFLICT` (the foreign keys restrict); deleting the run first frees them.
+- Tests: `packages/db/test/promotion-rls.test.ts`, `students-leaving.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 

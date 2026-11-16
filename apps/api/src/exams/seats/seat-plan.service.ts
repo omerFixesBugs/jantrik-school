@@ -178,7 +178,7 @@ export class SeatPlanService {
       },
       orderBy: [{ section: { name: 'asc' } }, { roll: 'asc' }],
       include: {
-        student: { select: { studentCode: true, nameBn: true, nameEn: true, photoUrl: true } },
+        student: { select: { studentCode: true, nameBn: true, nameEn: true, photoFileId: true } },
         section: { select: { id: true, name: true } },
         studyGroup: { select: { id: true, code: true, nameBn: true, nameEn: true } },
         room: { select: { name: true } },
@@ -219,7 +219,12 @@ export class SeatPlanService {
         );
         return {
           candidateId: c.id,
-          student: c.student,
+          student: {
+            studentCode: c.student.studentCode,
+            nameBn: c.student.nameBn,
+            nameEn: c.student.nameEn,
+            photoId: c.student.photoFileId,
+          },
           classLevel: c.examClass.classLevel,
           section: c.section,
           studyGroup: c.studyGroup,

@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  Inject,
   Injectable,
   Module,
   Param,
@@ -12,13 +13,18 @@ import {
   Post,
   Put,
   Query,
+  Req,
+  Res,
+  UploadedFile,
 } from '@nestjs/common';
 import { searchStudentIds, type Prisma } from '@jantrik/db';
 import {
   addGuardianSchema,
   admissionSchema,
+  changePlacementSchema,
   createEnrolmentSchema,
   guardianLookupQuerySchema,
+  leaveSchema,
   normalizeBdPhone,
   recentMonths,
   STUDENT_STATUSES,
@@ -38,13 +44,21 @@ import {
   type StudentsPage,
   type StudentsSummary,
 } from '@jantrik/shared';
-import { RequireModule, Roles } from '../common/decorators.js';
+import type { Request, Response } from 'express';
+import { OwnTransaction, RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
+import { FILE_STORE, type FileStore } from '../files/file-store.js';
+import { ImageUpload, sendStoredImage, type UploadedImage } from '../files/files.module.js';
+import { AttendanceUsageModule } from '../attendance/attendance-usage.js';
+import { ExamUsageModule } from '../exams/setup/exam-usage.js';
+import { SubjectChoicesModule } from '../exams/setup/subject-choices-copier.js';
+import { FeeUsageModule } from '../fees/fee-usage.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
 import { StudentAdminService } from './student-admin.service.js';
 import { StudentAccess } from './student-access.service.js';
 import { StudentCodesService } from './student-codes.service.js';
+import { StudentPhotoService } from './student-photo.service.js';
 
 export class StudentsQueryDto extends zodDto(studentsQuerySchema) {}
 class AdmissionDto extends zodDto(admissionSchema) {}
@@ -53,8 +67,10 @@ class AddGuardianDto extends zodDto(addGuardianSchema) {}
 class UpdateGuardianLinkDto extends zodDto(updateGuardianLinkSchema) {}
 class TransferDto extends zodDto(transferSchema) {}
 class CreateEnrolmentDto extends zodDto(createEnrolmentSchema) {}
+class ChangePlacementDto extends zodDto(changePlacementSchema) {}
 class StudentSettingsDto extends zodDto(studentSettingsSchema) {}
 class GuardianLookupDto extends zodDto(guardianLookupQuerySchema) {}
+class LeaveDto extends zodDto(leaveSchema) {}
 
 const Id = () => Param('id', ParseUUIDPipe);
 
@@ -156,7 +172,7 @@ export class StudentsService {
         nameBn: true,
         nameEn: true,
         status: true,
-        photoUrl: true,
+        photoFileId: true,
         enrolments: {
           where: { academicYearId: yearId },
           take: 1,
@@ -178,8 +194,10 @@ export class StudentsService {
       rows.sort((a, b) => at.get(a.id)! - at.get(b.id)!);
     }
 
-    const items: StudentListItem[] = rows.map(({ enrolments, guardians, ...s }) => ({
+    const items: StudentListItem[] = rows.map(({ enrolments, guardians, photoFileId, ...s }) => ({
       ...s,
+      // The photo is part of the full record (as on the student's page).
+      photoId: StudentAccess.sees(scope, enrolments[0]?.section?.id) ? photoFileId : null,
       enrolment: enrolments[0] ?? null,
       primaryGuardian: StudentAccess.sees(scope, enrolments[0]?.section?.id)
         ? (guardians[0]?.guardian ?? null)
@@ -332,6 +350,8 @@ export class StudentsController {
     private readonly students: StudentsService,
     private readonly admin: StudentAdminService,
     private readonly codes: StudentCodesService,
+    private readonly photos: StudentPhotoService,
+    @Inject(FILE_STORE) private readonly files: FileStore,
   ) {}
 
   @Get()
@@ -380,6 +400,30 @@ export class StudentsController {
     return this.admin.update(id, dto);
   }
 
+  /** The student's photo (JPEG), for everyone who may read students (decision F1). */
+  @Get(':id/photo')
+  async photo(@Id() id: string, @Req() req: Request, @Res() res: Response): Promise<void> {
+    await sendStoredImage(this.files, await this.photos.photoId(id), req, res);
+  }
+
+  /** multipart/form-data with `file` (JPEG, PNG or WebP, at most 5 MB); stored as a JPEG. */
+  @Put(':id/photo')
+  @Roles('OWNER', 'ADMIN')
+  @OwnTransaction()
+  @ImageUpload()
+  setPhoto(
+    @Id() id: string,
+    @UploadedFile() file: UploadedImage | undefined,
+  ): Promise<StudentProfile> {
+    return this.photos.set(id, file);
+  }
+
+  @Delete(':id/photo')
+  @Roles('OWNER', 'ADMIN')
+  removePhoto(@Id() id: string): Promise<StudentProfile> {
+    return this.photos.remove(id);
+  }
+
   @Post(':id/guardians')
   @Roles('OWNER', 'ADMIN')
   addGuardian(@Id() id: string, @Body() dto: AddGuardianDto): Promise<StudentProfile> {
@@ -418,11 +462,38 @@ export class StudentsController {
     return this.admin.enrol(id, dto);
   }
 
+  /** Correct a placement in a year that is not current yet (P5-L). */
+  @Patch(':id/enrolments/:enrolmentId')
+  @Roles('OWNER', 'ADMIN')
+  changePlacement(
+    @Id() id: string,
+    @Param('enrolmentId', ParseUUIDPipe) enrolmentId: string,
+    @Body() dto: ChangePlacementDto,
+  ): Promise<StudentProfile> {
+    return this.admin.changePlacement(id, enrolmentId, dto);
+  }
+
   @Post(':id/deactivate')
   @HttpCode(200)
   @Roles('OWNER', 'ADMIN')
   deactivate(@Id() id: string): Promise<StudentProfile> {
     return this.admin.deactivate(id);
+  }
+
+  /** Leaves the institute (graduated, transferred, dropped out, inactive): not a deletion (S14). */
+  @Post(':id/leave')
+  @HttpCode(200)
+  @Roles('OWNER', 'ADMIN')
+  leave(@Id() id: string, @Body() dto: LeaveDto): Promise<StudentProfile> {
+    return this.admin.leave(id, dto);
+  }
+
+  /** A leaver comes back (P5-J). */
+  @Post(':id/return')
+  @HttpCode(200)
+  @Roles('OWNER', 'ADMIN')
+  returnStudent(@Id() id: string): Promise<StudentProfile> {
+    return this.admin.returnStudent(id);
   }
 }
 
@@ -440,11 +511,13 @@ export class GuardiansController {
 }
 
 @Module({
+  imports: [SubjectChoicesModule, AttendanceUsageModule, ExamUsageModule, FeeUsageModule],
   controllers: [StudentsController, GuardiansController],
   providers: [
     StudentsService,
     StudentAdminService,
     StudentCodesService,
+    StudentPhotoService,
     GuardianLinker,
     StudentAccess,
   ],

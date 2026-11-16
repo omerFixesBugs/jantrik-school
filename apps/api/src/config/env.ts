@@ -26,7 +26,13 @@ export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     API_PORT: z.coerce.number().int().positive().default(4000),
-    /** Comma-separated allowlist of browser origins (credentials are allowed). */
+    /**
+     * Comma-separated allowlist of browser origins (credentials are allowed). Normalised as
+     * browsers send `Origin` (lower-case host, no trailing slash, no default port), so the CORS
+     * check (an exact match) allows what the production check passed. An entry that is not exactly
+     * an origin (not a URL, or with a login, a path, a query or a fragment) stays as written: it
+     * matches no browser's Origin, and production refuses it.
+     */
     CORS_ORIGINS: z
       .string()
       .default('http://localhost:3000')
@@ -34,7 +40,8 @@ export const envSchema = z
         v
           .split(',')
           .map((o) => o.trim())
-          .filter(Boolean),
+          .filter(Boolean)
+          .map((o) => normaliseOrigin(o) ?? o),
       ),
     /**
      * The platform web app's origins (comma-separated): the only browser origins /platform/*
@@ -52,7 +59,10 @@ export const envSchema = z
           .filter(Boolean)) {
           const origin = normaliseOrigin(entry);
           if (origin === null) {
-            ctx.addIssue({ code: 'custom', message: `PLATFORM_ORIGINS: "${entry}" is not a URL` });
+            ctx.addIssue({
+              code: 'custom',
+              message: `PLATFORM_ORIGINS: "${entry}" is not an origin (scheme, host and port only)`,
+            });
             return z.NEVER;
           }
           origins.push(origin);
@@ -67,6 +77,11 @@ export const envSchema = z
      * platform_* functions. Same database as DATABASE_URL.
      */
     DATABASE_PLATFORM_URL: z.string().min(1),
+    /**
+     * The password login's own login (role jantrik_login_app): the only role that may look up a
+     * password hash (the password lookup, P1-J; docs/auth.md). Same database as DATABASE_URL.
+     */
+    DATABASE_LOGIN_URL: z.string().min(1),
     /**
      * The device receiver's own login (role jantrik_ingest_app): the only role that may run the
      * ingest_* functions. Same database as DATABASE_URL. Required when the receiver runs in this
@@ -140,6 +155,8 @@ export const envSchema = z
     LOGIN_PER_IDENTIFIER_PER_15MIN: positiveInt(5),
     // Staff invitations (POST /staff and re-invites) per institute and hour.
     STAFF_INVITES_PER_TENANT_PER_HOUR: positiveInt(30),
+    // Stored images per institute, in MB (docs/files.md): over it, uploads get 413 STORAGE_FULL.
+    FILE_STORAGE_PER_TENANT_MB: positiveInt(1024),
   })
   .superRefine((env, ctx) => {
     // Loosened settings must never leave a developer's machine.
