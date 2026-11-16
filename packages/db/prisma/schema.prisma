@@ -592,6 +592,8 @@ model User {
   deviceSourceIpsTrusted   DeviceSourceIp[]     @relation("DeviceSourceIpTrustedBy")
   staffDaysUpdated         StaffAttendanceDay[] @relation("StaffAttendanceDayUpdatedBy")
 
+  storedFilesCreated StoredFile[] @relation("StoredFileCreatedBy")
+
   @@map("users")
 }
 
@@ -686,6 +688,10 @@ model Tenant {
   devicePunches       DevicePunch[]
   deviceSourceIps     DeviceSourceIp[]
   staffAttendanceDays StaffAttendanceDay[]
+
+  storedFiles      StoredFile[]
+  storedFileUsage  StoredFileUsage?
+  instituteProfile InstituteProfile?
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -1004,7 +1010,8 @@ model Student {
   nameEn              String?       @map("name_en")
   dateOfBirth         DateTime?     @map("date_of_birth") @db.Date
   gender              Gender?
-  photoUrl            String?       @map("photo_url")
+  /// The student's photo (stored_files, kind STUDENT_PHOTO); replaced files are deleted.
+  photoFileId         String?       @map("photo_file_id") @db.Uuid
   status              StudentStatus @default(ACTIVE)
   // Fields required for Bangladesh education board registration.
   fatherNameBn        String?       @map("father_name_bn")
@@ -1024,6 +1031,7 @@ model Student {
 
   tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  photoFile  StoredFile?       @relation("StudentPhoto", fields: [tenantId, photoFileId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   guardians  StudentGuardian[]
   enrolments Enrolment[]
 
@@ -1042,6 +1050,8 @@ model Student {
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
   @@unique([tenantId, birthRegistrationNo])
+  // A file belongs to one student (also the foreign key's index).
+  @@unique([tenantId, photoFileId])
   @@index([tenantId, status], where: raw("deleted_at IS NULL"))
   @@index([tenantId, nameEn])
   // Trigram indexes for ILIKE '%…%' search (GET /students).
@@ -3111,4 +3121,106 @@ model StaffAttendanceDay {
   @@unique([tenantId, userId, date])
   @@index([tenantId, date])
   @@map("staff_attendance_days")
+}
+
+// ───────────────────────────── Files and the institute profile (sprint 1 P2) ─────────────────────────────
+// docs/files.md. Only apps/api/src/files/postgres-file-store.ts reads or writes stored_files and
+// stored_file_usage (a code scan checks it); callers use the FileStore interface.
+
+enum StoredFileKind {
+  STUDENT_PHOTO
+  APPLICANT_PHOTO
+  LOGO
+  SIGNATURE
+  SEAL
+  DOCUMENT_ASSET
+
+  @@map("stored_file_kind")
+}
+
+/// An image stored in the database, already re-encoded by the API (never the uploaded bytes).
+/// Rows never change (no UPDATE grant): a replaced image is a new row, and the old one is deleted.
+model StoredFile {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  tenantId    String         @map("tenant_id") @db.Uuid
+  kind        StoredFileKind
+  /// image/jpeg, image/png or image/webp; the CHECK pairs each kind with its formats.
+  mime        String
+  bytes       Bytes
+  /// = octet_length(bytes); at most the kind's cap (CHECK).
+  sizeBytes   Int            @map("size_bytes")
+  /// Hex SHA-256 of bytes: the ETag.
+  sha256      String         @db.Char(64)
+  width       Int
+  height      Int
+  createdById String?        @map("created_by_id") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User?  @relation("StoredFileCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Restrict)
+
+  student          Student?          @relation("StudentPhoto")
+  profileLogo      InstituteProfile? @relation("InstituteProfileLogo")
+  profileSignature InstituteProfile? @relation("InstituteProfileSignature")
+  profileSeal      InstituteProfile? @relation("InstituteProfileSeal")
+
+  @@unique([tenantId, id])
+  @@index([tenantId, kind])
+  @@map("stored_files")
+}
+
+/// One row per institute once it stores a file: the running total for the per-institute cap
+/// (FILE_STORAGE_PER_TENANT_MB), changed with every put and delete under the institute's lock.
+model StoredFileUsage {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @unique @map("tenant_id") @db.Uuid
+  bytesUsed BigInt   @default(0) @map("bytes_used")
+  fileCount Int      @default(0) @map("file_count")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("stored_file_usage")
+}
+
+/// The institute's own profile (at most one per institute, created on the first save or image).
+/// tenants.name stays the name the platform registered; these are the institute's own words.
+model InstituteProfile {
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  tenantId            String   @unique @map("tenant_id") @db.Uuid
+  nameBn              String?  @map("name_bn")
+  nameEn              String?  @map("name_en")
+  shortName           String?  @map("short_name")
+  /// BANBEIS EIIN: 6 ASCII digits.
+  eiin                String?
+  addressBn           String?  @map("address_bn")
+  addressEn           String?  @map("address_en")
+  /// 5-15 ASCII digits with an optional leading + (a Bangladeshi mobile is stored as E.164).
+  phone               String?
+  email               String?
+  website             String?
+  headTitleBn         String?  @map("head_title_bn")
+  headTitleEn         String?  @map("head_title_en")
+  headNameBn          String?  @map("head_name_bn")
+  headNameEn          String?  @map("head_name_en")
+  establishedYear     Int?     @map("established_year") @db.SmallInt
+  logoFileId          String?  @map("logo_file_id") @db.Uuid
+  headSignatureFileId String?  @map("head_signature_file_id") @db.Uuid
+  sealFileId          String?  @map("seal_file_id") @db.Uuid
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  logoFile      StoredFile? @relation("InstituteProfileLogo", fields: [tenantId, logoFileId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  signatureFile StoredFile? @relation("InstituteProfileSignature", fields: [tenantId, headSignatureFileId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  sealFile      StoredFile? @relation("InstituteProfileSeal", fields: [tenantId, sealFileId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  // One file is used in one place (also each foreign key's index).
+  @@unique([tenantId, logoFileId])
+  @@unique([tenantId, headSignatureFileId])
+  @@unique([tenantId, sealFileId])
+  @@map("institute_profiles")
 }
