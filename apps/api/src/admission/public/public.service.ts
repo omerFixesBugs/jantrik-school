@@ -57,8 +57,9 @@ export class AdmissionPublicService {
 
   private async load(slug: string): Promise<StoredForm | null> {
     const now = this.clock.now();
-    const [row] = await this.call((tx) =>
-      tx.$queryRaw<{ v: StoredForm | null }[]>`
+    const [row] = await this.call(
+      (tx) =>
+        tx.$queryRaw<{ v: StoredForm | null }[]>`
         SELECT public.admission_public_form(${slug}, ${now}::timestamptz) AS v`,
     );
     return row?.v ?? null;
@@ -161,15 +162,16 @@ export class AdmissionPublicService {
     const image = photo?.length ? await this.images.process('APPLICANT_PHOTO', photo) : null;
     const now = this.clock.now();
     const payload = JSON.stringify(parsed.data);
-    const [r] = await this.call((tx) =>
-      tx.$queryRaw<
-        {
-          outcome: string;
-          application_no: string | null;
-          tenant_id: string | null;
-          application_id: string | null;
-        }[]
-      >`SELECT * FROM public.admission_submit(${slug}, ${cycleClassId}::uuid, ${phone},
+    const [r] = await this.call(
+      (tx) =>
+        tx.$queryRaw<
+          {
+            outcome: string;
+            application_no: string | null;
+            tenant_id: string | null;
+            application_id: string | null;
+          }[]
+        >`SELECT * FROM public.admission_submit(${slug}, ${cycleClassId}::uuid, ${phone},
           ${payload}::jsonb, ${image ? new Uint8Array(image.bytes) : null}::bytea,
           ${image?.width ?? null}::int, ${image?.height ?? null}::int, ${now}::timestamptz)`,
     );
@@ -214,8 +216,9 @@ export class AdmissionPublicService {
     await this.limiter.consume({ key: `adm-status-phone:${phone}`, limit: 20, windowSec: 86_400 });
     const no =
       typeof body.applicationNo === 'string' ? toAsciiDigits(body.applicationNo.trim()) : '';
-    const [row] = await this.call((tx) =>
-      tx.$queryRaw<{ v: AdmissionPublicStatus | null }[]>`
+    const [row] = await this.call(
+      (tx) =>
+        tx.$queryRaw<{ v: AdmissionPublicStatus | null }[]>`
         SELECT public.admission_lookup(${slug}, ${no}, ${phone}) AS v`,
     );
     if (!row?.v) throw apiError(404, 'APPLICATION_NOT_FOUND', 'No such application for this phone');

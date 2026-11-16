@@ -73,7 +73,8 @@ export class PhoneTokens {
     } catch {
       return null;
     }
-    if (claims.typ !== TYP || claims.aud !== tenantId || typeof claims.sub !== 'string') return null;
+    if (claims.typ !== TYP || claims.aud !== tenantId || typeof claims.sub !== 'string')
+      return null;
     if (typeof claims.exp !== 'number' || claims.exp * 1000 <= this.clock.now().getTime()) {
       return null;
     }

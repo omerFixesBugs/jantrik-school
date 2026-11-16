@@ -74,7 +74,10 @@ describe('admission public functions', () => {
     call(async (tx) => {
       const [r] = await tx.$queryRaw<{ v: unknown }[]>`
         SELECT public.admission_public_form(${slug}, ${now}::timestamptz) AS v`;
-      return r!.v as null | { institute: Record<string, unknown>; cycles: { classes: { cycleClassId: string }[] }[] };
+      return r!.v as null | {
+        institute: Record<string, unknown>;
+        cycles: { classes: { cycleClassId: string }[] }[];
+      };
     });
   const submit = (
     slug: string,
@@ -85,7 +88,12 @@ describe('admission public functions', () => {
   ) =>
     call(async (tx) => {
       const [r] = await tx.$queryRaw<
-        { outcome: string; application_no: string | null; tenant_id: string | null; application_id: string | null }[]
+        {
+          outcome: string;
+          application_no: string | null;
+          tenant_id: string | null;
+          application_id: string | null;
+        }[]
       >`SELECT * FROM public.admission_submit(${slug}, ${cycleClassId}::uuid, ${ph},
           ${JSON.stringify(body)}::jsonb, ${opts.photo ?? null}::bytea, ${opts.photo ? 300 : null}::int,
           ${opts.photo ? 400 : null}::int, ${opts.now ?? NOW}::timestamptz)`;
@@ -145,7 +153,11 @@ describe('admission public functions', () => {
     it('numbers applications per institute and year, with no gap under 20 parallel submits', async () => {
       const c = await school(app);
       const first = await submit(c.slug, c.class6, phone(), payload({ nameBn: 'প্রথম' }));
-      expect(first).toMatchObject({ outcome: 'CREATED', application_no: '2027-0001', tenant_id: c.tenantId });
+      expect(first).toMatchObject({
+        outcome: 'CREATED',
+        application_no: '2027-0001',
+        tenant_id: c.tenantId,
+      });
       const results = await Promise.all(
         Array.from({ length: 20 }, (_, i) =>
           submit(c.slug, c.class6, phone(), payload({ nameBn: `শিশু ${i}` })),
@@ -164,7 +176,9 @@ describe('admission public functions', () => {
       const before = await withTenant(app, b.tenantId, (tx) => tx.admissionApplication.count());
       const r = await submit(a.slug, b.class6, phone(), payload());
       expect(r).toMatchObject({ outcome: 'CLOSED', application_no: null, application_id: null });
-      expect(await withTenant(app, b.tenantId, (tx) => tx.admissionApplication.count())).toBe(before);
+      expect(await withTenant(app, b.tenantId, (tx) => tx.admissionApplication.count())).toBe(
+        before,
+      );
     });
 
     it('a closed class, or a time outside the window, is CLOSED; an unknown slug UNKNOWN', async () => {
@@ -247,7 +261,9 @@ describe('admission public functions', () => {
     it('the fourth live application of a phone in the cycle is PHONE_CAP', async () => {
       const ph = phone();
       for (const n of ['এক', 'দুই', 'তিন']) {
-        expect((await submit(a.slug, a.class6, ph, payload({ nameBn: n }))).outcome).toBe('CREATED');
+        expect((await submit(a.slug, a.class6, ph, payload({ nameBn: n }))).outcome).toBe(
+          'CREATED',
+        );
       }
       expect((await submit(a.slug, a.class6, ph, payload({ nameBn: 'চার' }))).outcome).toBe(
         'PHONE_CAP',

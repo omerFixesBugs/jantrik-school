@@ -95,6 +95,8 @@ export default defineConfig({
         REDIS_URL: E2E_REDIS_URL,
         QUEUE_PREFIX: 'jantrik-e2e',
         SMS_PROVIDER: 'outbox',
+        // The public admission form: the test stand-in's token passes, Cloudflare is never called.
+        TURNSTILE_PROVIDER: 'fake',
         // A developer's .env may enable phone testing (dev only); e2e never runs with it.
         DEV_LAN: 'false',
         // One machine plays every user at test speed: the general request limits (300 a minute

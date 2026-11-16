@@ -94,7 +94,8 @@ export class AdmissionOtpService {
     const stored = await this.redis.get(codeKey(tenantId, phone));
     if (!stored) return false;
     const attempts = await this.redis.incr(attemptsKey(tenantId, phone));
-    if (attempts === 1) await this.redis.expire(attemptsKey(tenantId, phone), ADMISSION_OTP_TTL_SEC);
+    if (attempts === 1)
+      await this.redis.expire(attemptsKey(tenantId, phone), ADMISSION_OTP_TTL_SEC);
     if (attempts > ADMISSION_OTP_MAX_ATTEMPTS) {
       await this.redis.del(codeKey(tenantId, phone), attemptsKey(tenantId, phone));
       return false;
