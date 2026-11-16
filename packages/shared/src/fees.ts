@@ -238,6 +238,23 @@ const maxDate = (a: IsoDate, b: IsoDate) => (a > b ? a : b);
 const minDate = (a: IsoDate, b: IsoDate) => (a < b ? a : b);
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
+/**
+ * The admission date a year's dues count from (sprint 1 P3, decision P3-K, review focus 5).
+ * A child admitted before their first year starts (in December, for January) is a member from
+ * the year's start: the one-time fee is due from then and the first month is not "late". A
+ * student with an enrolment in an earlier year keeps the real date, which is before any later
+ * year's one-time fee, so a promoted student is never charged one again.
+ */
+export function admissionDateForYear(input: {
+  /** The day the student was created, in the institute's timezone. */
+  createdOn: IsoDate;
+  yearStart: IsoDate;
+  /** The student has an enrolment in a year that starts before this one. */
+  enrolledBefore: boolean;
+}): IsoDate {
+  return input.enrolledBefore ? input.createdOn : maxDate(input.createdOn, input.yearStart);
+}
+
 function lastDayOfMonth(year: number, month: number): IsoDate {
   const day = new Date(Date.UTC(year, month, 0)).getUTCDate(); // month is 1-based here
   return `${year}-${pad2(month)}-${pad2(day)}`;
