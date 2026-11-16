@@ -65,7 +65,8 @@ export interface StudentListItem {
   nameBn: string | null;
   nameEn: string | null;
   status: StudentStatus;
-  photoUrl: string | null;
+  /** The stored photo's id (GET …/photo serves it), or null; a replaced photo has a new id. */
+  photoId: string | null;
   enrolment: {
     classLevel: { id: string; nameBn: string; nameEn: string };
     section: { id: string; name: string } | null;
@@ -106,7 +107,8 @@ export interface GuardianChild {
   studentCode: string;
   nameBn: string | null;
   nameEn: string | null;
-  photoUrl: string | null;
+  /** The stored photo's id (GET …/photo serves it), or null; a replaced photo has a new id. */
+  photoId: string | null;
   status: StudentListItem['status'];
   relation:
     | 'FATHER'

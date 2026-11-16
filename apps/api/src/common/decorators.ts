@@ -28,6 +28,15 @@ export const CurrentUser = createParamDecorator(
 
 export const USER_SCOPED = 'jantrik:userScoped';
 
+export const OWN_TRANSACTION = 'jantrik:ownTransaction';
+/**
+ * The route opens its request transaction itself (`RequestTransaction.run`), after its slow part:
+ * an upload's body is read and its image decoded before any database connection is taken, so a
+ * slow phone line never holds one (docs/auth.md → Request pipeline). Guards (token, module,
+ * roles, rate limits) still run first; everything that touches the database goes inside `run`.
+ */
+export const OwnTransaction = () => SetMetadata(OWN_TRANSACTION, true);
+
 export const PLATFORM = 'jantrik:platform';
 
 /**

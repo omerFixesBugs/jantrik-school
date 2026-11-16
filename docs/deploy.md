@@ -105,6 +105,9 @@ Fill in every value of `deploy/.env.prod` (git-ignored, never commit it):
   `openssl rand -hex 24` each, all different. Letters and digits only, because they go into
   connection URLs as they are. Postgres takes the
   superuser's and the roles' passwords on its **first start only** (below).
+- **Stored images:** `FILE_STORAGE_PER_TENANT_MB` (optional, default 1024): each institute's
+  total for photos, logos, signatures and seals, which live in the database
+  ([files.md](files.md)). Over it, uploads get 413 `STORAGE_FULL`.
 - **Redis memory:** `REDIS_MAXMEMORY` (default `512mb`, about an eighth of a 4 GB server). Redis
   refuses writes beyond it rather than evicting anything, so watch it (Monitoring) and raise it
   before it fills.
@@ -361,6 +364,12 @@ a `pg_dump` (custom format) of the database to `BACKUP_HOST_DIR` (default
 deletes backups older than `BACKUP_KEEP_DAYS` (default 14) and writes `LAST_SUCCESS`. The files
 are private (mode 600) and belong to `BACKUP_UID:BACKUP_GID`, the deploy user, so its own cron
 jobs can copy them away.
+
+**Images are in the database** ([files.md](files.md)): every student photo, logo, signature and
+seal is in the dump. Expect about 100 MB more per 2 000 photos (photos are at most 200 KB, usually
+about half that; JPEGs do not compress further). Size the backup folder and the off-site copy for
+it, and watch the dump's size (Monitoring). If it grows past what the backup window allows, the
+files move to a bucket (decision S7) without changing the app.
 
 Create the folder once, outside the git checkout (a `git clean` there would delete it), owned by
 the deploy user, and put that user's ids in the settings file:

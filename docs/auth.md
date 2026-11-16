@@ -260,7 +260,8 @@ JwtAuthGuard              @Public() skips; verify JWT + session not revoked → 
 RateLimitGuard            per user (authenticated) or per IP
 RolesGuard                @Roles(...)        → current roles from Redis (tenant:{tid}:user:{uid}:roles:v{n})
 ModuleGuard               @RequireModule(…)  → enabled modules from Redis (tenant:{tid}:modules)
-TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the handler:
+TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the handler
+                          (RequestTransaction.run; @OwnTransaction routes call it themselves):
                             - re-checks tenant ACTIVE/TRIAL + active membership (immediate suspension)
                             - handler runs inside the transaction (services use Db.tx)
                             - error → rollback;  success → commit → afterCommit callbacks
@@ -284,6 +285,27 @@ TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the
 - **`@UserScoped()`** runs a route with the user context only. Used by `/auth/*`, so account
   routes such as logout work even when the selected tenant is suspended.
 - **`@Public()`** routes get no request transaction.
+- **`@OwnTransaction()`** routes (sprint 1 P2: the image uploads `PUT /students/:id/photo` and
+  `PUT /institute/profile/:slot`) get no transaction from `TenantContextInterceptor`, which runs
+  before a route's own interceptors. Otherwise the transaction, and one of the pool's 10
+  connections, would be held while multer reads a slow upload and sharp decodes it: on slow 4G a
+  5 MB photo outlives the 15 s transaction (a 500 every time), and ten of them would hold every
+  connection and fail all other institutes' requests after the 5 s `maxWait`.
+  - The guards above still run first (token, rate limits, roles, module).
+  - The handler reads the body, applies the upload limit and decodes the image without the
+    database, then calls `RequestTransaction.run(fn)`: the same transaction the interceptor opens
+    (`withContext` with the same tenant and user, the tenant and membership re-check, `Db.tx`,
+    rollback on error, afterCommit after commit), just later and short.
+  - Everything that touches the database goes inside `run`. Nothing outside it may use `Db.tx`
+    (it throws: no request transaction), and `run` refuses to start inside one.
+  - The guards' checks can be a minute old by then (a slow body, the image queue), so the upload
+    routes pass `roles` to `run`: it re-checks the session (not revoked; in Redis, before the
+    transaction opens, with the 2 s deadline) and, in the transaction, that the person still holds
+    one of the route's roles, besides the institute's status and the membership. A short `run` before decoding refuses a lost role or a wrong target early.
+  - `UploadGuard` bounds the bodies in memory: 16 uploads in flight per process, 2 per person
+    (503 `IMAGE_BUSY`), a body not received within 60 s dropped.
+  - The CSV imports (student import, device people) still read their uploads inside the request
+    transaction; they are small (≤ 1–5 MB) and in the backlog to move the same way.
 
 ### Writing a service
 
