@@ -486,17 +486,20 @@ function Profile() {
         onConfirm={() => deactivate.mutate(undefined)}
       />
       <ConfirmDialog
-        open={typeof dialog === 'object' && dialog !== null}
+        open={typeof dialog === 'object' && dialog !== null && 'removeLink' in dialog}
         onOpenChange={(o) => !o && close()}
         title={
-          typeof dialog === 'object' && dialog
+          typeof dialog === 'object' && dialog && 'removeLink' in dialog
             ? t('removeGuardianTitle', { name: dialog.name })
             : ''
         }
         confirmLabel={t('removeGuardian')}
         pending={removeGuardian.isPending}
         onConfirm={() =>
-          typeof dialog === 'object' && dialog && removeGuardian.mutate(dialog.removeLink)
+          typeof dialog === 'object' &&
+          dialog &&
+          'removeLink' in dialog &&
+          removeGuardian.mutate(dialog.removeLink)
         }
       />
     </div>
