@@ -155,7 +155,11 @@ describe('promotion: copies into the new year', () => {
       tx.auditLog.findMany({ where: { entity: 'fee_concessions', entityId: s.y2027 } }),
     );
     expect(audit).toHaveLength(1);
-    expect(audit[0]!.newValues).toEqual({ copiedFrom: s.y2026, copied: 1 });
+    expect(audit[0]!.newValues).toEqual({
+      copiedFrom: s.y2026,
+      copied: 1,
+      concessions: [{ studentId: promoted!.id, feeHeadId: tuition.id }],
+    });
   });
 
   it('teachers: by class and section name; staff no longer active and deactivated subjects are skipped', async () => {
@@ -222,6 +226,97 @@ describe('promotion: copies into the new year', () => {
       subjectTeachers: 0,
       skipped: 4,
     });
+  });
+
+  it('a concession ending in the new year is copied with its end; one ending on its first day is not (review NIT 4)', async () => {
+    const admin = api(s.tokens.admin);
+    const [keepsEnd, endsAtStart] = s.students.seven;
+    const end = async (studentId: string, endedOn: string) => {
+      const c = (
+        await admin
+          .post('/fees/concessions', {
+            studentId,
+            feeHeadId: tuition.id,
+            academicYearId: s.y2026,
+            category: 'FREE_FULL',
+            validFrom: '2026-01-01',
+          })
+          .expect(201)
+      ).body as { id: string };
+      await admin
+        .post(`/fees/concessions/${c.id}/end`, { endedOn, reason: 'Scholarship ends' })
+        .expect(200);
+    };
+    await end(keepsEnd!.id, '2027-03-31');
+    await end(endsAtStart!.id, '2027-01-01');
+    for (const st of [keepsEnd!, endsAtStart!])
+      await admin
+        .post(`/students/${st.id}/enrolments`, {
+          academicYearId: s.y2027,
+          classLevelId: s.classes[8],
+          sectionId: s.sections[2027][8].ka,
+          roll: null,
+        })
+        .expect(201);
+    expect(
+      ((await admin.post('/fees/concessions/copy', years()).expect(200)).body as FeeCopyResult)
+        .copied,
+    ).toBe(1);
+    const copied = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.feeConcession.findMany({
+        where: { academicYearId: s.y2027, studentId: { in: [keepsEnd!.id, endsAtStart!.id] } },
+      }),
+    );
+    expect(copied).toHaveLength(1);
+    expect(copied[0]).toMatchObject({ studentId: keepsEnd!.id, endedReason: 'Scholarship ends' });
+    expect(copied[0]!.endedOn!.toISOString().slice(0, 10)).toBe('2027-03-31');
+  });
+
+  it('copies only go forward in time (review NIT 3)', async () => {
+    const back = { fromAcademicYearId: s.y2027, toAcademicYearId: s.y2026 };
+    expect((await api(s.tokens.admin).post('/fees/terms/copy', back).expect(422)).body.code).toBe(
+      'YEAR_ORDER',
+    );
+    expect(
+      (await api(s.tokens.admin).post('/fees/concessions/copy', back).expect(422)).body.code,
+    ).toBe('YEAR_ORDER');
+  });
+
+  it("an accountant's (or a former teacher's) old subject assignment is not copied (review SF1)", async () => {
+    const former = await addMember(h, s.tenantId, { roles: ['TEACHER'] });
+    const science = await withTenant(h.prisma, s.tenantId, async (tx) => {
+      const subject = await tx.subject.findFirstOrThrow({
+        where: { classLevelId: s.classes[7] },
+        orderBy: { sortOrder: 'asc' },
+      });
+      await tx.sectionSubjectTeacher.create({
+        data: {
+          tenantId: s.tenantId,
+          sectionId: s.sections[2026][7].ka,
+          subjectId: subject.id,
+          classLevelId: s.classes[7],
+          userId: former.userId,
+        },
+      });
+      return subject.id;
+    });
+    await h.access.setMemberRoles(s.tenantId, former.userId, ['ACCOUNTANT']);
+    const res = (
+      await api(s.tokens.admin)
+        .post(`/setup/academic-years/${s.y2027}/copy-teachers`, {
+          fromAcademicYearId: s.y2026,
+          classTeachers: false,
+          subjectTeachers: true,
+        })
+        .expect(200)
+    ).body as TeacherCopyResult;
+    expect(res.subjectTeachers).toBe(0);
+    const rows = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.sectionSubjectTeacher.count({
+        where: { userId: former.userId, subjectId: science, sectionId: s.sections[2027][7].ka },
+      }),
+    );
+    expect(rows).toBe(0);
   });
 
   it('without FEES the fee copies answer 403; teachers and accountants cannot copy', async () => {

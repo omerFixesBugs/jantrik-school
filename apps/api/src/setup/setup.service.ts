@@ -242,14 +242,18 @@ export class SetupService {
       const t = target.get(`${s.classLevelId}|${s.name}`);
       if (t) mapped.set(s.id, t);
     }
-    const staff = new Set(
-      (
-        await tx.membership.findMany({
-          where: { status: 'ACTIVE', role: { in: ['OWNER', 'ADMIN', 'TEACHER', 'ACCOUNTANT'] } },
-          select: { userId: true },
-        })
-      ).map((m) => m.userId),
-    );
+    // The rule of the normal assignment paths (attendance and exams setup, review SF1): an ACTIVE
+    // OWNER, ADMIN or TEACHER membership and a staff profile. An accountant, or a former teacher
+    // whose subject assignment stayed behind, is not copied.
+    const [members, profiles] = await Promise.all([
+      tx.membership.findMany({
+        where: { status: 'ACTIVE', role: { in: ['OWNER', 'ADMIN', 'TEACHER'] } },
+        select: { userId: true },
+      }),
+      tx.staffProfile.findMany({ select: { userId: true } }),
+    ]);
+    const profiled = new Set(profiles.map((p) => p.userId));
+    const staff = new Set(members.map((m) => m.userId).filter((id) => profiled.has(id)));
     const result: TeacherCopyResult = { sectionTeachers: 0, subjectTeachers: 0, skipped: 0 };
     const fromSectionIds = sections.filter((s) => s.academicYearId === from.id).map((s) => s.id);
 

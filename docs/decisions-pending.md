@@ -962,3 +962,16 @@ Built in `feature/sprint-1-p5b-promotion-wizard` (on top of P5a). Decided alone:
   (one layout for every width; checked at 390 px in Playwright).
 - **P5-b6. The wizard never switches the year by itself**, and its Playwright spec does not switch
   either (the specs after it live in the seeded current year).
+
+After the review (round 1), decided alone:
+
+- **P5-b7. Teacher copy uses the assignment paths' rule:** an ACTIVE OWNER, ADMIN or TEACHER
+  membership and a staff profile (P5-b1 counted accountants and skipped the profile check).
+- **P5-b8. Fee copies only go forward in time** (`422 YEAR_ORDER` when the target year does not
+  start after the source year). Two concession copies at once never double a concession (the
+  second skips what the first made); the audit row lists the copied student and head pairs, the
+  term copy the copied term names.
+- **P5-b9. A concession that ends after the new year's first day is copied with its end date**
+  (and who ended it, and why); one ending on or before that day is not copied (it does not run in
+  the new year).
+- **P5-b10. The run page's "leaves" defaults the date to the old year's last day.**

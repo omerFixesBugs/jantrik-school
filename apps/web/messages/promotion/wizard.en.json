@@ -62,7 +62,10 @@
     "switchUnderstand": "I understand what is not finished",
     "switchDo": "Make {name} current",
     "switchDone": "{name} is the current year.",
-    "alreadyCurrent": "{name} is already the current year."
+    "alreadyCurrent": "{name} is already the current year.",
+    "rollsPendingRuns": "Runs into this class are not applied yet ({names}: {count} students). Numbered now, the students they bring come after everyone numbered.",
+    "rollsForce": "Number them anyway",
+    "switchWithoutSection": "{n, plural, one {{count} student} other {{count} students}} in the new year without a {section}"
   },
   "run": {
     "back": "New academic year",
@@ -149,7 +152,13 @@
       "YEAR_ORDER": "The new year must start after this one.",
       "ACTOR_NOT_ADMIN": "the admin who started it is no longer an admin",
       "ERROR": "an error; resume to try again",
-      "TIMEOUT": "it took too long; resume to try again"
-    }
+      "TIMEOUT": "it took too long; resume to try again",
+      "RUNS_PENDING": "Runs into this class are not applied yet. Apply them first, or number anyway.",
+      "RUN_HAS_APPLIED": "Some rows are applied: the run stays."
+    },
+    "delete": "Delete the run",
+    "deleteTitle": "Delete this run?",
+    "deleteBody": "Nothing of it is applied. The list of decisions goes; you can start the class again.",
+    "deleted": "The run is deleted"
   }
 }

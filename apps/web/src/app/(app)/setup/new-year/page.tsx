@@ -384,11 +384,13 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
                 .filter((r) => r.roll !== ''),
             }))
             .filter((s) => s.rolls.length > 0),
+          force,
         },
       });
     },
     { success: t('rollsSaved') },
   );
+  const [force, setForce] = useState(false);
   const classLabel = label('class_level', 'Class', { inText: true });
   const section = label('section', 'Section', { inText: true });
   const p = preview.data;
@@ -411,6 +413,27 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
         <p className="text-muted-foreground text-sm">
           {t('rollsNone', { classLevel: classLabel })}
         </p>
+      )}
+      {p && p.pendingRuns.length > 0 && waiting && (
+        <Alert data-testid="rolls-pending-runs">
+          <AlertDescription className="flex flex-col gap-2">
+            <span>
+              {t('rollsPendingRuns', {
+                names: p.pendingRuns.map((r) => pick(locale, r.classLevel)).join(', '),
+                count: formatCount(
+                  p.pendingRuns.reduce((sum, r) => sum + r.pending, 0),
+                  locale,
+                ),
+              })}
+            </span>
+            <ToggleField
+              id="rolls-force"
+              checked={force}
+              onChange={setForce}
+              label={t('rollsForce')}
+            />
+          </AlertDescription>
+        </Alert>
       )}
       {p && p.withoutSection > 0 && (
         <Alert>
@@ -465,7 +488,7 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
             <div>
               <Button
                 onClick={() => save.mutate(undefined)}
-                disabled={save.isPending}
+                disabled={save.isPending || (p.pendingRuns.length > 0 && !force)}
                 data-testid="save-rolls"
               >
                 {t('rollsSave')}
@@ -481,6 +504,7 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
 function SwitchStep({ to }: { to: SetupAcademicYear }) {
   const t = useTranslations('promotion.wizard');
   const locale = useLocale() as Locale;
+  const label = useLabel();
   const { client, session } = useAuth();
   const f = (n: number) => formatCount(n, locale);
   const check = useQuery({
@@ -506,6 +530,12 @@ function SwitchStep({ to }: { to: SetupAcademicYear }) {
         c.notCarriedOver > 0 &&
           t('switchNotCarriedOver', { count: f(c.notCarriedOver), n: c.notCarriedOver }),
         c.withoutRoll > 0 && t('switchWithoutRoll', { count: f(c.withoutRoll), n: c.withoutRoll }),
+        c.withoutSection > 0 &&
+          t('switchWithoutSection', {
+            count: f(c.withoutSection),
+            n: c.withoutSection,
+            section: label('section', 'Section', { inText: true }),
+          }),
       ].filter((x): x is string => Boolean(x))
     : [];
   return (

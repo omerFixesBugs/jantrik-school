@@ -15,8 +15,15 @@ import {
   type SetupClassLevel,
   type SetupSection,
 } from '@jantrik/shared';
-import { ArrowLeftIcon, PlayIcon, RefreshCwIcon, RotateCcwIcon, SaveIcon } from 'lucide-react';
-import { useParams } from 'next/navigation';
+import {
+  ArrowLeftIcon,
+  PlayIcon,
+  RefreshCwIcon,
+  RotateCcwIcon,
+  SaveIcon,
+  Trash2Icon,
+} from 'lucide-react';
+import { useParams, useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { useMemo, useState } from 'react';
 import { SectionCard, SelectField } from '@/components/form-kit';
@@ -24,7 +31,7 @@ import { DateInput } from '@/components/date-input';
 import { Pill } from '@/components/kit/pill';
 import { PageGate } from '@/components/page-gate';
 import { pick, usePromotionMutation, useStopReason } from '@/components/promotion/kit';
-import { useSetupQuery } from '@/components/setup/setup-kit';
+import { ConfirmDialog, useSetupQuery } from '@/components/setup/setup-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -136,6 +143,12 @@ function Run() {
   const resume = usePromotionMutation(() =>
     client.api<PromotionRunDetail>(`/promotions/${runId}/resume`, { method: 'POST' }),
   );
+  const router = useRouter();
+  const [deleting, setDeleting] = useState(false);
+  const remove = usePromotionMutation(
+    () => client.api(`/promotions/${runId}`, { method: 'DELETE' }),
+    { success: t('deleted'), onSuccess: () => router.push('/setup/new-year') },
+  );
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const current = (r: PromotionRowView): Edit => edits[r.id] ?? fromRow(r);
@@ -177,7 +190,8 @@ function Run() {
         targetSectionId: null,
         targetStudyGroupId: null,
         leaveStatus: status ?? current(r).leaveStatus ?? 'GRADUATED',
-        leftOn: current(r).leftOn ?? null,
+        // The old year's last day unless a date was already chosen (review NIT 2).
+        leftOn: current(r).leftOn ?? data.fromYear.endDate,
       });
     const target =
       decision === 'REPEAT' ? data.classLevel.id : (data.nextClassLevel?.id ?? data.classLevel.id);
@@ -200,6 +214,15 @@ function Run() {
 
   return (
     <div className="flex flex-col gap-(--section-gap)" data-testid="promotion-run">
+      <ConfirmDialog
+        open={deleting}
+        onOpenChange={(o) => !o && setDeleting(false)}
+        title={t('deleteTitle')}
+        body={t('deleteBody')}
+        confirmLabel={t('delete')}
+        pending={remove.isPending}
+        onConfirm={() => remove.mutate(undefined)}
+      />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           <ButtonLink variant="ghost" size="sm" href="/setup/new-year" className="self-start">
@@ -236,15 +259,28 @@ function Run() {
         title={t('decision')}
         actions={
           editable && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => refresh.mutate(undefined)}
-              disabled={refresh.isPending || changed > 0}
-            >
-              <RefreshCwIcon aria-hidden />
-              {t('refresh')}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refresh.mutate(undefined)}
+                disabled={refresh.isPending || changed > 0}
+              >
+                <RefreshCwIcon aria-hidden />
+                {t('refresh')}
+              </Button>
+              {applied === 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDeleting(true)}
+                  data-testid="delete-run"
+                >
+                  <Trash2Icon aria-hidden />
+                  {t('delete')}
+                </Button>
+              )}
+            </>
           )
         }
       >

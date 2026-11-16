@@ -18,6 +18,8 @@ const KNOWN = new Set([
   'ROW_APPLIED',
   'ROLL_TAKEN',
   'YEAR_ORDER',
+  'RUNS_PENDING',
+  'RUN_HAS_APPLIED',
 ]);
 
 /** The name in the page's language, the other one when it is missing. */

@@ -487,8 +487,7 @@ export class FeeSetupService {
    */
   async copyTerms(input: CopyInput): Promise<FeeCopyResult> {
     const tx = this.db.tx;
-    const from = await this.year(input.fromAcademicYearId);
-    const to = await this.year(input.toAcademicYearId);
+    const { from, to } = await this.copyYears(input);
     const taken = new Set(
       (
         await tx.feeTerm.findMany({ where: { academicYearId: to.id }, select: { nameBn: true } })
@@ -522,7 +521,12 @@ export class FeeSetupService {
         entity: 'fee_terms',
         entityId: to.id,
         action: 'CREATE',
-        newValues: { copiedFrom: from.id, copied: data.length, outsideYear },
+        newValues: {
+          copiedFrom: from.id,
+          copied: data.length,
+          outsideYear,
+          terms: data.map((t) => t.nameBn),
+        },
       });
     }
     return { copied: data.length, skipped: source.length - data.length, outsideYear };
@@ -535,13 +539,14 @@ export class FeeSetupService {
    */
   async copyConcessions(input: CopyInput): Promise<FeeCopyResult> {
     const tx = this.db.tx;
-    const from = await this.year(input.fromAcademicYearId);
-    const to = await this.year(input.toAcademicYearId);
+    const { from, to } = await this.copyYears(input);
     const running = await tx.feeConcession.findMany({
       where: {
         academicYearId: from.id,
         validFrom: { lte: from.endDate },
-        OR: [{ endedOn: null }, { endedOn: { gt: from.endDate } }],
+        // Still running when the new year starts: no end, or one after the new year's first day
+        // (that end is kept, review NIT 4).
+        OR: [{ endedOn: null }, { endedOn: { gt: to.startDate } }],
         student: {
           deletedAt: null,
           status: 'ACTIVE',
@@ -575,18 +580,40 @@ export class FeeSetupService {
         reason: c.reason,
         validFrom: to.startDate,
         createdById: userId,
+        endedOn: c.endedOn,
+        endedById: c.endedOn ? c.endedById : null,
+        endedReason: c.endedOn ? c.endedReason : null,
       });
     }
-    if (data.length > 0) {
-      await tx.feeConcession.createMany({ data });
+    // A copy running at the same time may have added some: those are skipped, never doubled.
+    const created =
+      data.length === 0
+        ? []
+        : await tx.feeConcession.createManyAndReturn({
+            data,
+            skipDuplicates: true,
+            select: { studentId: true, feeHeadId: true },
+          });
+    if (created.length > 0) {
       await this.audit.record({
         entity: 'fee_concessions',
         entityId: to.id,
         action: 'CREATE',
-        newValues: { copiedFrom: from.id, copied: data.length },
+        newValues: { copiedFrom: from.id, copied: created.length, concessions: created },
       });
     }
-    return { copied: data.length, skipped: running.length - data.length };
+    return { copied: created.length, skipped: running.length - created.length };
+  }
+
+  /** The two years of a copy: the new one must start after the old one (422 YEAR_ORDER). */
+  private async copyYears(input: CopyInput) {
+    const from = await this.year(input.fromAcademicYearId);
+    const to = await this.year(input.toAcademicYearId);
+    if (to.startDate.getTime() <= from.startDate.getTime())
+      throw apiError(422, 'YEAR_ORDER', 'Copy into a year that starts after this one', {
+        field: 'toAcademicYearId',
+      });
+    return { from, to };
   }
 
   // ─────────────────────────── Concessions ───────────────────────────
