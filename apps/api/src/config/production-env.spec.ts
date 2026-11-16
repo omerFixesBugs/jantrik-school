@@ -195,6 +195,8 @@ describe('production env: the API and the worker', () => {
     const dev = {
       DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
       DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:x@localhost:5432/jantrik',
+      // Required once PR #16 (P1-J) is merged; ignored by the schema before that.
+      DATABASE_LOGIN_URL: 'postgresql://jantrik_login_app:x@localhost:5432/jantrik',
       DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@localhost:5432/jantrik',
       JWT_ACCESS_SECRET: 'x'.repeat(40),
       OTP_PEPPER: 'y'.repeat(40),
@@ -228,6 +230,8 @@ describe('production env: the API and the worker', () => {
     const dev = {
       DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
       DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:x@localhost:5432/jantrik',
+      // Required once PR #16 (P1-J) is merged; ignored by the schema before that.
+      DATABASE_LOGIN_URL: 'postgresql://jantrik_login_app:x@localhost:5432/jantrik',
       DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@localhost:5432/jantrik',
       JWT_ACCESS_SECRET: 'x'.repeat(40),
       OTP_PEPPER: 'y'.repeat(40),
