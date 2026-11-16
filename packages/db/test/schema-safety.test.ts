@@ -71,6 +71,11 @@ describe('schema safety net', () => {
         'stored_files',
         'stored_file_usage',
         'institute_profiles',
+        'admission_cycles',
+        'admission_cycle_classes',
+        'admission_applications',
+        'admission_application_photos',
+        'admission_counters',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
