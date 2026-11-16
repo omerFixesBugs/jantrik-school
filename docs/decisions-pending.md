@@ -605,35 +605,49 @@ Branch `chore/small-followups`, one PR. Decided by the agent alone (the owner wa
 be changed in review.
 
 F-1. **P1-I is built as the owner answered:** a password is also refused when it contains a
-distinctive word of an institute's name. The name is split at spaces, punctuation and symbols;
-generic words are dropped; every remaining word of 4 or more code points (the whole-name rule's
-counting) is refused. The whole-name rule stays. The error code stays `HAS_INSTITUTE_NAME` (its
-message now says "the name or a word from it"), so the web and the API did not change shape.
+distinctive word of an institute's name. The name is split at spaces, punctuation, symbols and
+zero-width spaces; generic words and words of digits only (`2026` in "Udvash 2026 Batch") are
+dropped; every remaining word of 4 or more code points (the whole-name rule's counting) is
+refused. The whole-name rule stays (digits included). Both sides are compared like the phone rule:
+NFKC (full-width letters and digits), lower case, ASCII digits, khanda ta in its old encoding
+(ত + ্ + ZWJ) read as ৎ, and without spaces, punctuation, symbols or invisible characters (soft
+hyphen, zero-width space and joiners, word joiner…), so `ko.dom2026` or `k-o-d-o-m` count as
+`kodom`. **Glued endings:** generic words glued to the end of a word are cut off only when they
+are 6 or more code points together (`শাপলাউচ্চবিদ্যালয়` → `শাপলা`, `Kodomtolaschool` →
+`kodomtola`), so a short generic ending leaves no fragment (`Australia` keeps its `alia`; `austr`
+is not a word of the name). The error code stays `HAS_INSTITUTE_NAME` (its message now says "the
+name or a word from it"), so the web and the API did not change shape.
 
 F-2. **The generic words** (`GENERIC_NAME_WORDS` in `packages/shared/src/password.ts`), chosen
 from the owner's examples "and similar": the kind of institute (school, college, madrasa, academy,
 coaching, centre, institute, kindergarten, polytechnic, pathshala…), its level (high, secondary,
 primary, junior, dakhil, alim, fazil, kamil…), who it is for (girls, boys, mohila…), its medium and
 standing (english, bangla, version, international, model, ideal, public, government/govt, cadet,
-residential…), madrasa name words (darul, uloom, jamia, hafizia, nurani, qawmi, islamia, quran…),
-`and` written in Bangla, each in Bangla and in English letters with common spellings (madrasah,
-madrassa, মাদরাসা, সরকারী, একাডেমী…). Not generic: place names and people's names (`Dhaka`,
-`Motijheel`, `Salim`): they point at the institute, so they are refused. Choices beyond the
-owner's words:
+residential, pilot, memorial, smriti, shaheed…), madrasa name words (darul, uloom, jamia, hafizia,
+nurani, qawmi, islamia, quran, ebtedayee…), nursery and shishu, `and` written in Bangla, each in
+Bangla and in English letters with common spellings (madrasah, madrassa, bidyalay, uchcha,
+balika, madhyamik, prathomik, adarsha, sarkari, মাদরাসা, সরকারী, একাডেমী…). Not generic: place
+names and people's names (`Dhaka`, `Motijheel`, `Cantonment`, `Salim`): they point at the
+institute, so they are refused. Choices beyond the owner's words:
 
-- **Generic words glued to the end of a word** are cut off too (`শাপলাউচ্চবিদ্যালয়` → `শাপলা`,
-  `Kodomtolaschool` → `kodomtola`), and the whole glued word is still refused as well, so the rule
-  never refuses less than splitting at spaces alone. Only endings: a generic word at the start of
-  an ordinary word is not cut (`Highland` stays `highland`, so `highschool2026` is allowed).
-- **Zero-width joiners** (U+200C, U+200D: typed inside some Bangla words) are ignored on both
-  sides, for whole names too. Unicode forms (য় as one code point or two) were already unified.
+- **Generic words glued to the end of a word** are cut off too (6 or more code points together,
+  F-1), and the whole glued word is still refused as well, so the rule never refuses less than
+  splitting at spaces alone. Only endings: a generic word at the start of an ordinary word is not
+  cut (`Highland` stays `highland`, so `highschool2026` is allowed).
+- **Invisible characters and other ways of writing** are ignored on both sides, for whole names
+  too (F-1). Unicode forms (য় as one code point or two) were already unified.
 - **The slug is not checked** (the decision mentioned it as a "perhaps"; the owner's answer did not
   ask for it).
 
 F-3. **`CORS_ORIGINS` is normalised in `env.ts`** like `PLATFORM_ORIGINS` (lower-case host, no
-trailing slash or default port). An entry that is not an origin (`*`, a bare host) is kept as
-written instead of stopping the start: it matches nothing, production refuses it as before, and a
-developer's existing `.env` keeps working.
+trailing slash or default port). An entry that is not exactly an origin (`*`, a bare host, or a
+URL with a login, a path, a query or a fragment) is kept as written instead of stopping the start:
+it matches no browser's Origin, production refuses it, and a developer's existing `.env` keeps
+working. **Also fixed for `PLATFORM_ORIGINS`** (they share the helper, which used `URL.origin`):
+`https://app.jantrik.com.bd@evil.example` used to become `https://evil.example` and pass the
+production check (in both lists, since before this PR for `PLATFORM_ORIGINS`). Such an entry is
+now no origin: production refuses it in either list, and `PLATFORM_ORIGINS` refuses it everywhere,
+as it already refused entries that are not URLs.
 
 F-4. **Redis is pinned to `redis:7.4.11-alpine`**, the version of the image this PC had (built
 2026-09-17; the tag exists on Docker Hub), in the production compose, the development compose and
@@ -652,10 +666,15 @@ F-6. **Test users' phones are unique per database, across runs too** (the appear
 P0-8). A per-run counter is not enough: the test database keeps every run's users, and Vitest
 gives each test file its own module (no shared memory). So one counter per database lives in a
 file in the OS temp folder (`jantrik-test-phones/`), taken 200 numbers at a time under a lock, and
-never behind a clock that moves 20 numbers a second (a deleted file restarts ahead of older runs).
-New phones use operators no test used before (API +88013, db package +88014, from 50 000 000; the
-seeds' fixed numbers are lower and the old random phones were 017/018), so they cannot meet old
-test users either. `randomPhone` kept its name (about 40 files call it).
+never behind a clock that moves 1 number a second (a deleted file restarts ahead of older runs,
+given about an hour and a half per 5 000 phones they used). New phones use operators no test used
+before (API +88013, db package +88014, 50 000 000 to 98 999 999; the seeds' fixed numbers are lower
+and the old random phones were 017/018), so they cannot meet old test users either. **The numbers
+never wrap:** when the 49 million are used up (the clock alone gets there in about May 2028),
+drawing stops with a message to recreate the test database and move the start date, instead of
+repeating numbers older runs gave out. The lock is taken over only when stale (10 s), by moving it
+aside first and checking its owner, and Windows' "being removed" answers (EPERM, EACCES) mean
+"busy". `randomPhone` kept its name (about 40 files call it).
 
 ## The refresh race fix (2026-11-15)
 
@@ -707,7 +726,7 @@ P1-G. **The rules are checked before the code** (a change to the plan's order, w
 
 P1-H. **`GET /me/password` also returns the person's own phone** (an addition to the plan), so the form can check the phone rule as they type. It is their own number, returned only to them.
 
-P1-I. **Open, for the owner: catch part of an institute's name too?** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widens the rule you set, so it is not built.
+P1-I. **Built in the follow-ups PR (`chore/small-followups`, the owner's answer of 2026-11-16; see F-1): a distinctive word of an institute's name is refused too.** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widened the rule you set, so it waited for your answer.
 
 - To change: `passwordProblems` in `packages/shared/src/password.ts` (the server and the form share it).
 

@@ -200,13 +200,16 @@ audited in that institute. Someone who is staff elsewhere switches to that insti
    - `HAS_PHONE`: the person's 10-digit national number, in any form (`01…`, `+880…`, Bangla
      digits, split by spaces, punctuation or symbols);
    - `HAS_INSTITUTE_NAME`: the whole name of any institute they are an active member of (as a
-     guardian too), or one of its distinctive words (P1-I), ignoring case, spaces and zero-width
-     joiners. Distinctive: the name split at spaces, punctuation and symbols, generic words
-     dropped (`GENERIC_NAME_WORDS` in `packages/shared/src/password.ts`: school, college, madrasa,
-     academy, coaching, high, model, বিদ্যালয়, উচ্চ, স্কুল, মাদ্রাসা, কলেজ, কোচিং… and their spellings),
-     and generic words glued to a word's end also counted without them (`শাপলাউচ্চবিদ্যালয়` →
-     `শাপলা`). Names and words under 4 characters (code points) are skipped. So for "শাপলা উচ্চ
-     বিদ্যালয়", `শাপলা২০২৬১২৩৪` is refused and `বিদ্যালয়২০২৬১২` is not;
+     guardian too), or one of its distinctive words (P1-I). Both sides are compared in NFKC, lower
+     case, with ASCII digits, khanda ta's old encoding read as ৎ, and without spaces, punctuation,
+     symbols or invisible characters (soft hyphen, zero-width space and joiners…), so `ko.dom2026`
+     contains `kodom`. Distinctive: the name split at spaces, punctuation, symbols and zero-width
+     spaces; generic words (`GENERIC_NAME_WORDS` in `packages/shared/src/password.ts`: school,
+     college, madrasa, academy, coaching, high, model, বিদ্যালয়, উচ্চ, স্কুল, মাদ্রাসা, কলেজ, কোচিং…
+     and their spellings) and words of digits only dropped; generic words of 6 or more code points
+     glued to a word's end also cut off (`শাপলাউচ্চবিদ্যালয়` → `শাপলা`). Names and words under 4
+     characters (code points) are skipped. So for "শাপলা উচ্চ বিদ্যালয়", `শাপলা২০২৬১২৩৪` is refused
+     and `বিদ্যালয়২০২৬১২` is not;
    - `TOO_COMMON`: on the list in `apps/api/src/auth/common-passwords.txt` (SecLists' 10,000 most
      common, MIT; plus jantrik, bangladesh and password with digits and years). Server only;
 3. the code, else `422 PASSWORD_CODE_INVALID` (wrong, expired or used). Checking the rules first
@@ -464,6 +467,9 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
 
 `CORS_ORIGINS` and `PLATFORM_ORIGINS` are normalised as browsers send `Origin` (lower-case host,
 no trailing slash or default port), so an entry written `https://App.example.com/` still matches.
+An entry with a login, a path, a query or a fragment is no origin (`https://app.example@evil.example`
+is not `https://evil.example`): production refuses it in either list, `PLATFORM_ORIGINS` everywhere,
+and in development a `CORS_ORIGINS` entry like that matches nothing.
 
 In production `SMS_PROVIDER=none` stands in until a gateway is built: every SMS fails and is
 recorded as failed. What else production refuses: [deploy.md](deploy.md) → Environment checks.
