@@ -9,12 +9,15 @@ import {
   type Tenant,
 } from '../src/index.js';
 import { APP_URL, INGEST_URL, LOGIN_URL, OWNER_URL, PLATFORM_URL } from './env.js';
+import { phoneSource } from './test-phones.js';
 
 export const appClient = (): PrismaClient => createPrismaClient(APP_URL);
 
-/** A random valid Bangladeshi mobile number (E.164). */
-export const randomPhone = (): string =>
-  `+88017${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
+/**
+ * A valid Bangladeshi mobile number (E.164) that no other test user of this database has, in this
+ * run or an earlier one (`test-phones.ts`; the API tests draw from +88013, these from +88014).
+ */
+export const randomPhone: () => string = phoneSource('+88014', APP_URL);
 export const ownerClient = (): PrismaClient => createPrismaClient(OWNER_URL);
 /** The API platform module's role: the only one that may run the platform_* functions. */
 export const platformClient = (): PrismaClient => createPrismaClient(PLATFORM_URL);

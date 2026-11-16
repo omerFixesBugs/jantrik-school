@@ -40,9 +40,11 @@ the template.
 **Every running service checks its login at start-up** (`readLoginPrivileges` in
 [`packages/db/src/login-privileges.ts`](../packages/db/src/login-privileges.ts)): the API and the
 worker (`jantrik_app`), the platform module (`jantrik_platform_app`), the password login
-(`jantrik_login_app`) and the receiver (`jantrik_ingest_app`) refuse to start when their login is a superuser, has BYPASSRLS, or can
-become (`pg_has_role(…, 'MEMBER')`) a role that is either, or `pg_read_all_data`,
-`pg_write_all_data` or one of the server file and program roles. The check fails closed: while the
+(`jantrik_login_app`) and the receiver (`jantrik_ingest_app`) refuse to start when their login is a
+superuser, has BYPASSRLS, REPLICATION (a replication connection streams every row, whatever RLS
+says) or CREATEROLE (no runtime login needs it), or can become (`pg_has_role(…, 'MEMBER')`) a role
+that has any of these, or `pg_read_all_data`, `pg_write_all_data` or one of the server file and
+program roles. The check fails closed: while the
 database does not answer, it is asked again for about 3 minutes, then the service exits.
 
 The roles and databases (`jantrik`, `jantrik_test`) are created by

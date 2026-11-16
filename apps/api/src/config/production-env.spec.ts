@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { envSchema, validateEnv } from './env.js';
+import { isAllowedOrigin } from './dev-lan.js';
 import { validateIngestEnv } from './ingest-env.js';
 import {
   API_ONLY_SECRETS,
   DATABASE_ADMIN_SECRETS,
+  normaliseOrigin,
   trustsAnyClient,
   unsafeOrigin,
 } from './production-env.js';
@@ -169,6 +171,97 @@ describe('production env: the API and the worker', () => {
     ).toEqual(['https://platform.jantrik.com.bd']);
     // A production list in another case or with a slash still matches its CORS entry.
     expect(apiError({ ...api, PLATFORM_ORIGINS: 'https://PLATFORM.jantrik.com.bd/' })).toBe('');
+  });
+
+  it('pins Redis to one exact version in the production compose, the development compose and CI', () => {
+    const images = [
+      'deploy/docker-compose.prod.yml',
+      'docker-compose.yml',
+      '.github/workflows/ci.yml',
+    ].flatMap((file) =>
+      [
+        ...readFileSync(path.resolve(import.meta.dirname, '../../../..', file), 'utf8').matchAll(
+          /image:\s*(redis:\S+)/g,
+        ),
+      ].map((m) => ({ file, image: m[1]! })),
+    );
+    // The production compose and the development one once each, CI's two jobs.
+    expect(images).toHaveLength(4);
+    for (const { file, image } of images) {
+      expect(image, file).toMatch(/^redis:\d+\.\d+\.\d+-alpine$/);
+    }
+    expect(new Set(images.map((i) => i.image)).size).toBe(1);
+  });
+
+  it('treats an entry with a login, a path, a query or a fragment as no origin at all', () => {
+    const dev = {
+      DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
+      DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:x@localhost:5432/jantrik',
+      // Required once PR #16 (P1-J) is merged; ignored by the schema before that.
+      DATABASE_LOGIN_URL: 'postgresql://jantrik_login_app:x@localhost:5432/jantrik',
+      DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@localhost:5432/jantrik',
+      JWT_ACCESS_SECRET: 'x'.repeat(40),
+      OTP_PEPPER: 'y'.repeat(40),
+    };
+    for (const entry of [
+      // A URL's origin would drop the part before @: this is https://evil.example.
+      'https://app.jantrik.com.bd@evil.example',
+      'https://user:pw@app.jantrik.com.bd',
+      'https://app.jantrik.com.bd/app',
+      'https://app.jantrik.com.bd/?x=1',
+      'https://app.jantrik.com.bd/#top',
+    ]) {
+      expect(normaliseOrigin(entry), entry).toBeNull();
+      // Production refuses it in either list.
+      expect(
+        apiError({ ...api, CORS_ORIGINS: `${entry},https://platform.jantrik.com.bd` }),
+      ).toMatch(/CORS_ORIGINS must hold https origins only; ".*" is not an origin/);
+      expect(apiError({ ...api, PLATFORM_ORIGINS: entry })).toMatch(
+        /PLATFORM_ORIGINS: ".*" is not an origin/,
+      );
+      // Development keeps a CORS entry as written: it matches no browser's Origin.
+      const parsed = envSchema.parse({ ...dev, CORS_ORIGINS: entry });
+      expect(parsed.CORS_ORIGINS).toEqual([entry]);
+      expect(isAllowedOrigin('https://evil.example', parsed)).toBe(false);
+      expect(isAllowedOrigin('https://app.jantrik.com.bd', parsed)).toBe(false);
+    }
+    expect(normaliseOrigin('HTTPS://App.Jantrik.com.bd:443/')).toBe('https://app.jantrik.com.bd');
+  });
+
+  it('normalises CORS_ORIGINS too, so the CORS middleware allows what the start-up check passed', () => {
+    const dev = {
+      DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
+      DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:x@localhost:5432/jantrik',
+      // Required once PR #16 (P1-J) is merged; ignored by the schema before that.
+      DATABASE_LOGIN_URL: 'postgresql://jantrik_login_app:x@localhost:5432/jantrik',
+      DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@localhost:5432/jantrik',
+      JWT_ACCESS_SECRET: 'x'.repeat(40),
+      OTP_PEPPER: 'y'.repeat(40),
+    };
+    const parsed = envSchema.parse({
+      ...dev,
+      CORS_ORIGINS:
+        'HTTPS://App.Jantrik.com.bd/ , http://localhost:3000/,https://a.example.com:443',
+    });
+    expect(parsed.CORS_ORIGINS).toEqual([
+      'https://app.jantrik.com.bd',
+      'http://localhost:3000',
+      'https://a.example.com',
+    ]);
+    // The browser sends the normalised form; the middleware's check is an exact match.
+    expect(isAllowedOrigin('https://app.jantrik.com.bd', parsed)).toBe(true);
+    // An entry that is not an origin stays as written (production refuses it, see above).
+    expect(envSchema.parse({ ...dev, CORS_ORIGINS: '*,app.jantrik.com.bd' }).CORS_ORIGINS).toEqual([
+      '*',
+      'app.jantrik.com.bd',
+    ]);
+    // Production: an upper-case, slash-ended entry passes the check and is allowed by the middleware.
+    const prod = {
+      ...api,
+      CORS_ORIGINS: 'https://APP.jantrik.com.bd/,https://platform.jantrik.com.bd',
+    };
+    expect(apiError(prod)).toBe('');
+    expect(envSchema.parse(prod).CORS_ORIGINS).toContain('https://app.jantrik.com.bd');
   });
 
   it('refuses secrets shorter than 32 characters', () => {
