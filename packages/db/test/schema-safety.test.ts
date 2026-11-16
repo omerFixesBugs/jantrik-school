@@ -71,6 +71,8 @@ describe('schema safety net', () => {
         'stored_files',
         'stored_file_usage',
         'institute_profiles',
+        'promotion_runs',
+        'promotion_run_students',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
