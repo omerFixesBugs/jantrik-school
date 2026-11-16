@@ -993,3 +993,20 @@ After the review (round 1), decided alone:
   (and who ended it, and why); one ending on or before that day is not copied (it does not run in
   the new year).
 - **P5-b10. The run page's "leaves" defaults the date to the old year's last day.**
+
+After the review (round 2), decided alone:
+
+- **P5-b11. A copied concession that ends in the new year keeps who ended it and why** (the
+  original's `ended_by`/`ended_reason`): the end date was their decision; the copy's own audit
+  row names the admin who copied it.
+- **P5-b12. Terms and concessions copy only from the year just before the target** (`422
+YEAR_ORDER`); amounts from any earlier year (they carry no dates). The wizard copies from the
+  new year's previous year.
+- **P5-b13. Concession copies into one year take turns** (an advisory lock per target year):
+  only open concessions are unique, so two copies at once could each add an ended one. No test
+  forces the race.
+- **P5-b14. A section teacher needs a staff profile** (`PUT /attendance/sections/:id/teachers`),
+  as subject teachers and the teacher copy do: stricter than before (an active role alone was
+  enough).
+- **P5-b15. The run page lets a stopped run be fixed** (APPLYING with an error): rows edited,
+  refreshed, the run deleted when nothing is applied; the API refuses while a retry is queued.

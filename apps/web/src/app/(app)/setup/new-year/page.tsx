@@ -58,6 +58,12 @@ function Wizard() {
     .filter((y) => current && y.startDate > current.startDate)
     .sort((a, b) => a.startDate.localeCompare(b.startDate));
   const target = later.find((y) => y.id === chosen) ?? later[0] ?? null;
+  // Copies come from the year just before the new one (the API refuses any other).
+  const source = target
+    ? (list
+        .filter((y) => y.startDate < target.startDate)
+        .sort((a, b) => b.startDate.localeCompare(a.startDate))[0] ?? null)
+    : null;
   const fees = context?.modules.includes('FEES') ?? false;
 
   return (
@@ -102,8 +108,8 @@ function Wizard() {
 
       {current && target && (
         <>
-          {fees && <FeesStep from={current} to={target} />}
-          <TeachersStep from={current} to={target} />
+          {fees && source && <FeesStep from={source} to={target} />}
+          {source && <TeachersStep from={source} to={target} />}
           <PromoteStep to={target} />
           <RollsStep to={target} />
           <SwitchStep to={target} />
@@ -401,7 +407,10 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
         id="rolls-class"
         label={label('class_level', 'Class')}
         value={classLevelId}
-        onChange={setClassLevelId}
+        onChange={(v) => {
+          setClassLevelId(v);
+          setForce(false); // "number anyway" is asked again for each class
+        }}
         placeholder={t('rollsChoose', { classLevel: classLabel })}
         options={(classes.data ?? [])
           .filter((c) => c.isActive)

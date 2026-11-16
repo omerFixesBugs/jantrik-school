@@ -450,8 +450,7 @@ export class FeeSetupService {
 
   async copyAmounts(input: CopyInput): Promise<{ copied: number }> {
     const tx = this.db.tx;
-    const from = await this.year(input.fromAcademicYearId);
-    const to = await this.year(input.toAcademicYearId);
+    const { from, to } = await this.copyYears(input, { adjacent: false });
     const key = (r: { feeHeadId: string; classLevelId: string; studyGroupId: string | null }) =>
       `${r.feeHeadId}|${r.classLevelId}|${r.studyGroupId ?? ''}`;
     const taken = new Set(
@@ -487,7 +486,7 @@ export class FeeSetupService {
    */
   async copyTerms(input: CopyInput): Promise<FeeCopyResult> {
     const tx = this.db.tx;
-    const { from, to } = await this.copyYears(input);
+    const { from, to } = await this.copyYears(input, { adjacent: true });
     const taken = new Set(
       (
         await tx.feeTerm.findMany({ where: { academicYearId: to.id }, select: { nameBn: true } })
@@ -539,7 +538,10 @@ export class FeeSetupService {
    */
   async copyConcessions(input: CopyInput): Promise<FeeCopyResult> {
     const tx = this.db.tx;
-    const { from, to } = await this.copyYears(input);
+    const { from, to } = await this.copyYears(input, { adjacent: true });
+    // One concession copy into a year at a time (review round 2): two at once would each see the
+    // other's ended copies as missing, since only open concessions are unique.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('fee-concession-copy:' || ${to.id}, 0))`;
     const running = await tx.feeConcession.findMany({
       where: {
         academicYearId: from.id,
@@ -605,14 +607,29 @@ export class FeeSetupService {
     return { copied: created.length, skipped: running.length - created.length };
   }
 
-  /** The two years of a copy: the new one must start after the old one (422 YEAR_ORDER). */
-  private async copyYears(input: CopyInput) {
+  /**
+   * The two years of a copy (422 YEAR_ORDER otherwise): the new one starts after the old one, and
+   * with `adjacent` the old one is the year just before it (terms move exactly one year, and a
+   * concession runs on from one year into the next).
+   */
+  private async copyYears(input: CopyInput, opts: { adjacent: boolean }) {
     const from = await this.year(input.fromAcademicYearId);
     const to = await this.year(input.toAcademicYearId);
     if (to.startDate.getTime() <= from.startDate.getTime())
       throw apiError(422, 'YEAR_ORDER', 'Copy into a year that starts after this one', {
         field: 'toAcademicYearId',
       });
+    if (opts.adjacent) {
+      const previous = await this.db.tx.academicYear.findFirst({
+        where: { startDate: { lt: to.startDate } },
+        orderBy: { startDate: 'desc' },
+        select: { id: true },
+      });
+      if (previous?.id !== from.id)
+        throw apiError(422, 'YEAR_ORDER', 'Copy from the year just before the new one', {
+          field: 'fromAcademicYearId',
+        });
+    }
     return { from, to };
   }
 

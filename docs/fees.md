@@ -180,7 +180,8 @@ Rules of the promotion itself: [promotion.md](promotion.md).
 - **The admission fee is never charged again** (one ONE_TIME due per student and head across all
   years); a YEARLY fee is charged each year.
 - **Copies into the new year** (OWNER/ADMIN, the wizard's fee step; each can run again and keeps
-  what is there; only into a year that starts later, `422 YEAR_ORDER`):
+  what is there; only into a year that starts later, and terms and concessions only from the
+  year just before it, `422 YEAR_ORDER`):
   - amounts: `POST /fees/amounts/copy` (missing rows only);
   - terms: `POST /fees/terms/copy`, exactly one year later (29 Feb → 28 Feb); a term of the same
     Bangla name already in the new year is skipped; dates that fall outside the new year are

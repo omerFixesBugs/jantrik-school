@@ -38,6 +38,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { useLabel } from '@/lib/hooks';
+import { runEditable } from '@/lib/promotion/run-state';
 import { cn } from '@/lib/utils';
 
 /** What the admin changed on a row (sent with PUT /promotions/:id/rows). */
@@ -168,7 +169,7 @@ function Run() {
       </Alert>
     );
 
-  const editable = data.status !== 'APPLYING';
+  const editable = runEditable(data);
   const sectionLabel = label('section', 'Section');
   const sectionText = label('section', 'Section', { inText: true });
   const activeClasses = (classes.data ?? [])

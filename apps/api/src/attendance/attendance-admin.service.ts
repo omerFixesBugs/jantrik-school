@@ -128,11 +128,17 @@ export class AttendanceAdminService {
     const tx = this.db.tx;
     await this.assertSection(sectionId);
     const ids = teachers.map((t) => t.userId);
-    const members = await tx.membership.findMany({
-      where: { userId: { in: ids }, status: 'ACTIVE', role: { in: [...MARKING_ROLES] } },
-      select: { userId: true },
-    });
-    const valid = new Set(members.map((m) => m.userId));
+    // An active teacher or admin membership and a staff profile, as for subject teachers and the
+    // new-year teacher copy (review round 2).
+    const [members, profiles] = await Promise.all([
+      tx.membership.findMany({
+        where: { userId: { in: ids }, status: 'ACTIVE', role: { in: [...MARKING_ROLES] } },
+        select: { userId: true },
+      }),
+      tx.staffProfile.findMany({ where: { userId: { in: ids } }, select: { userId: true } }),
+    ]);
+    const profiled = new Set(profiles.map((p) => p.userId));
+    const valid = new Set(members.map((m) => m.userId).filter((id) => profiled.has(id)));
     const invalid = ids.filter((id) => !valid.has(id));
     if (invalid.length > 0) {
       throw apiError(422, 'NOT_STAFF', 'Only active teachers or admins can be assigned', {

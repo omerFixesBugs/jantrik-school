@@ -1,7 +1,15 @@
-import { withTenant } from '@jantrik/db';
+import { findOrCreateUser, withTenant } from '@jantrik/db';
 import type { FeeCopyResult, FeeHeadView, TeacherCopyResult } from '@jantrik/shared';
-import { addMember, bearer, createHarness, http, type Harness } from './support/harness.js';
+import {
+  addMember,
+  bearer,
+  createHarness,
+  http,
+  randomPhone,
+  type Harness,
+} from './support/harness.js';
 import { promotionSchool, type PromotionSchool } from './support/promotion.js';
+import { school } from './support/school.js';
 
 /** P5 Task 7 (S16, P5-M, P5-N): fee terms, running concessions and teachers into the new year. */
 describe('promotion: copies into the new year', () => {
@@ -12,6 +20,7 @@ describe('promotion: copies into the new year', () => {
   const api = (token: string) => ({
     get: (path: string) => http(h).get(path).set(bearer(token)),
     post: (path: string, body: object = {}) => http(h).post(path).set(bearer(token)).send(body),
+    put: (path: string, body: object) => http(h).put(path).set(bearer(token)).send(body),
   });
   const years = () => ({ fromAcademicYearId: s.y2026, toAcademicYearId: s.y2027 });
 
@@ -280,6 +289,44 @@ describe('promotion: copies into the new year', () => {
     expect(
       (await api(s.tokens.admin).post('/fees/concessions/copy', back).expect(422)).body.code,
     ).toBe('YEAR_ORDER');
+    // Amounts too (review round 2).
+    expect((await api(s.tokens.admin).post('/fees/amounts/copy', back).expect(422)).body.code).toBe(
+      'YEAR_ORDER',
+    );
+  });
+
+  it('terms and concessions copy only from the year just before (review round 2)', async () => {
+    const y2030 = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.academicYear.create({
+        data: {
+          tenantId: s.tenantId,
+          name: '2030',
+          startDate: new Date('2030-01-01'),
+          endDate: new Date('2030-12-31'),
+        },
+      }),
+    );
+    const skip = { fromAcademicYearId: s.y2026, toAcademicYearId: y2030.id };
+    const terms = await api(s.tokens.admin).post('/fees/terms/copy', skip).expect(422);
+    expect(terms.body).toMatchObject({ code: 'YEAR_ORDER', field: 'fromAcademicYearId' });
+    await api(s.tokens.admin).post('/fees/concessions/copy', skip).expect(422);
+    // Amounts carry no dates: any earlier year will do.
+    await api(s.tokens.admin).post('/fees/amounts/copy', skip).expect(200);
+  });
+
+  it('a section teacher needs a staff profile, as for the copy (review round 2)', async () => {
+    const t = await school(h);
+    const userId = await withTenant(h.prisma, t.tenantId, async (tx) => {
+      const id = await findOrCreateUser(tx, randomPhone(), 'No profile');
+      await tx.membership.create({ data: { tenantId: t.tenantId, userId: id, role: 'TEACHER' } });
+      return id;
+    });
+    const res = await api(t.admin)
+      .put(`/attendance/sections/${t.sectionA}/teachers`, {
+        teachers: [{ userId, isClassTeacher: false }],
+      })
+      .expect(422);
+    expect(res.body).toMatchObject({ code: 'NOT_STAFF', userIds: [userId] });
   });
 
   it("an accountant's (or a former teacher's) old subject assignment is not copied (review SF1)", async () => {
