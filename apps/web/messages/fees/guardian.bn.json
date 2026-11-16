@@ -43,7 +43,8 @@
         "OPEN": "বাকি",
         "PAID": "পরিশোধিত",
         "CANCELLED": "বাতিল"
-      }
+      },
+      "previousYear": "আগের বছর ({year})"
     },
     "submissions": {
       "title": "বিকাশ/নগদে আপনার পাঠানো টাকা",
