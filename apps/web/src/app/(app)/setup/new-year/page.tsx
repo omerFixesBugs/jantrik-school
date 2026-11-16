@@ -414,7 +414,7 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
           </AlertDescription>
         </Alert>
       )}
-      {p && waiting && (
+      {p && p.sections.length > 0 && (
         <div className="flex flex-col gap-4" data-testid="rolls-preview">
           {p.sections.map((s) => (
             <div key={s.section.id} className="flex flex-col gap-2">
@@ -456,15 +456,17 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
               </ul>
             </div>
           ))}
-          <div>
-            <Button
-              onClick={() => save.mutate(undefined)}
-              disabled={save.isPending}
-              data-testid="save-rolls"
-            >
-              {t('rollsSave')}
-            </Button>
-          </div>
+          {waiting && (
+            <div>
+              <Button
+                onClick={() => save.mutate(undefined)}
+                disabled={save.isPending}
+                data-testid="save-rolls"
+              >
+                {t('rollsSave')}
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </SectionCard>
