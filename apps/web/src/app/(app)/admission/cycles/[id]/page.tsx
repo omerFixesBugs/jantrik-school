@@ -11,7 +11,7 @@ import {
 import { PlusIcon, Trash2Icon } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
 import {
   CYCLE_TONE,
@@ -96,40 +96,40 @@ function Cycle() {
 
   const [basics, setBasics] = useState<Basics | null>(null);
   const [classes, setClasses] = useState<ClassRow[] | null>(null);
-  useEffect(() => {
-    if (isNew && options.data && !basics) {
-      const next =
-        options.data.years.find((y) => !y.isCurrent && y.startDate > new Date().toISOString()) ??
-        options.data.years.find((y) => y.isCurrent) ??
-        options.data.years[0];
-      setBasics({
-        academicYearId: next?.id ?? '',
-        nameBn: '',
-        nameEn: '',
-        opensAt: '',
-        closesAt: '',
-        publicNoteBn: '',
-        publicNoteEn: '',
-        requiresTest: false,
-        collectPhoto: false,
-        fields: {},
-      });
-    }
-  }, [isNew, options.data, basics]);
-  useEffect(() => {
-    if (cycle.data) {
-      setBasics(basicsFrom(cycle.data));
-      setClasses(
-        cycle.data.classes.map((c) => ({
-          key: c.id,
-          classLevelId: c.classLevel.id,
-          studyGroupId: c.studyGroup?.id ?? '',
-          seats: c.seats ? String(c.seats) : '',
-          isOpen: c.isOpen,
-        })),
-      );
-    }
-  }, [cycle.data]);
+  // The form starts from what the server has (React's "state from props" pattern, set during
+  // render): a new cycle from the options, an existing one each time it is loaded or saved.
+  const [source, setSource] = useState<AdmissionCycleView | null>(null);
+  if (isNew && options.data && !basics) {
+    const next =
+      options.data.years.find((y) => !y.isCurrent && y.startDate > new Date().toISOString()) ??
+      options.data.years.find((y) => y.isCurrent) ??
+      options.data.years[0];
+    setBasics({
+      academicYearId: next?.id ?? '',
+      nameBn: '',
+      nameEn: '',
+      opensAt: '',
+      closesAt: '',
+      publicNoteBn: '',
+      publicNoteEn: '',
+      requiresTest: false,
+      collectPhoto: false,
+      fields: {},
+    });
+  }
+  if (cycle.data && cycle.data !== source) {
+    setSource(cycle.data);
+    setBasics(basicsFrom(cycle.data));
+    setClasses(
+      cycle.data.classes.map((c) => ({
+        key: c.id,
+        classLevelId: c.classLevel.id,
+        studyGroupId: c.studyGroup?.id ?? '',
+        seats: c.seats ? String(c.seats) : '',
+        isOpen: c.isOpen,
+      })),
+    );
+  }
 
   const refresh = (c: AdmissionCycleView) => {
     queryClient.setQueryData(['admission-cycle', session?.tenant?.id, c.id], c);
