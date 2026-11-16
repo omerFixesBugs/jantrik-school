@@ -2,7 +2,7 @@
 
 import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES } from '@jantrik/shared';
 import { ImageUpIcon } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -61,16 +61,30 @@ export function ChooseImageButton({
   );
 }
 
-/** An object URL for a chosen file, revoked when the file changes or the view goes. */
-export function useLocalPreview(file: File | null): string | null {
-  const [url, setUrl] = useState<{ file: File; url: string } | null>(null);
-  useEffect(() => {
-    if (!file) return;
-    const next = URL.createObjectURL(file);
-    setUrl({ file, url: next });
-    return () => URL.revokeObjectURL(next);
-  }, [file]);
-  return file && url?.file === file ? url.url : null;
+/**
+ * The chosen file and an object URL to preview it. The URL is made when a file is chosen (not in
+ * an effect) and revoked when another is chosen or the view goes.
+ */
+export function useFilePreview(): {
+  file: File | null;
+  preview: string | null;
+  choose: (file: File | null) => void;
+} {
+  const [chosen, setChosen] = useState<{ file: File; url: string } | null>(null);
+  const current = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      if (current.current) URL.revokeObjectURL(current.current);
+    },
+    [],
+  );
+  const choose = useCallback((file: File | null) => {
+    if (current.current) URL.revokeObjectURL(current.current);
+    const url = file ? URL.createObjectURL(file) : null;
+    current.current = url;
+    setChosen(file && url ? { file, url } : null);
+  }, []);
+  return { file: chosen?.file ?? null, preview: chosen?.url ?? null, choose };
 }
 
 /** The body of an image upload: the field `file`, as the API's multipart routes expect. */

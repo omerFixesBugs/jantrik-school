@@ -6,7 +6,7 @@ import { Trash2Icon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { ChooseImageButton, imageForm, useLocalPreview } from '@/components/image-upload';
+import { ChooseImageButton, imageForm, useFilePreview } from '@/components/image-upload';
 import { StudentAvatar } from '@/components/student-photo';
 import { Button } from '@/components/ui/button';
 import {
@@ -38,9 +38,8 @@ export function PhotoDialog({
   const describe = useImageErrorMessage();
   const { client, session } = useAuth();
   const queryClient = useQueryClient();
-  const [file, setFile] = useState<File | null>(null);
+  const { file, preview, choose: setFile } = useFilePreview();
   const [error, setError] = useState<string | null>(null);
-  const preview = useLocalPreview(file);
 
   const done = (p: StudentProfile, message: string) => {
     queryClient.setQueryData(['student', session?.tenant?.id, profile.id], p);
