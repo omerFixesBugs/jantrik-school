@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ClsModule } from 'nestjs-cls';
+import { AdmissionModule } from './admission/admission.module.js';
 import { AppearanceModule } from './appearance/appearance.module.js';
 import { AttendanceModule } from './attendance/attendance.module.js';
 import { AuditModule } from './audit/audit.module.js';
@@ -73,6 +74,7 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     SetupModule,
     StaffModule,
     ImportsModule,
+    AdmissionModule,
     AttendanceModule,
     DevicesModule,
     StaffAttendanceModule,

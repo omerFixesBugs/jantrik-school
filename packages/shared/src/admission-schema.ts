@@ -228,3 +228,10 @@ export const admissionApplicationsQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
 });
 export type AdmissionApplicationsQuery = z.output<typeof admissionApplicationsQuerySchema>;
+
+export type StaffAdmissionApplication = z.output<typeof staffAdmissionApplicationSchema>;
+export type ApproveAdmission = z.output<typeof approveAdmissionSchema>;
+export type AdmissionCycleClasses = z.output<typeof admissionCycleClassesSchema>;
+export type AdmissionCycle = z.output<typeof admissionCycleSchema>;
+export type UpdateAdmissionCycle = z.output<typeof updateAdmissionCycleSchema>;
+export type UpdateAdmissionApplication = z.output<typeof updateAdmissionApplicationSchema>;

@@ -282,3 +282,18 @@ export interface AdmissionBulkApproveStatus {
   admitted: number;
   problems: { applicationId: string; applicationNo: string; code: AdmissionApprovalProblem }[];
 }
+
+/** GET /admission/options: what the cycle form picks from. */
+export interface AdmissionOptions {
+  years: { id: string; name: string; startDate: IsoDate; endDate: IsoDate; isCurrent: boolean }[];
+  classLevels: (AdmissionNamed & { isActive: boolean })[];
+  studyGroups: (AdmissionNamed & { isActive: boolean })[];
+}
+
+/** GET /admission/cycle-classes/:id/sections: where an application may be approved into. */
+export interface AdmissionSectionOption {
+  id: string;
+  name: string;
+  capacity: number | null;
+  enrolled: number;
+}
