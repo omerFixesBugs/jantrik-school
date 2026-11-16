@@ -398,6 +398,36 @@ services and shared types (F3).
 - **R10.** The database tests name the rule that refuses each write; a PNG `eXIf` GPS case was
   added to the image tests.
 
+## Changed after the review, round 2 (2026-11-16)
+
+- **R11. Uploads in flight are bounded.** With R1 nothing limited how many upload bodies could be
+  in memory. `UploadGuard` (before multer) allows 16 per process and 2 per person, refuses more at
+  once with 503 `IMAGE_BUSY`, gives the slot back when the response closes (sent, failed or
+  dropped by the client), and drops a body not received within 60 s.
+- **R12. `RequestTransaction.run` refuses to nest** inside a request transaction (it would replace
+  the outer one in the request context).
+- **R13. The upload's transaction re-checks the session and the route's roles** (OWNER/ADMIN),
+  read in the transaction, besides the institute's status and the membership: an admin
+  downgraded, or a session revoked, while the body arrives stores nothing (403 / 401).
+- **R14. The target is checked before decoding:** a student photo for an unknown or deactivated
+  student, or any upload in a suspended institute or by someone who lost the role, is refused
+  before the image is decoded or the upload quota is used.
+- **R15. sharp's own 10 s timeout** on the decode and each encode → 422 `IMAGE_TIMEOUT`.
+- **R16. A replacement no bigger than the old file is never refused**, even when the total is over
+  a lowered cap; `FileStore.put`'s contract says the caller deletes the replaced file in the same
+  transaction.
+- **R17. A profile save takes the file lock before reading the row**, so a first save racing a
+  first image is audited as an UPDATE (one CREATE per institute).
+- **R18. The browser asks for the EXIF orientation explicitly** (`imageOrientation:
+'from-image'`); an engine without it sends the original, which the server turns upright.
+- **Tests:** a deterministic database test of the ON CONFLICT path (an insert held uncommitted);
+  the slow-body check sampled every 100 ms, for the logo route too; suspended institute and
+  disabled member → 403 with nothing stored; the signature column's wrong kind; the exams spec
+  removes the demo child's photo in an `afterEach`.
+- **Migrations edited in place:** both migrations of this PR changed after it was first pushed
+  (R6). Nothing outside this run's scratch databases applied them; any database that did needs
+  a fresh one (or a reset) before applying the final versions.
+
 ## Risks
 
 - **Backups grow** (about 100 MB per 2 000 photos). `pg_dump` custom format does not compress

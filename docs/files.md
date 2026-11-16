@@ -28,12 +28,20 @@ Never the uploaded file. `ImageService` (`apps/api/src/files/image.service.ts`, 
 4. never copies metadata: EXIF (with GPS), ICC, XMP and comments are gone.
 
 At most two images are processed at once per API process; at most 8 more wait (more get 503
-`IMAGE_BUSY`), and a freed slot goes straight to the next one.
+`IMAGE_BUSY`), and a freed slot goes straight to the next one. sharp's own timer stops a decode or
+an encode after 10 s (422 `IMAGE_TIMEOUT`).
+
+**Uploads in flight** (`UploadGuard`, before multer reads a byte): at most 16 per API process and
+2 per person; more get 503 `IMAGE_BUSY` at once. The slot is given back when the response closes,
+however it ends, and a body not received within 60 s is dropped.
 
 **No database connection while an upload arrives.** The upload routes are `@OwnTransaction()`
 ([auth.md](auth.md) → Request pipeline): multer reads the body and `ImageService` decodes it
 before any transaction is opened; then one short request transaction stores the file and changes
-the row. The browser also shrinks a chosen image to 1600 px on the long side before sending
+the row. That transaction re-checks what the guards checked when the request arrived (the
+session, the institute's status, the membership and the route's roles), and a short one before
+decoding refuses an unknown or deactivated student, a suspended institute or a lost role without
+decoding anything. The browser also shrinks a chosen image to 1600 px on the long side before sending
 (`apps/web/src/lib/image-shrink.ts`: JPEG 0.85 for photos, PNG otherwise; the original when the
 browser cannot decode it or the copy is not smaller), so a phone photo is about 300 KB.
 
@@ -59,8 +67,9 @@ The caps are in `packages/shared/src/files.ts` (`FILE_LIMITS`) and again in the 
   `capBytes`. A per-institute limit set by the platform can come later.
 - Code that replaces or clears an image calls `lock()` **before** reading which file a row points
   at, so two changes of one image cannot both delete or keep the same old file. A replacement
-  passes the old id to `put(file, { replaces })`, which counts it: a same-size replacement is
-  never refused near the cap.
+  passes the old id to `put(file, { replaces })`, which counts it: a replacement that does not
+  grow the total is allowed near the cap, and one no bigger than the old file even over a
+  lowered cap. The caller deletes the old file in the same transaction.
 - **Each reference is tied to its kind:** `UNIQUE (tenant_id, id, kind)` on `stored_files`, and a
   fixed kind column in each foreign key (`students.photo_file_kind` is always `STUDENT_PHOTO`,
   `institute_profiles.logo_file_kind` `LOGO`, and so on), so a logo can never be used as a photo.
@@ -84,7 +93,8 @@ Entity routes only; there is no `/files/:id`.
 - Uploads are `multipart/form-data` with one field, `file`, at most 5 MB (`UPLOAD_MAX_BYTES`;
   bigger: 413), at most 60 per person per 10 minutes (429).
 - Errors: 400 `FILE_REQUIRED`, 422 `IMAGE_INVALID`, 422 `IMAGE_TOO_BIG`, 422 `IMAGE_CANNOT_SHRINK`,
-  413 `STORAGE_FULL`, 409 `DEACTIVATED`, 503 `IMAGE_BUSY`.
+  422 `IMAGE_TIMEOUT`, 413 `STORAGE_FULL`, 409 `DEACTIVATED`, 503 `IMAGE_BUSY`, 403 when the
+  role was lost while the upload arrived.
 - Answers carry a strong `ETag` (the SHA-256 of the stored bytes) and
   `Cache-Control: private, no-cache`; a matching `If-None-Match` gets 304 without the bytes being
   read.

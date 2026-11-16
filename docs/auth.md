@@ -297,7 +297,13 @@ TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the
     (`withContext` with the same tenant and user, the tenant and membership re-check, `Db.tx`,
     rollback on error, afterCommit after commit), just later and short.
   - Everything that touches the database goes inside `run`. Nothing outside it may use `Db.tx`
-    (it throws: no request transaction).
+    (it throws: no request transaction), and `run` refuses to start inside one.
+  - The guards' checks can be a minute old by then (a slow body, the image queue), so the upload
+    routes pass `roles` to `run`: in its transaction it re-checks the session (not revoked) and
+    that the person still holds one of the route's roles, besides the institute's status and the
+    membership. A short `run` before decoding refuses a lost role or a wrong target early.
+  - `UploadGuard` bounds the bodies in memory: 16 uploads in flight per process, 2 per person
+    (503 `IMAGE_BUSY`), a body not received within 60 s dropped.
   - The CSV imports (student import, device people) still read their uploads inside the request
     transaction; they are small (≤ 1–5 MB) and in the backlog to move the same way.
 
