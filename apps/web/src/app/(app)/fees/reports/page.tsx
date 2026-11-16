@@ -5,11 +5,12 @@ import { Suspense } from 'react';
 import { FeesTabs } from '@/components/fees/fees-tabs';
 import { CollectionsReport } from '@/components/fees/reports/collections';
 import { DueListReport } from '@/components/fees/reports/due-list';
+import { LeaversReport } from '@/components/fees/reports/leavers';
 import { PageGate } from '@/components/page-gate';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useUrlParams } from '@/lib/view-state';
 
-const TABS = ['dues', 'defaulters', 'collections'] as const;
+const TABS = ['dues', 'defaulters', 'collections', 'leavers'] as const;
 type Tab = (typeof TABS)[number];
 
 export default function FeeReportsPage() {
@@ -37,6 +38,7 @@ function Reports() {
     dues: t('tabDues'),
     defaulters: t('tabDefaulters'),
     collections: t('tabCollections'),
+    leavers: t('tabLeavers'),
   };
   return (
     <div className="flex flex-col gap-(--section-gap)" data-testid="fees-reports">
@@ -64,6 +66,9 @@ function Reports() {
         </TabsContent>
         <TabsContent value="collections" className="text-base">
           <CollectionsReport />
+        </TabsContent>
+        <TabsContent value="leavers" className="text-base">
+          <LeaversReport />
         </TabsContent>
       </Tabs>
     </div>

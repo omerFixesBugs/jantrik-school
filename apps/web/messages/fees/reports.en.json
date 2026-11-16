@@ -150,7 +150,8 @@
       "cardDays": "{n, plural, one {for {count} day} other {for {count} days}}",
       "cardFine": "{amount} fine",
       "cardOpenDues": "{n, plural, one {{count} fee owed} other {{count} fees owed}}",
-      "remind": "Send reminder SMS"
+      "remind": "Send reminder SMS",
+      "tabLeavers": "Leavers with dues"
     },
     "collections": {
       "intro": "Money collected in a period, void receipts left out.",
@@ -237,6 +238,23 @@
         "CANCELLED": "Skipped",
         "EXPIRED": "Expired"
       }
+    },
+    "leavers": {
+      "intro": "Students who still owe but are not on the due list: those who left, those not enrolled in the current year, and deactivated students. Their dues stay where they are.",
+      "student": "Student",
+      "why": "Why",
+      "lastYear": "Last year",
+      "guardian": "Guardian",
+      "total": "Total owed",
+      "overdue": "Overdue",
+      "leftOn": "{status} on {date}",
+      "kind": {
+        "NOT_CARRIED_OVER": "Not enrolled this year",
+        "DEACTIVATED": "Deactivated"
+      },
+      "totalRow": "Total, {n, plural, one {{count} student} other {{count} students}}",
+      "empty": "No one who left owes anything.",
+      "emptyHint": "Students who leave with dues, or are not carried over into the new year, appear here."
     }
   }
 }
