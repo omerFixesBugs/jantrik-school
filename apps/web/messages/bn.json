@@ -753,7 +753,8 @@
     "imageNone": "এখনো নেই",
     "imageSaved": "ছবি রাখা হয়েছে",
     "imageRemoved": "ছবি সরানো হয়েছে",
-    "storageUsed": "ছবির জায়গা: {cap} MB-এর মধ্যে {used} MB ব্যবহৃত"
+    "storageUsed": "ছবির জায়গা: {cap} MB-এর মধ্যে {used} MB ব্যবহৃত",
+    "newYearWizard": "উত্তরণ ও নতুন {year}"
   },
   "staff": {
     "title": "কর্মী ও শিক্ষক",

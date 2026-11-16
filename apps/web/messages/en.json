@@ -753,7 +753,8 @@
     "imageNone": "None yet",
     "imageSaved": "Image saved",
     "imageRemoved": "Image removed",
-    "storageUsed": "Image storage: {used} MB of {cap} MB used"
+    "storageUsed": "Image storage: {used} MB of {cap} MB used",
+    "newYearWizard": "Promotion and the new {year}"
   },
   "staff": {
     "title": "Staff",
