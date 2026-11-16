@@ -56,7 +56,9 @@ describe('platform isolation (code scan)', () => {
     expect(tenantReach("set_config('app.tenant_id', id, true)")).toEqual([
       'sets an institute context',
     ]);
-    expect(tenantReach("set_config('app.context', v, true)")).toEqual(['sets an institute context']);
+    expect(tenantReach("set_config('app.context', v, true)")).toEqual([
+      'sets an institute context',
+    ]);
     expect(tenantReach('signRequestContext(key, parts)')).toEqual([
       'reads or signs with the request context key',
     ]);
