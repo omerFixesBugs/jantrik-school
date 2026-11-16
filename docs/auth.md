@@ -30,8 +30,9 @@ Code lives in [`apps/api/src/auth`](../apps/api/src/auth) and
   the user lookup. An SMS is sent only if the phone belongs to a user.
 - Every failure of `otp/verify` and `login` (unknown user, wrong code or password, expired or
   burned code, OTP-only account) returns the same `401 Invalid credentials`.
-- Password checks always run one argon2 hash and one database comparison, with a dummy salt
-  and the nil user if needed, so timing doesn't leak either.
+- Password checks always run one argon2 verification, against a dummy hash if needed (no
+  account, no password, or a stored hash that is unreadable or above the cost ceiling), so timing
+  doesn't leak either.
 
 **OTP storage.** Codes are never stored in plain text. Redis holds
 `HMAC-SHA256(OTP_PEPPER, phone:code)` with a 5-minute TTL, plus an attempt counter. The 5th wrong
@@ -222,26 +223,38 @@ Password login accepts up to 512 code points, as many as a settable password can
 decomposed. `PasswordSettingsService` is the only code that writes `users.password_hash`
 (`password-writes.spec.ts` checks it).
 
-**The API never reads a staff password hash (P1-J).** `jantrik_app` may write
-`users.password_hash` but not read it, so an SQL injection in a request cannot take hashes away
-to crack offline ([database.md](database.md) → users). Checking a password at login:
+### The API never reads a hash in a request (P1-J)
 
-1. `auth_find_user_for_login(phone, email)` returns the stored hash up to its last `$`
-   (`password_params`: argon2id, version 19, `m`, `t`, `p`, the salt), never the digest; NULL for
-   no password or any other format;
-2. `PasswordService.loginDigest` hashes the typed password (NFC) with those parameters and that
-   salt, and takes the SHA-256 of the result. Parameters above 64 MiB, 10 passes or 4 lanes are
-   treated as unusable (a hash written into someone's own row cannot make each attempt
-   arbitrarily expensive);
-3. `auth_my_password_matches(digest)`, run with `app.user_id` set to that user, compares it with
-   the SHA-256 of the stored hash and answers yes or no.
+Ordinary requests run as `jantrik_app`, which may write `users.password_hash` (setting a password)
+but cannot read it: not with a query (the column is not granted), and not through a function
+(`auth_find_user_for_login` returns who the person is, never password data). The password login
+alone has its own database login:
 
-With no user, no password or unusable parameters, step 2 hashes once at today's cost with a dummy
-salt and step 3 runs for the nil user, so every case costs the same. `GET /me/password` reads
-`hasPassword` from `auth_my_password_is_set()`. What is left: an injection can still ask step 3
-about guesses it hashed itself, one query per guess and only while the hole is open, which is less
-than reading the hash. The platform admins' login is separate and unchanged
-([platform.md](platform.md)).
+- `POST /auth/login` with a password looks the person up through `LoginPrismaService`
+  (`DATABASE_LOGIN_URL`, role `jantrik_login_app`) and the function
+  `auth_find_user_for_password_login(phone, email)`, which returns the stored hash; the API
+  verifies with argon2 as before.
+- `jantrik_login_app` may run that one function and nothing else (no table, no other function),
+  and `jantrik_app` may not run it. Only `AuthService` holds that client
+  (`login-isolation.spec.ts`). Its pool is small (4 connections).
+- At start-up the API refuses a `DATABASE_LOGIN_URL` that is a superuser, has BYPASSRLS or can
+  become such a role (fail closed, like the other logins), and one mixed up with `DATABASE_URL`.
+- A stored hash above 64 MiB, 10 passes or 4 lanes, or one argon2 cannot read, counts as no
+  password (the dummy check runs): a hash someone wrote into their own row cannot make each login
+  attempt arbitrarily expensive.
+
+**What an SQL injection in an ordinary request can and cannot do now:**
+
+- It **cannot** read any password hash or salt: its own, a co-member's or a stranger's.
+- It **cannot** run the password lookup, or anything as `jantrik_login_app`: that login's
+  password is only in the API's environment.
+- It **can** learn whether a given person has a password at all, yes or no:
+  `auth_my_password_is_set()` (for `GET /me/password`) answers for `app.user_id`, which any SQL can
+  set with `set_config`. It reveals nothing about the password itself.
+- It can still set its own row's hash (the app login keeps UPDATE on the column, under RLS: its
+  own row only), as before.
+
+The platform admins' login is separate and unchanged ([platform.md](platform.md)).
 
 ## Tenants
 

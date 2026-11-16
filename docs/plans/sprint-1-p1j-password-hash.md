@@ -9,6 +9,38 @@ follow-up is P1-J in [decisions-pending.md](../decisions-pending.md); the phase 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (one implementer,
 > one database-security review subagent at the end). Steps use checkbox (`- [ ]`) syntax.
 
+## Changed after the review (P1-J7; the owner may drop these commits)
+
+The database-security review found that the first design below left an oracle as good as the
+hash: as `jantrik_app`, an injection could read any user's salt from `auth_find_user_for_login`,
+set `app.user_id` to them, and check 200,000 offline-computed guesses against
+`auth_my_password_matches` in one statement (6.4 s on the scratch database). What was built
+instead, and what this plan's sections below describe only where they say so:
+
+- **A dedicated login, `jantrik_login_app`** (`DATABASE_LOGIN_URL`), like the platform and
+  receiver logins: LOGIN, no table grants, a member of no role, not a member of `jantrik_app`. It
+  may run one function, `auth_find_user_for_password_login(phone, email)`, which returns the
+  stored hash; `jantrik_app` may not run it. `LoginPrismaService` (a small pool, used by
+  `AuthService.loginWithPassword` only) checks at start-up that the login is not privileged (fail
+  closed) and not mixed up with `DATABASE_URL`.
+- **The API verifies with argon2 as before** (`PasswordService.verify`, dummy hash for unknown
+  users). The digest exchange (`loginDigest`, `auth_my_password_matches`) is gone, and with it the
+  format restriction (P1-J5). The cost ceiling (P1-J4) stays, now in `verify`.
+- **`auth_find_user_for_login`** (the app's) returns id, name and locale only.
+- **What an injection in an ordinary request can and cannot do now:** it cannot read any hash or
+  salt, its own or anyone's, and cannot run the password lookup. It can learn whether a given
+  person has a password (yes or no) through `auth_my_password_is_set()` with a `set_config` of
+  `app.user_id` (P1-J2).
+- **Guards:** `schema-safety.test.ts` checks that `jantrik_app` may read every `users` column but
+  the hash (a new column without its GRANT fails), pins by name every definer function a runtime
+  login may run whose owner can read the hash, refuses any function that returns the hash or a
+  whole users row except the password lookup, and holds `jantrik_login_app` to that one function.
+- **Setup:** the role in `01-roles.sh`, `create-roles.sh`, the production compose and its
+  settings example, the restore check, CI and `.env.example`. On an existing machine: create the
+  role once (database.md → Database roles) and add `DATABASE_LOGIN_URL` to `.env`. On an existing
+  server: deploy.md → Upgrades (create the role before the migration; the old API fails some reads
+  between migrate and restart).
+
 **Goal:** an SQL injection in any institute request (which runs as `jantrik_app`) can no longer
 read a staff member's argon2 password hash, neither of co-members nor of anyone else. Everything
 the app needs keeps working: password login, `GET /me/password` (`hasPassword`), setting a
@@ -153,10 +185,10 @@ Each function: `REVOKE ALL … FROM PUBLIC`, `GRANT EXECUTE … TO jantrik_app`,
    in an error message.
 2. **No timing difference** between an unknown phone, a user without a password and a wrong
    password (one argon2 hash and one transaction each).
-3. **The oracle that remains:** `auth_my_password_matches` answers yes/no for a digest. An
-   injection could ask it for guesses after computing argon2 for each one itself (the cost of an
-   offline attack, but online, one query per guess, and only while the hole is open). That is
-   strictly less than reading the hash (P1-J1).
+3. **(Wrong in the first version, see "Changed after the review".)** The first version said the
+   remaining oracle allowed one query per guess. In fact the salt was readable and one statement
+   could test 200,000 guesses, close to reading the hash. The oracle is gone; what is left is one
+   bit per person ("has a password", P1-J2).
 4. **Nothing else broke:** the seed (demo passwords and Bangla names), the API harness, every
    `users` read.
 
