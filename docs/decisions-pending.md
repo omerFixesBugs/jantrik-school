@@ -685,6 +685,45 @@ F11. **The per-institute total is counted, not recomputed**, under the institute
 
 F12. **No institute header or logo on the report card yet.** The profile and images exist for P3 (the admission slip), P8 and P9 (documents); the report card gains only the student photo, as the sprint plan says.
 
+Changed after the review (each code fix with a test that failed first; R3 is checked by Playwright
+in CI; R9 and R10 are docs and tests only; details in the plan → "Changed after the review"):
+
+- **R1. Uploads no longer run inside the request transaction** (must-fix). `TenantContextInterceptor`
+  (a global interceptor) opened the 15 s transaction and took a pool connection before multer read
+  the body: a 2–5 MB photo on slow 4G took longer than 15 s (a 500 every time), and ten slow
+  uploads could hold all 10 connections (every other institute failing). The two upload routes
+  are now `@OwnTransaction()`: the body is read, the upload limit applied and the image decoded
+  with no connection; then `RequestTransaction.run` (the interceptor's own logic, moved into a
+  service) opens the same tenant transaction for the short store. The image queue is bounded (8
+  waiting; more get 503 `IMAGE_BUSY`), and the browser shrinks a chosen image to 1600 px on the
+  long side (JPEG 0.85 for photos, PNG for the others) before sending, so a phone sends about
+  300 KB. Test: while a slow body arrives, no session of the app login is idle in a transaction.
+- **R2. The code scan also catches Prisma relation fields** (`photoFile`, `logoFile`,
+  `signatureFile`, `sealFile`, `storedFiles`, `storedFileUsage`, `storedFilesCreated`, the
+  `profile*` back-relations).
+- **R3. The guardian's report card shows the photo** through `/me/children/:id/photo`
+  (`ReportCardsPrint as="guardian"`); Playwright checks it in the exams spec.
+- **R4. The web address's scheme is stored in lower case** (`HTTPS://x` → `https://x`), as the
+  database CHECK is case-sensitive; it was a 500.
+- **R5. The image queue hands a freed slot straight to the next waiter**, so it can never run
+  three at once.
+- **R6. A file reference is tied to its kind in the database.** `stored_files` has
+  `UNIQUE (tenant_id, id, kind)`; `students.photo_file_kind` (always `STUDENT_PHOTO`) and
+  `institute_profiles.logo_file_kind`, `head_signature_file_kind`, `seal_file_kind` (always
+  `LOGO`, `SIGNATURE`, `SEAL`, by CHECK) are part of each foreign key, so a photo column can only
+  hold a photo, a logo column a logo, and so on.
+- **R7. Replacing an image near the cap is allowed** when the total would not grow: `put` takes the
+  id it replaces (read under the file lock) and counts it.
+- **R8. The first image and the first save cannot collide:** the row an image creates is inserted
+  with `ON CONFLICT DO NOTHING`.
+- **R9.** F1 above now says what the code does (a teacher sees photos of their own sections only).
+- **R10.** The database tests name the rule that refuses each write; a PNG `eXIf` GPS case was
+  added to the image tests.
+
+- **For the owner (backlog): the CSV imports read their uploads inside the request transaction
+  too** (student import up to 5 MB, device people up to 1 MB). Smaller and rarer than photos, so
+  not changed here; they can move to `@OwnTransaction()` the same way.
+
 Also decided while building:
 
 - The migrations were written by hand (no development database is used in this run) and checked with `prisma migrate diff` against a scratch database: empty.

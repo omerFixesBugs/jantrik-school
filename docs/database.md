@@ -525,9 +525,12 @@ Images live in the database ([files.md](files.md), decision S7):
   lengths, a 6-digit EIIN, a 5–15 digit phone (optional `+`), e-mail and website shapes, a year
   1800–2100, and the three images being different files.
 - **`students.photo_file_id`** replaces the never-written `photo_url`.
-- **Every reference to a file is a composite foreign key** (`(tenant_id, x) → stored_files
-(tenant_id, id)`, `ON DELETE RESTRICT ON UPDATE RESTRICT`) and unique, so a row can only point at
-  its own institute's file, a file is used in one place, and a file still in use cannot be deleted.
+- **Every reference to a file is a composite foreign key with the kind**
+  (`(tenant_id, x, x_kind) → stored_files (tenant_id, id, kind)`, `ON DELETE RESTRICT ON UPDATE
+RESTRICT`) and unique. The kind column is fixed by a CHECK (`students.photo_file_kind` =
+  `STUDENT_PHOTO`; `institute_profiles.logo_file_kind`, `head_signature_file_kind`,
+  `seal_file_kind` = `LOGO`, `SIGNATURE`, `SEAL`). So a row can only point at its own institute's
+  file of the right kind, a file is used in one place, and a file still in use cannot be deleted.
 - Isolation, grants, CHECKs and keys: `packages/db/test/files-rls.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`

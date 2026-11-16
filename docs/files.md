@@ -27,7 +27,15 @@ Never the uploaded file. `ImageService` (`apps/api/src/files/image.service.ts`, 
    into the kind's box, and re-encodes it until it fits the kind's cap;
 4. never copies metadata: EXIF (with GPS), ICC, XMP and comments are gone.
 
-At most two images are processed at once per API process.
+At most two images are processed at once per API process; at most 8 more wait (more get 503
+`IMAGE_BUSY`), and a freed slot goes straight to the next one.
+
+**No database connection while an upload arrives.** The upload routes are `@OwnTransaction()`
+([auth.md](auth.md) → Request pipeline): multer reads the body and `ImageService` decodes it
+before any transaction is opened; then one short request transaction stores the file and changes
+the row. The browser also shrinks a chosen image to 1600 px on the long side before sending
+(`apps/web/src/lib/image-shrink.ts`: JPEG 0.85 for photos, PNG otherwise; the original when the
+browser cannot decode it or the copy is not smaller), so a phone photo is about 300 KB.
 
 | Kind              | Stored as                         | Cap    | Box       | Used by                                  |
 | ----------------- | --------------------------------- | ------ | --------- | ---------------------------------------- |
@@ -49,9 +57,13 @@ The caps are in `packages/shared/src/files.ts` (`FILE_LIMITS`) and again in the 
   so the total always equals the sum of the rows, even with uploads at the same moment.
 - Over `FILE_STORAGE_PER_TENANT_MB` (default 1024): 413 `STORAGE_FULL` with `bytesUsed` and
   `capBytes`. A per-institute limit set by the platform can come later.
-- Code that replaces or clears an image calls `lock()` (or `put`, which takes it) **before**
-  reading which file a row points at, so two changes of one image cannot both delete or keep the
-  same old file.
+- Code that replaces or clears an image calls `lock()` **before** reading which file a row points
+  at, so two changes of one image cannot both delete or keep the same old file. A replacement
+  passes the old id to `put(file, { replaces })`, which counts it: a same-size replacement is
+  never refused near the cap.
+- **Each reference is tied to its kind:** `UNIQUE (tenant_id, id, kind)` on `stored_files`, and a
+  fixed kind column in each foreign key (`students.photo_file_kind` is always `STUDENT_PHOTO`,
+  `institute_profiles.logo_file_kind` `LOGO`, and so on), so a logo can never be used as a photo.
 
 ## Routes
 
@@ -72,7 +84,7 @@ Entity routes only; there is no `/files/:id`.
 - Uploads are `multipart/form-data` with one field, `file`, at most 5 MB (`UPLOAD_MAX_BYTES`;
   bigger: 413), at most 60 per person per 10 minutes (429).
 - Errors: 400 `FILE_REQUIRED`, 422 `IMAGE_INVALID`, 422 `IMAGE_TOO_BIG`, 422 `IMAGE_CANNOT_SHRINK`,
-  413 `STORAGE_FULL`, 409 `DEACTIVATED`.
+  413 `STORAGE_FULL`, 409 `DEACTIVATED`, 503 `IMAGE_BUSY`.
 - Answers carry a strong `ETag` (the SHA-256 of the stored bytes) and
   `Cache-Control: private, no-cache`; a matching `If-None-Match` gets 304 without the bytes being
   read.
@@ -84,7 +96,8 @@ Entity routes only; there is no `/files/:id`.
 - Images need the bearer token, so `<img src>` cannot load them: `useAuthedImage(path, fileId)`
   (`apps/web/src/lib/authed-image.ts`) fetches with `AuthClient.download` and returns an object
   URL, shared by every component and cached per path and file id (a replaced image has a new id).
-- `StudentAvatar` / `StudentPhoto` (`components/student-photo.tsx`) show a student's photo. Lists
+- `StudentAvatar` / `StudentPhoto` (`components/student-photo.tsx`) show a student's photo, from
+  the staff route or, with `as="guardian"`, the guardian's own (the guardian's report card). Lists
   keep initials (decision F2): fifty photos would not fit the 3 s budget on slow 4G.
 - API types carry `photoId` (the stored file's id or null), never a URL.
 

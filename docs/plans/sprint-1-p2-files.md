@@ -92,9 +92,10 @@ this branch's migrations are `20261116100000_*` and later, so the order holds ei
 
 ## Decisions taken during the run (F1–F12, the owner reviews them with the PR)
 
-- **F1. Who sees what.** Student photo: the roles that may read students (`OWNER`, `ADMIN`,
-  `TEACHER`), for every student, like name and code (a teacher sees basics of every student).
-  Guardians: their own children only. Logo: every member of the institute (guardians too).
+- **F1. Who sees what.** A student's photo is part of the full record, as on the student's page
+  (the basic view for a teacher of another section already left it out): `OWNER` and `ADMIN` for
+  every student, a `TEACHER` for the students of their current sections, guardians for their own
+  children only; anyone else gets 404. Logo: every member of the institute (guardians too).
   Head's signature and seal: `OWNER` and `ADMIN` only (they can be misused on forged papers;
   printing roles widen in P8/P9). Profile fields: `OWNER` and `ADMIN` (the settings page).
 - **F2. Lists keep initials.** The student list, the board and the other lists do not load photos
@@ -362,6 +363,40 @@ services and shared types (F3).
   `.env.example`, `decisions-pending.md` (F1–F12).
 - Gates: lint, typecheck, format, tests package by package, build, size budget; Playwright in CI.
 - Review subagent (database, uploads), fixes, PR.
+
+## Changed after the review (2026-11-16)
+
+- **R1. Uploads no longer run inside the request transaction** (must-fix). `TenantContextInterceptor`
+  (a global interceptor) opened the 15 s transaction and took a pool connection before multer read
+  the body: a 2–5 MB photo on slow 4G took longer than 15 s (a 500 every time), and ten slow
+  uploads could hold all 10 connections (every other institute failing). The two upload routes
+  are now `@OwnTransaction()`: the body is read, the upload limit applied and the image decoded
+  with no connection; then `RequestTransaction.run` (the interceptor's own logic, moved into a
+  service) opens the same tenant transaction for the short store. The image queue is bounded (8
+  waiting; more get 503 `IMAGE_BUSY`), and the browser shrinks a chosen image to 1600 px on the
+  long side (JPEG 0.85 for photos, PNG for the others) before sending, so a phone sends about
+  300 KB. Test: while a slow body arrives, no session of the app login is idle in a transaction.
+- **R2. The code scan also catches Prisma relation fields** (`photoFile`, `logoFile`,
+  `signatureFile`, `sealFile`, `storedFiles`, `storedFileUsage`, `storedFilesCreated`, the
+  `profile*` back-relations).
+- **R3. The guardian's report card shows the photo** through `/me/children/:id/photo`
+  (`ReportCardsPrint as="guardian"`); Playwright checks it in the exams spec.
+- **R4. The web address's scheme is stored in lower case** (`HTTPS://x` → `https://x`), as the
+  database CHECK is case-sensitive; it was a 500.
+- **R5. The image queue hands a freed slot straight to the next waiter**, so it can never run
+  three at once.
+- **R6. A file reference is tied to its kind in the database.** `stored_files` has
+  `UNIQUE (tenant_id, id, kind)`; `students.photo_file_kind` (always `STUDENT_PHOTO`) and
+  `institute_profiles.logo_file_kind`, `head_signature_file_kind`, `seal_file_kind` (always
+  `LOGO`, `SIGNATURE`, `SEAL`, by CHECK) are part of each foreign key, so a photo column can only
+  hold a photo, a logo column a logo, and so on.
+- **R7. Replacing an image near the cap is allowed** when the total would not grow: `put` takes the
+  id it replaces (read under the file lock) and counts it.
+- **R8. The first image and the first save cannot collide:** the row an image creates is inserted
+  with `ON CONFLICT DO NOTHING`.
+- **R9.** F1 above now says what the code does (a teacher sees photos of their own sections only).
+- **R10.** The database tests name the rule that refuses each write; a PNG `eXIf` GPS case was
+  added to the image tests.
 
 ## Risks
 
