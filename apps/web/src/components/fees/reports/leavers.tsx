@@ -166,6 +166,7 @@ export function LeaversReport() {
           rows={data.rows}
           rowKey={(r) => r.student.id}
           rowLabel={name}
+          caption={t('intro')}
           testId="leavers-table"
           footer={
             <tr className="font-semibold">

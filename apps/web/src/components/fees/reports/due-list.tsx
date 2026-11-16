@@ -288,7 +288,8 @@ export function DueListReport({ mode }: { mode: 'dues' | 'defaulters' }) {
             id: 'previousYears',
             header: tc('previousYears'),
             align: 'end',
-            cell: (r) => (r.previousYearsPaisa > 0 ? taka(r.previousYearsPaisa) : '—'),
+            cell: (r: FeeDueListRow) =>
+              r.previousYearsPaisa > 0 ? taka(r.previousYearsPaisa) : '—',
             foot: taka(totals.previous),
           },
         ] as const)
