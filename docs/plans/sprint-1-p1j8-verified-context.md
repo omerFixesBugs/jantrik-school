@@ -263,6 +263,34 @@ than before; a tenant-only or person-only one (jobs, login steps) needs one more
 
 Plus the existing budgets (the 600-student publish, fee reports) in the full API suite.
 
+### On a skewed dataset (review round 1)
+
+The policies now compare `tenant_id` with an InitPlan parameter, so the planner no longer uses the
+institute's own statistics (before, it evaluated the setting for its estimate). Two scratch
+databases with identical data: the demo school cloned to 3,030 students (87,870 attendance records,
+76,970 marks) next to 151 institutes of 3–10 students; the same statements as `jantrik_app`, old
+context against signed context, three rounds each (ms, `EXPLAIN ANALYZE` execution time):
+
+| Statement                                                          | Large institute, before | after       | Small institute, before | after   |
+| ------------------------------------------------------------------ | ----------------------- | ----------- | ----------------------- | ------- |
+| Q1 student list page (50 by name, current year)                    | 0.8–1.2                 | **5.0–6.2** | 0.4–0.5                 | 0.6–1.7 |
+| Q2 student count (current year)                                    | 5.3–8.5                 | 3.3–3.9     | 0.4                     | 0.6–0.9 |
+| Q3 attendance stats, 2,727 students, one month (the service's SQL) | 79–183                  | 82–95       | 0.2–0.3                 | 0.5–1.0 |
+| Q4 exam totals per student (publish read)                          | 18.5–34.4               | 20.3–23.7   | 0.1–0.2                 | 0.5–0.7 |
+| Q5 one day's attendance by section                                 | 2.9–6.8                 | 3.4–4.4     | 0.2                     | 0.3–0.6 |
+| Q6 search (`search_student_ids`)                                   | 5.9–11.2                | 8.7–9.6     | 4.4–6.2                 | 4.3–6.3 |
+
+- **One real plan change, Q1:** estimated 30 rows for 3,030, so a hash join and a full sort instead
+  of reading the first 50 by name (incremental sort). With an explicit `tenant_id = $1` in the
+  query (RLS still applies) the old plan comes back: 0.9–1.4 ms. The app's student list
+  (`students.module.ts`) does not pass the institute today. Recorded as P1-J8n with options.
+- The rest is the same or within noise; small institutes pay the check itself (about 0.1–0.5 ms a
+  statement with several policies: one check per policy InitPlan).
+- **Row triggers (NIT 4):** an update of 2,828 marks (one component, the whole large institute)
+  took 147–237 ms before and 242–374 ms after (first run of each pair): about 35 µs a row for
+  `exam_marks_score_within_full`'s check. A real mark sheet (one section, about 100 rows) costs
+  some 3–4 ms more.
+
 ## Decisions taken in this plan (the owner reviews them with the PR)
 
 - **P1-J8a** Option C, the verified context (table above).
