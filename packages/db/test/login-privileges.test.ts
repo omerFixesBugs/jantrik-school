@@ -10,8 +10,8 @@ import {
 import { APP_URL, INGEST_URL, OWNER_URL, PLATFORM_URL, superuserUrl } from './env.js';
 
 // Every running service checks its database login at start-up and refuses one that is a
-// superuser, bypasses RLS, or can become a role that does (or one of the pg_* roles that pass
-// every grant). These tests make such roles as the superuser and drop them afterwards.
+// superuser, bypasses RLS, has REPLICATION or CREATEROLE, or can become a role that does (or one
+// of the pg_* roles that pass every grant). These tests make such roles as the superuser and drop them afterwards.
 
 async function withClient<T>(url: string, fn: (c: PrismaClient) => Promise<T>): Promise<T> {
   const client = createPrismaClient(url);
@@ -111,6 +111,26 @@ describe('login privileges', () => {
     expect(loginPrivilegeProblems(p)).toEqual(['is a superuser']);
   });
 
+  it('refuses a login with REPLICATION (it can stream every row, RLS or not)', async () => {
+    const p = await withClient(await tempLogin('REPLICATION'), readLoginPrivileges);
+    expect(p.replication).toBe(true);
+    expect(loginPrivilegeProblems(p)).toEqual(['has REPLICATION']);
+  });
+
+  it('refuses a login with CREATEROLE (no runtime login needs it)', async () => {
+    const p = await withClient(await tempLogin('CREATEROLE'), readLoginPrivileges);
+    expect(p.createRole).toBe(true);
+    expect(loginPrivilegeProblems(p)).toEqual(['has CREATEROLE']);
+  });
+
+  it('refuses a login that can become a REPLICATION or CREATEROLE role', async () => {
+    for (const attribute of ['REPLICATION', 'CREATEROLE']) {
+      const role = await tempRole(`NOLOGIN ${attribute}`);
+      const p = await withClient(await tempLogin('', { member: role }), readLoginPrivileges);
+      expect(loginPrivilegeProblems(p)).toEqual([`can become ${role}`]);
+    }
+  });
+
   it('refuses a login that can become pg_read_all_data', async () => {
     const url = await tempLogin('', { member: 'pg_read_all_data' });
     const p = await withClient(url, readLoginPrivileges);
@@ -123,6 +143,8 @@ describe('loginPrivilegeProblems', () => {
     login: 'jantrik_app',
     superuser: false,
     bypassRls: false,
+    replication: false,
+    createRole: false,
     canBecome: [],
   };
 
@@ -136,6 +158,14 @@ describe('loginPrivilegeProblems', () => {
       'can become a',
       'can become b',
     ]);
+  });
+
+  it('lists REPLICATION and CREATEROLE', () => {
+    expect(loginPrivilegeProblems({ ...safe, replication: true })).toEqual(['has REPLICATION']);
+    expect(loginPrivilegeProblems({ ...safe, createRole: true })).toEqual(['has CREATEROLE']);
+    expect(
+      loginPrivilegeProblems({ ...safe, bypassRls: true, replication: true, createRole: true }),
+    ).toEqual(['has BYPASSRLS', 'has REPLICATION', 'has CREATEROLE']);
   });
 
   it('says only "is a superuser" for a superuser (it can become every role anyway)', () => {

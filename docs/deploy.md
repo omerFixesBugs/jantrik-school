@@ -172,8 +172,8 @@ The device receiver refuses:
 
 Beyond these, every service checks its database login at start-up, against the database itself:
 
-- **No login may be a superuser, have BYPASSRLS, or be able to become such a role** (nor
-  `pg_read_all_data`, `pg_write_all_data` or the server file and program roles): the API and the
+- **No login may be a superuser, have BYPASSRLS, REPLICATION or CREATEROLE, or be able to become
+  such a role** (nor `pg_read_all_data`, `pg_write_all_data` or the server file and program roles): the API and the
   worker (`DATABASE_URL`), the platform module (`DATABASE_PLATFORM_URL`) and the receiver
   (`DATABASE_INGEST_URL`). Fail closed: while the database does not answer, the check is asked
   again for about 3 minutes, then the service exits ([database.md](database.md) → Database roles).

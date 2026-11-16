@@ -169,7 +169,8 @@ screen. Devices that support HTTPS can use a TLS proxy in front of the receiver'
   ([deploy.md](deploy.md) → Redis users).
 - **Startup check.** The receiver refuses to start unless its login can run `ingest_resolve`,
   cannot read `students` or `device_punches` (so `DATABASE_URL` pasted by mistake fails), runs
-  with the 5 s statement limit, and is not a superuser, BYPASSRLS or able to become such a role
+  with the 5 s statement limit, and is not a superuser, BYPASSRLS, REPLICATION or CREATEROLE, nor
+  able to become such a role
   (the same check as the API's logins, [database.md](database.md) → Database roles): a check
   that answers otherwise stops the start at once. A check that fails (the database not reachable
   yet, or not migrated yet, e.g. 42501: the e2e run starts the API before its global setup
