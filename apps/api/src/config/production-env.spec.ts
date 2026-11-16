@@ -6,6 +6,7 @@ import { validateIngestEnv } from './ingest-env.js';
 import {
   API_ONLY_SECRETS,
   DATABASE_ADMIN_SECRETS,
+  normaliseOrigin,
   trustsAnyClient,
   unsafeOrigin,
 } from './production-env.js';
@@ -188,6 +189,39 @@ describe('production env: the API and the worker', () => {
       expect(image, file).toMatch(/^redis:\d+\.\d+\.\d+-alpine$/);
     }
     expect(new Set(images.map((i) => i.image)).size).toBe(1);
+  });
+
+  it('treats an entry with a login, a path, a query or a fragment as no origin at all', () => {
+    const dev = {
+      DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
+      DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:x@localhost:5432/jantrik',
+      DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@localhost:5432/jantrik',
+      JWT_ACCESS_SECRET: 'x'.repeat(40),
+      OTP_PEPPER: 'y'.repeat(40),
+    };
+    for (const entry of [
+      // A URL's origin would drop the part before @: this is https://evil.example.
+      'https://app.jantrik.com.bd@evil.example',
+      'https://user:pw@app.jantrik.com.bd',
+      'https://app.jantrik.com.bd/app',
+      'https://app.jantrik.com.bd/?x=1',
+      'https://app.jantrik.com.bd/#top',
+    ]) {
+      expect(normaliseOrigin(entry), entry).toBeNull();
+      // Production refuses it in either list.
+      expect(
+        apiError({ ...api, CORS_ORIGINS: `${entry},https://platform.jantrik.com.bd` }),
+      ).toMatch(/CORS_ORIGINS must hold https origins only; ".*" is not an origin/);
+      expect(apiError({ ...api, PLATFORM_ORIGINS: entry })).toMatch(
+        /PLATFORM_ORIGINS: ".*" is not an origin/,
+      );
+      // Development keeps a CORS entry as written: it matches no browser's Origin.
+      const parsed = envSchema.parse({ ...dev, CORS_ORIGINS: entry });
+      expect(parsed.CORS_ORIGINS).toEqual([entry]);
+      expect(isAllowedOrigin('https://evil.example', parsed)).toBe(false);
+      expect(isAllowedOrigin('https://app.jantrik.com.bd', parsed)).toBe(false);
+    }
+    expect(normaliseOrigin('HTTPS://App.Jantrik.com.bd:443/')).toBe('https://app.jantrik.com.bd');
   });
 
   it('normalises CORS_ORIGINS too, so the CORS middleware allows what the start-up check passed', () => {

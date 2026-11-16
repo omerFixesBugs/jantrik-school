@@ -29,8 +29,9 @@ export const envSchema = z
     /**
      * Comma-separated allowlist of browser origins (credentials are allowed). Normalised as
      * browsers send `Origin` (lower-case host, no trailing slash, no default port), so the CORS
-     * check (an exact match) allows what the production check passed. An entry that is not an
-     * origin stays as written: it matches nothing, and production refuses it.
+     * check (an exact match) allows what the production check passed. An entry that is not exactly
+     * an origin (not a URL, or with a login, a path, a query or a fragment) stays as written: it
+     * matches no browser's Origin, and production refuses it.
      */
     CORS_ORIGINS: z
       .string()
@@ -58,7 +59,10 @@ export const envSchema = z
           .filter(Boolean)) {
           const origin = normaliseOrigin(entry);
           if (origin === null) {
-            ctx.addIssue({ code: 'custom', message: `PLATFORM_ORIGINS: "${entry}" is not a URL` });
+            ctx.addIssue({
+              code: 'custom',
+              message: `PLATFORM_ORIGINS: "${entry}" is not an origin (scheme, host and port only)`,
+            });
             return z.NEVER;
           }
           origins.push(origin);
