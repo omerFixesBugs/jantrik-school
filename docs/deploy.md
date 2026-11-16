@@ -400,8 +400,8 @@ deploy/compose.sh ps
     (`app.tenant_id`, `app.user_id`), which mean nothing now: their requests and jobs see no
     institute data and fail until they restart. Nothing is lost (a failed job is retried, a failed
     refresh too). Run the last two commands together; `up -d` restarts api and worker at once.
-  - The new API refuses to start until the migration has run ("Could not read the request context
-    key through DATABASE_LOGIN_URL … Run the database migrations").
+  - In production the new API refuses to start until the migration has run ("Could not read the
+    request context key through DATABASE_LOGIN_URL … Run the database migrations").
   - Every statement of the migration can run again: after a failure half-way,
     `prisma migrate resolve --rolled-back 20261117000000_verified_request_context`, then
     `migrate` again (the key it made the first time is kept).

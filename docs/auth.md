@@ -279,8 +279,10 @@ for them, or enter any institute. Now:
   The request context). `app_current_tenant_id()` / `app_current_user_id()` believe nothing else,
   and a value that does not verify for this very transaction raises 42501.
 - **The key** reaches the API and the worker through the password-login login: `LoginPrismaService`
-  registers itself as its source when it is built and loads it at start-up; **without it the API
-  does not start**. `jantrik_app` can neither read the key nor run `auth_context_key()`. The
+  registers itself as its source when it is built and loads it at start-up. **In production the
+  API does not start without it**; in development and tests it logs an error and loads it on the
+  first institute transaction (Playwright starts the API before its global setup migrates). Every
+  signed transaction also compares the database's key fingerprint and reloads a changed key once. `jantrik_app` can neither read the key nor run `auth_context_key()`. The
   receiver never opens a context and has no key (`ingest-isolation.spec.ts`); `src/platform`
   never touches either (`platform-isolation.spec.ts`).
 - **So an injection is the person whose request it rides in, in their institute:** it can do what

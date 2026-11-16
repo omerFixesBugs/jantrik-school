@@ -79,6 +79,27 @@ REVOKE ALL ON FUNCTION auth_context_key() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION auth_context_key() TO jantrik_login_app;
 ALTER FUNCTION auth_context_key() OWNER TO jantrik_auth;
 
+-- ───────────── app_context_key_id(): which key the database has now ─────────────
+-- A one-way fingerprint of the key (sha256 of a label and the key), which reveals nothing that
+-- helps forge a signature. withContext reads it in the round trip it already makes and reloads its
+-- key when it differs, e.g. after `prisma migrate reset` recreated the database under a running
+-- API (Playwright's global setup) or a restore from another server.
+DROP FUNCTION IF EXISTS app_context_key_id();
+CREATE FUNCTION app_context_key_id()
+  RETURNS text
+  LANGUAGE sql STABLE PARALLEL RESTRICTED SECURITY DEFINER
+  SET search_path = pg_catalog, public, pg_temp
+  AS $$
+    SELECT encode(sha256(convert_to('jantrik request context key id:', 'UTF8') || k.key), 'hex')
+    FROM public.app_context_key k WHERE k.id = 1
+  $$;
+REVOKE ALL ON FUNCTION app_context_key_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app_context_key_id() TO jantrik_app;
+ALTER FUNCTION app_context_key_id() OWNER TO jantrik_auth;
+SET ROLE jantrik_auth;
+GRANT EXECUTE ON FUNCTION app_context_key_id() TO jantrik_owner;
+RESET ROLE;
+
 -- ───────────── app_verified_context(): the only reader of app.context ─────────────
 -- app.context = 'v1:<tenant uuid or empty>:<user uuid or empty>:<backend pid>:<transaction start,
 -- µs since 1970>:<HMAC-SHA256(key, everything before the last colon), 64 hex digits>'.

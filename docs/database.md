@@ -173,8 +173,14 @@ enter any institute. Those two settings mean nothing now.
   database has its own, and the migration file holds no secret. Only the owner and `jantrik_auth`
   may read the table. `auth_context_key()` returns it to **`jantrik_login_app` only** (the
   password-login login no ordinary request uses): the API and the worker load it once at start-up
-  through `LoginPrismaService` and refuse to start without it. The seed and the tests read the
-  table as the owner. The device receiver never opens a context and never sees the key.
+  through `LoginPrismaService` (in production they refuse to start without it; elsewhere they log
+  an error and load it on the first institute transaction). The seed and the tests read the table
+  as the owner. The device receiver never opens a context and never sees the key.
+- **A changed key is noticed:** `app_context_key_id()` (runnable by `jantrik_app`) returns a
+  one-way fingerprint of the key; `withContext` reads it in the round trip it already makes and
+  loads the key again, once, when it differs (a database reset under a running API, as in
+  Playwright's global setup, or a restore from another server). If it still differs, the
+  transaction fails before its work runs.
 - **The check:** `app_verified_context()` (definer, owner `jantrik_auth`, `PARALLEL RESTRICTED`)
   is the only reader of `app.context`. Unset or empty → no context. Otherwise the MAC must match
   (checked first, over the raw text, compared through sha256), and the pid and transaction start
@@ -185,8 +191,9 @@ enter any institute. Those two settings mean nothing now.
   RLS, in its own institute. Inside one's own institute RLS does not separate roles (P1-J10 in
   decisions-pending).
 - **Rotating the key** (no command yet): as the owner, `UPDATE app_context_key SET key = …,
-inner_pad = …, outer_pad = …` (the migration shows how they are made), then restart the API and
-  the worker; requests in between fail.
+inner_pad = …, outer_pad = …` (the migration shows how they are made). Running processes notice
+  the new fingerprint on their next transaction and reload; only transactions already signed with
+  the old key fail.
 - Tests: `account-takeover.test.ts` (the attacks), `request-context.test.ts` (the check, the
   privileges), `schema-safety.test.ts` (the wrapped calls, the pinned functions).
 

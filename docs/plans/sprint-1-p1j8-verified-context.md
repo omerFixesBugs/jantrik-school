@@ -25,6 +25,12 @@ is merged by Claude. The follow-up it answers is P1-J8 in
   that table's own policy PostgreSQL refused it as "infinite recursion detected in policy"
   (42P17). Its check moved into `app_tenant_has_modules()` (STABLE plpgsql, invoker).
 - **`tenantClient` kept:** each model call now runs in its own `withTenant` (about 20 test uses).
+- **The key is not only loaded at start-up:** CI's Playwright starts the API before its global
+  setup migrates (and resets) `jantrik_e2e`, so the start-up load failed, and a reset would have
+  made a new key under the running API. Now production still refuses to start without the key,
+  development and tests log an error and load it on first use, and every signed transaction
+  compares the database's key fingerprint (`app_context_key_id()`, one-way) in the round trip it
+  already makes and reloads a changed key once (P1-J8h). Rotation needs no restart any more.
 - **The DB tests register the key source in `helpers.ts`**, not a Vitest setup file (a setup file
   loads the package before `client-options.test.ts` mocks the adapter).
 
@@ -252,7 +258,9 @@ Plus the existing budgets (the 600-student publish, fee reports) in the full API
 - **P1-J8e** Every policy rewritten to the wrapped form in the same migration; guarded by a test.
 - **P1-J8f** `tenantClient` kept, one `withTenant` per model call.
 - **P1-J8g** `app_verified_context()` granted to the roles that meet policies, not PUBLIC.
-- No key rotation command; documented SQL plus a restart (database.md → The request context).
+- **P1-J8h** Start-up refuses without the key in production only; a changed key is noticed by its
+  fingerprint and reloaded. No key rotation command; documented SQL (database.md → The request
+  context).
 - **P1-J10** (follow-up) role-level limits inside an institute.
 
 ## Files

@@ -28,13 +28,18 @@ import { PrismaService } from '../prisma/prisma.service.js';
  * It also reads the request context key (P1-J8), the other thing only this login may read: every
  * institute transaction of the API and the worker is signed with it (withContext, docs/auth.md →
  * The request context). The source is registered when the service is built, so any module may
- * open a context during start-up; the key is loaded at start-up, and without it the API does not
- * start.
+ * open a context during start-up. The key is loaded at start-up. When it cannot be (the
+ * migrations have not run yet), production refuses to start; development and tests only log an
+ * error and load it on the first institute transaction (Playwright starts the API before its
+ * global setup migrates jantrik_e2e). Without a key no context can be signed, so every institute
+ * transaction fails: closed, and loud.
  */
 @Injectable()
 export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LoginPrismaService.name);
   readonly client: PrismaClient;
+  /** Production refuses to start without the request context key; elsewhere it only logs. */
+  private readonly production: boolean;
   /** Waits between failed start-up checks (about 3 minutes in all; tests shorten them). */
   retryDelaysMs: readonly number[] = STARTUP_RETRY_DELAYS_MS;
   /** How long one start-up check may take. */
@@ -47,6 +52,7 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
     this.client = createPrismaClient(config.get('DATABASE_LOGIN_URL', { infer: true }), {
       max: 4,
     });
+    this.production = config.get('NODE_ENV', { infer: true }) === 'production';
     this.registerContextKeySource();
   }
 
@@ -83,14 +89,18 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
       label: startupErrorLabel,
     });
 
-    // P1-J8: no key, no institute context, so no start (fail closed).
+    // P1-J8: read the key now. Production refuses to start without it (the migrations run
+    // before the apps, docs/deploy.md). Elsewhere every institute transaction tries again and
+    // fails until it can (no key, no context), so an API started before its migrations
+    // (Playwright's global setup migrates after starting it) heals by itself.
     try {
       await requestContextKey();
     } catch (error) {
-      throw new Error(
+      const message =
         'Could not read the request context key through DATABASE_LOGIN_URL ' +
-          `(${(error as Error).message}). Run the database migrations. See docs/auth.md.`,
-      );
+        `(${(error as Error).message}). Run the database migrations. See docs/auth.md.`;
+      if (this.production) throw new Error(message);
+      this.logger.error(`${message} Institute requests fail until the key can be read.`);
     }
 
     const canRun = (client: PrismaClient) =>

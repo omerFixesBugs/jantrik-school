@@ -76,19 +76,22 @@ function service(
   privileges: (LoginPrivileges | Error)[] = [SAFE],
   loginWhere: Where = HERE,
   key: Buffer | Error = KEY,
+  production = false,
 ) {
   const warn = vi.fn();
+  const error = vi.fn();
   const s = Object.create(LoginPrismaService.prototype) as LoginPrismaService;
   Object.assign(s, {
     client: client(loginCanRun, privileges, loginWhere, key),
     main: { client: client(mainCanRun) },
-    logger: { warn, log: vi.fn() },
+    logger: { warn, error, log: vi.fn() },
+    production,
     retryDelaysMs: [0, 0, 0],
     checkTimeoutMs: 50,
   });
   // What the constructor does.
   s.registerContextKeySource();
-  return { s, warn };
+  return { s, warn, error };
 }
 
 describe('LoginPrismaService startup check', () => {
@@ -132,12 +135,24 @@ describe('LoginPrismaService and the request context key (P1-J8)', () => {
     expect(asked).toHaveLength(1);
   });
 
-  it('refuses to start without the key (no migration, or no privilege)', async () => {
+  it('in production, refuses to start without the key (no migration, or no privilege)', async () => {
     const missing = new Error('function auth_context_key() does not exist');
-    const { s } = service(true, false, [SAFE], HERE, missing);
+    const { s } = service(true, false, [SAFE], HERE, missing, true);
     await expect(s.onModuleInit()).rejects.toThrow(
       /request context key through DATABASE_LOGIN_URL \(.*does not exist\)\. Run the database migrations/,
     );
+  });
+
+  it('elsewhere, starts without the key but logs an error; institute transactions keep failing until it can be read', async () => {
+    const missing = new Error('function auth_context_key() does not exist');
+    const { s, error } = service(true, false, [SAFE], HERE, missing);
+    await expect(s.onModuleInit()).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /request context key through DATABASE_LOGIN_URL \(.*does not exist\)\..*Institute requests fail/,
+      ),
+    );
+    await expect(requestContextKey()).rejects.toThrow(/does not exist/);
   });
 });
 

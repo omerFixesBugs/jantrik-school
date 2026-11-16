@@ -5,6 +5,8 @@ import {
   loadRequestContextKey,
   loadRequestContextKeyAsOwner,
   requestContextKey,
+  requestContextKeyId,
+  setRequestContextKeySource,
   signRequestContext,
   withContext,
   withTenant,
@@ -217,6 +219,50 @@ describe('the verified request context', () => {
   });
 });
 
+describe('a key the database no longer has', () => {
+  it('withContext notices it (the fingerprint) and loads the key again, once', async () => {
+    const app = appClient();
+    const owner = ownerClient();
+    const real = await loadRequestContextKeyAsOwner(owner);
+    const loads: string[] = [];
+    // First a key that is not the database's (as after a reset under a running API), then the
+    // real one.
+    setRequestContextKeySource(async () => {
+      loads.push(loads.length === 0 ? 'stale' : 'real');
+      return loads.length === 1 ? randomBytes(48) : real;
+    });
+    try {
+      const tenantId = (await createTenant(app)).id;
+      expect(await withTenant(app, tenantId, (tx) => tx.tenant.count())).toBe(1);
+      expect(await withTenant(app, tenantId, (tx) => tx.tenant.count())).toBe(1);
+      expect(loads).toEqual(['stale', 'real']);
+    } finally {
+      setRequestContextKeySource(() => Promise.resolve(real));
+      await Promise.all([app.$disconnect(), owner.$disconnect()]);
+    }
+  });
+
+  it('when the reloaded key does not match either, the transaction fails before running', async () => {
+    const app = appClient();
+    const owner = ownerClient();
+    const real = await loadRequestContextKeyAsOwner(owner);
+    const tenantId = (await createTenant(app)).id;
+    setRequestContextKeySource(async () => randomBytes(48));
+    let ran = false;
+    try {
+      await expect(
+        withTenant(app, tenantId, async () => {
+          ran = true;
+        }),
+      ).rejects.toThrow(/not the one this process can read/);
+      expect(ran).toBe(false);
+    } finally {
+      setRequestContextKeySource(() => Promise.resolve(real));
+      await Promise.all([app.$disconnect(), owner.$disconnect()]);
+    }
+  });
+});
+
 describe('who may read the key', () => {
   let owner: PrismaClient;
   let login: PrismaClient;
@@ -256,6 +302,17 @@ describe('who may read the key', () => {
     expect(viaLogin.length).toBe(48);
     expect(viaLogin.equals(viaOwner)).toBe(true);
     expect(viaLogin.equals(await requestContextKey())).toBe(true);
+  });
+
+  it('the app login may read the key fingerprint, which matches requestContextKeyId()', async () => {
+    const app = appClient();
+    try {
+      const [row] = await app.$queryRaw<{ id: string }[]>`SELECT app_context_key_id() AS id`;
+      expect(row?.id).toBe(requestContextKeyId(await loadRequestContextKeyAsOwner(owner)));
+      expect(row?.id).toMatch(/^[0-9a-f]{64}$/);
+    } finally {
+      await app.$disconnect();
+    }
   });
 
   it('the privileges, exactly', async () => {

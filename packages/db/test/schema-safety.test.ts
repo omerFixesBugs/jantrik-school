@@ -131,6 +131,7 @@ describe('schema safety net', () => {
   // P1-J: every definer function a runtime login may run whose owner can read
   // users.password_hash ("login: function"). Each was checked to return nothing of the hash.
   const PASSWORD_READING_OWNER_FUNCTIONS = [
+    'jantrik_app: app_context_key_id', // a one-way fingerprint of the context key (P1-J8)
     'jantrik_app: app_find_or_create_user', // the id only
     'jantrik_app: app_verified_context', // the caller's own verified institute and person (P1-J8)
     'jantrik_app: auth_find_refresh_token', // the token's session and user ids
@@ -181,7 +182,8 @@ describe('schema safety net', () => {
   const isIngest = (fn: string) => fn.startsWith('ingest_');
   // And the request context itself (P1-J8): the one reader of app.context, and the key's reader
   // for the password-login login.
-  const isContext = (fn: string) => fn === 'app_verified_context' || fn === 'auth_context_key';
+  const isContext = (fn: string) =>
+    ['app_verified_context', 'auth_context_key', 'app_context_key_id'].includes(fn);
 
   it('no SECURITY DEFINER function takes a tenant id parameter', async () => {
     // Parameters it takes: OUT parameters are results (app_verified_context() returns an

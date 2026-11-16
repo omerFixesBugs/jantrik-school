@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import type { PrismaClient, TransactionClient } from '../client.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,13 +33,29 @@ export interface TxOptions {
 // (app_context_key, made by its migration); a process reads it once, through a source it
 // registers at start-up: the API and the worker through the password-login login
 // (`loadRequestContextKey`, LoginPrismaService), the seed and the tests as the schema owner
-// (`loadRequestContextKeyAsOwner`).
+// (`loadRequestContextKeyAsOwner`). Every signed transaction also reads the database's key
+// fingerprint (`app_context_key_id()`) and reloads the key once when it changed (a database reset
+// or restored under a running process).
 
 /** Where this process gets the request context key. */
 export type RequestContextKeySource = () => Promise<Uint8Array>;
 
+interface LoadedKey {
+  key: Buffer;
+  /** The fingerprint `app_context_key_id()` returns for this key. */
+  id: string;
+}
+
 let keySource: RequestContextKeySource | null = null;
-let keyPromise: Promise<Buffer> | null = null;
+let keyPromise: Promise<LoadedKey> | null = null;
+
+/** The key's one-way fingerprint, as `app_context_key_id()` computes it in the database. */
+export function requestContextKeyId(key: Uint8Array): string {
+  return createHash('sha256')
+    .update('jantrik request context key id:', 'utf8')
+    .update(key)
+    .digest('hex');
+}
 
 /**
  * Register where the request context key comes from. Called once at start-up (the API's
@@ -55,7 +71,11 @@ export function setRequestContextKeySource(source: RequestContextKeySource): voi
  * The request context key, loaded once from the registered source. Rejects when no source is
  * registered, or the source fails (a failed load is tried again on the next call).
  */
-export function requestContextKey(): Promise<Buffer> {
+export async function requestContextKey(): Promise<Buffer> {
+  return (await loadedKey()).key;
+}
+
+function loadedKey(): Promise<LoadedKey> {
   if (keyPromise) return keyPromise;
   const source = keySource;
   if (!source) {
@@ -69,13 +89,21 @@ export function requestContextKey(): Promise<Buffer> {
   const loading = source().then((raw) => {
     const key = Buffer.from(raw);
     if (key.length < 32) throw new Error('The request context key is too short.');
-    return key;
+    return { key, id: requestContextKeyId(key) };
   });
   keyPromise = loading;
   loading.catch(() => {
     if (keyPromise === loading) keyPromise = null;
   });
   return loading;
+}
+
+/** Forget `stale` (unless another caller already replaced it) and load the key again. */
+async function reloadKey(stale: LoadedKey): Promise<LoadedKey> {
+  const current = keyPromise ? await keyPromise.catch(() => null) : null;
+  if (current && current !== stale) return current;
+  keyPromise = null;
+  return loadedKey();
 }
 
 /**
@@ -122,18 +150,32 @@ export function signRequestContext(key: Uint8Array, parts: SignedContextParts): 
   return `${message}:${createHmac('sha256', key).update(message, 'utf8').digest('hex')}`;
 }
 
-/** Sign and set the context for the transaction `tx` runs in. */
+/**
+ * Sign and set the context for the transaction `tx` runs in. The same round trip reads the
+ * database's key fingerprint: when it is not the loaded key's, the key is loaded again once.
+ */
 async function setSignedContext(
   tx: TenantTx,
-  key: Buffer,
+  loaded: LoadedKey,
   tenantId: string | null,
   userId: string | null,
 ): Promise<void> {
-  const [here] = await tx.$queryRaw<{ pid: string; started: string }[]>`
+  const [here] = await tx.$queryRaw<{ pid: string; started: string; key_id: string | null }[]>`
     SELECT pg_backend_pid()::text AS pid,
-           (extract(epoch FROM now()) * 1000000)::bigint::text AS started`;
+           (extract(epoch FROM now()) * 1000000)::bigint::text AS started,
+           app_context_key_id() AS key_id`;
   if (!here) throw new Error('Could not read the transaction to sign its context.');
-  const value = signRequestContext(key, {
+  let key = loaded;
+  if (here.key_id !== key.id) {
+    key = await reloadKey(key);
+    if (here.key_id !== key.id) {
+      throw new Error(
+        'The request context key of the database is not the one this process can read ' +
+          '(docs/database.md → The request context).',
+      );
+    }
+  }
+  const value = signRequestContext(key.key, {
     tenantId,
     userId,
     pid: here.pid,
@@ -161,7 +203,7 @@ export async function withContext<T>(
   if (tenantId) assertUuid('tenant', tenantId);
   if (userId) assertUuid('user', userId);
   // Loaded before the transaction opens, so a first load never holds a connection.
-  const key = tenantId || userId ? await requestContextKey() : null;
+  const key = tenantId || userId ? await loadedKey() : null;
   return prisma.$transaction(async (tx) => {
     if (key) await setSignedContext(tx, key, tenantId || null, userId || null);
     return fn(tx);
