@@ -64,9 +64,10 @@ test('new year: create it, copy terms, promote class 6, apply, number the rolls,
   await page.getByTestId('apply-run').click();
   await expect(page.getByTestId('run-applied')).toBeVisible({ timeout: 30_000 });
 
-  // 4. Rolls of class 7 in the new year; one typed by hand in Bangla digits.
+  // 4. Rolls of class 6 in the new year (the repeater, in 6 ক: class 7 has no sections in the
+  // demo, so the promoted are enrolled without one); the roll typed by hand in Bangla digits.
   await page.goto('/setup/new-year');
-  await page.locator('#rolls-class').selectOption({ label: 'সপ্তম শ্রেণি' });
+  await page.locator('#rolls-class').selectOption({ label: 'ষষ্ঠ শ্রেণি' });
   const preview = page.getByTestId('rolls-preview');
   await expect(preview).toBeVisible();
   await preview.getByTestId('rolls-row').first().locator('input').fill('১২');

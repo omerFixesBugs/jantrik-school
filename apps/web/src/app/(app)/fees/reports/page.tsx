@@ -51,13 +51,16 @@ function Reports() {
         }
         className="gap-(--section-gap)"
       >
-        <TabsList aria-label={t('tabsLabel')} className="max-w-full print:hidden">
-          {TABS.map((key) => (
-            <TabsTrigger key={key} value={key} data-testid={`reports-tab-${key}`}>
-              {labels[key]}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        {/* Four tabs: on a phone they scroll sideways instead of running off the screen. */}
+        <div className="max-w-full overflow-x-auto print:hidden">
+          <TabsList aria-label={t('tabsLabel')} className="w-max">
+            {TABS.map((key) => (
+              <TabsTrigger key={key} value={key} data-testid={`reports-tab-${key}`}>
+                {labels[key]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
         <TabsContent value="dues" className="text-base">
           <DueListReport mode="dues" />
         </TabsContent>
