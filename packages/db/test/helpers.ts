@@ -1,11 +1,10 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { PrismaPg } from '@prisma/adapter-pg';
 import {
-  PrismaClient,
   createPrismaClient,
   hashPlatformToken,
   provisionTenant,
   withTenant,
+  type PrismaClient,
   type ProvisionTenantInput,
   type Tenant,
 } from '../src/index.js';
@@ -52,7 +51,7 @@ export async function newPlatformSession(
 
 /** App-role client with a single pooled connection, to test connection reuse. */
 export const singleConnectionAppClient = (): PrismaClient =>
-  new PrismaClient({ adapter: new PrismaPg({ connectionString: APP_URL, max: 1 }) });
+  createPrismaClient(APP_URL, { max: 1 });
 
 export async function createTenant(
   app: PrismaClient,

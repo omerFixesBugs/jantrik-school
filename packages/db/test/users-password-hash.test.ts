@@ -167,4 +167,22 @@ describe('users.password_hash is out of the app login’s reach (P1-J)', () => {
     );
     expect(row.passwordHash).toBe(next);
   });
+
+  it('every Prisma client leaves the hash out, so whole-row reads and updates work', async () => {
+    const read = await withContext(app, { userId: staff.id }, (tx) =>
+      tx.user.findUniqueOrThrow({ where: { id: staff.id } }),
+    );
+    expect(read.id).toBe(staff.id);
+    expect('passwordHash' in read).toBe(false);
+    const updated = await withContext(app, { userId: staff.id }, (tx) =>
+      tx.user.update({ where: { id: staff.id }, data: { locale: 'en' } }),
+    );
+    expect(updated.locale).toBe('en');
+    expect('passwordHash' in updated).toBe(false);
+    // The owner asks for it explicitly on one query.
+    const withHash = await withContext(owner, { userId: staff.id }, (tx) =>
+      tx.user.findUniqueOrThrow({ where: { id: staff.id }, omit: { passwordHash: false } }),
+    );
+    expect(withHash.passwordHash).toBe(staff.hash);
+  });
 });
