@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,7 +14,8 @@ import path from 'node:path';
  * one by one. The counter never goes back behind the clock (`floorAt`), so a lost counter file
  * does not restart at numbers earlier runs gave out. The numbers sit where nothing else is:
  * `<prefix>` + 50 000 000–98 999 999 (the seeds' fixed numbers are below; the old random phones
- * used other operators).
+ * used other operators). They never wrap: when the range is used up (the clock alone reaches its
+ * end in about May 2028), drawing stops with a message instead of repeating old numbers.
  *
  * Kept identical in packages/db/test/test-phones.ts and apps/api/test/support/test-phones.ts (a
  * test of the db copy pins how it behaves).
@@ -23,9 +25,13 @@ import path from 'node:path';
 const BLOCK = 200;
 const LOW = 50_000_000;
 const SPAN = 49_000_000;
-/** The counter's floor grows 20 a second from this day, so it is always ahead of older runs. */
+/** The counter's floor grows 1 a second from this day, so it is always ahead of older runs. */
 const EPOCH_MS = Date.UTC(2026, 10, 1);
-const PER_SECOND = 20;
+const PER_SECOND = 1;
+/** A lock older than this was left by a process that died (the locked work takes microseconds). */
+const STALE_MS = 10_000;
+/** What `mkdir` answers while the lock exists, or (Windows) while it is being removed. */
+const BUSY = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY']);
 
 export const floorAt = (nowMs: number): number =>
   Math.max(0, Math.floor(((nowMs - EPOCH_MS) / 1000) * PER_SECOND));
@@ -34,22 +40,55 @@ const pause = (ms: number): void => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
-/** Runs `fn` while holding a lock directory; a lock older than 10 s is left over and taken. */
-function withLock<T>(lockDir: string, fn: () => T): T {
+const ownerOf = (f: typeof fs, lockDir: string): string | null => {
+  try {
+    return f.readFileSync(path.join(lockDir, 'owner'), 'utf8');
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Removes the lock if it is stale. It is first moved aside (a rename: only one process can), and
+ * removed only if its owner is still the one seen as stale; a fresh lock that another process made
+ * meanwhile is put back.
+ */
+function takeOverIfStale(f: typeof fs, lockDir: string): void {
+  const seen = ownerOf(f, lockDir);
+  try {
+    if (Date.now() - f.statSync(lockDir).mtimeMs <= STALE_MS) return;
+  } catch {
+    return; // released meanwhile
+  }
+  const aside = `${lockDir}.stale-${randomUUID()}`;
+  try {
+    f.renameSync(lockDir, aside);
+  } catch {
+    return; // another process moved or released it first
+  }
+  if (ownerOf(f, aside) === seen) {
+    f.rmSync(aside, { recursive: true, force: true });
+    return;
+  }
+  try {
+    f.renameSync(aside, lockDir);
+  } catch {
+    // Its owner has finished and a newer lock exists; nothing refers to this copy any more.
+    f.rmSync(aside, { recursive: true, force: true });
+  }
+}
+
+/** Runs `fn` while holding the lock directory `lockDir`, taking over a stale one. */
+export function withLock<T>(lockDir: string, fn: () => T, f: typeof fs = fs): T {
+  const token = randomUUID();
   for (let tries = 0; ; tries++) {
     try {
-      fs.mkdirSync(lockDir);
+      f.mkdirSync(lockDir);
+      f.writeFileSync(path.join(lockDir, 'owner'), token);
       break;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      try {
-        if (Date.now() - fs.statSync(lockDir).mtimeMs > 10_000) {
-          fs.rmSync(lockDir, { recursive: true, force: true });
-          continue;
-        }
-      } catch {
-        continue; // released meanwhile
-      }
+      if (!BUSY.has((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      takeOverIfStale(f, lockDir);
       if (tries > 3_000) throw new Error(`test-phones: lock ${lockDir} stays taken`);
       pause(10);
     }
@@ -57,7 +96,7 @@ function withLock<T>(lockDir: string, fn: () => T): T {
   try {
     return fn();
   } finally {
-    fs.rmSync(lockDir, { recursive: true, force: true });
+    if (ownerOf(f, lockDir) === token) f.rmSync(lockDir, { recursive: true, force: true });
   }
 }
 
@@ -99,6 +138,12 @@ export function phoneSource(
   return () => {
     if (next >= end) takeBlock();
     const n = next++;
-    return `${prefix}${LOW + (n % SPAN)}`;
+    if (n >= SPAN) {
+      throw new Error(
+        `The test phone range of ${url.pathname.slice(1)} is used up: recreate the test database, ` +
+          `delete ${counterFile} and move EPOCH_MS in test-phones.ts (both copies) to today`,
+      );
+    }
+    return `${prefix}${LOW + n}`;
   };
 }
