@@ -145,6 +145,8 @@ export const envSchema = z
     LOGIN_PER_IDENTIFIER_PER_15MIN: positiveInt(5),
     // Staff invitations (POST /staff and re-invites) per institute and hour.
     STAFF_INVITES_PER_TENANT_PER_HOUR: positiveInt(30),
+    // Stored images per institute, in MB (docs/files.md): over it, uploads get 413 STORAGE_FULL.
+    FILE_STORAGE_PER_TENANT_MB: positiveInt(1024),
   })
   .superRefine((env, ctx) => {
     // Loosened settings must never leave a developer's machine.

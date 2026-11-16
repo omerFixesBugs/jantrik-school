@@ -3,6 +3,7 @@ import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
 import { Db } from './db.service.js';
 import { InstituteProvisioning } from './institute-provisioning.service.js';
+import { RequestTransaction } from './request-transaction.service.js';
 import { TenantAccessService } from './tenant-access.service.js';
 import { TenantContextInterceptor } from './tenant-context.interceptor.js';
 import { TenantJobRunner } from './tenant-job-runner.service.js';
@@ -13,6 +14,7 @@ import { TenantJobRunner } from './tenant-job-runner.service.js';
     RequestContext,
     Clock,
     Db,
+    RequestTransaction,
     TenantAccessService,
     TenantContextInterceptor,
     TenantJobRunner,
@@ -22,6 +24,7 @@ import { TenantJobRunner } from './tenant-job-runner.service.js';
     RequestContext,
     Clock,
     Db,
+    RequestTransaction,
     TenantAccessService,
     TenantContextInterceptor,
     TenantJobRunner,
