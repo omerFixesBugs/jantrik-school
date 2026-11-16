@@ -16,12 +16,12 @@ import { RateLimiter } from '../redis/rate-limiter.service.js';
 import { Db } from '../tenancy/db.service.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 import {
-  findUserForLogin,
+  findUserForPasswordLogin,
   listMemberships,
   listMembershipsFor,
-  passwordMatches,
   type LoginUser,
 } from './login-lookup.js';
+import { LoginPrismaService } from './login-prisma.service.js';
 import { OtpService } from './otp.service.js';
 import { PasswordService } from './password.service.js';
 import { newRefreshToken, SessionService, type SessionMeta } from './session.service.js';
@@ -35,6 +35,7 @@ type ResponseUser = AuthResponse['user'];
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly login: LoginPrismaService,
     private readonly db: Db,
     private readonly otp: OtpService,
     private readonly passwords: PasswordService,
@@ -80,13 +81,12 @@ export class AuthService {
       },
     );
 
-    const user = await findUserForLogin(this.prisma.client, { phone, email });
-    // One argon2 hash and one comparison in the database whatever the account (a dummy hash and
-    // the nil user when needed), so timing doesn't reveal unknown accounts. The stored hash never
-    // leaves the database (P1-J).
-    const digest = await this.passwords.loginDigest(user?.password_params, password);
-    const ok = await passwordMatches(this.prisma.client, user?.id, digest);
-    if (!user || !ok) throw invalidCredentials();
+    // On the password login's own database login (P1-J): no ordinary request can read a hash.
+    const found = await findUserForPasswordLogin(this.login.client, { phone, email });
+    // Always verify (against a dummy hash if needed) so timing doesn't reveal unknown accounts.
+    const ok = await this.passwords.verify(found?.password_hash, password);
+    if (!found || !ok) throw invalidCredentials();
+    const user: LoginUser = { id: found.id, name: found.name, locale: found.locale };
     // Passwords are for staff (sprint 1 P1): an active staff membership in an open institute.
     // Anyone else gets the same answer as a wrong password, and it counts as a failed attempt.
     const memberships = await listMembershipsFor(this.prisma.client, user.id);
