@@ -143,6 +143,59 @@ describe('password rules (S26, P1-C, P1-D)', () => {
       refused('শা‌পলা২০২৬১২৩৪', 'শাপলা মাদ্রাসা');
     });
 
+    it.each<[string, string]>([
+      // Invisible characters (soft hyphen, zero-width space, word joiner) on either side.
+      ['শাপলা২০২৬১২৩৪', 'শা­পলা উচ্চ বিদ্যালয়'],
+      ['kodom2026xyzw', 'Kodom​Tola School'],
+      ['tola2026xyzw', 'Kodom​Tola School'],
+      ['ko​dom2026xyzw', 'Kodom Tola School'],
+      ['ko­dom2026xyzw', 'Kodom Tola School'],
+      ['ko⁠dom2026xyzw', 'Kodom Tola School'],
+      // Khanda ta in its old encoding (ত + hasant + ZWJ) is ৎ.
+      ['উত্‍সব২০২৬১২৩৪', 'উৎসব উচ্চ বিদ্যালয়'],
+      ['উৎসব২০২৬১২৩৪', 'উত্‍সব উচ্চ বিদ্যালয়'],
+      // Punctuation and symbols between the letters, full-width letters, Bangla digits.
+      ['ko.dom2026xyzw', 'Kodom Tola School'],
+      ['k-o-d-o-m-2026', 'Kodom Tola School'],
+      ['ｋｏｄｏｍ２০২৬ｘ', 'Kodom Tola School'],
+      ['alo৭১২০২৬xyz', 'Alo71 Coaching'],
+    ])('refuses %s for "%s" (written another way)', (pw, name) => refused(pw, name));
+
+    it('skips words that are only digits (the whole name still counts)', () => {
+      allowed('mypass2026abc', 'Udvash 2026 Batch');
+      allowed('anything১৯৭১x', 'Kodom 1971 School');
+      refused('kodom১৯৭১school', 'Kodom 1971 School');
+    });
+
+    it.each<[string, string]>([
+      ['balika2026xyz', 'Kodom Tola Balika Bidyalaya'],
+      ['uchcha2026xyz', 'Shapla Uchcha Bidyalay'],
+      ['madhyamik2026', 'Shapla Madhyamik Bidyalay'],
+      ['prathomik2026', 'Shapla Prathomik Bidyalay'],
+      ['adarsha2026xy', 'Shapla Adarsha Bidyalay'],
+      ['sarkari2026xy', 'Shapla Sarkari Bidyalay'],
+      ['pilot2026xyzw', 'Kodom Pilot High School'],
+      ['memorial2026x', 'Abdul Karim Memorial School'],
+      ['স্মৃতি২০২৬১২৩৪', 'শহীদ স্মৃতি উচ্চ বিদ্যালয়'],
+      ['শহীদ২০২৬১২৩৪', 'শহীদ স্মৃতি উচ্চ বিদ্যালয়'],
+      ['ইবতেদায়ী২০২৬১২', 'শাপলা ইবতেদায়ী মাদ্রাসা'],
+      ['ebtedayee2026', 'Shapla Ebtedayee Madrasa'],
+      ['শিশু২০২৬১২৩৪৫', 'শাপলা শিশু নিকেতন'],
+      ['নার্সারি২০২৬১২', 'শাপলা নার্সারি স্কুল'],
+      ['nursery2026xy', 'Shapla Nursery School'],
+      ['পাইলট২০২৬১২৩৪', 'শাপলা পাইলট উচ্চ বিদ্যালয়'],
+    ])('allows %s for "%s" (generic words written in English letters, and more)', (pw, name) =>
+      allowed(pw, name),
+    );
+
+    it('cuts glued generic endings of 6 characters or more only, so short ones leave no fragments', () => {
+      // "alia" (4) ends Australia: not cut, so "austr" is not a word of the name.
+      allowed('austr2026xyzw', 'Australia International School');
+      refused('australia2026', 'Australia International School');
+      // "republic" ends in "public" (6): cut, but "re" is too short to count; the word stays.
+      refused('republic2026x', 'Republic Model School');
+    });
+
     it('still refuses the whole name, generic words included', () => {
       refused('alocoaching!!', 'Alo Coaching');
       refused('উচ্চবিদ্যালয়', 'উচ্চ বিদ্যালয়');
