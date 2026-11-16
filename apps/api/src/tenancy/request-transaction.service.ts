@@ -10,6 +10,7 @@ import type { Redis } from 'ioredis';
 import { RequestContext, type Principal } from '../common/request-context.js';
 import { revokedSessionKey } from '../common/revocation.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { REDIS_CALL_TIMEOUT_MS, withRedisDeadline } from '../redis/redis-deadline.js';
 import { REDIS } from '../redis/redis.constants.js';
 
 export const REQUEST_TX_TIMEOUT_MS = 15_000;
@@ -59,6 +60,15 @@ export class RequestTransaction {
     opts: { userScoped?: boolean; roles?: readonly Role[] } = {},
   ): Promise<T> {
     const principal = this.context.requirePrincipal();
+    // The session first, outside the transaction and with Redis's deadline (review round 3): a
+    // slow Redis never holds a pooled connection.
+    if (opts.roles) {
+      await withRedisDeadline(
+        () => this.sessionLive(principal),
+        REDIS_CALL_TIMEOUT_MS,
+        'SERVICE_UNAVAILABLE',
+      );
+    }
     const tenantId = opts.userScoped ? null : (principal.tenantId ?? null);
     let committed: (() => unknown)[] = [];
     const result = await withContext(
@@ -66,7 +76,7 @@ export class RequestTransaction {
       { tenantId, userId: principal.userId },
       async (tx) => {
         if (tenantId) await assertTenantAccess(tx);
-        if (opts.roles) await this.recheck(tx, principal, opts.roles);
+        if (opts.roles) await this.recheckRoles(tx, opts.roles);
         this.context.beginTransaction(tx);
         try {
           const value = await fn();
@@ -83,11 +93,15 @@ export class RequestTransaction {
     return result;
   }
 
-  /** The session still live and the person still holding one of `roles` here, read now. */
-  private async recheck(tx: TenantTx, principal: Principal, roles: readonly Role[]) {
+  /** The session not revoked since the guards checked it. */
+  private async sessionLive(principal: Principal): Promise<void> {
     if (await this.redis.exists(revokedSessionKey(principal.sessionId))) {
       throw new UnauthorizedException();
     }
+  }
+
+  /** The person still holding one of `roles` here, read in the transaction. */
+  private async recheckRoles(tx: TenantTx, roles: readonly Role[]) {
     const held = await tx.$queryRaw<{ role: Role }[]>`
       SELECT role FROM memberships
       WHERE user_id = app_current_user_id() AND status = 'ACTIVE'`;

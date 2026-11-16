@@ -428,6 +428,22 @@ services and shared types (F3).
   (R6). Nothing outside this run's scratch databases applied them; any database that did needs
   a fresh one (or a reset) before applying the final versions.
 
+## Changed after the review, round 3 (2026-11-16)
+
+- **R19. No upload slot leaks when the client leaves early** (must-fix). If the socket closed while
+  the global guards awaited Redis, the response's one 'close' event was already past when
+  `UploadGuard` listened for it, so the slot was never given back. A client already gone (the
+  test on-finished uses: the request or response destroyed, the answer sent, or the socket no
+  longer writable) now gets no slot, and every slot is given back after 5 minutes at the latest
+  (a backstop).
+- **R20. The revoked-session check runs before the transaction**, with Redis's 2 s deadline (503
+  `SERVICE_UNAVAILABLE`), so a slow Redis never holds a pooled connection; the roles are still
+  read in the transaction.
+- **R21. A browser that predates `imageOrientation`** (a TypeError) decodes without it when the
+  photo needs no turning (no EXIF orientation, or 1; a small JPEG reader checks), and sends the
+  original otherwise (the server turns it upright).
+- **R22.** The timeout test uses sharp 0.35.5's real message (`timeout: N% complete`).
+
 ## Risks
 
 - **Backups grow** (about 100 MB per 2 000 photos). `pg_dump` custom format does not compress

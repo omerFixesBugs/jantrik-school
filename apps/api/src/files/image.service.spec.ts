@@ -159,7 +159,8 @@ describe('processImage', () => {
 
 describe('imageFailure (review round 2)', () => {
   it("maps sharp's timeout to 422 IMAGE_TIMEOUT and anything else to IMAGE_INVALID", () => {
-    const timeout = imageFailure(new Error('timeout: 10s exceeded'));
+    // sharp 0.35.5's own message (src/common.cc): "timeout: N% complete".
+    const timeout = imageFailure(new Error('timeout: 37% complete'));
     expect([timeout.getStatus(), (timeout.getResponse() as { code: string }).code]).toEqual([
       422,
       'IMAGE_TIMEOUT',

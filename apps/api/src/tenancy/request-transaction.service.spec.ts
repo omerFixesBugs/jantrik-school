@@ -20,4 +20,19 @@ describe('RequestTransaction.run', () => {
     expect(fn).not.toHaveBeenCalled();
     expect(withContext).not.toHaveBeenCalled();
   });
+
+  it('checks the session in Redis before opening the transaction, with a deadline (review round 3)', async () => {
+    const transaction = vi.fn();
+    const prisma = { client: { $transaction: transaction } } as unknown as PrismaService;
+    const context = {
+      tx: undefined,
+      requirePrincipal: () => ({ userId: 'u', sessionId: 's', tenantId: 't' }),
+    } as unknown as RequestContext;
+    // A Redis that never answers: 503 after the deadline, and no connection was taken.
+    const silent = { exists: () => new Promise(() => undefined) };
+    const tx = new RequestTransaction(prisma, context, silent as never);
+    const failure = await tx.run(vi.fn(), { roles: ['ADMIN'] }).catch((e: unknown) => e);
+    expect((failure as { getStatus(): number }).getStatus()).toBe(503);
+    expect(transaction).not.toHaveBeenCalled();
+  });
 });

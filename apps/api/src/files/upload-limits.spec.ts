@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import type { Request, Response } from 'express';
 import {
   UPLOAD_BODY_TIMEOUT_MS,
+  UPLOAD_SLOT_BACKSTOP_MS,
   UPLOADS_IN_FLIGHT,
   UPLOADS_IN_FLIGHT_PER_USER,
   UploadLimits,
@@ -11,8 +12,12 @@ import {
 // byte, and every slot is given back when the response closes (finished, aborted or failed).
 
 function exchange() {
-  const req = Object.assign(new EventEmitter(), { destroy: vi.fn() });
-  const res = new EventEmitter();
+  const req = Object.assign(new EventEmitter(), { destroy: vi.fn(), destroyed: false });
+  const res = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    writableFinished: false,
+    socket: { writable: true } as { writable: boolean } | null,
+  });
   return { req, res, asReq: req as unknown as Request, asRes: res as unknown as Response };
 }
 
@@ -66,6 +71,38 @@ describe('UploadLimits', () => {
     limits.enter('u1', c.asReq, c.asRes);
     limits.enter('u1', exchange().asReq, exchange().asRes);
     expect(limits.inFlight).toBe(2);
+  });
+
+  it('takes no slot for a client already gone (its one close event was before the guard ran)', () => {
+    const limits = new UploadLimits();
+    // The socket closed while the global guards awaited Redis: Node destroyed the response and
+    // emitted its only 'close' before enter() could listen for it.
+    const gone = exchange();
+    gone.res.emit('close');
+    gone.res.destroyed = true;
+    gone.res.socket = null;
+    gone.req.destroyed = true;
+    expect(() => limits.enter('u1', gone.asReq, gone.asRes)).toThrow();
+    const ended = exchange();
+    ended.res.writableFinished = true;
+    expect(() => limits.enter('u1', ended.asReq, ended.asRes)).toThrow();
+    expect(limits.inFlight).toBe(0);
+    // The person can still upload twice.
+    limits.enter('u1', exchange().asReq, exchange().asRes);
+    limits.enter('u1', exchange().asReq, exchange().asRes);
+    expect(limits.inFlight).toBe(2);
+  });
+
+  it('a slot whose close never comes is given back after the backstop', () => {
+    vi.useFakeTimers();
+    const limits = new UploadLimits();
+    const lost = exchange();
+    limits.enter('u1', lost.asReq, lost.asRes);
+    lost.req.emit('end');
+    vi.advanceTimersByTime(UPLOAD_SLOT_BACKSTOP_MS);
+    expect(limits.inFlight).toBe(0);
+    lost.res.emit('close'); // a late close changes nothing
+    expect(limits.inFlight).toBe(0);
   });
 
   it(`drops a body that has not arrived within ${UPLOAD_BODY_TIMEOUT_MS / 1000} s; one that has is left alone`, () => {

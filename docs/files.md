@@ -33,7 +33,8 @@ an encode after 10 s (422 `IMAGE_TIMEOUT`).
 
 **Uploads in flight** (`UploadGuard`, before multer reads a byte): at most 16 per API process and
 2 per person; more get 503 `IMAGE_BUSY` at once. The slot is given back when the response closes,
-however it ends, and a body not received within 60 s is dropped.
+however it ends (or after 5 minutes at the latest); a client already gone when the guard runs gets
+no slot. A body not received within 60 s is dropped.
 
 **No database connection while an upload arrives.** The upload routes are `@OwnTransaction()`
 ([auth.md](auth.md) → Request pipeline): multer reads the body and `ImageService` decodes it

@@ -299,9 +299,9 @@ TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the
   - Everything that touches the database goes inside `run`. Nothing outside it may use `Db.tx`
     (it throws: no request transaction), and `run` refuses to start inside one.
   - The guards' checks can be a minute old by then (a slow body, the image queue), so the upload
-    routes pass `roles` to `run`: in its transaction it re-checks the session (not revoked) and
-    that the person still holds one of the route's roles, besides the institute's status and the
-    membership. A short `run` before decoding refuses a lost role or a wrong target early.
+    routes pass `roles` to `run`: it re-checks the session (not revoked; in Redis, before the
+    transaction opens, with the 2 s deadline) and, in the transaction, that the person still holds
+    one of the route's roles, besides the institute's status and the membership. A short `run` before decoding refuses a lost role or a wrong target early.
   - `UploadGuard` bounds the bodies in memory: 16 uploads in flight per process, 2 per person
     (503 `IMAGE_BUSY`), a body not received within 60 s dropped.
   - The CSV imports (student import, device people) still read their uploads inside the request
