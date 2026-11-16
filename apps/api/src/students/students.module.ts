@@ -43,7 +43,7 @@ import {
   type StudentsSummary,
 } from '@jantrik/shared';
 import type { Request, Response } from 'express';
-import { RequireModule, Roles } from '../common/decorators.js';
+import { OwnTransaction, RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import { FILE_STORE, type FileStore } from '../files/file-store.js';
 import { ImageUpload, sendStoredImage, type UploadedImage } from '../files/files.module.js';
@@ -401,6 +401,7 @@ export class StudentsController {
   /** multipart/form-data with `file` (JPEG, PNG or WebP, at most 5 MB); stored as a JPEG. */
   @Put(':id/photo')
   @Roles('OWNER', 'ADMIN')
+  @OwnTransaction()
   @ImageUpload()
   setPhoto(
     @Id() id: string,

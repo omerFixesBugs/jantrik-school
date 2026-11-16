@@ -45,7 +45,7 @@ export class PostgresFileStore implements FileStore {
       .$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('stored-files:' || app_current_tenant_id()::text, 0))`;
   }
 
-  async put(file: PutFile): Promise<StoredFileMeta> {
+  async put(file: PutFile, opts: { replaces?: string | null } = {}): Promise<StoredFileMeta> {
     const limit = FILE_LIMITS[file.kind];
     const size = file.bytes.length;
     // ImageService guarantees these; reaching here otherwise is a bug, not a user error.
@@ -63,7 +63,15 @@ export class PostgresFileStore implements FileStore {
     });
     const capBytes = this.capBytes;
     const bytesUsed = Number(usage.bytesUsed);
-    if (bytesUsed + size > capBytes) {
+    const replaced = opts.replaces
+      ? ((
+          await tx.storedFile.findUnique({
+            where: { id: opts.replaces },
+            select: { sizeBytes: true },
+          })
+        )?.sizeBytes ?? 0)
+      : 0;
+    if (bytesUsed - replaced + size > capBytes) {
       throw apiError(413, 'STORAGE_FULL', "The institute's storage for images is full", {
         bytesUsed,
         capBytes,

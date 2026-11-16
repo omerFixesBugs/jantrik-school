@@ -5,6 +5,7 @@ import { apiError } from '../common/api-error.js';
 import { FILE_STORE, type FileStore } from '../files/file-store.js';
 import { ImageUploads, type UploadedImage } from '../files/files.module.js';
 import { Db } from '../tenancy/db.service.js';
+import { RequestTransaction } from '../tenancy/request-transaction.service.js';
 import { StudentAccess } from './student-access.service.js';
 import { StudentAdminService } from './student-admin.service.js';
 
@@ -21,6 +22,7 @@ export class StudentPhotoService {
     private readonly access: StudentAccess,
     private readonly uploads: ImageUploads,
     private readonly audit: AuditService,
+    private readonly transaction: RequestTransaction,
     @Inject(FILE_STORE) private readonly files: FileStore,
   ) {}
 
@@ -46,19 +48,28 @@ export class StudentPhotoService {
     return s.photoFileId;
   }
 
+  /**
+   * PUT /students/:id/photo, an @OwnTransaction route: the image is decoded and re-encoded first,
+   * holding no database connection, then one short request transaction stores it (docs/auth.md →
+   * Request pipeline). Inside it the institute's file lock comes before reading the old id, and
+   * the cap counts the photo being replaced.
+   */
   async set(studentId: string, upload: UploadedImage | undefined): Promise<StudentProfile> {
-    await this.writable(studentId);
-    // The store holds the institute's file lock from here to commit: the old id read next is final.
-    const stored = await this.uploads.store('STUDENT_PHOTO', upload);
-    const old = await this.current(studentId);
-    await this.db.tx.student.update({
-      where: { id: studentId },
-      data: { photoFileId: stored.id },
-      select: { id: true },
+    const image = await this.uploads.prepare('STUDENT_PHOTO', upload);
+    return this.transaction.run(async () => {
+      await this.writable(studentId);
+      await this.files.lock();
+      const old = await this.current(studentId);
+      const stored = await this.uploads.store(image, old);
+      await this.db.tx.student.update({
+        where: { id: studentId },
+        data: { photoFileId: stored.id },
+        select: { id: true },
+      });
+      if (old) await this.files.delete(old);
+      await this.record(studentId, old, stored.id);
+      return this.admin.view(studentId);
     });
-    if (old) await this.files.delete(old);
-    await this.record(studentId, old, stored.id);
-    return this.admin.view(studentId);
   }
 
   async remove(studentId: string): Promise<StudentProfile> {

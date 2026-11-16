@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
 import sharp from 'sharp';
-import { ImageService, processImage, sniffImage } from './image.service.js';
+import { ImageService, Slots, processImage, sniffImage } from './image.service.js';
 
 // docs/files.md: what an upload becomes before it is stored. Test images are made with sharp.
 
@@ -157,6 +157,57 @@ describe('processImage', () => {
   });
 });
 
+describe('PNG metadata', () => {
+  it('strips EXIF from a PNG too (the eXIf chunk), whatever it becomes', async () => {
+    const input = await noise(300, 300)
+      .png()
+      .withExif({
+        IFD0: { Make: 'PhoneCo' },
+        IFD3: { GPSLatitudeRef: 'N', GPSLatitude: '23/1 48/1 0/1' },
+      })
+      .toBuffer();
+    expect(input.includes(Buffer.from('PhoneCo'))).toBe(true);
+    for (const kind of ['STUDENT_PHOTO', 'LOGO', 'SIGNATURE'] as const) {
+      const out = await processImage(kind, input);
+      expect(out.bytes.includes(Buffer.from('PhoneCo'))).toBe(false);
+      expect((await sharp(out.bytes).metadata()).exif).toBeUndefined();
+    }
+  });
+});
+
+describe('Slots (the image queue)', () => {
+  it('hands a freed slot to the first waiter: never more than the maximum at once', async () => {
+    const slots = new Slots(2, 8);
+    await slots.acquire();
+    await slots.acquire();
+    const third = slots.acquire();
+    expect([slots.active, slots.waiting]).toEqual([2, 1]);
+    slots.release(); // the slot goes to the third, not back to the pool
+    const fourth = slots.acquire(); // so a newcomer waits
+    await third;
+    expect([slots.active, slots.waiting]).toEqual([2, 1]);
+    slots.release();
+    await fourth;
+    expect([slots.active, slots.waiting]).toEqual([2, 0]);
+  });
+
+  it('refuses with 503 IMAGE_BUSY when the queue is full', async () => {
+    const slots = new Slots(1, 2);
+    await slots.acquire();
+    const queued = [slots.acquire(), slots.acquire()];
+    const refused = await slots
+      .acquire()
+      .catch((e: { getStatus(): number; getResponse(): object }) => e);
+    expect((refused as { getStatus(): number }).getStatus()).toBe(503);
+    expect((refused as { getResponse(): object }).getResponse()).toMatchObject({
+      code: 'IMAGE_BUSY',
+    });
+    for (let i = 0; i < 3; i++) slots.release();
+    await Promise.all(queued);
+    expect([slots.active, slots.waiting]).toEqual([0, 0]);
+  });
+});
+
 describe('ImageService', () => {
   it('runs at most two images at once', async () => {
     const service = new ImageService();
@@ -164,7 +215,7 @@ describe('ImageService', () => {
     let peak = 0;
     // Watch the service's own counter while five run.
     const watch = setInterval(() => {
-      peak = Math.max(peak, (service as unknown as { running: number }).running);
+      peak = Math.max(peak, (service as unknown as { slots: Slots }).slots.active);
     }, 1);
     const results = await Promise.all(
       Array.from({ length: 5 }, () => service.process('STUDENT_PHOTO', input)),

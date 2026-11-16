@@ -34,8 +34,12 @@ export interface FileStore {
    * changes of one image cannot both see the same old file (one would be left behind).
    */
   lock(): Promise<void>;
-  /** Stores a file; 413 STORAGE_FULL when the institute's total would pass its cap. */
-  put(file: PutFile): Promise<StoredFileMeta>;
+  /**
+   * Stores a file; 413 STORAGE_FULL when the institute's total would pass its cap. `replaces`:
+   * the file this one replaces (the caller deletes it in the same transaction), so a same-size
+   * replacement is never refused near the cap.
+   */
+  put(file: PutFile, opts?: { replaces?: string | null }): Promise<StoredFileMeta>;
   /** The file with its bytes, or null (unknown here). */
   get(id: string): Promise<(StoredFileMeta & { bytes: Buffer }) | null>;
   /** The file without its bytes, or null. */

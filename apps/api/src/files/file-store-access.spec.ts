@@ -7,8 +7,25 @@ import path from 'node:path';
 const SRC = path.resolve(import.meta.dirname, '..');
 const THE_STORE = 'files/postgres-file-store.ts';
 
+/** Prisma relation fields that reach the files (include, select or nested writes). */
+const RELATIONS = [
+  'photoFile',
+  'logoFile',
+  'signatureFile',
+  'sealFile',
+  'storedFiles',
+  'storedFileUsage',
+  'storedFilesCreated',
+  'profileLogo',
+  'profileSignature',
+  'profileSeal',
+];
+
 export function touchesFileTables(code: string): boolean {
-  return /\.storedFile(Usage)?\b|\bstored_file(s|_usage)\b/.test(code);
+  return (
+    /\.storedFile(Usage)?\b|\bstored_file(s|_usage)\b/.test(code) ||
+    new RegExp(String.raw`\b(${RELATIONS.join('|')})\s*:`).test(code)
+  );
 }
 
 function sources(dir: string): string[] {
@@ -35,10 +52,22 @@ describe('who touches stored_files', () => {
       'SELECT bytes FROM stored_files WHERE id = $1',
       'DELETE FROM stored_files',
       'UPDATE stored_file_usage SET bytes_used = 0',
+      // Through a relation (review): these read bytes or change files past the usage total.
+      'tx.student.findMany({ include: { photoFile: true } })',
+      'tx.student.update({ where: { id }, data: { photoFile: { delete: true } } })',
+      'tx.instituteProfile.findFirst({ include: { logoFile: true } })',
+      'select: { signatureFile: { select: { bytes: true } } }',
+      'include: { sealFile: true }',
+      'tx.tenant.findFirst({ include: { storedFiles: true } })',
+      'include: { storedFileUsage: true }',
+      'tx.user.findFirst({ select: { storedFilesCreated: true } })',
+      'include: { profileLogo: true, student: true }',
     ];
     for (const sample of caught) expect(touchesFileTables(sample), sample).toBe(true);
     const fine = [
       'await this.files.get(id)',
+      'data: { photoFileId: stored.id }',
+      'select: { photoFileId: true, logoFileKind: true }',
       'tx.student.update({ data: { photoFileId } })',
       'const storedFiles = 3;',
       "'stored-files:' advisory lock name",

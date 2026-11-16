@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FILE_LIMITS,
+  INSTITUTE_PROFILE_PATTERNS,
   normalizeInstitutePhone,
   normalizeWebsite,
   STORED_FILE_KINDS,
@@ -81,5 +82,11 @@ describe('instituteProfileSchema', () => {
     expect(normalizeWebsite('shapla.edu.bd')).toBe('https://shapla.edu.bd');
     expect(normalizeWebsite('http://shapla.edu.bd')).toBe('http://shapla.edu.bd');
     expect(parse({ website: 'shapla.edu.bd' }).data?.website).toBe('https://shapla.edu.bd');
+  });
+
+  it('lower-cases the scheme, as the database CHECK is case-sensitive (review)', () => {
+    expect(normalizeWebsite('Http://Shapla.edu.bd')).toBe('http://Shapla.edu.bd');
+    expect(parse({ website: 'HTTPS://shapla.edu.bd' }).data?.website).toBe('https://shapla.edu.bd');
+    expect(INSTITUTE_PROFILE_PATTERNS.website.test('HTTPS://shapla.edu.bd')).toBe(false);
   });
 });

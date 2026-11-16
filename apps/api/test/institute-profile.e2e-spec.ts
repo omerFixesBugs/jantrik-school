@@ -98,6 +98,28 @@ describe('institute profile', () => {
     expect(rows[0]!.newValues).toMatchObject({ eiin: '108123' });
   });
 
+  it('an upper-case web address is stored with a lower-case scheme, never a 500 (review)', async () => {
+    const t = await institute();
+    const res = await http(h)
+      .put('/institute/profile')
+      .set(bearer(t.owner))
+      .send({ nameEn: 'X', website: 'HTTPS://Shapla.edu.bd' })
+      .expect(200);
+    expect(res.body.website).toBe('https://Shapla.edu.bd');
+  });
+
+  it('the first logo and the first save at the same moment both succeed (review)', async () => {
+    for (let i = 0; i < 3; i++) {
+      const t = await institute();
+      const logo = await png(64, 64);
+      const [up, save] = await Promise.all([
+        upload(t.admin, 'logo', logo),
+        http(h).put('/institute/profile').set(bearer(t.owner)).send({ nameBn: 'শাপলা' }),
+      ]);
+      expect([up.status, save.status]).toEqual([200, 200]);
+    }
+  });
+
   it('refuses bad values (400) and non-admins (403)', async () => {
     const t = await institute();
     for (const bad of [

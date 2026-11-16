@@ -1,3 +1,5 @@
+import { request as httpRequest, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { crc32, deflateSync } from 'node:zlib';
 import { withTenant } from '@jantrik/db';
 import type { GuardianChild, StudentProfile } from '@jantrik/shared';
@@ -239,6 +241,57 @@ describe('student photos', () => {
     // Full now: a third is refused.
     const third = await put(t.admin, t.b[0]!.id, image).expect(413);
     expect(third.body).toMatchObject({ code: 'STORAGE_FULL', capBytes: CAP });
+    // Replacing a photo with one of the same size does not grow the total: allowed (review).
+    await put(t.admin, t.a[0]!.id, image).expect(200);
+    expect((await usage(t.tenantId)).bytesUsed).toBe(now.bytesUsed);
+  });
+
+  it('a slow upload holds no database transaction while its body arrives (review)', async () => {
+    const server = h.app.getHttpServer() as Server;
+    if (!server.listening) await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as AddressInfo;
+    const image = await photo(400, 500, '#aa6633');
+    const boundary = 'jantrik-slow-upload';
+    const head = Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="slow.jpg"\r\n` +
+        'Content-Type: image/jpeg\r\n\r\n',
+    );
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+    const openTransactions = async () =>
+      (
+        await h.prisma.$queryRaw<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE usename = current_user AND datname = current_database()
+            AND state LIKE 'idle in transaction%'`
+      )[0]!.n;
+    const status = new Promise<number>((resolve, reject) => {
+      const req = httpRequest(
+        {
+          host: '127.0.0.1',
+          port,
+          method: 'PUT',
+          path: `/students/${s.a[0]!.id}/photo`,
+          headers: {
+            Authorization: `Bearer ${s.admin}`,
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': head.length + image.length + tail.length,
+          },
+        },
+        (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode!));
+        },
+      );
+      req.on('error', reject);
+      req.write(head);
+      req.write(image.subarray(0, 64));
+      // The rest arrives 2 s later, as from a phone on a slow line.
+      setTimeout(() => req.end(Buffer.concat([image.subarray(64), tail])), 2_000);
+    });
+    await new Promise((r) => setTimeout(r, 1_000));
+    const whileReading = await openTransactions();
+    expect(await status).toBe(200);
+    expect(whileReading).toBe(0);
   });
 
   it('at most 60 uploads per person in 10 minutes (F8)', async () => {

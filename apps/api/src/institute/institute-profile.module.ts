@@ -25,7 +25,7 @@ import {
 } from '@jantrik/shared';
 import type { Request, Response } from 'express';
 import { AuditService } from '../audit/audit.module.js';
-import { RequireModule, Roles } from '../common/decorators.js';
+import { OwnTransaction, RequireModule, Roles } from '../common/decorators.js';
 import { RequestContext } from '../common/request-context.js';
 import { zodDto } from '../common/zod.js';
 import { FILE_STORE, type FileStore, type StoredFileMeta } from '../files/file-store.js';
@@ -36,6 +36,7 @@ import {
   type UploadedImage,
 } from '../files/files.module.js';
 import { Db } from '../tenancy/db.service.js';
+import { RequestTransaction } from '../tenancy/request-transaction.service.js';
 
 class InstituteProfileDto extends zodDto(instituteProfileSchema) {}
 
@@ -77,6 +78,7 @@ export class InstituteProfileService {
     private readonly context: RequestContext,
     private readonly audit: AuditService,
     private readonly uploads: ImageUploads,
+    private readonly transaction: RequestTransaction,
     @Inject(FILE_STORE) private readonly files: FileStore,
   ) {}
 
@@ -135,27 +137,33 @@ export class InstituteProfileService {
   }
 
   /**
-   * Sets (or replaces) one image; the replaced file is deleted in the same transaction (F10). The
-   * store holds the institute's file lock from here to commit, so the old id read below is final.
+   * Sets (or replaces) one image; the replaced file is deleted in the same transaction (F10).
+   * PUT /institute/profile/:slot is an @OwnTransaction route: the image is decoded first, holding
+   * no database connection, then one short request transaction stores it. Inside it the
+   * institute's file lock comes before reading the old id, and the cap counts the file replaced.
    */
   async setImage(slot: InstituteImageSlot, upload: UploadedImage | undefined) {
-    const stored = await this.uploads.store(INSTITUTE_IMAGE_KIND[slot], upload);
-    const profile = await this.ensureRow();
-    const oldId = profile[COLUMN[slot]];
-    await this.db.tx.instituteProfile.update({
-      where: { id: profile.id },
-      data: { [COLUMN[slot]]: stored.id },
-      select: { id: true },
+    const image = await this.uploads.prepare(INSTITUTE_IMAGE_KIND[slot], upload);
+    return this.transaction.run(async () => {
+      await this.files.lock();
+      const profile = await this.ensureRow();
+      const oldId = profile[COLUMN[slot]];
+      const stored = await this.uploads.store(image, oldId);
+      await this.db.tx.instituteProfile.update({
+        where: { id: profile.id },
+        data: { [COLUMN[slot]]: stored.id },
+        select: { id: true },
+      });
+      if (oldId) await this.files.delete(oldId);
+      await this.audit.record({
+        entity: 'institute_profile',
+        entityId: profile.id,
+        action: 'UPDATE',
+        oldValues: { image: slot, fileId: oldId },
+        newValues: { image: slot, fileId: stored.id },
+      });
+      return this.get();
     });
-    if (oldId) await this.files.delete(oldId);
-    await this.audit.record({
-      entity: 'institute_profile',
-      entityId: profile.id,
-      action: 'UPDATE',
-      oldValues: { image: slot, fileId: oldId },
-      newValues: { image: slot, fileId: stored.id },
-    });
-    return this.get();
   }
 
   async removeImage(slot: InstituteImageSlot): Promise<InstituteProfile> {
@@ -187,7 +195,9 @@ export class InstituteProfileService {
 
   /**
    * The profile row, created for an image uploaded before the first save (F6) with the
-   * registered name in the matching script, so the "one name" CHECK holds.
+   * registered name in the matching script, so the "one name" CHECK holds. Created with
+   * ON CONFLICT DO NOTHING (createMany skipDuplicates): a first save at the same moment (PUT
+   * /institute/profile, an upsert) wins or loses the race without an error either way.
    */
   private async ensureRow() {
     const existing = await this.row();
@@ -200,13 +210,19 @@ export class InstituteProfileService {
     const names = BANGLA.test(name)
       ? { nameBn: name.slice(0, 200) }
       : { nameEn: name.slice(0, 200) };
-    const row = await this.db.tx.instituteProfile.create({ data: { tenantId, ...names } });
-    await this.audit.record({
-      entity: 'institute_profile',
-      entityId: row.id,
-      action: 'CREATE',
-      newValues: names,
+    const { count } = await this.db.tx.instituteProfile.createMany({
+      data: [{ tenantId, ...names }],
+      skipDuplicates: true,
     });
+    const row = await this.db.tx.instituteProfile.findFirstOrThrow();
+    if (count === 1) {
+      await this.audit.record({
+        entity: 'institute_profile',
+        entityId: row.id,
+        action: 'CREATE',
+        newValues: names,
+      });
+    }
     return row;
   }
 }
@@ -264,6 +280,7 @@ export class InstituteProfileController {
   /** multipart/form-data with `file` (JPEG, PNG or WebP, at most 5 MB). */
   @Put(':slot')
   @Roles('OWNER', 'ADMIN')
+  @OwnTransaction()
   @ImageUpload()
   setImage(
     @Slot() slot: InstituteImageSlot,

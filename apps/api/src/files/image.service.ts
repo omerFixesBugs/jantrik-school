@@ -20,6 +20,48 @@ export interface ProcessedImage {
 
 /** At most this many images are decoded at once per process (memory: a 48 MP photo is ~150 MB). */
 const MAX_PARALLEL = 2;
+/** At most this many wait for a slot; more get 503 IMAGE_BUSY instead of queueing without end. */
+const MAX_WAITING = 8;
+
+/**
+ * A counting semaphore with a bounded queue. A freed slot is handed straight to the first waiter
+ * (the count never drops in between), so a newcomer cannot slip in and make it MAX + 1.
+ */
+export class Slots {
+  private running = 0;
+  private readonly queue: (() => void)[] = [];
+
+  constructor(
+    private readonly max: number,
+    private readonly maxWaiting: number,
+  ) {}
+
+  get active(): number {
+    return this.running;
+  }
+
+  get waiting(): number {
+    return this.queue.length;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.running < this.max) {
+      this.running++;
+      return;
+    }
+    if (this.queue.length >= this.maxWaiting) {
+      throw apiError(503, 'IMAGE_BUSY', 'Many images are being prepared; try again in a moment');
+    }
+    await new Promise<void>((go) => this.queue.push(go));
+  }
+
+  release(): void {
+    const next = this.queue.shift();
+    if (next)
+      next(); // the slot passes on: running stays the same
+    else this.running--;
+  }
+}
 
 /**
  * Turns an upload into what is stored (docs/files.md, decision S7): only JPEG, PNG or WebP by
@@ -29,17 +71,14 @@ const MAX_PARALLEL = 2;
  */
 @Injectable()
 export class ImageService {
-  private running = 0;
-  private readonly queue: (() => void)[] = [];
+  private readonly slots = new Slots(MAX_PARALLEL, MAX_WAITING);
 
   async process(kind: StoredFileKind, input: Buffer): Promise<ProcessedImage> {
-    if (this.running >= MAX_PARALLEL) await new Promise<void>((go) => this.queue.push(go));
-    this.running++;
+    await this.slots.acquire();
     try {
       return await processImage(kind, input);
     } finally {
-      this.running--;
-      this.queue.shift()?.();
+      this.slots.release();
     }
   }
 }

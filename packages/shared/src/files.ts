@@ -128,7 +128,7 @@ export const INSTITUTE_PROFILE_PATTERNS = {
   eiin: /^\d{6}$/,
   phone: /^\+?\d{5,15}$/,
   email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/,
-  website: /^https?:\/\/\S+$/i,
+  website: /^https?:\/\/\S+$/,
 } as const;
 
 /** A mobile is stored as E.164; anything else as its digits (a landline), with an optional +. */
@@ -141,8 +141,12 @@ export function normalizeInstitutePhone(input: string): string {
   );
 }
 
-/** `shapla.edu.bd` → `https://shapla.edu.bd`; a given scheme is kept (and then checked). */
+/**
+ * `shapla.edu.bd` → `https://shapla.edu.bd`; a given scheme is kept (and then checked) in lower
+ * case (`HTTP://` → `http://`), as the database CHECK compares it case-sensitively.
+ */
 export function normalizeWebsite(input: string): string {
   const v = input.trim();
-  return /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : `https://${v}`;
+  const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(v);
+  return scheme ? scheme[0].toLowerCase() + v.slice(scheme[0].length) : `https://${v}`;
 }

@@ -13,7 +13,7 @@ import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import { RateLimiter } from '../redis/rate-limiter.service.js';
 import { FILE_STORE, type FileStore, type StoredFileMeta } from './file-store.js';
-import { ImageService } from './image.service.js';
+import { ImageService, type ProcessedImage } from './image.service.js';
 import { PostgresFileStore } from './postgres-file-store.js';
 
 /** What multer hands over for the `file` field (memory storage). */
@@ -35,7 +35,14 @@ export const ImageUpload = () =>
     ),
   );
 
-/** Upload → ImageService → FileStore, with the per-person limit. */
+/** An upload ready to store: re-encoded, its kind known. */
+export type PreparedImage = ProcessedImage & { kind: StoredFileKind };
+
+/**
+ * Upload → ImageService → FileStore, with the per-person limit. In two steps (from the review):
+ * `prepare` touches no database (routes marked @OwnTransaction call it before opening their
+ * transaction); `store` puts the file in the request's transaction.
+ */
 @Injectable()
 export class ImageUploads {
   constructor(
@@ -45,7 +52,7 @@ export class ImageUploads {
     private readonly context: RequestContext,
   ) {}
 
-  async store(kind: StoredFileKind, upload: UploadedImage | undefined): Promise<StoredFileMeta> {
+  async prepare(kind: StoredFileKind, upload: UploadedImage | undefined): Promise<PreparedImage> {
     if (!upload?.buffer?.length) {
       throw apiError(400, 'FILE_REQUIRED', 'Choose an image to upload', { field: 'file' });
     }
@@ -54,8 +61,11 @@ export class ImageUploads {
       limit: UPLOADS_PER_USER,
       windowSec: 600,
     });
-    const image = await this.images.process(kind, upload.buffer);
-    return this.files.put({ kind, ...image });
+    return { kind, ...(await this.images.process(kind, upload.buffer)) };
+  }
+
+  store(image: PreparedImage, replaces: string | null): Promise<StoredFileMeta> {
+    return this.files.put(image, { replaces });
   }
 }
 
