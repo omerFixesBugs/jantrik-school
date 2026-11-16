@@ -1,4 +1,4 @@
-import { withContext, withTenant } from '@jantrik/db';
+import { withContext, withTenant, type PrismaClient } from '@jantrik/db';
 import {
   IMPORT_FIELDS,
   templateHeader,
@@ -25,6 +25,7 @@ import {
   randomPhone,
   type Harness,
 } from './support/harness.js';
+import { ownerClient } from './support/platform.js';
 
 const local = () => randomPhone().slice(3); // 01XXXXXXXXX
 const reg = () => `2014${String(Math.floor(Math.random() * 1e13)).padStart(13, '0')}`;
@@ -35,6 +36,8 @@ describe('student import', () => {
   let admin: string;
   let teacher: string;
   let otherAdmin: string;
+  /** For fixture writes the app may not do (backdating an import's created_at). */
+  let owner: PrismaClient;
 
   const upload = (body: Buffer | string, name: string, token = admin) =>
     http(h).post('/student-imports').set(bearer(token)).attach('file', Buffer.from(body), name);
@@ -51,6 +54,7 @@ describe('student import', () => {
   };
 
   beforeAll(async () => {
+    owner = ownerClient();
     h = await createHarness();
     tenantId = (await createTenant(h)).id;
     const login = async (t: string, roles: ('ADMIN' | 'TEACHER')[]) =>
@@ -71,6 +75,7 @@ describe('student import', () => {
   });
 
   afterAll(async () => {
+    await owner.$disconnect();
     await h.close();
   });
 
@@ -567,7 +572,7 @@ describe('student import', () => {
     const listed = async (t: string) => h.redis.zscore(RAW_IMPORT_TENANTS_KEY, t);
     expect(await listed(one.t)).not.toBeNull();
     expect(await listed(two.t)).not.toBeNull();
-    await withTenant(h.prisma, one.t, async (tx) => {
+    await withTenant(owner, one.t, async (tx) => {
       await tx.$executeRaw`UPDATE student_imports SET created_at = now() - interval '8 days' WHERE id = ${old}::uuid`;
       await tx.$executeRaw`UPDATE student_imports SET status = 'RUNNING', updated_at = now() - interval '2 days' WHERE id = ${stuck}::uuid`;
     });
@@ -599,7 +604,7 @@ describe('student import', () => {
       [two.t, other],
     ] as const) {
       await withTenant(
-        h.prisma,
+        owner,
         t,
         (tx) =>
           tx.$executeRaw`UPDATE student_imports SET created_at = now() - interval '8 days' WHERE id = ${id}::uuid`,
@@ -628,7 +633,7 @@ describe('student import', () => {
       ).body as StudentImportSummary
     ).id;
     await withTenant(
-      h.prisma,
+      owner,
       t,
       (tx) =>
         tx.$executeRaw`UPDATE student_imports SET created_at = now() - interval '8 days' WHERE id = ${id}::uuid`,
