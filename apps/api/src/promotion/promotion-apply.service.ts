@@ -92,7 +92,7 @@ export class PromotionApplyService {
     });
     const enrolled = await tx.enrolment.groupBy({
       by: ['sectionId'],
-      where: { sectionId: { in: sectionIds }, student: { deletedAt: null } },
+      where: { sectionId: { in: sectionIds }, student: { deletedAt: null, status: 'ACTIVE' } },
       _count: { _all: true },
     });
     const already = new Set(
@@ -376,7 +376,7 @@ export class PromotionApplyService {
     }
     if (sectionId && capacity !== null && toCreate.length > 0) {
       const now = await tx.enrolment.count({
-        where: { sectionId, student: { deletedAt: null } },
+        where: { sectionId, student: { deletedAt: null, status: 'ACTIVE' } },
       });
       if (now + toCreate.length > capacity)
         throw apiError(422, 'SECTION_FULL', 'The section would be over capacity', {
@@ -428,7 +428,7 @@ export class PromotionApplyService {
     // P5-H: repeaters keep their subject choices (the same class's subjects, still active).
     const repeaters = toCreate
       .filter((r) => r.decision === 'REPEAT' && createdBy.has(r.studentId))
-      .map((r) => r.studentId);
+      .map((r) => ({ studentId: r.studentId, studyGroupId: r.targetStudyGroupId }));
     await this.choices.copyForRepeaters(repeaters, run.fromYearId, run.toYearId, run.classLevelId);
 
     const appliedAt = new Date();

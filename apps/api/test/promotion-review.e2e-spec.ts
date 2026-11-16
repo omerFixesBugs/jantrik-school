@@ -3,7 +3,9 @@ import { withTenant } from '@jantrik/db';
 import {
   addDays,
   todayIn,
+  type AttendanceRegisterReport,
   type AttendanceSheet,
+  type MySectionsResponse,
   type PromotionApplyCheck,
   type PromotionRunDetail,
   type RollsPreview,
@@ -56,6 +58,93 @@ describe('promotion: review fixes', () => {
   afterAll(async () => {
     await promotionsQueue(h).resume();
     await h.close();
+  });
+
+  it('round 2 SF-A: after a placement correction, the roll group follows the class the student is in now', async () => {
+    const s = await promotionSchool(h);
+    const six = await createRun(s, 6);
+    const seven = await createRun(s, 7);
+    await api(s.tokens.admin)
+      .put(`/promotions/${seven.id}/rows`, {
+        rows: seven.rows.map((r) => ({
+          id: r.id,
+          decision: 'REPEAT',
+          targetClassLevelId: s.classes[7],
+          targetSectionId: s.sections[2027][7].ka,
+        })),
+      })
+      .expect(200);
+    for (const id of [six.id, seven.id]) {
+      await startApply(s, id);
+      await processRun(s, id);
+      await removeJob(id);
+    }
+    const enrolmentOf = async (studentId: string) =>
+      (
+        (await api(s.tokens.admin).get(`/students/${studentId}`).expect(200)).body as StudentProfile
+      ).enrolments.find((e) => e.academicYear.id === s.y2027)!;
+    const [passed, failed] = s.students.six;
+    // The failed one was kept back by mistake: moved up to 7 ক. The passed one goes back to 6 ক.
+    await api(s.tokens.admin)
+      .patch(`/students/${failed!.id}/enrolments/${(await enrolmentOf(failed!.id)).id}`, {
+        classLevelId: s.classes[7],
+        sectionId: s.sections[2027][7].ka,
+      })
+      .expect(200);
+    await api(s.tokens.admin)
+      .patch(`/students/${passed!.id}/enrolments/${(await enrolmentOf(passed!.id)).id}`, {
+        classLevelId: s.classes[6],
+        sectionId: s.sections[2027][6].ka,
+      })
+      .expect(200);
+    const preview = async (n: 6 | 7) =>
+      (
+        await api(s.tokens.admin)
+          .get(`/promotions/rolls?toYearId=${s.y2027}&classLevelId=${s.classes[n]}`)
+          .expect(200)
+      ).body as RollsPreview;
+    const rowOf = (p: RollsPreview, id: string) =>
+      p.sections.flatMap((x) => x.rows).find((r) => r.studentId === id)!;
+    // Now in class 7, coming from class 6: promoted, not a class-7 repeater.
+    expect(rowOf(await preview(7), failed!.id)).toMatchObject({ group: 'PROMOTED' });
+    // Back in class 6, the run's own class: a repeater (class 6's own run, so its merit place stays).
+    expect(rowOf(await preview(6), passed!.id)).toMatchObject({
+      group: 'REPEATER',
+      meritPosition: 2,
+    });
+  });
+
+  it('round 2 SF-B: a student who left does not hold a seat', async () => {
+    const s = await promotionSchool(h, { capacity: 2 });
+    const admin = api(s.tokens.admin);
+    const enrol = (studentId: string) =>
+      admin.post(`/students/${studentId}/enrolments`, {
+        academicYearId: s.y2027,
+        classLevelId: s.classes[7],
+        sectionId: s.sections[2027][7].ka,
+        roll: null,
+      });
+    const [a, , c] = s.students.six;
+    await enrol(a!.id).expect(201);
+    await enrol(c!.id).expect(201);
+    await admin
+      .post(`/students/${a!.id}/leave`, { status: 'TRANSFERRED', leftOn: '2026-12-01' })
+      .expect(200);
+    // The seat a left is free again.
+    await enrol(s.students.sixB[0]!.id).expect(201);
+    // The apply-check counts only students still here.
+    const run7 = await createRun(s, 7);
+    const check = (await admin.get(`/promotions/${run7.id}/apply-check`).expect(200))
+      .body as PromotionApplyCheck;
+    expect(check.sections.find((x) => x.section.id === s.sections[2027][8].ka)).toMatchObject({
+      enrolled: 0,
+    });
+    const six = await createRun(s, 6);
+    const check6 = (await admin.get(`/promotions/${six.id}/apply-check`).expect(200))
+      .body as PromotionApplyCheck;
+    expect(check6.sections.find((x) => x.section.id === s.sections[2027][7].ka)).toMatchObject({
+      enrolled: 2,
+    });
   });
 
   it('SF2: a run comes only from the year just before the new one', async () => {
@@ -422,13 +511,15 @@ describe('promotion: review fixes', () => {
     await removeJob(six.id);
   });
 
-  it('SF4: a leaver is on registers before the day they left, not from it', async () => {
+  it('SF4: a leaver is on registers up to the day they left (their last day), not after', async () => {
     const t = await school(h);
     const today = todayIn('Asia/Dhaka');
     const yesterday = addDays(today, -1);
+    const dayBefore = addDays(today, -2);
     const leaver = t.a[0]!;
+    // Their last day was yesterday.
     await api(t.admin)
-      .post(`/students/${leaver.id}/leave`, { status: 'TRANSFERRED', leftOn: today })
+      .post(`/students/${leaver.id}/leave`, { status: 'TRANSFERRED', leftOn: yesterday })
       .expect(200);
     const sheet = async (date: string) =>
       (
@@ -438,6 +529,7 @@ describe('promotion: review fixes', () => {
       ).body as AttendanceSheet;
     expect((await sheet(today)).students.map((x) => x.id)).not.toContain(leaver.id);
     expect((await sheet(yesterday)).students.map((x) => x.id)).toContain(leaver.id);
+    expect((await sheet(dayBefore)).students.map((x) => x.id)).toContain(leaver.id);
     // Today's register is saved without them; a record for them is refused.
     const others = t.a.slice(1).map((x) => ({ studentId: x.id, status: 'PRESENT' }));
     await api(t.admin)
@@ -458,5 +550,20 @@ describe('promotion: review fixes', () => {
         records: others,
       })
       .expect(200);
+    // The board counts them on their last day, not after.
+    const count = async (date: string) =>
+      (
+        (await api(t.admin).get(`/attendance/my-sections?date=${date}`).expect(200))
+          .body as MySectionsResponse
+      ).sections.find((x) => x.id === t.sectionA)!.studentCount;
+    expect(await count(today)).toBe(2);
+    expect(await count(yesterday)).toBe(3);
+    // The monthly register of their last day's month lists them.
+    const register = (
+      await api(t.admin)
+        .get(`/attendance/reports/register?sectionId=${t.sectionA}&month=${yesterday.slice(0, 7)}`)
+        .expect(200)
+    ).body as AttendanceRegisterReport;
+    expect(register.rows.map((r) => r.id)).toContain(leaver.id);
   });
 });

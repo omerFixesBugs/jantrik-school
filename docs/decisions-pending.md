@@ -946,6 +946,24 @@ What changed is listed in the PR's review comment. Decided alone:
 - **P5-a18. Subject choices** are copied and removed through `SubjectChoicesModule` (exams), a
   module with no imports, so students and promotion can both use it without a cycle.
 
+### P5a after the review (round 2)
+
+Decided alone:
+
+- **P5-a19. `left_on` is the last day on the register** (a leaver is marked that day and gone from
+  the next). The run's default leaving date stays the old year's last day, so graduates are on its
+  register; a leave today keeps the student on today's register.
+- **P5-a20. Roll groups follow the current class:** a row's student now in its run's own class is a
+  repeater, in any other class promoted (S15's "promoted" covers everyone who came up from another
+  class); old roll and merit place only within the run that orders the group.
+- **P5-a21. Capacity counts only students still here.** A student who returns is not checked
+  against the section's capacity again (return checks the student limit only), so a return can
+  take a section over its capacity; the apply-check and the next admission see it.
+- **P5-a22. The device day** uses the same register filter as the daily register (`on-register.ts`)
+  and is covered by the existing device-register tests; no separate leaver test there.
+- **P5-a23. "In use" readers** (`AttendanceUsage`, `ExamUsage`, `FeeUsage`) live in their modules,
+  each a module with no imports, so students reads them without a cycle.
+
 ### P5b: the wizard, copies and dues markers (stacked PR)
 
 Built in `feature/sprint-1-p5b-promotion-wizard` (on top of P5a). Decided alone:

@@ -49,7 +49,10 @@ import { OwnTransaction, RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import { FILE_STORE, type FileStore } from '../files/file-store.js';
 import { ImageUpload, sendStoredImage, type UploadedImage } from '../files/files.module.js';
+import { AttendanceUsageModule } from '../attendance/attendance-usage.js';
+import { ExamUsageModule } from '../exams/setup/exam-usage.js';
 import { SubjectChoicesModule } from '../exams/setup/subject-choices-copier.js';
+import { FeeUsageModule } from '../fees/fee-usage.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
 import { StudentAdminService } from './student-admin.service.js';
@@ -508,7 +511,7 @@ export class GuardiansController {
 }
 
 @Module({
-  imports: [SubjectChoicesModule],
+  imports: [SubjectChoicesModule, AttendanceUsageModule, ExamUsageModule, FeeUsageModule],
   controllers: [StudentsController, GuardiansController],
   providers: [
     StudentsService,
