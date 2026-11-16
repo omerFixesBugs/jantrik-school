@@ -55,8 +55,9 @@ jobs:
   checks:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-24.04
-    # Normal runs take well under 5 minutes; this only stops a hung job.
-    timeout-minutes: 10
+    # Runs take 8 to 10 minutes now (all API test files run one after another); this only stops
+    # a hung job, so it leaves room to grow.
+    timeout-minutes: 20
 
     services:
       postgres:
