@@ -454,13 +454,16 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `JWT_ACCESS_SECRET`  | at least 32 characters                                                                                                                                        |
 | `OTP_PEPPER`         | at least 32 characters                                                                                                                                        |
-| `CORS_ORIGINS`       | comma-separated allowlist, normalised like `Origin` (lower-case host, no trailing slash or default port); browsers may cache a preflight's answer for 2 h (`maxAge` in `app.setup.ts`), so a narrower list reaches open tabs up to 2 h later |
+| `CORS_ORIGINS`       | comma-separated allowlist; browsers may cache a preflight's answer for 2 h (`maxAge` in `app.setup.ts`), so a narrower list reaches open tabs up to 2 h later |
 | `PLATFORM_ORIGINS`   | the platform web app's origins: the only ones `/platform/*` answers (each also in `CORS_ORIGINS`); default `http://localhost:3000`, required in production    |
 | `COOKIE_SECURE`      | Secure flag on the refresh cookie                                                                                                                             |
 | `TRUST_PROXY`        | Express `trust proxy`; set it behind a load balancer so client IPs are right                                                                                  |
 | `INGEST_*`           | the device receiver: port, public host and port for the setup guide, `INGEST_TRUST_PROXY`, limits ([devices.md](devices.md))                                  |
 | `SMS_PROVIDER`       | `console` in development, `memory` in API tests, `outbox` (Redis list `sms:outbox:<phone>`) for Playwright; all refused in production                         |
 | rate-limit variables | see `.env.example`                                                                                                                                            |
+
+`CORS_ORIGINS` and `PLATFORM_ORIGINS` are normalised as browsers send `Origin` (lower-case host,
+no trailing slash or default port), so an entry written `https://App.example.com/` still matches.
 
 In production `SMS_PROVIDER=none` stands in until a gateway is built: every SMS fails and is
 recorded as failed. What else production refuses: [deploy.md](deploy.md) → Environment checks.

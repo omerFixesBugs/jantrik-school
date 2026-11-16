@@ -593,11 +593,69 @@ P0-9. **The login check reads `session_user`** (the login), never `current_user`
 
 Left by the final review for later (not built, each small):
 
-- **Redis runs as root and its image floats.** `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
-- **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
+- **Redis runs as root ~~and its image floats~~** (the image is pinned since the follow-ups of 2026-11-16, F-4 below; running as root is still open). `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
+- **Done 2026-11-16 (F-3 below).** **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
 - **The receiver's key scope `~<prefix>:devices:*` includes the worker's job schedulers** (the devices tick, expire-punches): code run in the receiver could delete them until the worker restarts and recreates them. Accepted for now (the scope the plan set); narrower read/write key selectors are possible at some cost across BullMQ upgrades.
-- **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
+- **Done 2026-11-16 (F-5 below).** **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
 - **Local Playwright configs** that are not in git (`playwright.alt*.config.ts`, `dbg`, `shots`) set `CORS_ORIGINS` but not `PLATFORM_ORIGINS`: their platform specs now get 403 until they set it.
+
+## Small follow-ups (day run 2026-11-16)
+
+Branch `chore/small-followups`, one PR. Decided by the agent alone (the owner was away); each can
+be changed in review.
+
+F-1. **P1-I is built as the owner answered:** a password is also refused when it contains a
+distinctive word of an institute's name. The name is split at spaces, punctuation and symbols;
+generic words are dropped; every remaining word of 4 or more code points (the whole-name rule's
+counting) is refused. The whole-name rule stays. The error code stays `HAS_INSTITUTE_NAME` (its
+message now says "the name or a word from it"), so the web and the API did not change shape.
+
+F-2. **The generic words** (`GENERIC_NAME_WORDS` in `packages/shared/src/password.ts`), chosen
+from the owner's examples "and similar": the kind of institute (school, college, madrasa, academy,
+coaching, centre, institute, kindergarten, polytechnic, pathshala…), its level (high, secondary,
+primary, junior, dakhil, alim, fazil, kamil…), who it is for (girls, boys, mohila…), its medium and
+standing (english, bangla, version, international, model, ideal, public, government/govt, cadet,
+residential…), madrasa name words (darul, uloom, jamia, hafizia, nurani, qawmi, islamia, quran…),
+`and` written in Bangla, each in Bangla and in English letters with common spellings (madrasah,
+madrassa, মাদরাসা, সরকারী, একাডেমী…). Not generic: place names and people's names (`Dhaka`,
+`Motijheel`, `Salim`): they point at the institute, so they are refused. Choices beyond the
+owner's words:
+
+- **Generic words glued to the end of a word** are cut off too (`শাপলাউচ্চবিদ্যালয়` → `শাপলা`,
+  `Kodomtolaschool` → `kodomtola`), and the whole glued word is still refused as well, so the rule
+  never refuses less than splitting at spaces alone. Only endings: a generic word at the start of
+  an ordinary word is not cut (`Highland` stays `highland`, so `highschool2026` is allowed).
+- **Zero-width joiners** (U+200C, U+200D: typed inside some Bangla words) are ignored on both
+  sides, for whole names too. Unicode forms (য় as one code point or two) were already unified.
+- **The slug is not checked** (the decision mentioned it as a "perhaps"; the owner's answer did not
+  ask for it).
+
+F-3. **`CORS_ORIGINS` is normalised in `env.ts`** like `PLATFORM_ORIGINS` (lower-case host, no
+trailing slash or default port). An entry that is not an origin (`*`, a bare host) is kept as
+written instead of stopping the start: it matches nothing, production refuses it as before, and a
+developer's existing `.env` keeps working.
+
+F-4. **Redis is pinned to `redis:7.4.11-alpine`**, the version of the image this PC had (built
+2026-09-17; the tag exists on Docker Hub), in the production compose, the development compose and
+both CI jobs; a test checks the four agree and are exact. The exact tag, not a digest: Docker's
+patched rebuilds of the same version can still be taken (`compose.sh pull redis`, deploy.md §
+11). Your local Redis container keeps running `redis:7-alpine` until the next
+`docker compose up -d`, which pulls 7.4.11 and restarts it on the same volume. Postgres
+(`postgres:16-alpine`) and Caddy (`caddy:2-alpine`) still float: not asked, same fix if wanted.
+
+F-5. **The login check refuses REPLICATION and CREATEROLE** for the runtime logins, and a login
+that can become a role with either. CREATEROLE is refused too (the decision said "possibly"): no
+runtime login has or needs it, the local init script creates none with it, and `create-roles.sh`
+already refuses both for every role it makes, so no correct setup stops starting.
+
+F-6. **Test users' phones are unique per database, across runs too** (the appearance flake,
+P0-8). A per-run counter is not enough: the test database keeps every run's users, and Vitest
+gives each test file its own module (no shared memory). So one counter per database lives in a
+file in the OS temp folder (`jantrik-test-phones/`), taken 200 numbers at a time under a lock, and
+never behind a clock that moves 20 numbers a second (a deleted file restarts ahead of older runs).
+New phones use operators no test used before (API +88013, db package +88014, from 50 000 000; the
+seeds' fixed numbers are lower and the old random phones were 017/018), so they cannot meet old
+test users either. `randomPhone` kept its name (about 40 files call it).
 
 ## The refresh race fix (2026-11-15)
 
