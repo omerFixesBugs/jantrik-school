@@ -71,7 +71,9 @@ export class PostgresFileStore implements FileStore {
           })
         )?.sizeBytes ?? 0)
       : 0;
-    if (bytesUsed - replaced + size > capBytes) {
+    // A replacement no bigger than the file it replaces is never refused, even when the total is
+    // over a lowered cap: it cannot make it worse (the caller deletes the old file).
+    if (size > replaced && bytesUsed - replaced + size > capBytes) {
       throw apiError(413, 'STORAGE_FULL', "The institute's storage for images is full", {
         bytesUsed,
         capBytes,

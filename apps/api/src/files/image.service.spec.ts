@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
 import sharp from 'sharp';
-import { ImageService, Slots, processImage, sniffImage } from './image.service.js';
+import { ImageService, Slots, imageFailure, processImage, sniffImage } from './image.service.js';
 
 // docs/files.md: what an upload becomes before it is stored. Test images are made with sharp.
 
@@ -154,6 +154,18 @@ describe('processImage', () => {
     expect(sniffImage(await noise(4, 4).webp().toBuffer())).toBe('webp');
     expect(sniffImage(await noise(4, 4).gif().toBuffer())).toBeNull();
     expect(sniffImage(Buffer.alloc(0))).toBeNull();
+  });
+});
+
+describe('imageFailure (review round 2)', () => {
+  it("maps sharp's timeout to 422 IMAGE_TIMEOUT and anything else to IMAGE_INVALID", () => {
+    const timeout = imageFailure(new Error('timeout: 10s exceeded'));
+    expect([timeout.getStatus(), (timeout.getResponse() as { code: string }).code]).toEqual([
+      422,
+      'IMAGE_TIMEOUT',
+    ]);
+    const other = imageFailure(new Error('Input buffer contains unsupported image format'));
+    expect((other.getResponse() as { code: string }).code).toBe('IMAGE_INVALID');
   });
 });
 

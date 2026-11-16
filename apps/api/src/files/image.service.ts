@@ -109,6 +109,16 @@ export function sniffImage(input: Buffer): Sniffed | null {
 const invalid = () =>
   apiError(422, 'IMAGE_INVALID', 'The file is not a JPEG, PNG or WebP image, or it is damaged');
 
+/** Seconds a decode or an encode may take (sharp's own timer), well inside the queue's turn. */
+const SHARP_TIMEOUT = { seconds: 10 };
+
+/** sharp's error as the API's: its timeout → 422 IMAGE_TIMEOUT, anything else IMAGE_INVALID. */
+export function imageFailure(error: unknown) {
+  return /timeout/i.test((error as Error)?.message ?? '')
+    ? apiError(422, 'IMAGE_TIMEOUT', 'The image took too long to process; try a simpler one')
+    : invalid();
+}
+
 /** sharp's types are an `export =` namespace; these are the shapes used here. */
 type Sharp = ReturnType<typeof sharp>;
 type Metadata = Awaited<ReturnType<Sharp['metadata']>>;
@@ -184,9 +194,9 @@ export async function processImage(kind: StoredFileKind, input: Buffer): Promise
       .rotate()
       .resize(box.width, box.height, { fit: 'inside', withoutEnlargement: true });
     if (flatten) pipeline = pipeline.flatten({ background: '#ffffff' });
-    raw = await pipeline.raw().toBuffer({ resolveWithObject: true });
-  } catch {
-    throw invalid();
+    raw = await pipeline.raw().timeout(SHARP_TIMEOUT).toBuffer({ resolveWithObject: true });
+  } catch (error) {
+    throw imageFailure(error);
   }
 
   const fromRaw = () =>
@@ -204,7 +214,16 @@ export async function processImage(kind: StoredFileKind, input: Buffer): Promise
     const height = Math.max(1, Math.round(raw.info.height * scale));
     for (const encoder of encoders) {
       const sized = scale === 1 ? fromRaw() : fromRaw().resize(width, height, { fit: 'fill' });
-      const { data, info } = await encoder.apply(sized).toBuffer({ resolveWithObject: true });
+      let encoded: RawImage;
+      try {
+        encoded = await encoder
+          .apply(sized)
+          .timeout(SHARP_TIMEOUT)
+          .toBuffer({ resolveWithObject: true });
+      } catch (error) {
+        throw imageFailure(error);
+      }
+      const { data, info } = encoded;
       if (data.length <= limit.maxBytes) {
         return { bytes: data, mime: encoder.mime, width: info.width, height: info.height };
       }

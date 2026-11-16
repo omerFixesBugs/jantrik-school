@@ -270,6 +270,11 @@ describe('files and the institute profile (P2)', () => {
           tx.instituteProfile.updateMany({ data: { logoFileId: aPhoto } }),
         ),
       ).rejects.toThrow('institute_profiles_tenant_id_logo_file_id_logo_file_kind_fkey');
+      await expect(
+        withTenant(app, a, (tx) =>
+          tx.instituteProfile.updateMany({ data: { headSignatureFileId: aPhoto } }),
+        ),
+      ).rejects.toThrow('institute_profiles_tenant_id_head_signature_file_id_head_s_fkey');
       const aLogo = await putFile(a, 'LOGO', 'image/png', 100);
       await expect(
         withTenant(app, a, (tx) => tx.instituteProfile.updateMany({ data: { sealFileId: aLogo } })),
@@ -283,6 +288,39 @@ describe('files and the institute profile (P2)', () => {
         ),
       ).rejects.toThrow('institute_profiles_tenant_id_logo_file_id_logo_file_kind_fkey');
     });
+  });
+
+  it('a first image and a first save at once: the insert waits for the held one, then skips it', async () => {
+    // InstituteProfileService.ensureRow inserts with ON CONFLICT DO NOTHING (createMany
+    // skipDuplicates) while PUT /institute/profile upserts. Hold an uncommitted insert, run the
+    // second, commit the first: no error, nothing inserted twice, the first row stays.
+    const t = (await createTenant(app)).id;
+    const other = appClient();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let inserted!: () => void;
+    const insertedOnce = new Promise<void>((r) => (inserted = r));
+    const first = withTenant(app, t, async (tx) => {
+      await tx.instituteProfile.create({ data: { tenantId: t, nameEn: 'First save' } });
+      inserted();
+      await held;
+    });
+    await insertedOnce;
+    const second = withTenant(other, t, (tx) =>
+      tx.instituteProfile.createMany({
+        data: [{ tenantId: t, nameEn: 'From the image' }],
+        skipDuplicates: true,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 300)); // the second is now waiting on the first
+    release();
+    await first;
+    expect((await second).count).toBe(0);
+    const rows = await withTenant(app, t, (tx) =>
+      tx.instituteProfile.findMany({ select: { nameEn: true } }),
+    );
+    expect(rows).toEqual([{ nameEn: 'First save' }]);
+    await other.$disconnect();
   });
 
   describe('students.photo_file_id', () => {

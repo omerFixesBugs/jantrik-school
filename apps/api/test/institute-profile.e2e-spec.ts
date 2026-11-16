@@ -117,6 +117,8 @@ describe('institute profile', () => {
         http(h).put('/institute/profile').set(bearer(t.owner)).send({ nameBn: 'শাপলা' }),
       ]);
       expect([up.status, save.status]).toEqual([200, 200]);
+      const created = (await audits(t.id)).filter((r) => r.action === 'CREATE');
+      expect(created).toHaveLength(1);
     }
   });
 

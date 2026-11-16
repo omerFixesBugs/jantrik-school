@@ -36,8 +36,10 @@ export interface FileStore {
   lock(): Promise<void>;
   /**
    * Stores a file; 413 STORAGE_FULL when the institute's total would pass its cap. `replaces`:
-   * the file this one replaces (the caller deletes it in the same transaction), so a same-size
-   * replacement is never refused near the cap.
+   * the file this one replaces, counted as freed, so a replacement that does not grow the total
+   * is allowed near the cap, and one no bigger than the old file even over it. The caller MUST
+   * then delete that file in the same transaction (after pointing the row at the new one), or
+   * the total ends above the cap. Take `lock()` before reading which file is replaced.
    */
   put(file: PutFile, opts?: { replaces?: string | null }): Promise<StoredFileMeta>;
   /** The file with its bytes, or null (unknown here). */

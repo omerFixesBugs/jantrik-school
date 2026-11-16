@@ -66,6 +66,9 @@ const FIELDS = [
 
 const BANGLA = /[ঀ-৿]/;
 
+/** Who may change the profile (the routes' @Roles), checked again when an image is stored. */
+const EDITORS = ['OWNER', 'ADMIN'] as const;
+
 /**
  * The institute's own profile (sprint 1 P2, docs/files.md): names, EIIN, contact, the head of the
  * institute, and three images. One row per institute, created on the first save or image (no
@@ -112,6 +115,9 @@ export class InstituteProfileService {
 
   async update(input: InstituteProfileFields): Promise<InstituteProfile> {
     const tenantId = this.context.requireTenantId();
+    // The file lock (an image upload holds it from before it creates the row to its commit), so a
+    // first image racing this first save is seen here and the save is audited as an UPDATE.
+    await this.files.lock();
     const before = await this.row();
     const data = Object.fromEntries(
       FIELDS.map((f) => [f, input[f]]),
@@ -143,27 +149,32 @@ export class InstituteProfileService {
    * institute's file lock comes before reading the old id, and the cap counts the file replaced.
    */
   async setImage(slot: InstituteImageSlot, upload: UploadedImage | undefined) {
+    // A suspended institute or a lost role costs no decoding and no quota.
+    await this.transaction.run(async () => undefined, { roles: EDITORS });
     const image = await this.uploads.prepare(INSTITUTE_IMAGE_KIND[slot], upload);
-    return this.transaction.run(async () => {
-      await this.files.lock();
-      const profile = await this.ensureRow();
-      const oldId = profile[COLUMN[slot]];
-      const stored = await this.uploads.store(image, oldId);
-      await this.db.tx.instituteProfile.update({
-        where: { id: profile.id },
-        data: { [COLUMN[slot]]: stored.id },
-        select: { id: true },
-      });
-      if (oldId) await this.files.delete(oldId);
-      await this.audit.record({
-        entity: 'institute_profile',
-        entityId: profile.id,
-        action: 'UPDATE',
-        oldValues: { image: slot, fileId: oldId },
-        newValues: { image: slot, fileId: stored.id },
-      });
-      return this.get();
-    });
+    return this.transaction.run(
+      async () => {
+        await this.files.lock();
+        const profile = await this.ensureRow();
+        const oldId = profile[COLUMN[slot]];
+        const stored = await this.uploads.store(image, oldId);
+        await this.db.tx.instituteProfile.update({
+          where: { id: profile.id },
+          data: { [COLUMN[slot]]: stored.id },
+          select: { id: true },
+        });
+        if (oldId) await this.files.delete(oldId);
+        await this.audit.record({
+          entity: 'institute_profile',
+          entityId: profile.id,
+          action: 'UPDATE',
+          oldValues: { image: slot, fileId: oldId },
+          newValues: { image: slot, fileId: stored.id },
+        });
+        return this.get();
+      },
+      { roles: EDITORS },
+    );
   }
 
   async removeImage(slot: InstituteImageSlot): Promise<InstituteProfile> {

@@ -9,6 +9,9 @@ import { RequestTransaction } from '../tenancy/request-transaction.service.js';
 import { StudentAccess } from './student-access.service.js';
 import { StudentAdminService } from './student-admin.service.js';
 
+/** Who may change a photo (the route's @Roles), checked again when the photo is stored. */
+const WRITERS = ['OWNER', 'ADMIN'] as const;
+
 /**
  * A student's photo (sprint 1 P2, docs/files.md): one STUDENT_PHOTO file per student, replaced
  * or removed by OWNER/ADMIN, seen by those who see the student's full record (decision F1). A replaced
@@ -55,21 +58,26 @@ export class StudentPhotoService {
    * the cap counts the photo being replaced.
    */
   async set(studentId: string, upload: UploadedImage | undefined): Promise<StudentProfile> {
+    // A wrong or deactivated student, or a suspended institute, costs no decoding and no quota.
+    await this.transaction.run(() => this.writable(studentId), { roles: WRITERS });
     const image = await this.uploads.prepare('STUDENT_PHOTO', upload);
-    return this.transaction.run(async () => {
-      await this.writable(studentId);
-      await this.files.lock();
-      const old = await this.current(studentId);
-      const stored = await this.uploads.store(image, old);
-      await this.db.tx.student.update({
-        where: { id: studentId },
-        data: { photoFileId: stored.id },
-        select: { id: true },
-      });
-      if (old) await this.files.delete(old);
-      await this.record(studentId, old, stored.id);
-      return this.admin.view(studentId);
-    });
+    return this.transaction.run(
+      async () => {
+        await this.writable(studentId);
+        await this.files.lock();
+        const old = await this.current(studentId);
+        const stored = await this.uploads.store(image, old);
+        await this.db.tx.student.update({
+          where: { id: studentId },
+          data: { photoFileId: stored.id },
+          select: { id: true },
+        });
+        if (old) await this.files.delete(old);
+        await this.record(studentId, old, stored.id);
+        return this.admin.view(studentId);
+      },
+      { roles: WRITERS },
+    );
   }
 
   async remove(studentId: string): Promise<StudentProfile> {

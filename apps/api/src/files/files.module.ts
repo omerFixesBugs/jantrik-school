@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   Module,
+  UseGuards,
   UseInterceptors,
   applyDecorators,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import { RateLimiter } from '../redis/rate-limiter.service.js';
 import { FILE_STORE, type FileStore, type StoredFileMeta } from './file-store.js';
 import { ImageService, type ProcessedImage } from './image.service.js';
 import { PostgresFileStore } from './postgres-file-store.js';
+import { UploadGuard, UploadLimits } from './upload-limits.js';
 
 /** What multer hands over for the `file` field (memory storage). */
 export interface UploadedImage {
@@ -26,10 +28,13 @@ export const UPLOADS_PER_USER = 60;
 
 /**
  * A multipart route with one image in the field `file`: at most UPLOAD_MAX_BYTES (bigger: 413),
- * one file and no other fields. The type and name the browser sends are never trusted.
+ * one file and no other fields. The type and name the browser sends are never trusted. UploadGuard
+ * runs first: a bounded number of uploads in flight per process and per person, a slot given
+ * back when the response closes, and a body that has not arrived in 60 s dropped.
  */
 export const ImageUpload = () =>
   applyDecorators(
+    UseGuards(UploadGuard),
     UseInterceptors(
       FileInterceptor('file', { limits: { fileSize: UPLOAD_MAX_BYTES, files: 1, fields: 0 } }),
     ),
@@ -96,7 +101,13 @@ export async function sendStoredImage(
 
 @Global()
 @Module({
-  providers: [ImageService, ImageUploads, { provide: FILE_STORE, useClass: PostgresFileStore }],
-  exports: [ImageService, ImageUploads, FILE_STORE],
+  providers: [
+    ImageService,
+    ImageUploads,
+    UploadLimits,
+    UploadGuard,
+    { provide: FILE_STORE, useClass: PostgresFileStore },
+  ],
+  exports: [ImageService, ImageUploads, UploadLimits, UploadGuard, FILE_STORE],
 })
 export class FilesModule {}
