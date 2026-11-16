@@ -363,6 +363,7 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
   const typed = typedFor.version === preview.data?.version ? typedFor.values : {};
   const setTyped = (update: (values: Record<string, string>) => Record<string, string>) =>
     setTypedFor({ version: preview.data?.version, values: update(typed) });
+  const [force, setForce] = useState(false);
   const save = usePromotionMutation(
     () => {
       const p = preview.data!;
@@ -390,7 +391,6 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
     },
     { success: t('rollsSaved') },
   );
-  const [force, setForce] = useState(false);
   const classLabel = label('class_level', 'Class', { inText: true });
   const section = label('section', 'Section', { inText: true });
   const p = preview.data;
