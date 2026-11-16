@@ -113,22 +113,23 @@ describe('login privileges', () => {
     const receiver = (await withClient(INGEST_URL, readLoginPrivileges)).roleSettings;
     expect(receiver.filter((s) => s !== 'statement_timeout=5s')).toEqual([]);
     // What an injection could store for its own login (P1-J8 review round 2): it outlives
-    // restarts. Here on a login made for this test.
+    // restarts (with a 1 ms timeout even the start-up check fails, which also stops the start).
+    // Here a harmless value on a login made for this test.
     const url = await tempLogin('');
     const login = new URL(url).username;
     await su.$executeRawUnsafe(`ALTER ROLE ${login} SET work_mem = '64kB'`);
     await su.$executeRawUnsafe(
-      `ALTER ROLE ${login} IN DATABASE ${database} SET statement_timeout = '1ms'`,
+      `ALTER ROLE ${login} IN DATABASE ${database} SET statement_timeout = '7min'`,
     );
     try {
       const p = await withClient(url, readLoginPrivileges);
-      expect(p.roleSettings).toEqual(['statement_timeout=1ms', 'work_mem=64kB']);
+      expect(p.roleSettings).toEqual(['statement_timeout=7min', 'work_mem=64kB']);
       expect(loginStartupVerdict(p, { production: true }).problems).toEqual([
-        'has role settings it should not have (statement_timeout=1ms, work_mem=64kB)',
+        'has role settings it should not have (statement_timeout=7min, work_mem=64kB)',
       ]);
       expect(
         loginStartupVerdict(p, { production: true, expectedSettings: ['work_mem=64kB'] }).problems,
-      ).toEqual(['has role settings it should not have (statement_timeout=1ms)']);
+      ).toEqual(['has role settings it should not have (statement_timeout=7min)']);
       const elsewhere = loginStartupVerdict(p, { production: false });
       expect(elsewhere.problems).toEqual([]);
       expect(elsewhere.warnings.join(' ')).toMatch(/RESET ALL/);
