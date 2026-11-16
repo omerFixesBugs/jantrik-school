@@ -432,6 +432,8 @@ export interface FeeWaiverView {
 export interface FeeLedger {
   /** Today in the institute's timezone. */
   today: IsoDate;
+  /** The current academic year: dues of other years are "previous year" (P5, S17). */
+  currentYearId: string | null;
   student: FeeStudentHit;
   family: { groupId: string; rank: number } | null;
   /** Every due (earlier years' arrears too), oldest first; cancelled ones stay visible. */
@@ -710,6 +712,8 @@ export interface FeeDueListRow {
   finePaisa: number;
   totalPaisa: number;
   overduePaisa: number;
+  /** Of totalPaisa: the balance of dues of earlier years than the current one (P5, S17). */
+  previousYearsPaisa: number;
   oldestOverdue: IsoDate | null;
 }
 
@@ -722,7 +726,53 @@ export interface FeeDueList {
     finePaisa: number;
     totalPaisa: number;
     overduePaisa: number;
+    previousYearsPaisa: number;
   };
+}
+
+/**
+ * GET /fees/reports/leavers-with-dues (P5-K): students who still owe but are not on the due list:
+ * leavers (GRADUATED, TRANSFERRED, DROPPED_OUT, INACTIVE), ACTIVE students not enrolled in the
+ * current year ("not carried over"), and deactivated students.
+ */
+export const FEE_LEAVER_KINDS = ['LEFT', 'NOT_CARRIED_OVER', 'DEACTIVATED'] as const;
+export type FeeLeaverKind = (typeof FEE_LEAVER_KINDS)[number];
+
+export interface FeeLeaverRow {
+  student: FeeStudentRef;
+  kind: FeeLeaverKind;
+  status: 'ACTIVE' | 'INACTIVE' | 'GRADUATED' | 'TRANSFERRED' | 'DROPPED_OUT';
+  leftOn: IsoDate | null;
+  deactivated: boolean;
+  /** Their latest enrolment. */
+  lastYear: { id: string; name: string } | null;
+  classLevel: { id: string; nameBn: string; nameEn: string } | null;
+  section: { id: string; name: string } | null;
+  roll: number | null;
+  /** Primary guardian; the phone masked for the accountant. */
+  guardian: { nameBn: string | null; nameEn: string | null; phone: string } | null;
+  openDues: number;
+  totalPaisa: number;
+  overduePaisa: number;
+}
+
+export interface FeeLeaversReport {
+  today: IsoDate;
+  rows: FeeLeaverRow[];
+  totals: { students: number; totalPaisa: number; overduePaisa: number };
+}
+
+export const feeLeaversQuerySchema = z.object({
+  locale: z.enum(['bn', 'en']).default('bn'),
+});
+
+/** POST /fees/terms/copy and /fees/concessions/copy (P5, S16). */
+export interface FeeCopyResult {
+  copied: number;
+  /** Already there (a term of that name, a concession on that head), so not copied again. */
+  skipped: number;
+  /** Terms only: copied with a date outside the new year (P5-M). */
+  outsideYear?: number;
 }
 
 /** GET /fees/reports/collections: money kept (void payments left out), recorded in a range. */

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@jantrik/db';
 import {
+  addYears,
   dateFromDb,
   dateToDb,
   normalizeFeeHead,
@@ -10,6 +11,7 @@ import {
   type FeeSettingsView,
   type FeeTermView,
   type IsoDate,
+  type FeeCopyResult,
 } from '@jantrik/shared';
 import type { z } from 'zod';
 import type {
@@ -476,6 +478,115 @@ export class FeeSetupService {
       });
     }
     return { copied: missing.length };
+  }
+
+  /**
+   * Terms moved exactly one year later (S16, P5-M; 29 Feb → 28 Feb). A term whose Bangla name is
+   * already in the new year is not copied again; one whose dates fall outside the new year is
+   * copied and counted in `outsideYear`. Idempotent.
+   */
+  async copyTerms(input: CopyInput): Promise<FeeCopyResult> {
+    const tx = this.db.tx;
+    const from = await this.year(input.fromAcademicYearId);
+    const to = await this.year(input.toAcademicYearId);
+    const taken = new Set(
+      (
+        await tx.feeTerm.findMany({ where: { academicYearId: to.id }, select: { nameBn: true } })
+      ).map((t) => t.nameBn),
+    );
+    const source = await tx.feeTerm.findMany({
+      where: { academicYearId: from.id },
+      orderBy: [{ sortOrder: 'asc' }, { dueDate: 'asc' }],
+    });
+    const start = dateFromDb(to.startDate);
+    const end = dateFromDb(to.endDate);
+    let outsideYear = 0;
+    const missing = source.filter((t) => !taken.has(t.nameBn));
+    const data = missing.map((t) => {
+      const opensOn = addYears(dateFromDb(t.opensOn), 1);
+      const dueDate = addYears(dateFromDb(t.dueDate), 1);
+      if (opensOn < start || dueDate > end) outsideYear++;
+      return {
+        tenantId: this.tenantId,
+        academicYearId: to.id,
+        nameBn: t.nameBn,
+        nameEn: t.nameEn,
+        opensOn: dateToDb(opensOn),
+        dueDate: dateToDb(dueDate),
+        sortOrder: t.sortOrder,
+      };
+    });
+    if (data.length > 0) {
+      await tx.feeTerm.createMany({ data });
+      await this.audit.record({
+        entity: 'fee_terms',
+        entityId: to.id,
+        action: 'CREATE',
+        newValues: { copiedFrom: from.id, copied: data.length, outsideYear },
+      });
+    }
+    return { copied: data.length, skipped: source.length - data.length, outsideYear };
+  }
+
+  /**
+   * Concessions still running at the old year's end (P5-N), for students enrolled in the new year
+   * who are still ACTIVE, starting on the new year's first day. A student who already has one on
+   * that head in the new year is skipped. The audit row names the counts only.
+   */
+  async copyConcessions(input: CopyInput): Promise<FeeCopyResult> {
+    const tx = this.db.tx;
+    const from = await this.year(input.fromAcademicYearId);
+    const to = await this.year(input.toAcademicYearId);
+    const running = await tx.feeConcession.findMany({
+      where: {
+        academicYearId: from.id,
+        validFrom: { lte: from.endDate },
+        OR: [{ endedOn: null }, { endedOn: { gt: from.endDate } }],
+        student: {
+          deletedAt: null,
+          status: 'ACTIVE',
+          enrolments: { some: { academicYearId: to.id } },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const existing = new Set(
+      (
+        await tx.feeConcession.findMany({
+          where: { academicYearId: to.id, studentId: { in: running.map((c) => c.studentId) } },
+          select: { studentId: true, feeHeadId: true },
+        })
+      ).map((c) => `${c.studentId}|${c.feeHeadId}`),
+    );
+    const userId = this.context.requirePrincipal().userId;
+    const data = [];
+    for (const c of running) {
+      const key = `${c.studentId}|${c.feeHeadId}`;
+      if (existing.has(key)) continue;
+      existing.add(key);
+      data.push({
+        tenantId: this.tenantId,
+        studentId: c.studentId,
+        feeHeadId: c.feeHeadId,
+        academicYearId: to.id,
+        category: c.category,
+        type: c.type,
+        value: c.value,
+        reason: c.reason,
+        validFrom: to.startDate,
+        createdById: userId,
+      });
+    }
+    if (data.length > 0) {
+      await tx.feeConcession.createMany({ data });
+      await this.audit.record({
+        entity: 'fee_concessions',
+        entityId: to.id,
+        action: 'CREATE',
+        newValues: { copiedFrom: from.id, copied: data.length },
+      });
+    }
+    return { copied: data.length, skipped: running.length - data.length };
   }
 
   // ─────────────────────────── Concessions ───────────────────────────
