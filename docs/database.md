@@ -5,11 +5,11 @@ you add a table. Code lives in [`packages/db`](../packages/db).
 
 ## Two kinds of tables
 
-| Kind             | Examples                                                                                     | `tenant_id`    | Row-Level Security                               | App role can                          |
-| ---------------- | -------------------------------------------------------------------------------------------- | -------------- | ------------------------------------------------ | ------------------------------------- |
-| **Global**       | `institute_types`, `template_*`, `grading_scheme_templates`, `grade_band_templates`, `users` | no             | templates: no; `users`: yes (see below)          | read templates; `users` via RLS       |
-| **User-owned**   | `sessions`, `refresh_tokens`                                                                 | no (`user_id`) | enabled **and forced** (`user_id = app.user_id`) | own sessions only                     |
-| **Tenant-owned** | `tenants`, `students`, `sections`, `grade_bands`, … (everything else)                        | `NOT NULL`     | enabled **and forced**                           | read/write its own tenant's rows only |
+| Kind             | Examples                                                                                     | `tenant_id`    | Row-Level Security                                       | App role can                          |
+| ---------------- | -------------------------------------------------------------------------------------------- | -------------- | -------------------------------------------------------- | ------------------------------------- |
+| **Global**       | `institute_types`, `template_*`, `grading_scheme_templates`, `grade_band_templates`, `users` | no             | templates: no; `users`: yes (see below)                  | read templates; `users` via RLS       |
+| **User-owned**   | `sessions`, `refresh_tokens`                                                                 | no (`user_id`) | enabled **and forced** (`user_id` = the verified person) | own sessions only                     |
+| **Tenant-owned** | `tenants`, `students`, `sections`, `grade_bands`, … (everything else)                        | `NOT NULL`     | enabled **and forced**                                   | read/write its own tenant's rows only |
 
 **`platform_sms_logs`** is a global table for SMS sent before any tenant is known (login OTP),
 kept for cost tracking. The app role may **only INSERT** into it: no SELECT, UPDATE or DELETE,
@@ -24,18 +24,18 @@ the template.
 
 ## Database roles
 
-| Role                   | Used by                                                        | Notes                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `postgres`             | Docker admin only                                              | Superuser. Only the init script uses it.                                                                                                                                                                                                                                                                                                       |
-| `jantrik_owner`        | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`)     | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                                                                            |
-| `jantrik_app`          | API runtime, demo seed (`DATABASE_URL`)                        | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                                                                                           |
-| `jantrik_auth`         | Owner of the auth `SECURITY DEFINER` functions                 | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything).                                                             |
-| `jantrik_search`       | Owner of `search_student_ids()`                                | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                                                                             |
-| `jantrik_platform`     | Owner of the `platform_*` functions (Jantrik's own admins)     | Same rules as `jantrik_auth`. Grants on the platform tables and explicit `TO jantrik_platform` policies for institute metadata only, never student/guardian/attendance rows. See [platform.md](platform.md).                                                                                                                                   |
-| `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)            | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                                                                                           |
-| `jantrik_ingest`       | Owner of the `ingest_*` functions (the ZKTeco device receiver) | Same rules as `jantrik_auth`, with `TO jantrik_ingest` policies on the device tables and by column on tenants, modules and attendance settings. See "Devices (step 11)" below.                                                                                                                                                                 |
-| `jantrik_ingest_app`   | The device receiver (`DATABASE_INGEST_URL`)                    | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the four `ingest_*` functions (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants. Its statements stop after 5 s (`statement_timeout`, decision #79): set on the role and sent by the receiver's pool. |
-| `jantrik_login_app`    | The password login (`DATABASE_LOGIN_URL`, P1-J)                | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on `auth_find_user_for_password_login`, the one way to a password hash (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants. Used by `AuthService.loginWithPassword` only (`LoginPrismaService`).          |
+| Role                   | Used by                                                        | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres`             | Docker admin only                                              | Superuser. Only the init script uses it.                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `jantrik_owner`        | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`)     | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                                                                                                                                                                         |
+| `jantrik_app`          | API runtime, demo seed (`DATABASE_URL`)                        | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                                                                                                                                                                                        |
+| `jantrik_auth`         | Owner of the auth `SECURITY DEFINER` functions                 | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything).                                                                                                                                                          |
+| `jantrik_search`       | Owner of `search_student_ids()`                                | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                                                                                                                                                                          |
+| `jantrik_platform`     | Owner of the `platform_*` functions (Jantrik's own admins)     | Same rules as `jantrik_auth`. Grants on the platform tables and explicit `TO jantrik_platform` policies for institute metadata only, never student/guardian/attendance rows. See [platform.md](platform.md).                                                                                                                                                                                                                                |
+| `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)            | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                                                                                                                                                                                        |
+| `jantrik_ingest`       | Owner of the `ingest_*` functions (the ZKTeco device receiver) | Same rules as `jantrik_auth`, with `TO jantrik_ingest` policies on the device tables and by column on tenants, modules and attendance settings. See "Devices (step 11)" below.                                                                                                                                                                                                                                                              |
+| `jantrik_ingest_app`   | The device receiver (`DATABASE_INGEST_URL`)                    | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the four `ingest_*` functions (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants. Its statements stop after 5 s (`statement_timeout`, decision #79): set on the role and sent by the receiver's pool.                                                                                              |
+| `jantrik_login_app`    | The password login (`DATABASE_LOGIN_URL`, P1-J)                | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on `auth_find_user_for_password_login`, the one way to a password hash (`jantrik_app` has none), and on `auth_context_key()` (P1-J8, the request context key, read once at start-up), and that is all it has: a member of no role, no table, column or sequence grants. Used by `AuthService.loginWithPassword` and the key load only (`LoginPrismaService`). |
 
 **Every running service checks its login at start-up** (`readLoginPrivileges` in
 [`packages/db/src/login-privileges.ts`](../packages/db/src/login-privileges.ts)): the API and the
@@ -136,16 +136,59 @@ Every tenant-owned table has the same policy (the `tenants` table uses `id` inst
 ALTER TABLE x ENABLE ROW LEVEL SECURITY;
 ALTER TABLE x FORCE ROW LEVEL SECURITY;      -- applies to the table owner as well
 CREATE POLICY tenant_isolation ON x
-  USING      (tenant_id = app_current_tenant_id())   -- which rows you can see / update / delete
-  WITH CHECK (tenant_id = app_current_tenant_id());  -- which rows you can write
+  USING      (tenant_id = (SELECT app_current_tenant_id()))   -- which rows you can see / update / delete
+  WITH CHECK (tenant_id = (SELECT app_current_tenant_id()));  -- which rows you can write
 ```
 
-`app_current_tenant_id()` returns `NULLIF(current_setting('app.tenant_id', true), '')::uuid`:
+`app_current_tenant_id()` returns the institute of the **verified request context** (next
+section):
 
 - **No context set → NULL → no rows.** Forgetting to set the tenant shows nothing; it never shows
-  everything.
-- `NULLIF(..., '')` matters: once a pooled connection has run a `SET LOCAL`, Postgres reports the
-  setting as `''` (not NULL) afterwards, and `''::uuid` would throw.
+  everything. An empty setting (what a pooled connection reports after a `SET LOCAL`) is no
+  context too.
+- **Always call it wrapped, `(SELECT app_current_tenant_id())`** (and the same for
+  `app_current_user_id()`), in policies, functions and raw SQL alike. It checks a signature, and
+  PostgreSQL never inlines it: a bare call in a policy runs once for every row a scan looks at,
+  the wrapped one once per statement (an InitPlan), and is still used as an index condition.
+  `schema-safety.test.ts` fails on a bare call in any policy or function.
+- **A policy must not query its own table** in a subquery (e.g. `EXISTS (SELECT … FROM x …)` in
+  a policy on `x`): with the wrapped call in `x`'s own policy, PostgreSQL refuses it as
+  "infinite recursion detected in policy" (42P17). Put such a check in a `STABLE` plpgsql function
+  (invoker, so RLS still applies; plpgsql, so it is never inlined back), as
+  `tenant_modules.provisioning_only` does with `app_tenant_has_modules()`.
+
+### The request context (P1-J8)
+
+Who a transaction runs for (institute, person) is one setting, `app.context`, **signed by the API
+for that very transaction**. Before P1-J8 it was two plain settings, `app.tenant_id` and
+`app.user_id`, which any SQL in the transaction could overwrite with `set_config`: an SQL
+injection could become any person (write their password hash, insert a session for them) or
+enter any institute. Those two settings mean nothing now.
+
+- **The value:** `v1:<tenant uuid or empty>:<user uuid or empty>:<backend pid>:<transaction start in
+µs>:<HMAC-SHA256, hex>`, set with `set_config('app.context', $1, true)` by `withContext` only
+  (next to last section). The pid and the start bind it to one transaction: a copied value is
+  refused anywhere else.
+- **The key** (`app_context_key`, one row) is made by its migration from `pg_strong_random`; every
+  database has its own, and the migration file holds no secret. Only the owner and `jantrik_auth`
+  may read the table. `auth_context_key()` returns it to **`jantrik_login_app` only** (the
+  password-login login no ordinary request uses): the API and the worker load it once at start-up
+  through `LoginPrismaService` and refuse to start without it. The seed and the tests read the
+  table as the owner. The device receiver never opens a context and never sees the key.
+- **The check:** `app_verified_context()` (definer, owner `jantrik_auth`, `PARALLEL RESTRICTED`)
+  is the only reader of `app.context`. Unset or empty → no context. Otherwise the MAC must match
+  (checked first, over the raw text, compared through sha256), and the pid and transaction start
+  must be this transaction's; anything else raises **42501 "invalid request context"**, one message
+  for every reason. `app_current_tenant_id()` / `app_current_user_id()` return its two fields.
+  About 40 µs a check, once per statement and function call site.
+- **What an injection can do now:** only what its own signed-in person could already do through
+  RLS, in its own institute. Inside one's own institute RLS does not separate roles (P1-J10 in
+  decisions-pending).
+- **Rotating the key** (no command yet): as the owner, `UPDATE app_context_key SET key = …,
+inner_pad = …, outer_pad = …` (the migration shows how they are made), then restart the API and
+  the worker; requests in between fail.
+- Tests: `account-takeover.test.ts` (the attacks), `request-context.test.ts` (the check, the
+  privileges), `schema-safety.test.ts` (the wrapped calls, the pinned functions).
 
 **Cross-tenant references.** Foreign-key checks ignore RLS. Without extra protection, tenant A
 could store a reference to tenant B's student if it knew the UUID. So every tenant table has
@@ -155,10 +198,10 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
 
 ### Users, sessions and the auth functions
 
-`app_current_user_id()` works like the tenant helper, reading `app.user_id`.
+`app_current_user_id()` works like the tenant helper: the person of the verified request context.
 
 - **`users`** (RLS enabled + forced):
-  - **Visible:** yourself (`id = app.user_id`), or anyone with a membership in the current tenant
+  - **Visible:** yourself (`id = app_current_user_id()`), or anyone with a membership in the current tenant
     that is not `INVITED` or `DECLINED` (the `users_visible` view). An invited person stays hidden
     until they accept.
   - **Updatable:** your own row only. One person can belong to several tenants, so staff of
@@ -166,11 +209,11 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   - **Only some columns (sprint 1 P1-B):** `jantrik_app` may update `locale`, `color_scheme`,
     `name_bn`, `password_hash`, `password_changed_at` and `updated_at`, and nothing else. The
     login identifiers (`phone`, `email`) and the global `name` are out of the app's reach: no app
-    code (or injection) can change the phone or email a person signs in with. The password hash is
-    not: an injection can set `app.user_id` to anyone with `set_config` and then write their
-    `password_hash` (or create a session for them), which RLS allows for "your own row"
-    (P1-J8 in decisions-pending). Tests that need another column set
-    it through the owner role, as that user.
+    code (or injection) can change the phone or email a person signs in with. The password hash
+    is writable for "your own row" only, and since P1-J8 that row is the verified person's: an
+    injection can no longer pose as someone else with `set_config` and write their
+    `password_hash` or create a session for them (The request context, above). Tests that need
+    another column set it through the owner role, as that user.
   - **`password_changed_at`:** when the person last set their password themselves (null: never,
     or only by the seed). Written only by `PasswordSettingsService`, with `password_hash`
     ([auth.md](auth.md) → Setting a password).
@@ -208,14 +251,15 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   - `auth_find_user_for_password_login(phone, email)`: the same plus `password_hash`. **The one
     exception to "executable only by `jantrik_app`":** only `jantrik_login_app` may run it, and
     `jantrik_app` may not (P1-J, [auth.md](auth.md) → The API never reads a hash in a request)
-  - `auth_my_password_is_set()`: whether the current user (`app.user_id`) has a password
-    (`GET /me/password`). A request can set `app.user_id` to any id, so this tells an injection
-    whether a given person has a password: yes or no, nothing more
-  - `auth_list_my_memberships()`: uses `app.user_id`, with no user parameter. It also returns
+  - `auth_my_password_is_set()`: whether the current (verified) person has a password
+    (`GET /me/password`). Before P1-J8 an injection could ask it about anyone (P1-J2); no longer
+  - `auth_list_my_memberships()`: uses the verified person, with no user parameter. It also returns
     `invited_at`, so the login flow can show pending invitations.
   - `auth_resolve_tenant(slug)`
   - `auth_find_refresh_token(hash)`
   - `app_find_or_create_user(phone, name, name_bn)`: `name_bn` is written only for a new person
+  - `app_verified_context()` (P1-J8): the caller's own verified institute and person
+  - `auth_context_key()` (P1-J8): the request context key, for `jantrik_login_app` only
 - **Don't add more casually.** Each one is a deliberate hole in RLS.
 - **Never accept a tenant (or user) id as a parameter.** Scope only by `app_current_tenant_id()`
   / `app_current_user_id()`, so a missing context returns nothing. The only exceptions are the
@@ -307,7 +351,7 @@ tenant's rows.
 **The fix.** Search runs in `search_student_ids(term, phone, limit)`:
 
 - It is SECURITY DEFINER, owned by `jantrik_search`, and executable only by `jantrik_app`.
-- It filters by `app_current_tenant_id()` **explicitly**, escapes LIKE wildcards, skips
+- It filters by `(SELECT app_current_tenant_id())` **explicitly**, escapes LIKE wildcards, skips
   soft-deleted students, and returns **ids only**.
 - The API then loads those students through normal RLS (`searchStudentIds(tx, …)` in
   `@jantrik/db`).
@@ -574,12 +618,16 @@ RESTRICT`) and unique. The kind column is fixed by a CHECK (`students.photo_file
 > `this.db.tx`. An ESLint rule forbids these imports outside `apps/api/src/tenancy` and
 > `apps/api/src/auth`. See [docs/auth.md](auth.md).
 
-`withContext(prisma, { tenantId?, userId? }, fn)` sets both settings in one transaction;
-`withTenant(prisma, tenantId, fn)` is the tenant-only shorthand.
+`withContext(prisma, { tenantId?, userId? }, fn)` opens one transaction for that institute and/or
+person; `withTenant(prisma, tenantId, fn)` is the tenant-only shorthand.
 
-Both set `app.tenant_id` with `set_config(..., true)`, the parameter-safe form of `SET LOCAL`. The
-value disappears when the transaction ends, so a pooled connection never carries one tenant into
-the next request.
+Both read the transaction's backend and start (one round trip), sign them with the request
+context key and set `app.context` with `set_config(..., true)`, the parameter-safe form of
+`SET LOCAL` (The request context, above). The value disappears when the transaction ends, so a
+pooled connection never carries one tenant into the next request. **Never set a context any other
+way:** a hand-made value is refused (42501). The process must have registered where the key comes
+from first (`setRequestContextKeySource`): the API's `LoginPrismaService`, the seed and the test
+helpers do; without it `withContext` throws.
 
 ```ts
 import { createPrismaClient, tenantClient, withTenant } from '@jantrik/db';
@@ -671,8 +719,8 @@ Without either helper, queries run with no tenant and return nothing. That is in
    ALTER TABLE my_table ENABLE ROW LEVEL SECURITY;
    ALTER TABLE my_table FORCE ROW LEVEL SECURITY;
    CREATE POLICY tenant_isolation ON my_table
-     USING (tenant_id = app_current_tenant_id())
-     WITH CHECK (tenant_id = app_current_tenant_id());
+     USING (tenant_id = (SELECT app_current_tenant_id()))
+     WITH CHECK (tenant_id = (SELECT app_current_tenant_id()));
    GRANT SELECT, INSERT, UPDATE, DELETE ON my_table TO jantrik_app;
    ```
    There are no default privileges. Without the `GRANT`, the app gets "permission denied", which

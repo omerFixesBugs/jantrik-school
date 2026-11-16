@@ -1,7 +1,8 @@
 # Sprint 1, P1-J8: a verified request context (implementation plan)
 
 **Status: written and built during the unattended day run of 2026-11-17, for the owner's review
-together with the PR.** The owner asked for P1-J8 to be closed "with the option that closes it
+together with the PR.** "Changed while building" below lists where the build departed from the
+first version of this plan. The owner asked for P1-J8 to be closed "with the option that closes it
 most completely without weakening anything", planned here, built, and reviewed before P3. Nothing
 is merged by Claude. The follow-up it answers is P1-J8 in
 [decisions-pending.md](../decisions-pending.md); the previous step is
@@ -9,6 +10,23 @@ is merged by Claude. The follow-up it answers is P1-J8 in
 
 > **For agentic workers:** one implementer, then a database-security review subagent run by the
 > coordinator. Steps use checkbox (`- [ ]`) syntax.
+
+## Changed while building
+
+- **`auth_context_key()` is for `jantrik_login_app` only;** the owner (seed, tests) reads the
+  table directly, which it owns (a grant to the old owner does not survive the ownership change).
+- **`app_verified_context()` is not runnable by PUBLIC** (schema-safety refuses that for every
+  definer function): it is granted to the roles whose queries meet a policy (`jantrik_app`, the
+  owner, `jantrik_search`, `jantrik_platform`, `jantrik_ingest`).
+- **No format check before the MAC:** a regular expression cost about 30 µs a call (the whole check
+  122 µs). The MAC is checked first over the raw text, nothing is cast before it passes, and
+  nothing in the check can raise on a malformed value: about 38 µs a check.
+- **`tenant_modules.provisioning_only`** read its own table in a subquery; with the wrapped call in
+  that table's own policy PostgreSQL refused it as "infinite recursion detected in policy"
+  (42P17). Its check moved into `app_tenant_has_modules()` (STABLE plpgsql, invoker).
+- **`tenantClient` kept:** each model call now runs in its own `withTenant` (about 20 test uses).
+- **The DB tests register the key source in `helpers.ts`**, not a Vitest setup file (a setup file
+  loads the package before `client-options.test.ts` mocks the adapter).
 
 ## Goal
 
@@ -69,8 +87,8 @@ sessions, which it can do through the API anyway).
 ### Reading the key: `auth_context_key()`
 
 `SECURITY DEFINER`, owner `jantrik_auth`, returns the key. `EXECUTE` for **`jantrik_login_app`**
-(#16's dedicated login, which no ordinary request uses) and `jantrik_owner` (seed, CLI, tests),
-nobody else. `REVOKE … FROM PUBLIC`.
+(#16's dedicated login, which no ordinary request uses), nobody else. `REVOKE … FROM PUBLIC`. The
+seed and the tests read the table as its owner.
 
 - **API and worker:** `LoginPrismaService` (constructed in both, AppModule → AuthModule) registers
   itself as the key's source in its constructor and loads the key in `onModuleInit`, after its
@@ -99,8 +117,8 @@ tenant-only or user-only context). The key comes from a per-process source
 (`setRequestContextKeySource(load)`, memoised; `requestContextKeyReady()` loads it eagerly); a
 context asked for before any source is registered throws a clear error.
 
-`tenantClient` is **removed** (P1-J8e): it ran each model call as a batch transaction, which
-cannot read the pid and transaction start first. It was used only by two tests and the docs.
+`tenantClient` (P1-J8f): it ran each model call as a batch transaction, which cannot read the pid
+and transaction start first; each model call now runs in its own `withTenant`.
 
 ### Verifying: the context functions
 
@@ -108,12 +126,12 @@ cannot read the pid and transaction start first. It was used only by two tests a
   `jantrik_auth`, `STABLE`, `PARALLEL RESTRICTED` (it compares `pg_backend_pid()`, which differs in
   a parallel worker), `search_path = pg_catalog, public, pg_temp`, the key table schema-qualified.
   - `app.context` unset or `''` → `(NULL, NULL)`: no context, nothing visible (as today).
-  - Otherwise it must parse exactly (six parts, lower-case UUIDs or empty, decimal pid and µs,
-    64 hex digits), carry a correct HMAC, name **this** backend's pid and **this** transaction's
-    start. Anything else → `RAISE … USING ERRCODE = 'insufficient_privilege'` (42501), one message
-    for every reason: fail closed and loud.
-  - The MAC is compared as `sha256(given) = sha256(expected)`, so the comparison time does not
-    depend on how many leading bytes match.
+  - Otherwise it must have six parts, version `v1`, a correct HMAC over the first five (checked
+    first, over the raw text: nothing is cast before it passes), and name **this** backend's pid
+    and **this** transaction's start. Anything else → `RAISE … USING ERRCODE =
+'insufficient_privilege'` (42501), one message for every reason: fail closed and loud.
+  - The MAC is compared as `sha256(given hex) = sha256(expected hex)`, so the comparison time
+    does not depend on how many leading characters match.
 - `app_current_tenant_id()` / `app_current_user_id()` keep their names, owners and grants
   (`EXECUTE` for PUBLIC, as today); they become `SELECT (app_verified_context()).tenant_id`
   (`.user_id`), `STABLE`, `PARALLEL RESTRICTED`. So every policy and function that calls them now
@@ -211,12 +229,16 @@ Failing first where it can (the attack tests fail on the integration branch):
 Micro-benchmark on the scratch database (scratchpad `bench-context.ts`: one tenant, 300 students;
 Windows + Docker, so each round trip costs about 1.5 ms). Before (integration/sprint-1):
 
-| Transaction                     | Before       | After      |
-| ------------------------------- | ------------ | ---------- |
-| `student.count`                 | 6.0–6.4 ms   | see the PR |
-| 300 students with enrolments    | 61–65 ms     | see the PR |
-| 10 statements                   | 25.9–26.1 ms | see the PR |
-| users list (policy with EXISTS) | 7.4–7.6 ms   | see the PR |
+| Transaction                     | Before       | After                                                 |
+| ------------------------------- | ------------ | ----------------------------------------------------- |
+| `student.count`                 | 6.0–6.4 ms   | 7.4–8.1 ms (one more round trip: tenant-only context) |
+| 300 students with enrolments    | 61–65 ms     | 63.2–64.4 ms                                          |
+| 10 statements                   | 25.9–26.1 ms | 26.7–27.9 ms                                          |
+| users list (policy with EXISTS) | 7.4–7.6 ms   | 8.1–8.3 ms (one run 12.0, noise)                      |
+
+One check: 38 µs (2,000 in one statement: 77 ms), against 122 µs for the first version with a
+format regex. A tenant-and-person context (every authenticated request) needs no more round trips
+than before; a tenant-only or person-only one (jobs, login steps) needs one more.
 
 Plus the existing budgets (the 600-student publish, fee reports) in the full API suite.
 
@@ -227,15 +249,16 @@ Plus the existing budgets (the 600-student publish, fee reports) in the full API
   the login login (`jantrik_login_app`), the seed and tests through the owner. No env var.
 - **P1-J8c** A bad context raises 42501 instead of meaning "no context".
 - **P1-J8d** Bound to the backend pid and the transaction start, so a leaked string is useless.
-- **P1-J8e** `tenantClient` removed.
-- **P1-J8f** Every policy rewritten to the wrapped form in the same migration; guarded by a test.
-- **P1-J8g** No key rotation command; documented SQL plus a restart.
+- **P1-J8e** Every policy rewritten to the wrapped form in the same migration; guarded by a test.
+- **P1-J8f** `tenantClient` kept, one `withTenant` per model call.
+- **P1-J8g** `app_verified_context()` granted to the roles that meet policies, not PUBLIC.
+- No key rotation command; documented SQL plus a restart (database.md → The request context).
 - **P1-J10** (follow-up) role-level limits inside an institute.
 
 ## Files
 
 - `packages/db/prisma/migrations/20261117000000_verified_request_context/migration.sql`
-- `packages/db/src/tenancy/context.ts` (signing, the key source; `tenantClient` removed)
+- `packages/db/src/tenancy/context.ts` (signing, the key source; `tenantClient` per call)
 - `packages/db/src/seed/index.ts`, test helpers / setup (key source)
 - `apps/api/src/auth/login-prisma.service.ts` (+ spec), `apps/api/src/tenancy/request-transaction.service.ts`
 - `deploy/backup/restore-check.sh`
@@ -244,15 +267,15 @@ Plus the existing budgets (the 600-student publish, fee reports) in the full API
 
 ## Tasks
 
-- [ ] 1. This plan.
-- [ ] 2. Migration: key table, `auth_context_key`, `app_verified_context`, the two functions, the
+- [x] 1. This plan.
+- [x] 2. Migration: key table, `auth_context_key`, `app_verified_context`, the two functions, the
       policy rewrite, the four definer functions.
-- [ ] 3. `withContext` signing, the key source, `tenantClient` removed; seed and test helpers.
-- [ ] 4. The attack and privilege tests; existing tests updated.
-- [ ] 5. API: `LoginPrismaService` loads the key; raw SQL wrapped; API tests.
-- [ ] 6. Restore check.
-- [ ] 7. Benchmark after; docs; decisions-pending.
-- [ ] 8. Gates one at a time, push, draft PR, CI.
+- [x] 3. `withContext` signing, the key source, `tenantClient` per call; seed and test helpers.
+- [x] 4. The attack and privilege tests; existing tests updated.
+- [x] 5. API: `LoginPrismaService` loads the key; raw SQL wrapped; API tests.
+- [x] 6. Restore check.
+- [x] 7. Benchmark after; docs; decisions-pending.
+- [x] 8. Gates one at a time, push, draft PR, CI.
 
 ## Risks
 
