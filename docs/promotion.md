@@ -133,6 +133,31 @@ attendance and the device roster (all read the current year); enrolling them res
 Leavers leave at apply (P5-C): applying class 10's run in December removes them from attendance
 and the due list from then on.
 
+## The wizard (`/setup/new-year`)
+
+Setup → years → "Promotion and the new year" (OWNER/ADMIN):
+
+1. **The year:** create the next one from the current (its sections copied), or pick one made.
+2. **Fees** (with FEES): copy amounts, terms and (optionally) running concessions; each says how
+   many it copied and how many were already there ([fees.md](fees.md) → A new academic year).
+3. **Teachers:** class and section teachers and subject teachers, by class and section name
+   (`POST /setup/academic-years/:id/copy-teachers`): staff no longer ACTIVE, deactivated subjects
+   and rows already there are skipped; a section that already has a class teacher gets the copied
+   one as an ordinary teacher.
+4. **Promote:** every class of the year before with students: open its run or start one. The run's
+   page (`/setup/new-year/<runId>`) lists every student with the result, the decision, the target
+   class and section (or the leaving status and date), filters, bulk actions ("all who passed →
+   promote", selected → promote / repeat / leave as graduated), save, then apply with progress, and
+   resume when it stopped. On a phone each row stacks its controls (P5-Q).
+5. **Rolls:** per class of the new year; the proposal can be edited (Bangla digits accepted).
+6. **Switch:** the switch check's list, a tick "I understand" when anything is left (P5-O), then the
+   existing switch.
+
+## Leavers and dues
+
+Leavers keep their dues (S17): they leave the due list but appear on Fees → Reports → "Leavers with
+dues", with students not carried over and deactivated ones ([fees.md](fees.md)).
+
 ## Tables
 
 `promotion_runs` and `promotion_run_students`: see [database.md](database.md) → Promotion.

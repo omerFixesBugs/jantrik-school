@@ -926,3 +926,20 @@ number_rolls`); each leaver under `student` (old and new status).
 - **P5-a12. Setup's "in use" counts do not include promotion rows:** deleting a year, class,
   section or group a row names answers `409 REFERENCE_CONFLICT` (the foreign key), as for other
   references the counts do not list.
+
+### P5b: the wizard, copies and dues markers (stacked PR)
+
+Built in `feature/sprint-1-p5b-promotion-wizard` (on top of P5a). Decided alone:
+
+- **P5-b1. Teacher copy:** "class teachers" copies every section teacher of a section (the class
+  teacher and the others), keeping the class-teacher flag unless the new section already has one.
+  Staff counted: ACTIVE OWNER, ADMIN, TEACHER or ACCOUNTANT memberships.
+- **P5-b2. Concession copy** also skips students who left (only ACTIVE students enrolled in the new
+  year), and one already on that head in the new year, ended or not.
+- **P5-b3. Term copy** matches existing terms by Bangla name (the table's unique key).
+- **P5-b4. The leavers report** sums every open due of every year (not only earlier years), with
+  fines up to today, and lists each student's latest enrolment.
+- **P5-b5. Phones (P5-Q):** the decision grid stacks each row's controls instead of a sheet per row
+  (one layout for every width; checked at 390 px in Playwright).
+- **P5-b6. The wizard never switches the year by itself**, and its Playwright spec does not switch
+  either (the specs after it live in the seeded current year).
