@@ -3300,12 +3300,14 @@ enum PromotionDecision {
 }
 
 /// What applying a row did: a new enrolment, an enrolment that was already there (left as is,
-/// P5-D), the student marked as leaving, or nothing because the student was deactivated meanwhile.
+/// P5-D), the student marked as leaving, or nothing because the student was deactivated or had
+/// already left (another way) meanwhile.
 enum PromotionApplyOutcome {
   ENROLLED
   ALREADY_ENROLLED
   LEFT
   SKIPPED_DEACTIVATED
+  SKIPPED_LEFT
 
   @@map("promotion_apply_outcome")
 }

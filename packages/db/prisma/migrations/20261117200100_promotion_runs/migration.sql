@@ -11,7 +11,7 @@ CREATE TYPE "promotion_run_status" AS ENUM ('DRAFT', 'APPLYING', 'APPLIED');
 CREATE TYPE "promotion_decision" AS ENUM ('PROMOTE', 'REPEAT', 'LEAVE');
 
 -- CreateEnum
-CREATE TYPE "promotion_apply_outcome" AS ENUM ('ENROLLED', 'ALREADY_ENROLLED', 'LEFT', 'SKIPPED_DEACTIVATED');
+CREATE TYPE "promotion_apply_outcome" AS ENUM ('ENROLLED', 'ALREADY_ENROLLED', 'LEFT', 'SKIPPED_DEACTIVATED', 'SKIPPED_LEFT');
 
 
 -- CreateTable

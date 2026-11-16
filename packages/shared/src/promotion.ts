@@ -27,6 +27,7 @@ export const PROMOTION_APPLY_OUTCOMES = [
   'ALREADY_ENROLLED',
   'LEFT',
   'SKIPPED_DEACTIVATED',
+  'SKIPPED_LEFT',
 ] as const;
 export type PromotionApplyOutcome = (typeof PROMOTION_APPLY_OUTCOMES)[number];
 

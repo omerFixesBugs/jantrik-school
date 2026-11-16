@@ -36,7 +36,8 @@ export const createPromotionRunSchema = z.object({
   fromYearId: z.uuid(),
   toYearId: z.uuid(),
   classLevelId: z.uuid(),
-  rollStrategy: z.enum(ROLL_STRATEGIES).default('MERIT'),
+  /** Default: MERIT when a merit exam is found, else NAME_BN. */
+  rollStrategy: z.enum(ROLL_STRATEGIES).optional(),
   meritExamId: z
     .uuid()
     .nullish()
