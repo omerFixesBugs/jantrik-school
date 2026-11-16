@@ -395,11 +395,26 @@ deploy/compose.sh ps
     retried by the browser, and nobody is signed out. Run the last two commands together.
 
 - **The upgrade to sprint 1's P1-J8** (the signed request context) needs no new setting and no
-  new role (after P1-J's): upgrade as above. Its migration makes the database's own context key.
-  - **Between `migrate` and `up -d`** the old API and worker still set the old settings
-    (`app.tenant_id`, `app.user_id`), which mean nothing now: their requests and jobs see no
-    institute data and fail until they restart. Nothing is lost (a failed job is retried, a failed
-    refresh too). Run the last two commands together; `up -d` restarts api and worker at once.
+  new role (after P1-J's). Its migration makes the database's own context key and revokes
+  TEMPORARY on the database from PUBLIC (production's setup did already). **Stop the API and the
+  worker before `migrate`:**
+
+  ```bash
+  cd /srv/jantrik
+  deploy/compose.sh run --rm backup                 # a backup first
+  git fetch && git checkout <new tag or commit>
+  deploy/compose.sh build
+  deploy/compose.sh stop api worker                 # nothing old may run against the new schema
+  deploy/compose.sh run --rm migrate
+  deploy/compose.sh up -d
+  ```
+
+  - **Why stop them first:** an old API or worker running after `migrate` sets settings the
+    database no longer believes, so it reads no institute data. It is not harmless: it would
+    cache empty roles and modules (5 minutes of 403s; this release reads a new cache generation,
+    so the new API ignores those), mark today's dues as generated without generating them (also a
+    new key now), skip institutes in the device jobs, and leave a student import queued until the
+    daily sweep. With both stopped, requests fail only while they are down (the web app retries).
   - In production the new API refuses to start until the migration has run ("Could not read the
     request context key through DATABASE_LOGIN_URL … Run the database migrations").
   - Every statement of the migration can run again: after a failure half-way,

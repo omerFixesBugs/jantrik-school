@@ -285,6 +285,10 @@ for them, or enter any institute. Now:
   signed transaction also compares the database's key fingerprint and reloads a changed key once. `jantrik_app` can neither read the key nor run `auth_context_key()`. The
   receiver never opens a context and has no key (`ingest-isolation.spec.ts`); `src/platform`
   never touches either (`platform-isolation.spec.ts`).
+- **It assumes the runtime login cannot create temporary objects** (TEMPORARY revoked on the
+  database; production refuses to start otherwise): a temporary view planted by an injection
+  would otherwise run inside the next request on that pooled connection ([database.md](database.md)
+  → The request context).
 - **So an injection is the person whose request it rides in, in their institute:** it can do what
   that person could already do through RLS there, and nothing as anyone else. RLS does not
   separate roles inside an institute (a teacher's injection can still write rows RLS lets the

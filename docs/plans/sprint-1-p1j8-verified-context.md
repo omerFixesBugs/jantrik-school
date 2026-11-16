@@ -34,6 +34,21 @@ is merged by Claude. The follow-up it answers is P1-J8 in
 - **The DB tests register the key source in `helpers.ts`**, not a Vitest setup file (a setup file
   loads the package before `client-options.test.ts` mocks the adapter).
 
+## Changed after the review (round 1)
+
+- **No TEMP for the runtime logins** (the precondition the design relies on): the migration and
+  the dev init revoke TEMPORARY on the database from PUBLIC; production refuses to start with a
+  `DATABASE_URL` login that has it, elsewhere a warning; the request path's SQL is
+  schema-qualified. The review planted a temporary view `tenants` through an injection and the
+  victim's next request on the same connection ran it in the victim's signed context.
+- **The roles and modules caches have a new key generation**, and the upgrade stops the API and
+  the worker before `migrate` (an old API in between cached empty roles and modules).
+- **Signed identities from rows:** `student_imports.created_by_id` pinned (column grant and a
+  trigger); invitations checked before signing the URL's institute.
+- **The HMAC pads are derived by a trigger**, so rotation is one UPDATE.
+- **The wrapped-call guard** catches more forms and also scans views, defaults and CHECKs.
+- **Planner estimates** with an InitPlan parameter: measured on a skewed dataset (Performance).
+
 ## Goal
 
 No SQL that runs as `jantrik_app` can change **who** it runs as or **which institute** it runs

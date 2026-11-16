@@ -190,10 +190,35 @@ enter any institute. Those two settings mean nothing now.
 - **What an injection can do now:** only what its own signed-in person could already do through
   RLS, in its own institute. Inside one's own institute RLS does not separate roles (P1-J10 in
   decisions-pending).
-- **Rotating the key** (no command yet): as the owner, `UPDATE app_context_key SET key = …,
-inner_pad = …, outer_pad = …` (the migration shows how they are made). Running processes notice
-  the new fingerprint on their next transaction and reload; only transactions already signed with
-  the old key fail.
+- **Precondition: no runtime login may create temporary objects.** A temporary view or function
+  outlives its request on a pooled connection, and `pg_temp` is searched first for relations: a
+  view named `tenants` planted by an injection would run inside the next request's (someone
+  else's) signed context. So TEMPORARY is revoked from PUBLIC on every Jantrik database (the
+  P1-J8 migration, `docker/postgres/init`, production's `database-setup.sql`); the owner keeps it.
+  The API checks it at start-up: production refuses a `DATABASE_URL` login with TEMP, development
+  warns. On a database the migrations have not reached yet, as the Postgres superuser:
+  `REVOKE TEMPORARY ON DATABASE <name> FROM PUBLIC;`. The request path's own SQL (the tenant and
+  role re-checks, `withContext`) is schema-qualified as well. `schema-safety.test.ts` checks
+  that no runtime login has TEMP.
+- **Identities a job signs come from rows the app cannot forge:** the import job signs as the
+  import's creator, so `student_imports.created_by_id` is not updatable by `jantrik_app` and a
+  request can only create an import as its signed person (trigger `student_imports_creator`).
+  Accepting an invitation checks the invitation in the person's own context before signing the
+  institute named in the URL.
+- **Rotating the key** (no command yet), as the owner:
+  `UPDATE app_context_key SET key = uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid()), created_at = now() WHERE id = 1;`
+  A trigger derives the HMAC pads from the key (they cannot drift from it). Running processes
+  notice the new fingerprint on their next transaction and reload; only transactions already
+  signed with the old key fail.
+- **Row triggers check the context per row** where they call the context functions through a
+  policy or a lookup (`exam_marks_score_within_full` once a row, `fee_payment_allocations_check`
+  three times, `fee_dues_cancel_final` twice): about 40 µs a check, measured in the plan (P1-J8 →
+  Performance).
+- **Known, not new:** an injection can still run a session-level `SET app.context = …` or
+  `SET search_path = …` (not `LOCAL`), which stays on that pooled connection after its request:
+  the next requests there fail (a wrong context is refused; withContext sets its own value with
+  `set_config(…, true)`, which overrides it for its transaction). Denial of service only, as before
+  P1-J8.
 - Tests: `account-takeover.test.ts` (the attacks), `request-context.test.ts` (the check, the
   privileges), `schema-safety.test.ts` (the wrapped calls, the pinned functions).
 
