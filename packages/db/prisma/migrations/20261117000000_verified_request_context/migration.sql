@@ -82,10 +82,14 @@ ALTER FUNCTION auth_context_key() OWNER TO jantrik_auth;
 -- ───────────── app_verified_context(): the only reader of app.context ─────────────
 -- app.context = 'v1:<tenant uuid or empty>:<user uuid or empty>:<backend pid>:<transaction start,
 -- µs since 1970>:<HMAC-SHA256(key, everything before the last colon), 64 hex digits>'.
--- Unset or '' → no context (NULLs), as before. Anything else must be exact, correctly signed and
--- name this backend and this transaction; otherwise 42501, one message for every reason. Bound to
--- the transaction, a copied string is useless anywhere else. The MACs are compared through
--- sha256, so the comparison time does not depend on how many bytes match.
+-- Unset or '' → no context (NULLs), as before. Anything else must be six parts, correctly signed
+-- and name this backend and this transaction; otherwise 42501, one message for every reason.
+-- Bound to the transaction, a copied string is useless anywhere else.
+-- - The MAC is checked first, over the raw text: only the API's signer can produce a matching
+--   one, so nothing is cast before it passes, and no format check is needed (a regular
+--   expression here cost about 30 µs a call, the whole check now about 40).
+-- - The MACs are compared through sha256 of their hex text, so the comparison time does not
+--   depend on how many characters match. Nothing in the check can raise on a malformed value.
 -- PARALLEL RESTRICTED: pg_backend_pid() differs in a parallel worker.
 -- EXECUTE for every role whose queries meet a policy (the policies call it through
 -- app_current_tenant_id()): the app login, the owner, and the owners of the definer functions. It
@@ -100,23 +104,23 @@ CREATE FUNCTION app_verified_context(OUT tenant_id uuid, OUT user_id uuid)
     v_parts text[];
     v_inner bytea;
     v_outer bytea;
-    v_ok boolean;
   BEGIN
     IF v_raw IS NULL OR v_raw = '' THEN
       RETURN;
     END IF;
-    IF v_raw !~ '^v1:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?:[1-9][0-9]{0,9}:[1-9][0-9]{0,17}:[0-9a-f]{64}$' THEN
-      RAISE EXCEPTION 'invalid request context' USING ERRCODE = 'insufficient_privilege';
-    END IF;
     v_parts := string_to_array(v_raw, ':');
     SELECT k.inner_pad, k.outer_pad INTO v_inner, v_outer FROM public.app_context_key k WHERE k.id = 1;
-    v_ok := sha256(sha256(v_outer || sha256(v_inner || convert_to(array_to_string(v_parts[1:5], ':'), 'UTF8'))))
-              = sha256(decode(v_parts[6], 'hex'))
-            AND v_parts[4]::bigint = pg_backend_pid()
-            AND v_parts[5]::bigint = (extract(epoch FROM now()) * 1000000)::bigint;
-    IF v_ok IS NOT TRUE THEN
+    IF cardinality(v_parts) IS DISTINCT FROM 6
+       OR v_parts[1] IS DISTINCT FROM 'v1'
+       OR sha256(convert_to(encode(sha256(v_outer || sha256(v_inner
+            || convert_to(array_to_string(v_parts[1:5], ':'), 'UTF8'))), 'hex'), 'UTF8'))
+          IS DISTINCT FROM sha256(convert_to(v_parts[6], 'UTF8'))
+       OR v_parts[4] IS DISTINCT FROM pg_backend_pid()::text
+       OR v_parts[5] IS DISTINCT FROM ((extract(epoch FROM now()) * 1000000)::bigint)::text
+    THEN
       RAISE EXCEPTION 'invalid request context' USING ERRCODE = 'insufficient_privilege';
     END IF;
+    -- Signed by the API, so these are a UUID or empty.
     tenant_id := NULLIF(v_parts[2], '')::uuid;
     user_id := NULLIF(v_parts[3], '')::uuid;
   END
