@@ -5,6 +5,18 @@
 -- jantrik_login_app must exist first: docker/postgres/init/01-roles.sh, or for an existing local
 -- volume the commands in docs/database.md → Database roles; deploy/postgres/create-roles.sh in
 -- production.
+--
+-- Prisma does not run a migration in one transaction: a statement that fails leaves the ones
+-- before it applied. So the role is checked first, before anything changes, and every statement
+-- can run again (after `prisma migrate resolve --rolled-back 20261116000000_users_password_hash_hidden`).
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_login_app') THEN
+    RAISE EXCEPTION 'create the role jantrik_login_app first: docs/deploy.md → Upgrades (production), docs/database.md → Database roles (development)';
+  END IF;
+END
+$$;
 
 -- ───────────── users: SELECT by column, every column but password_hash ─────────────
 -- A table-level SELECT covers every column (a column REVOKE would change nothing), so the table
@@ -20,7 +32,7 @@ GRANT SELECT (id, phone, email, name, name_bn, password_changed_at, locale, colo
 -- pointless. The OTP login and the profile read need only who the person is. A changed result type
 -- needs DROP + CREATE. Privileges are set BEFORE the ownership change (see
 -- fix_definer_function_privileges).
-DROP FUNCTION auth_find_user_for_login(text, text);
+DROP FUNCTION IF EXISTS auth_find_user_for_login(text, text);
 CREATE FUNCTION auth_find_user_for_login(p_phone text, p_email text)
   RETURNS TABLE (id uuid, name text, locale locale)
   LANGUAGE sql STABLE SECURITY DEFINER
@@ -40,6 +52,7 @@ ALTER FUNCTION auth_find_user_for_login(text, text) OWNER TO jantrik_auth;
 -- The password login (POST /auth/login) runs this on its own login (jantrik_login_app), which has
 -- no table grants and may run nothing else, so an injection in an ordinary request (jantrik_app)
 -- cannot reach it. The API verifies the password with argon2 itself.
+DROP FUNCTION IF EXISTS auth_find_user_for_password_login(text, text);
 CREATE FUNCTION auth_find_user_for_password_login(p_phone text, p_email text)
   RETURNS TABLE (id uuid, name text, locale locale, password_hash text)
   LANGUAGE sql STABLE SECURITY DEFINER
@@ -61,6 +74,7 @@ GRANT USAGE ON SCHEMA public TO jantrik_login_app;
 -- ───────────── auth_my_password_is_set(): GET /me/password's hasPassword ─────────────
 -- Scoped by app.user_id. A request can set that to any id with set_config, so an injection can
 -- learn whether a given person has a password (yes or no, nothing more): docs/auth.md.
+DROP FUNCTION IF EXISTS auth_my_password_is_set();
 CREATE FUNCTION auth_my_password_is_set()
   RETURNS boolean
   LANGUAGE sql STABLE SECURITY DEFINER

@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { hash } from '@node-rs/argon2';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findOrCreateUser, withContext, withTenant, type PrismaClient } from '../src/index.js';
@@ -114,6 +117,19 @@ describe('users.password_hash is out of the app login’s reach (P1-J)', () => {
     ).toEqual([]);
   });
 
+  it('finds an email whatever its case, as the login types it', async () => {
+    const email = `Staff.Login.${randomUUID().slice(0, 8)}@Example.COM`;
+    // The app may not change emails (P1-B): the owner sets it, as that user.
+    await withContext(owner, { userId: staff.id }, (tx) =>
+      tx.user.update({ where: { id: staff.id }, data: { email }, select: { id: true } }),
+    );
+    for (const typed of [email, email.toLowerCase(), email.toUpperCase()]) {
+      const rows = await login.$queryRaw<{ id: string; password_hash: string | null }[]>`
+        SELECT id::text, password_hash FROM auth_find_user_for_password_login(NULL, ${typed})`;
+      expect(rows, typed).toEqual([{ id: staff.id, password_hash: staff.hash }]);
+    }
+  });
+
   it('the login login reads no table and runs no other function', async () => {
     await expect(login.$queryRaw`SELECT id FROM users LIMIT 1`).rejects.toThrow(
       /permission denied/i,
@@ -164,5 +180,83 @@ describe('users.password_hash is out of the app login’s reach (P1-J)', () => {
       tx.user.findUniqueOrThrow({ where: { id: staff.id }, omit: { passwordHash: false } }),
     );
     expect(withHash.passwordHash).toBe(staff.hash);
+  });
+});
+
+// ─────────── The migration itself (Prisma does not run it in one transaction) ───────────
+
+const MIGRATION = path.resolve(
+  import.meta.dirname,
+  '../prisma/migrations/20261116000000_users_password_hash_hidden/migration.sql',
+);
+
+/** The migration's statements: comment lines dropped, split at semicolons outside `$$` bodies. */
+function statements(sql: string): string[] {
+  const code = sql
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n');
+  const out: string[] = [];
+  let current = '';
+  let inBody = false;
+  for (let i = 0; i < code.length; i++) {
+    if (code.startsWith('$$', i)) {
+      inBody = !inBody;
+      current += '$$';
+      i++;
+      continue;
+    }
+    if (code[i] === ';' && !inBody) {
+      if (current.trim()) out.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += code[i];
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+}
+
+class Rollback extends Error {}
+
+describe('the P1-J migration', () => {
+  let owner: PrismaClient;
+  const sql = readFileSync(MIGRATION, 'utf8');
+
+  beforeAll(() => {
+    owner = ownerClient();
+  });
+
+  afterAll(async () => {
+    await owner.$disconnect();
+  });
+
+  it('checks for jantrik_login_app before it changes anything', async () => {
+    const [guard] = statements(sql);
+    expect(guard).toMatch(/^DO \$\$/);
+    expect(guard).toContain("rolname = 'jantrik_login_app'");
+    // The same block, for a role that does not exist: it stops with the instruction.
+    await expect(
+      owner.$executeRawUnsafe(
+        guard!.replace("rolname = 'jantrik_login_app'", "rolname = 'jantrik_no_such_role'"),
+      ),
+    ).rejects.toThrow(/create the role jantrik_login_app first/);
+    // The role exists here: it passes.
+    await owner.$executeRawUnsafe(guard!);
+  });
+
+  it('can run again over itself (after a failure and `migrate resolve --rolled-back`)', async () => {
+    const all = statements(sql);
+    expect(all.length).toBeGreaterThanOrEqual(15);
+    // Every statement once more, as the migration login, then rolled back.
+    await expect(
+      owner.$transaction(
+        async (tx) => {
+          for (const statement of all) await tx.$executeRawUnsafe(statement);
+          throw new Rollback();
+        },
+        { timeout: 30_000 },
+      ),
+    ).rejects.toBeInstanceOf(Rollback);
   });
 });

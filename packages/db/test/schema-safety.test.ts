@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '../src/index.js';
-import { appClient, tenantTableNames } from './helpers.js';
+import { appClient, ownerClient, tenantTableNames } from './helpers.js';
 
 // Guards against a future table being added without RLS. See docs/database.md.
 describe('schema safety net', () => {
@@ -230,6 +230,40 @@ describe('schema safety net', () => {
       UNION ALL
       SELECT 'PUBLIC' WHERE has_column_privilege('public', 'users', 'password_hash', 'SELECT')`;
     expect(readers).toEqual([]);
+  });
+
+  // Nor through a view: a view runs with its owner's rights (and a whole-row `u.*` view
+  // depends on every column), so no view or materialised view may read the hash.
+  const VIEWS_READING_HASH = `
+    SELECT DISTINCT r.ev_class::regclass::text AS view
+    FROM pg_depend d
+    JOIN pg_rewrite r ON r.oid = d.objid
+    WHERE d.classid = 'pg_rewrite'::regclass
+      AND d.refclassid = 'pg_class'::regclass
+      AND d.refobjid = 'users'::regclass
+      AND d.refobjsubid = (SELECT attnum FROM pg_attribute
+                           WHERE attrelid = 'users'::regclass AND attname = 'password_hash')`;
+
+  it('no view or materialised view reads users.password_hash', async () => {
+    expect(await app.$queryRawUnsafe(VIEWS_READING_HASH)).toEqual([]);
+  });
+
+  it('the view check finds a whole-row view of users', async () => {
+    const owner = ownerClient();
+    class Rollback extends Error {}
+    let found: unknown;
+    try {
+      await owner.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe('CREATE VIEW p1j_probe AS SELECT u.* FROM users u');
+        found = await tx.$queryRawUnsafe(VIEWS_READING_HASH);
+        throw new Rollback();
+      });
+    } catch (error) {
+      if (!(error instanceof Rollback)) throw error;
+    } finally {
+      await owner.$disconnect();
+    }
+    expect(found).toEqual([{ view: 'p1j_probe' }]);
   });
 
   // The hash must not come back through a definer function either. Every function a runtime login

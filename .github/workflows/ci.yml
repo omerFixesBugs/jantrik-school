@@ -331,6 +331,11 @@ jobs:
       - name: Create the roles and the production database (create-roles.sh)
         run: sh deploy/postgres/create-roles.sh
 
+      # An upgrade runs it again on a live cluster to add new roles (docs/deploy.md → Upgrades):
+      # a second run must succeed and change nothing that exists.
+      - name: create-roles.sh again (safe to re-run)
+        run: sh deploy/postgres/create-roles.sh
+
       # Version comes from "packageManager" in package.json.
       - uses: pnpm/action-setup@v6
 
