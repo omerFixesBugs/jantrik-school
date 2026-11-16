@@ -6,9 +6,14 @@ import { appClient, createStudent, createTenant } from './helpers.js';
 // Sprint 1 P2 (docs/plans/sprint-1-p2-files.md): stored_files, stored_file_usage,
 // institute_profiles and students.photo_file_id. Tenant isolation, the grants (no UPDATE of a
 // file, no DELETE of usage or profile), the CHECKs that back the per-kind caps, and the composite
-// foreign keys that keep a row from pointing at another institute's file.
+// foreign keys that keep a row from pointing at another institute's file, or at a file of another
+// kind. Each refusal names the rule that refused it.
 
 type Mime = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' | 'text/plain';
+
+/** What refuses a write: a CHECK or foreign key by name, or RLS, or a unique index. */
+const RLS = /row-level security/;
+const UNIQUE = /Unique constraint/;
 
 function fileData(
   tenantId: string,
@@ -71,7 +76,7 @@ describe('files and the institute profile (P2)', () => {
             select: { id: true },
           }),
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow(RLS);
       const mine = await withTenant(app, a, (tx) =>
         tx.storedFile.findUniqueOrThrow({ where: { id: aFile }, select: { sizeBytes: true } }),
       );
@@ -84,28 +89,63 @@ describe('files and the institute profile (P2)', () => {
       ).rejects.toThrow(/permission denied/);
     });
 
-    it.each<[string, StoredFileKind, Mime, number, Parameters<typeof fileData>[4]]>([
-      ['an unknown mime', 'DOCUMENT_ASSET', 'text/plain', 10, {}],
-      ['a GIF', 'DOCUMENT_ASSET', 'image/gif', 10, {}],
-      ['a PNG photo', 'STUDENT_PHOTO', 'image/png', 10, {}],
-      ['a JPEG signature', 'SIGNATURE', 'image/jpeg', 10, {}],
-      ['a JPEG logo', 'LOGO', 'image/jpeg', 10, {}],
-      ['a photo over 200 KB', 'STUDENT_PHOTO', 'image/jpeg', 204_801, {}],
-      ['an applicant photo over 200 KB', 'APPLICANT_PHOTO', 'image/jpeg', 204_801, {}],
-      ['a logo over 100 KB', 'LOGO', 'image/png', 102_401, {}],
-      ['a seal over 100 KB', 'SEAL', 'image/webp', 102_401, {}],
-      ['a signature over 100 KB', 'SIGNATURE', 'image/png', 102_401, {}],
-      ['a document asset over 256 KB', 'DOCUMENT_ASSET', 'image/png', 262_145, {}],
-      ['a size that is not the bytes’ length', 'STUDENT_PHOTO', 'image/jpeg', 10, { sizeBytes: 9 }],
-      ['a malformed sha256', 'STUDENT_PHOTO', 'image/jpeg', 10, { sha256: 'ABC' }],
-      ['width 0', 'STUDENT_PHOTO', 'image/jpeg', 10, { width: 0 }],
-      ['height over 4000', 'STUDENT_PHOTO', 'image/jpeg', 10, { height: 4001 }],
-    ])('refuses %s', async (_name, kind, mime, size, over) => {
+    it.each<[string, StoredFileKind, Mime, number, Parameters<typeof fileData>[4], string]>([
+      ['an unknown mime', 'DOCUMENT_ASSET', 'text/plain', 10, {}, 'stored_files_mime'],
+      ['a GIF', 'DOCUMENT_ASSET', 'image/gif', 10, {}, 'stored_files_mime'],
+      ['a PNG photo', 'STUDENT_PHOTO', 'image/png', 10, {}, 'stored_files_mime'],
+      ['a JPEG signature', 'SIGNATURE', 'image/jpeg', 10, {}, 'stored_files_mime'],
+      ['a JPEG logo', 'LOGO', 'image/jpeg', 10, {}, 'stored_files_mime'],
+      ['a photo over 200 KB', 'STUDENT_PHOTO', 'image/jpeg', 204_801, {}, 'stored_files_size'],
+      [
+        'an applicant photo over 200 KB',
+        'APPLICANT_PHOTO',
+        'image/jpeg',
+        204_801,
+        {},
+        'stored_files_size',
+      ],
+      ['a logo over 100 KB', 'LOGO', 'image/png', 102_401, {}, 'stored_files_size'],
+      ['a seal over 100 KB', 'SEAL', 'image/webp', 102_401, {}, 'stored_files_size'],
+      ['a signature over 100 KB', 'SIGNATURE', 'image/png', 102_401, {}, 'stored_files_size'],
+      [
+        'a document asset over 256 KB',
+        'DOCUMENT_ASSET',
+        'image/png',
+        262_145,
+        {},
+        'stored_files_size',
+      ],
+      [
+        'a size that is not the bytes’ length',
+        'STUDENT_PHOTO',
+        'image/jpeg',
+        10,
+        { sizeBytes: 9 },
+        'stored_files_size',
+      ],
+      [
+        'a malformed sha256',
+        'STUDENT_PHOTO',
+        'image/jpeg',
+        10,
+        { sha256: 'ABC' },
+        'stored_files_sha256',
+      ],
+      ['width 0', 'STUDENT_PHOTO', 'image/jpeg', 10, { width: 0 }, 'stored_files_dimensions'],
+      [
+        'height over 4000',
+        'STUDENT_PHOTO',
+        'image/jpeg',
+        10,
+        { height: 4001 },
+        'stored_files_dimensions',
+      ],
+    ])('refuses %s', async (_name, kind, mime, size, over, rule) => {
       await expect(
         withTenant(app, a, (tx) =>
           tx.storedFile.create({ data: fileData(a, kind, mime, size, over), select: { id: true } }),
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow(rule);
     });
 
     it.each<[StoredFileKind, Mime, number]>([
@@ -132,16 +172,15 @@ describe('files and the institute profile (P2)', () => {
       });
       await expect(
         withTenant(app, b, (tx) => tx.storedFileUsage.create({ data: { tenantId: a } })),
-      ).rejects.toThrow();
+      ).rejects.toThrow(RLS);
       await expect(
         withTenant(app, a, (tx) => tx.$executeRaw`DELETE FROM stored_file_usage`),
       ).rejects.toThrow(/permission denied/);
-      await expect(
-        withTenant(app, a, (tx) => tx.storedFileUsage.updateMany({ data: { bytesUsed: -1 } })),
-      ).rejects.toThrow();
-      await expect(
-        withTenant(app, a, (tx) => tx.storedFileUsage.updateMany({ data: { fileCount: -1 } })),
-      ).rejects.toThrow();
+      for (const data of [{ bytesUsed: -1 }, { fileCount: -1 }]) {
+        await expect(
+          withTenant(app, a, (tx) => tx.storedFileUsage.updateMany({ data })),
+        ).rejects.toThrow('stored_file_usage_non_negative');
+      }
     });
   });
 
@@ -164,7 +203,7 @@ describe('files and the institute profile (P2)', () => {
         withTenant(app, b, (tx) =>
           tx.instituteProfile.create({ data: { tenantId: c, nameEn: 'C' } }),
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow(RLS);
     });
 
     it('one per institute, never deleted', async () => {
@@ -172,26 +211,32 @@ describe('files and the institute profile (P2)', () => {
         withTenant(app, a, (tx) =>
           tx.instituteProfile.create({ data: { tenantId: a, nameEn: 'Again' } }),
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow(UNIQUE);
       await expect(
         withTenant(app, a, (tx) => tx.$executeRaw`DELETE FROM institute_profiles`),
       ).rejects.toThrow(/permission denied/);
     });
 
     it.each([
-      ['no name', { nameBn: null, nameEn: null }],
-      ['a 5-digit EIIN', { eiin: '12345' }],
-      ['letters in the EIIN', { eiin: '12345a' }],
-      ['letters in the phone', { phone: 'abc12345' }],
-      ['a 4-digit phone', { phone: '1234' }],
-      ['an e-mail without a domain', { email: 'x@' }],
-      ['an ftp website', { website: 'ftp://example.com' }],
-      ['year 1700', { establishedYear: 1700 }],
-      ['a 31-character short name', { shortName: 'x'.repeat(31) }],
-    ])('refuses %s', async (_name, data) => {
+      ['no name', { nameBn: null, nameEn: null }, 'institute_profiles_name'],
+      ['a 5-digit EIIN', { eiin: '12345' }, 'institute_profiles_eiin'],
+      ['letters in the EIIN', { eiin: '12345a' }, 'institute_profiles_eiin'],
+      ['letters in the phone', { phone: 'abc12345' }, 'institute_profiles_phone'],
+      ['a 4-digit phone', { phone: '1234' }, 'institute_profiles_phone'],
+      ['an e-mail without a domain', { email: 'x@' }, 'institute_profiles_email'],
+      ['an ftp website', { website: 'ftp://example.com' }, 'institute_profiles_website'],
+      ['an upper-case scheme', { website: 'HTTPS://example.com' }, 'institute_profiles_website'],
+      ['year 1700', { establishedYear: 1700 }, 'institute_profiles_established_year'],
+      ['a 31-character short name', { shortName: 'x'.repeat(31) }, 'institute_profiles_lengths'],
+      [
+        'another kind in a kind column',
+        { logoFileKind: 'SEAL' as const },
+        'institute_profiles_file_kinds',
+      ],
+    ])('refuses %s', async (_name, data, rule) => {
       await expect(
         withTenant(app, a, (tx) => tx.instituteProfile.updateMany({ data })),
-      ).rejects.toThrow();
+      ).rejects.toThrow(rule);
     });
 
     it('accepts a full, valid profile', async () => {
@@ -213,12 +258,22 @@ describe('files and the institute profile (P2)', () => {
       expect(n.count).toBe(1);
     });
 
-    it("cannot point at another institute's file; a file in use cannot be deleted", async () => {
+    it("cannot point at another institute's file or another kind; a file in use cannot be deleted", async () => {
       const bLogo = await putFile(b, 'LOGO', 'image/png', 100);
       await expect(
         withTenant(app, a, (tx) => tx.instituteProfile.updateMany({ data: { logoFileId: bLogo } })),
-      ).rejects.toThrow();
+      ).rejects.toThrow('institute_profiles_tenant_id_logo_file_id_logo_file_kind_fkey');
+      // A photo is not a logo, and a logo is not a seal.
+      const aPhoto = await putFile(a, 'STUDENT_PHOTO', 'image/jpeg', 100);
+      await expect(
+        withTenant(app, a, (tx) =>
+          tx.instituteProfile.updateMany({ data: { logoFileId: aPhoto } }),
+        ),
+      ).rejects.toThrow('institute_profiles_tenant_id_logo_file_id_logo_file_kind_fkey');
       const aLogo = await putFile(a, 'LOGO', 'image/png', 100);
+      await expect(
+        withTenant(app, a, (tx) => tx.instituteProfile.updateMany({ data: { sealFileId: aLogo } })),
+      ).rejects.toThrow('institute_profiles_tenant_id_seal_file_id_seal_file_kind_fkey');
       await withTenant(app, a, (tx) =>
         tx.instituteProfile.updateMany({ data: { logoFileId: aLogo } }),
       );
@@ -226,57 +281,47 @@ describe('files and the institute profile (P2)', () => {
         withTenant(app, a, (tx) =>
           tx.storedFile.delete({ where: { id: aLogo }, select: { id: true } }),
         ),
-      ).rejects.toThrow();
-      // One file is used in one place only.
-      await expect(
-        withTenant(app, a, (tx) => tx.instituteProfile.updateMany({ data: { sealFileId: aLogo } })),
-      ).rejects.toThrow();
+      ).rejects.toThrow('institute_profiles_tenant_id_logo_file_id_logo_file_kind_fkey');
     });
   });
 
   describe('students.photo_file_id', () => {
-    it("cannot point at another institute's file, and two students cannot share one", async () => {
+    it("cannot point at another institute's file or a logo; two students cannot share one", async () => {
       const { student } = await createStudent(app, a, 'P-1');
       const { student: other } = await createStudent(app, a, 'P-2');
-      const bPhoto = await putFile(b);
-      await expect(
+      const setPhoto = (id: string, photoFileId: string) =>
         withTenant(app, a, (tx) =>
-          tx.student.update({
-            where: { id: student.id },
-            data: { photoFileId: bPhoto },
-            select: { id: true },
-          }),
-        ),
-      ).rejects.toThrow();
+          tx.student.update({ where: { id }, data: { photoFileId }, select: { id: true } }),
+        );
+      const FK = 'students_tenant_id_photo_file_id_photo_file_kind_fkey';
+      await expect(setPhoto(student.id, await putFile(b))).rejects.toThrow(FK);
+      await expect(
+        setPhoto(student.id, await putFile(a, 'LOGO', 'image/png', 100)),
+      ).rejects.toThrow(FK);
       const photo = await putFile(a);
-      await withTenant(app, a, (tx) =>
-        tx.student.update({
-          where: { id: student.id },
-          data: { photoFileId: photo },
-          select: { id: true },
-        }),
-      );
-      await expect(
-        withTenant(app, a, (tx) =>
-          tx.student.update({
-            where: { id: other.id },
-            data: { photoFileId: photo },
-            select: { id: true },
-          }),
-        ),
-      ).rejects.toThrow();
+      await setPhoto(student.id, photo);
+      await expect(setPhoto(other.id, photo)).rejects.toThrow(UNIQUE);
       await expect(
         withTenant(app, a, (tx) =>
           tx.storedFile.delete({ where: { id: photo }, select: { id: true } }),
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow(FK);
+      await expect(
+        withTenant(app, a, (tx) =>
+          tx.student.update({
+            where: { id: student.id },
+            data: { photoFileKind: 'LOGO' },
+            select: { id: true },
+          }),
+        ),
+      ).rejects.toThrow('students_photo_file_kind');
     });
 
     it('students.photo_url is gone (never written; replaced by photo_file_id)', async () => {
       const cols = await app.$queryRaw<{ column_name: string }[]>`
         SELECT column_name FROM information_schema.columns
         WHERE table_name = 'students' AND column_name LIKE 'photo%' ORDER BY 1`;
-      expect(cols.map((c) => c.column_name)).toEqual(['photo_file_id']);
+      expect(cols.map((c) => c.column_name)).toEqual(['photo_file_id', 'photo_file_kind']);
     });
   });
 });

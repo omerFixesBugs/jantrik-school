@@ -54,6 +54,9 @@ CREATE TABLE "institute_profiles" (
     "logo_file_id" UUID,
     "head_signature_file_id" UUID,
     "seal_file_id" UUID,
+    "logo_file_kind" "stored_file_kind" NOT NULL DEFAULT 'LOGO',
+    "head_signature_file_kind" "stored_file_kind" NOT NULL DEFAULT 'SIGNATURE',
+    "seal_file_kind" "stored_file_kind" NOT NULL DEFAULT 'SEAL',
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -65,6 +68,9 @@ CREATE INDEX "stored_files_tenant_id_kind_idx" ON "stored_files"("tenant_id", "k
 
 -- CreateIndex
 CREATE UNIQUE INDEX "stored_files_tenant_id_id_key" ON "stored_files"("tenant_id", "id");
+
+-- CreateIndex (what the kind-bound foreign keys point at)
+CREATE UNIQUE INDEX "stored_files_tenant_id_id_kind_key" ON "stored_files"("tenant_id", "id", "kind");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "stored_file_usage_tenant_id_key" ON "stored_file_usage"("tenant_id");
@@ -79,13 +85,13 @@ CREATE UNIQUE INDEX "institute_profiles_tenant_id_key" ON "institute_profiles"("
 CREATE UNIQUE INDEX "institute_profiles_tenant_id_id_key" ON "institute_profiles"("tenant_id", "id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "institute_profiles_tenant_id_logo_file_id_key" ON "institute_profiles"("tenant_id", "logo_file_id");
+CREATE UNIQUE INDEX "institute_profiles_tenant_id_logo_file_id_logo_file_kind_key" ON "institute_profiles"("tenant_id", "logo_file_id", "logo_file_kind");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "institute_profiles_tenant_id_head_signature_file_id_key" ON "institute_profiles"("tenant_id", "head_signature_file_id");
+CREATE UNIQUE INDEX "institute_profiles_tenant_id_head_signature_file_id_head_si_key" ON "institute_profiles"("tenant_id", "head_signature_file_id", "head_signature_file_kind");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "institute_profiles_tenant_id_seal_file_id_key" ON "institute_profiles"("tenant_id", "seal_file_id");
+CREATE UNIQUE INDEX "institute_profiles_tenant_id_seal_file_id_seal_file_kind_key" ON "institute_profiles"("tenant_id", "seal_file_id", "seal_file_kind");
 
 -- AddForeignKey
 ALTER TABLE "stored_files" ADD CONSTRAINT "stored_files_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
@@ -100,13 +106,13 @@ ALTER TABLE "stored_file_usage" ADD CONSTRAINT "stored_file_usage_tenant_id_fkey
 ALTER TABLE "institute_profiles" ADD CONSTRAINT "institute_profiles_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE "institute_profiles" ADD CONSTRAINT "institute_profiles_tenant_id_logo_file_id_fkey" FOREIGN KEY ("tenant_id", "logo_file_id") REFERENCES "stored_files"("tenant_id", "id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE "institute_profiles" ADD CONSTRAINT "institute_profiles_tenant_id_logo_file_id_logo_file_kind_fkey" FOREIGN KEY ("tenant_id", "logo_file_id", "logo_file_kind") REFERENCES "stored_files"("tenant_id", "id", "kind") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE "institute_profiles" ADD CONSTRAINT "institute_profiles_tenant_id_head_signature_file_id_fkey" FOREIGN KEY ("tenant_id", "head_signature_file_id") REFERENCES "stored_files"("tenant_id", "id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE "institute_profiles" ADD CONSTRAINT "institute_profiles_tenant_id_head_signature_file_id_head_s_fkey" FOREIGN KEY ("tenant_id", "head_signature_file_id", "head_signature_file_kind") REFERENCES "stored_files"("tenant_id", "id", "kind") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE "institute_profiles" ADD CONSTRAINT "institute_profiles_tenant_id_seal_file_id_fkey" FOREIGN KEY ("tenant_id", "seal_file_id") REFERENCES "stored_files"("tenant_id", "id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE "institute_profiles" ADD CONSTRAINT "institute_profiles_tenant_id_seal_file_id_seal_file_kind_fkey" FOREIGN KEY ("tenant_id", "seal_file_id", "seal_file_kind") REFERENCES "stored_files"("tenant_id", "id", "kind") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- Row-Level Security (docs/database.md → Checklist).
 ALTER TABLE stored_files ENABLE ROW LEVEL SECURITY;
@@ -181,6 +187,11 @@ ALTER TABLE institute_profiles
   ),
   ADD CONSTRAINT institute_profiles_established_year CHECK (
     established_year IS NULL OR established_year BETWEEN 1800 AND 2100
+  ),
+  -- Each image column's kind is fixed; with the kind in each foreign key, a logo can only be a LOGO
+  -- file, the signature a SIGNATURE, the seal a SEAL (so never a student's photo).
+  ADD CONSTRAINT institute_profiles_file_kinds CHECK (
+    logo_file_kind = 'LOGO' AND head_signature_file_kind = 'SIGNATURE' AND seal_file_kind = 'SEAL'
   ),
   -- One file in one place: the unique indexes cover each column; this covers the row's three.
   ADD CONSTRAINT institute_profiles_distinct_files CHECK (

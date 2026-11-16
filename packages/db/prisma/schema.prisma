@@ -1002,36 +1002,38 @@ model Membership {
 }
 
 model Student {
-  id                  String        @id @default(uuid(7)) @db.Uuid
-  tenantId            String        @map("tenant_id") @db.Uuid
-  studentCode         String        @map("student_code")
-  userId              String?       @map("user_id") @db.Uuid
-  nameBn              String?       @map("name_bn")
-  nameEn              String?       @map("name_en")
-  dateOfBirth         DateTime?     @map("date_of_birth") @db.Date
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  tenantId            String         @map("tenant_id") @db.Uuid
+  studentCode         String         @map("student_code")
+  userId              String?        @map("user_id") @db.Uuid
+  nameBn              String?        @map("name_bn")
+  nameEn              String?        @map("name_en")
+  dateOfBirth         DateTime?      @map("date_of_birth") @db.Date
   gender              Gender?
   /// The student's photo (stored_files, kind STUDENT_PHOTO); replaced files are deleted.
-  photoFileId         String?       @map("photo_file_id") @db.Uuid
-  status              StudentStatus @default(ACTIVE)
+  photoFileId         String?        @map("photo_file_id") @db.Uuid
+  /// Always STUDENT_PHOTO (CHECK): part of the foreign key, so the photo can only be a photo.
+  photoFileKind       StoredFileKind @default(STUDENT_PHOTO) @map("photo_file_kind")
+  status              StudentStatus  @default(ACTIVE)
   // Fields required for Bangladesh education board registration.
-  fatherNameBn        String?       @map("father_name_bn")
-  fatherNameEn        String?       @map("father_name_en")
-  motherNameBn        String?       @map("mother_name_bn")
-  motherNameEn        String?       @map("mother_name_en")
+  fatherNameBn        String?        @map("father_name_bn")
+  fatherNameEn        String?        @map("father_name_en")
+  motherNameBn        String?        @map("mother_name_bn")
+  motherNameEn        String?        @map("mother_name_en")
   religion            Religion?
   /// 17-digit birth registration number; unique per tenant when present.
-  birthRegistrationNo String?       @map("birth_registration_no")
-  bloodGroup          BloodGroup?   @map("blood_group")
-  presentAddress      String?       @map("present_address")
-  permanentAddress    String?       @map("permanent_address")
+  birthRegistrationNo String?        @map("birth_registration_no")
+  bloodGroup          BloodGroup?    @map("blood_group")
+  presentAddress      String?        @map("present_address")
+  permanentAddress    String?        @map("permanent_address")
   /// Soft delete. Queries must filter `deletedAt: null` themselves.
-  deletedAt           DateTime?     @map("deleted_at") @db.Timestamptz(3)
-  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt           DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
-  photoFile  StoredFile?       @relation("StudentPhoto", fields: [tenantId, photoFileId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  photoFile  StoredFile?       @relation("StudentPhoto", fields: [tenantId, photoFileId, photoFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
   guardians  StudentGuardian[]
   enrolments Enrolment[]
 
@@ -1051,7 +1053,7 @@ model Student {
   @@unique([tenantId, studentCode])
   @@unique([tenantId, birthRegistrationNo])
   // A file belongs to one student (also the foreign key's index).
-  @@unique([tenantId, photoFileId])
+  @@unique([tenantId, photoFileId, photoFileKind])
   @@index([tenantId, status], where: raw("deleted_at IS NULL"))
   @@index([tenantId, nameEn])
   // Trigram indexes for ILIKE '%…%' search (GET /students).
@@ -3165,6 +3167,8 @@ model StoredFile {
   profileSeal      InstituteProfile? @relation("InstituteProfileSeal")
 
   @@unique([tenantId, id])
+  // What the kind-bound foreign keys point at.
+  @@unique([tenantId, id, kind])
   @@index([tenantId, kind])
   @@map("stored_files")
 }
@@ -3188,39 +3192,44 @@ model StoredFileUsage {
 /// The institute's own profile (at most one per institute, created on the first save or image).
 /// tenants.name stays the name the platform registered; these are the institute's own words.
 model InstituteProfile {
-  id                  String   @id @default(uuid(7)) @db.Uuid
-  tenantId            String   @unique @map("tenant_id") @db.Uuid
-  nameBn              String?  @map("name_bn")
-  nameEn              String?  @map("name_en")
-  shortName           String?  @map("short_name")
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  tenantId            String         @unique @map("tenant_id") @db.Uuid
+  nameBn              String?        @map("name_bn")
+  nameEn              String?        @map("name_en")
+  shortName           String?        @map("short_name")
   /// BANBEIS EIIN: 6 ASCII digits.
   eiin                String?
-  addressBn           String?  @map("address_bn")
-  addressEn           String?  @map("address_en")
+  addressBn           String?        @map("address_bn")
+  addressEn           String?        @map("address_en")
   /// 5-15 ASCII digits with an optional leading + (a Bangladeshi mobile is stored as E.164).
   phone               String?
   email               String?
   website             String?
-  headTitleBn         String?  @map("head_title_bn")
-  headTitleEn         String?  @map("head_title_en")
-  headNameBn          String?  @map("head_name_bn")
-  headNameEn          String?  @map("head_name_en")
-  establishedYear     Int?     @map("established_year") @db.SmallInt
-  logoFileId          String?  @map("logo_file_id") @db.Uuid
-  headSignatureFileId String?  @map("head_signature_file_id") @db.Uuid
-  sealFileId          String?  @map("seal_file_id") @db.Uuid
-  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  headTitleBn         String?        @map("head_title_bn")
+  headTitleEn         String?        @map("head_title_en")
+  headNameBn          String?        @map("head_name_bn")
+  headNameEn          String?        @map("head_name_en")
+  establishedYear     Int?           @map("established_year") @db.SmallInt
+  logoFileId          String?        @map("logo_file_id") @db.Uuid
+  headSignatureFileId String?        @map("head_signature_file_id") @db.Uuid
+  sealFileId          String?        @map("seal_file_id") @db.Uuid
+  /// Fixed kinds (CHECK institute_profiles_file_kinds), part of each image's foreign key, so a
+  /// logo is a LOGO file, the signature a SIGNATURE and the seal a SEAL.
+  logoFileKind        StoredFileKind @default(LOGO) @map("logo_file_kind")
+  signatureFileKind   StoredFileKind @default(SIGNATURE) @map("head_signature_file_kind")
+  sealFileKind        StoredFileKind @default(SEAL) @map("seal_file_kind")
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  logoFile      StoredFile? @relation("InstituteProfileLogo", fields: [tenantId, logoFileId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
-  signatureFile StoredFile? @relation("InstituteProfileSignature", fields: [tenantId, headSignatureFileId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
-  sealFile      StoredFile? @relation("InstituteProfileSeal", fields: [tenantId, sealFileId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  logoFile      StoredFile? @relation("InstituteProfileLogo", fields: [tenantId, logoFileId, logoFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+  signatureFile StoredFile? @relation("InstituteProfileSignature", fields: [tenantId, headSignatureFileId, signatureFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+  sealFile      StoredFile? @relation("InstituteProfileSeal", fields: [tenantId, sealFileId, sealFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   // One file is used in one place (also each foreign key's index).
-  @@unique([tenantId, logoFileId])
-  @@unique([tenantId, headSignatureFileId])
-  @@unique([tenantId, sealFileId])
+  @@unique([tenantId, logoFileId, logoFileKind])
+  @@unique([tenantId, headSignatureFileId, signatureFileKind])
+  @@unique([tenantId, sealFileId, sealFileKind])
   @@map("institute_profiles")
 }
