@@ -78,6 +78,9 @@ RETURNS TABLE (outcome text, application_no text, tenant_id uuid, application_id
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp
 AS $$
+-- The result columns (tenant_id, application_no) are also table columns: names in the queries
+-- below always mean the columns.
+#variable_conflict use_column
 DECLARE
   v_tenant uuid;
   v_cycle record;

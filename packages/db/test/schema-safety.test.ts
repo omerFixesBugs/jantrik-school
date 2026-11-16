@@ -671,14 +671,17 @@ describe('schema safety net', () => {
 
   // A snapshot: widening what the public form's functions may touch fails here.
   it("jantrik_admission's table and column privileges are exactly the plan's", async () => {
+    // From the catalogs: information_schema shows only the grants the current login may see.
     const rows = await app.$queryRaw<{ grant: string }[]>`
-      SELECT table_name || ':' || privilege_type || ':' || column_name AS grant
-      FROM information_schema.column_privileges
-      WHERE grantee = 'jantrik_admission' AND table_schema = 'public'
+      SELECT c.relname || ':' || a.privilege_type || ':' || att.attname AS grant
+      FROM pg_class c
+      JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 AND NOT att.attisdropped
+      CROSS JOIN LATERAL aclexplode(att.attacl) a
+      WHERE c.relnamespace = 'public'::regnamespace AND a.grantee = 'jantrik_admission'::regrole
       UNION
-      SELECT table_name || ':' || privilege_type || ':*'
-      FROM information_schema.table_privileges
-      WHERE grantee = 'jantrik_admission' AND table_schema = 'public'
+      SELECT c.relname || ':' || a.privilege_type || ':*'
+      FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+      WHERE c.relnamespace = 'public'::regnamespace AND a.grantee = 'jantrik_admission'::regrole
       ORDER BY 1`;
     const tables = [...new Set(rows.map((r) => r.grant.split(':').slice(0, 2).join(':')))];
     expect(tables).toEqual([
