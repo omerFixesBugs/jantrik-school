@@ -58,6 +58,8 @@ describe('env: loosened settings never leave development', () => {
       NODE_ENV: 'production',
       PLATFORM_TOTP_KEY: 'k'.repeat(32),
       INGEST_PUBLIC_HOST: 'devices.example.com',
+      TURNSTILE_SECRET_KEY: '0x4AAAAAAAexampleRealSecretKeyXYZ',
+      WEB_PUBLIC_URL: 'https://app.example.com',
     };
     const result = envSchema.safeParse({ ...prod, COOKIE_SECURE: 'false' });
     expect(result.success).toBe(false);

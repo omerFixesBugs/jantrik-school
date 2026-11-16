@@ -299,3 +299,46 @@ export interface AdmissionSectionOption {
   capacity: number | null;
   enrolled: number;
 }
+
+// ─────────────────────────── API shapes (the public form, P3b) ───────────────────────────
+
+export interface AdmissionPublicClass {
+  cycleClassId: string;
+  classNameBn: string;
+  classNameEn: string;
+  groupNameBn: string | null;
+  groupNameEn: string | null;
+}
+
+export interface AdmissionPublicCycle {
+  nameBn: string;
+  nameEn: string | null;
+  closesAt: string;
+  noteBn: string | null;
+  noteEn: string | null;
+  collectPhoto: boolean;
+  fields: Partial<AdmissionFieldSettings>;
+  classes: AdmissionPublicClass[];
+}
+
+/** GET /public/admission/:slug: no person's data, ever. */
+export interface AdmissionPublicForm {
+  institute: { name: string; nameBn: string | null; nameEn: string | null; locale: 'bn' | 'en' };
+  /** Cycles taking applications now (empty: the form is not open). */
+  cycles: AdmissionPublicCycle[];
+}
+
+/** POST /public/admission/:slug/status (the phone proved by a code first). */
+export interface AdmissionPublicStatus {
+  applicationNo: string;
+  status: AdmissionApplicationStatus;
+  nameBn: string | null;
+  nameEn: string | null;
+  classNameBn: string;
+  classNameEn: string;
+  groupNameBn: string | null;
+  groupNameEn: string | null;
+  cycleNameBn: string;
+  cycleNameEn: string | null;
+  submittedAt: string;
+}
