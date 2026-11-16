@@ -32,6 +32,7 @@ const SAFE: LoginPrivileges = {
   replication: false,
   createRole: false,
   temp: false,
+  roleSettings: ['statement_timeout=5s'],
   canBecome: [],
 };
 
@@ -66,6 +67,7 @@ function serviceWith(privileges: LoginPrivileges, ...answers: (Check | Error | t
         replication: privileges.replication,
         create_role: privileges.createRole,
         temp: privileges.temp,
+        role_settings: privileges.roleSettings,
         can_become: privileges.canBecome,
       },
     ]),

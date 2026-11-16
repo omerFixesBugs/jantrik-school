@@ -15,9 +15,10 @@
 -- with either version.
 
 -- ───────────── No temporary objects for the runtime logins ─────────────
--- The signed context assumes an SQL injection cannot leave anything behind on a pooled connection:
--- a temporary view named like a table (pg_temp is searched first for relations) would be run by
--- the next request on that connection, someone else's, inside THEIR signed context (P1-J8 review).
+-- An SQL injection must not be able to leave behind, on a pooled connection, something the next
+-- request (someone else's) runs inside ITS signed context. A temporary view named like a table
+-- (pg_temp is searched first for relations) would be one: so no TEMP (P1-J8 review). The other
+-- leftovers and how each is handled: docs/database.md → The request context.
 -- Production already revokes this (deploy/postgres/database-setup.sql); now every database the
 -- migrations reach does: development, the test databases, CI and Playwright's. The owner keeps it
 -- (database owners always do). Run by a role that does not own the database it only warns, and

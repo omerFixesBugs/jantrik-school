@@ -11,6 +11,7 @@ const SAFE: LoginPrivileges = {
   createRole: false,
   canBecome: [],
   temp: false,
+  roleSettings: [],
 };
 
 /** The privilege query's row (readLoginPrivileges reads pg_roles). */
@@ -21,6 +22,7 @@ const privilegeRow = (p: LoginPrivileges) => ({
   replication: p.replication,
   create_role: p.createRole,
   temp: p.temp,
+  role_settings: p.roleSettings,
   can_become: p.canBecome,
 });
 

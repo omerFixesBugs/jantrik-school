@@ -2,8 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import {
   createPrismaClient,
-  loginPrivilegeProblems,
-  loginTempWarning,
+  loginStartupVerdict,
   readLoginPrivileges,
   type PrismaClient,
 } from '@jantrik/db';
@@ -41,20 +40,16 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * (the database is not reachable yet) it is asked again for about 3 minutes, then the start is
    * refused.
    *
-   * A login that may create temporary objects (TEMP on the database) is refused in production and
-   * warned about elsewhere: the signed request context (P1-J8) assumes an SQL injection cannot
-   * leave objects behind on a pooled connection for the next request to run.
+   * A login that may create temporary objects (TEMP on the database) or has stored role settings
+   * (`ALTER ROLE … SET`) is refused in production and warned about elsewhere (P1-J8 review:
+   * loginStartupVerdict).
    */
   async onModuleInit(): Promise<void> {
     await runStartupCheck({
       run: () => readLoginPrivileges(this.client),
       verdict: (p) => {
-        const temp = loginTempWarning(p);
-        if (temp && !this.production) this.logger.warn(temp);
-        const problems = [
-          ...loginPrivilegeProblems(p),
-          ...(temp && this.production ? ['may create temporary objects (TEMP)'] : []),
-        ];
+        const { problems, warnings } = loginStartupVerdict(p, { production: this.production });
+        for (const w of warnings) this.logger.warn(w);
         return problems.length === 0
           ? true
           : `DATABASE_URL must use the app login (jantrik_app), which Row-Level Security applies ` +

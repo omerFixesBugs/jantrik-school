@@ -90,6 +90,22 @@ describe('the verified request context', () => {
     expect(empty).toEqual({ me: { tenant: null, person: null }, students: 0 });
   });
 
+  it('a value stored for the session (SET without LOCAL) is never used: signed or empty, per transaction', async () => {
+    const single = singleConnectionAppClient();
+    try {
+      await single.$executeRawUnsafe("SET app.context = 'v1:garbage'");
+      // A contextless transaction sets an empty value for itself instead of reading the stored one.
+      expect(await withContext(single, {}, (tx) => whoAmI(tx))).toEqual({
+        tenant: null,
+        person: null,
+      });
+      // A signed one sets its own.
+      expect(await withTenant(single, tenantA, (tx) => tx.student.count())).toBe(1);
+    } finally {
+      await single.$disconnect();
+    }
+  });
+
   it('the old settings app.tenant_id and app.user_id mean nothing', async () => {
     const seen = await app.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantA}, true)`;

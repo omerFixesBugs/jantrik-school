@@ -49,6 +49,25 @@ is merged by Claude. The follow-up it answers is P1-J8 in
 - **The wrapped-call guard** catches more forms and also scans views, defaults and CHECKs.
 - **Planner estimates** with an InitPlan parameter: measured on a skewed dataset (Performance).
 
+## Changed after the review (round 2)
+
+- **A transaction left open on a pooled connection** (an injection's `…; BEGIN; DECLARE … WITH
+HOLD` outside a transaction) was signed by the next request and its cursor filled with that
+  request's rows at its COMMIT (reproduced cross-institute). Now the pool closes a connection
+  released with a transaction open (`createPrismaClient`), `withContext` refuses to sign a
+  transaction that is not fresh (a transaction id assigned or a cursor declared in it), and the
+  three app queries that ran outside a transaction run in one. Considered and not adopted: refusing
+  when `now()` is older than `statement_timestamp()` by more than a margin (a busy event loop
+  between BEGIN and the first statement would refuse honest requests; the two checks above cover
+  the leftover transaction exactly).
+- **Stored role settings:** every runtime login's start-up check reads them; production refuses
+  unexpected ones, development warns. TEMP is also read through SET-only memberships, and the
+  platform, receiver and password-login logins check both too.
+- **Imports:** only the uploader may start an import or include a possible duplicate (the worker
+  acts and audits in their name).
+- **A transaction without a context** sets an empty `app.context` for itself, so a value an
+  injection stored for the session is never used.
+
 ## Goal
 
 No SQL that runs as `jantrik_app` can change **who** it runs as or **which institute** it runs
@@ -215,13 +234,15 @@ Column grants checked too: `jantrik_app` may update only `name_bn`, `locale`, `c
 
 1. **Locally:** `pnpm db:migrate`, then restart `pnpm dev`. No new role, no new `.env` line
    (`DATABASE_LOGIN_URL` from #16 is enough).
-2. **Server:** `migrate`, then restart **api and worker together** (docs/deploy.md → Upgrades).
-   Between the two, the old processes set the old settings, which the new functions ignore: their
-   requests see no rows and fail. A failed refresh is retried; nobody is signed out.
+2. **Server:** stop api and worker, `migrate`, then start them (docs/deploy.md → Upgrades). An
+   old process running after `migrate` reads no institute data and would cache that (empty roles
+   and modules, a day's dues marked as generated); the caches now have a new key generation, and
+   the stop removes the window.
 3. **Rollback:** the migration's down path is "restore the previous function bodies": recorded in
    the migration's comment; the policies' wrapped form is correct for both versions.
-4. **Key rotation** (not built, documented): `UPDATE app_context_key …` as the owner, then restart
-   api and worker; requests between the two fail.
+4. **Key rotation** (no command, documented): one `UPDATE app_context_key SET key = …` as the
+   owner (a trigger derives the pads); running processes notice the new key's fingerprint on their
+   next transaction and reload it, no restart.
 
 ## Tests
 

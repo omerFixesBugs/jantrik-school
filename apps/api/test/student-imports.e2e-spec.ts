@@ -291,6 +291,25 @@ describe('student import', () => {
       .body as StudentImportSummary[];
     expect(theirs.map((i) => i.id)).not.toContain(up.id);
   });
+  it('only the uploader may start an import (the worker runs and audits it in their name)', async () => {
+    const colleague = (
+      await otpLogin(h, (await addMember(h, tenantId, { roles: ['ADMIN'] })).phone)
+    ).accessToken;
+    const up = (
+      await upload(
+        toCsv([
+          ['Name', 'Class', 'Mobile'],
+          ['C Student', 'Class 6', local()],
+        ]),
+        'c.csv',
+      ).expect(201)
+    ).body as StudentImportSummary;
+    const run = await http(h).post(`/student-imports/${up.id}/run`).set(bearer(colleague));
+    expect(run.status).toBe(403);
+    expect(run.body).toMatchObject({ code: 'NOT_YOUR_IMPORT' });
+    expect((await summary(up.id)).status).toBe('VALIDATED');
+  });
+
   it('guardians: phone + name links; nameless links only one known guardian; never guessed', async () => {
     const e164 = (l: string) => `+88${l}`;
     const linked = local();

@@ -152,7 +152,11 @@ export function signRequestContext(key: Uint8Array, parts: SignedContextParts): 
 
 /**
  * Sign and set the context for the transaction `tx` runs in. The same round trip reads the
- * database's key fingerprint: when it is not the loaded key's, the key is loaded again once.
+ * database's key fingerprint (when it is not the loaded key's, the key is loaded again once), and
+ * whether the transaction is fresh: nothing written yet (no transaction id) and no cursor declared
+ * in it. A transaction that is not fresh was left open on the connection by someone else (an SQL
+ * injection's `BEGIN; DECLARE … WITH HOLD`; the pool closes such connections, this is the second
+ * line): signing it would hand that someone this request's context. Refused, so it rolls back.
  */
 async function setSignedContext(
   tx: TenantTx,
@@ -160,11 +164,22 @@ async function setSignedContext(
   tenantId: string | null,
   userId: string | null,
 ): Promise<void> {
-  const [here] = await tx.$queryRaw<{ pid: string; started: string; key_id: string | null }[]>`
-    SELECT pg_backend_pid()::text AS pid,
-           (extract(epoch FROM now()) * 1000000)::bigint::text AS started,
-           public.app_context_key_id() AS key_id`;
+  const [here] = await tx.$queryRaw<
+    { pid: string; started: string; key_id: string | null; fresh: boolean }[]
+  >`
+    SELECT pg_catalog.pg_backend_pid()::text AS pid,
+           (extract(epoch FROM pg_catalog.now()) * 1000000)::bigint::text AS started,
+           public.app_context_key_id() AS key_id,
+           pg_catalog.txid_current_if_assigned() IS NULL
+             AND NOT EXISTS (SELECT FROM pg_catalog.pg_cursors c
+                             WHERE c.creation_time >= pg_catalog.now()) AS fresh`;
   if (!here) throw new Error('Could not read the transaction to sign its context.');
+  if (!here.fresh) {
+    throw new Error(
+      'Refusing to sign the request context: this transaction was not fresh (a transaction or ' +
+        'cursor left open on the connection; docs/database.md → The request context).',
+    );
+  }
   let key = loaded;
   if (here.key_id !== key.id) {
     key = await reloadKey(key);
@@ -206,6 +221,9 @@ export async function withContext<T>(
   const key = tenantId || userId ? await loadedKey() : null;
   return prisma.$transaction(async (tx) => {
     if (key) await setSignedContext(tx, key, tenantId || null, userId || null);
+    // No context: an empty one for this transaction, so a value an injection stored for the
+    // session (SET without LOCAL) is never read here (P1-J8 review round 2).
+    else await tx.$executeRaw`SELECT pg_catalog.set_config('app.context', '', true)`;
     return fn(tx);
   }, options);
 }

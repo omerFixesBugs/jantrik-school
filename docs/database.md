@@ -190,16 +190,44 @@ enter any institute. Those two settings mean nothing now.
 - **What an injection can do now:** only what its own signed-in person could already do through
   RLS, in its own institute. Inside one's own institute RLS does not separate roles (P1-J10 in
   decisions-pending).
-- **Precondition: no runtime login may create temporary objects.** A temporary view or function
-  outlives its request on a pooled connection, and `pg_temp` is searched first for relations: a
-  view named `tenants` planted by an injection would run inside the next request's (someone
-  else's) signed context. So TEMPORARY is revoked from PUBLIC on every Jantrik database (the
-  P1-J8 migration, `docker/postgres/init`, production's `database-setup.sql`); the owner keeps it.
-  The API checks it at start-up: production refuses a `DATABASE_URL` login with TEMP, development
-  warns. On a database the migrations have not reached yet, as the Postgres superuser:
-  `REVOKE TEMPORARY ON DATABASE <name> FROM PUBLIC;`. The request path's own SQL (the tenant and
-  role re-checks, `withContext`) is schema-qualified as well. `schema-safety.test.ts` checks
-  that no runtime login has TEMP.
+- **What an injection could leave on a pooled connection, and how each is handled.** The
+  signed context binds a transaction; what outlives the injection's own request on its connection
+  could otherwise run inside the next request's (someone else's) context:
+  - **An open transaction** (SQL sent outside a transaction can carry several statements:
+    `…; BEGIN; DECLARE c CURSOR WITH HOLD FOR …`). The next request's BEGIN would only warn, it
+    would sign the attacker's transaction, and the cursor would be filled at its COMMIT with the
+    victim's rows (reproduced by the review). **Handled twice:** the pool of every client
+    `createPrismaClient` makes closes a connection released with a transaction open; and
+    `withContext` refuses to sign a transaction that is not fresh (a transaction id already
+    assigned, or a cursor declared in it before signing), which rolls it back, cursor and all.
+    The app's own queries outside `withContext` run in transactions too.
+    Tests: `leftover-transaction.test.ts`.
+  - **Temporary objects** (a view named `tenants`: `pg_temp` is searched first for relations).
+    **No runtime login may create them:** TEMPORARY is revoked from PUBLIC on every Jantrik
+    database (the P1-J8 migration, `docker/postgres/init`, production's `database-setup.sql`;
+    the owner keeps it). Every runtime login's start-up check reads TEMP, also through a role it can
+    only SET ROLE to: production refuses, development warns. On a database the migrations have not
+    reached yet, as the Postgres superuser: `REVOKE TEMPORARY ON DATABASE <name> FROM PUBLIC;`. The
+    request path's own SQL is schema-qualified as well. `schema-safety.test.ts` checks that no
+    runtime login has TEMP.
+  - **Session settings** (`SET` without `LOCAL`): `app.context` (withContext sets its own
+    value, transaction-local, for every transaction, an empty one when it has no context, so a
+    stored value is never used), `search_path` (only the owner may create objects in `public`
+    and nobody in `pg_temp`, so nothing can be shadowed), `statement_timeout`, `TimeZone`,
+    `client_encoding`, `synchronous_commit`, `work_mem` and the like: later requests on that
+    connection may fail, be slow or format dates in another zone. Denial of service and wrong
+    output, no other person's data.
+  - **Session advisory locks** (`pg_advisory_lock`): later requests that take a transaction lock
+    on the same key (fees, SMS and devices lock keys derived from the institute) wait until their
+    statement timeout. Denial of service.
+  - **Other backends:** `pg_cancel_backend` / `pg_terminate_backend` on other `jantrik_app`
+    connections (a role may signal its own backends). Denial of service.
+  - **Stored role settings** (`ALTER ROLE jantrik_app [IN DATABASE …] SET …`, which a login may run
+    for itself): every new connection takes them, even after restarts (a 1 ms statement timeout
+    stops the API and the worker). Every runtime login's start-up check reads them: production
+    refuses a login with settings it should not have (the receiver's `statement_timeout=5s` is
+    expected), development warns. **Not preventable:** a login may also change its own password
+    (PostgreSQL has no privilege to take that away); the services then fail to connect.
 - **Identities a job signs come from rows the app cannot forge:** the import job signs as the
   import's creator, so `student_imports.created_by_id` is not updatable by `jantrik_app` and a
   request can only create an import as its signed person (trigger `student_imports_creator`).
@@ -214,11 +242,6 @@ enter any institute. Those two settings mean nothing now.
   policy or a lookup (`exam_marks_score_within_full` once a row, `fee_payment_allocations_check`
   three times, `fee_dues_cancel_final` twice): about 40 µs a check, measured in the plan (P1-J8 →
   Performance).
-- **Known, not new:** an injection can still run a session-level `SET app.context = …` or
-  `SET search_path = …` (not `LOCAL`), which stays on that pooled connection after its request:
-  the next requests there fail (a wrong context is refused; withContext sets its own value with
-  `set_config(…, true)`, which overrides it for its transaction). Denial of service only, as before
-  P1-J8.
 - Tests: `account-takeover.test.ts` (the attacks), `request-context.test.ts` (the check, the
   privileges), `schema-safety.test.ts` (the wrapped calls, the pinned functions).
 

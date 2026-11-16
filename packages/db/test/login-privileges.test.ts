@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createPrismaClient,
   loginPrivilegeProblems,
-  loginTempWarning,
+  loginStartupVerdict,
   readLoginPrivileges,
   type LoginPrivileges,
   type PrismaClient,
@@ -71,7 +71,6 @@ describe('login privileges', () => {
     for (const url of [APP_URL, PLATFORM_URL, INGEST_URL]) {
       const p = await withClient(url, readLoginPrivileges);
       expect({ login: p.login, temp: p.temp }).toEqual({ login: p.login, temp: false });
-      expect(loginTempWarning(p)).toBe('');
     }
     expect((await withClient(OWNER_URL, readLoginPrivileges)).temp).toBe(true);
     const url = await tempLogin('');
@@ -80,9 +79,62 @@ describe('login privileges', () => {
     try {
       const p = await withClient(url, readLoginPrivileges);
       expect(p.temp).toBe(true);
-      expect(loginTempWarning(p)).toMatch(/may create temporary objects/);
+      expect(loginStartupVerdict(p, { production: true }).problems).toEqual([
+        'may create temporary objects (TEMP)',
+      ]);
+      const elsewhere = loginStartupVerdict(p, { production: false });
+      expect(elsewhere.problems).toEqual([]);
+      expect(elsewhere.warnings.join(' ')).toMatch(
+        /may create temporary objects.*REVOKE TEMPORARY/,
+      );
     } finally {
       await su.$executeRawUnsafe(`REVOKE TEMPORARY ON DATABASE ${database} FROM ${login}`);
+    }
+  });
+
+  it('reads TEMP through a role the login can only SET ROLE to (no INHERIT)', async () => {
+    const holder = await tempRole('NOLOGIN');
+    await su.$executeRawUnsafe(`GRANT TEMPORARY ON DATABASE ${database} TO ${holder}`);
+    const url = await tempLogin('');
+    const login = new URL(url).username;
+    await su.$executeRawUnsafe(`GRANT ${holder} TO ${login} WITH INHERIT FALSE, SET TRUE`);
+    try {
+      expect((await withClient(url, readLoginPrivileges)).temp).toBe(true);
+    } finally {
+      await su.$executeRawUnsafe(`REVOKE TEMPORARY ON DATABASE ${database} FROM ${holder}`);
+    }
+  });
+
+  it('reads role settings (for every database or this one); only the expected ones pass', async () => {
+    // The runtime logins: none, but the receiver's own 5 s statement timeout (decision #79; a
+    // volume made before step 11's role script may lack it: its pool sends the same limit).
+    expect((await withClient(APP_URL, readLoginPrivileges)).roleSettings).toEqual([]);
+    expect((await withClient(PLATFORM_URL, readLoginPrivileges)).roleSettings).toEqual([]);
+    const receiver = (await withClient(INGEST_URL, readLoginPrivileges)).roleSettings;
+    expect(receiver.filter((s) => s !== 'statement_timeout=5s')).toEqual([]);
+    // What an injection could store for its own login (P1-J8 review round 2): it outlives
+    // restarts. Here on a login made for this test.
+    const url = await tempLogin('');
+    const login = new URL(url).username;
+    await su.$executeRawUnsafe(`ALTER ROLE ${login} SET work_mem = '64kB'`);
+    await su.$executeRawUnsafe(
+      `ALTER ROLE ${login} IN DATABASE ${database} SET statement_timeout = '1ms'`,
+    );
+    try {
+      const p = await withClient(url, readLoginPrivileges);
+      expect(p.roleSettings).toEqual(['statement_timeout=1ms', 'work_mem=64kB']);
+      expect(loginStartupVerdict(p, { production: true }).problems).toEqual([
+        'has role settings it should not have (statement_timeout=1ms, work_mem=64kB)',
+      ]);
+      expect(
+        loginStartupVerdict(p, { production: true, expectedSettings: ['work_mem=64kB'] }).problems,
+      ).toEqual(['has role settings it should not have (statement_timeout=1ms)']);
+      const elsewhere = loginStartupVerdict(p, { production: false });
+      expect(elsewhere.problems).toEqual([]);
+      expect(elsewhere.warnings.join(' ')).toMatch(/RESET ALL/);
+    } finally {
+      await su.$executeRawUnsafe(`ALTER ROLE ${login} RESET ALL`);
+      await su.$executeRawUnsafe(`ALTER ROLE ${login} IN DATABASE ${database} RESET ALL`);
     }
   });
 
@@ -166,6 +218,7 @@ describe('loginPrivilegeProblems', () => {
     replication: false,
     createRole: false,
     temp: false,
+    roleSettings: [],
     canBecome: [],
   };
 

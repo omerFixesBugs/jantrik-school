@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   createPrismaClient,
   loadRequestContextKey,
-  loginPrivilegeProblems,
+  loginStartupVerdict,
   readLoginPrivileges,
   requestContextKey,
   setRequestContextKeySource,
@@ -75,7 +75,8 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
     await runStartupCheck({
       run: () => readLoginPrivileges(this.client),
       verdict: (p) => {
-        const problems = loginPrivilegeProblems(p);
+        const { problems, warnings } = loginStartupVerdict(p, { production: this.production });
+        for (const w of warnings) this.logger.warn(w);
         return problems.length === 0
           ? true
           : `DATABASE_LOGIN_URL must use the password login's login (jantrik_login_app): ` +
