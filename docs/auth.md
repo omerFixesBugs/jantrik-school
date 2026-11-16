@@ -200,7 +200,13 @@ audited in that institute. Someone who is staff elsewhere switches to that insti
    - `HAS_PHONE`: the person's 10-digit national number, in any form (`01…`, `+880…`, Bangla
      digits, split by spaces, punctuation or symbols);
    - `HAS_INSTITUTE_NAME`: the whole name of any institute they are an active member of (as a
-     guardian too), ignoring case and spaces; names under 4 characters (code points) are skipped;
+     guardian too), or one of its distinctive words (P1-I), ignoring case, spaces and zero-width
+     joiners. Distinctive: the name split at spaces, punctuation and symbols, generic words
+     dropped (`GENERIC_NAME_WORDS` in `packages/shared/src/password.ts`: school, college, madrasa,
+     academy, coaching, high, model, বিদ্যালয়, উচ্চ, স্কুল, মাদ্রাসা, কলেজ, কোচিং… and their spellings),
+     and generic words glued to a word's end also counted without them (`শাপলাউচ্চবিদ্যালয়` →
+     `শাপলা`). Names and words under 4 characters (code points) are skipped. So for "শাপলা উচ্চ
+     বিদ্যালয়", `শাপলা২০২৬১২৩৪` is refused and `বিদ্যালয়২০২৬১২` is not;
    - `TOO_COMMON`: on the list in `apps/api/src/auth/common-passwords.txt` (SecLists' 10,000 most
      common, MIT; plus jantrik, bangladesh and password with digits and years). Server only;
 3. the code, else `422 PASSWORD_CODE_INVALID` (wrong, expired or used). Checking the rules first

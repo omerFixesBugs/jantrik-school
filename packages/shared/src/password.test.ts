@@ -87,6 +87,68 @@ describe('password rules (S26, P1-C, P1-D)', () => {
     expect(passwordProblems('abcdefghijk', about)).toEqual([]);
   });
 
+  describe('a distinctive word of an institute name (P1-I)', () => {
+    const named = (...instituteNames: string[]) => ({ phone: about.phone, instituteNames });
+    const refused = (pw: string, ...names: string[]) =>
+      expect(passwordProblems(pw, named(...names))).toContain('HAS_INSTITUTE_NAME');
+    const allowed = (pw: string, ...names: string[]) =>
+      expect(passwordProblems(pw, named(...names))).toEqual([]);
+
+    it.each<[string, string]>([
+      ['শাপলা২০২৬১২৩৪', 'শাপলা উচ্চ বিদ্যালয়'],
+      ['kodomtola@2026', 'Kodom Tola School'],
+      ['Kodom2026!!', 'Kodom Tola School'],
+      ['my tola 2026 x', 'Kodom Tola School'],
+      ['HUDA-2026-pass', 'Darul Huda Madrasah'],
+      ['highland2026', 'Highland Academy'],
+      ['বকুল২০২৬১২৩৪', 'বকুল কোচিং সেন্টার'],
+      ['st-joseph-2026', "St. Joseph's High School & College"],
+    ])('refuses %s for "%s"', (pw, name) => refused(pw, name));
+
+    it.each<[string, string]>([
+      ['school2026xyz', 'Kodom Tola School'],
+      ['বিদ্যালয়২০২৬১২', 'শাপলা উচ্চ বিদ্যালয়'],
+      ['উচ্চ মাধ্যমিক ২০২৬', 'শাপলা উচ্চ মাধ্যমিক বিদ্যালয়'],
+      ['madrasah 2026 x', 'Darul Huda Madrasah'],
+      ['darul 2026 rain', 'Darul Huda Madrasah'],
+      ['highschool2026', 'Highland Academy'],
+      ['কোচিং সেন্টার ২০২৬', 'বকুল কোচিং সেন্টার'],
+      ['college 2026 x', "St. Joseph's High School & College"],
+    ])('allows %s for "%s" (generic words only)', (pw, name) => allowed(pw, name));
+
+    it('ignores words under 4 characters (code points), as for whole names', () => {
+      // আলো is three code points (আ ল ো), Alo three letters.
+      allowed('আলো২০২৬১২৩৪৫', 'আলো কোচিং সেন্টার');
+      allowed('alo2026xyzw', 'Alo Coaching');
+      allowed('abc 2026 rain', 'ABC Tola');
+      refused('tola 2026 rain', 'ABC Tola');
+    });
+
+    it('finds the distinctive part of a word glued to generic ones', () => {
+      refused('শাপলা২০২৬১২৩৪', 'শাপলাউচ্চবিদ্যালয়');
+      refused('kodomtola2026', 'Kodomtolaschool');
+      allowed('উচ্চবিদ্যালয়২০২৬', 'শাপলা উচ্চবিদ্যালয়');
+      allowed('স্কুলঅ্যান্ডকলেজ১২', 'শাপলা স্কুল অ্যান্ড কলেজ');
+    });
+
+    it('drops generic words whichever Unicode form either side was typed in', () => {
+      // য় as one code point (U+09DF) in the name, as য + nukta in the password, and the reverse.
+      const nameOne = 'শাপলা উচ্চ বিদ্যালয়';
+      const nameTwo = 'শাপলা উচ্চ বিদ্যালয়';
+      allowed('বিদ্যালয়২০২৬১২', nameOne);
+      allowed('বিদ্যালয়২০২৬১২', nameTwo);
+      refused('শাপলা২০২৬১২৩৪'.normalize('NFD'), nameOne);
+      // A zero-width joiner or non-joiner (typed in some Bangla words) is ignored on both sides.
+      allowed('মাদ্‌রাসা২০২৬১২', 'শাপলা মাদ্‌রাসা');
+      refused('শা‌পলা২০২৬১২৩৪', 'শাপলা মাদ্রাসা');
+    });
+
+    it('still refuses the whole name, generic words included', () => {
+      refused('alocoaching!!', 'Alo Coaching');
+      refused('উচ্চবিদ্যালয়', 'উচ্চ বিদ্যালয়');
+    });
+  });
+
   it('reports every problem at once', () => {
     expect(passwordProblems('01711000002alocoaching', about).sort()).toEqual(
       ['HAS_INSTITUTE_NAME', 'HAS_PHONE'].sort(),

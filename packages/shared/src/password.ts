@@ -23,9 +23,80 @@ export function normalizePassword(pw: string): string {
   return pw.normalize('NFC');
 }
 
-/** NFC, lower-case, without whitespace: how passwords and institute names are compared. */
+/** Zero-width joiner and non-joiner: typed inside some Bangla words (মাদ্‌রাসা), invisible. */
+const ZERO_WIDTH = /[‌‍]/gu;
+
+/** NFC, lower-case, without whitespace or zero-width joiners: how passwords and names compare. */
 function comparable(text: string): string {
-  return text.normalize('NFC').toLowerCase().replace(/\s+/gu, '');
+  return text.normalize('NFC').toLowerCase().replace(/\s+/gu, '').replace(ZERO_WIDTH, '');
+}
+
+/**
+ * Words many institutes' names share (P1-I): what kind of institute it is, its level, who it is
+ * for, its medium. They say nothing about which institute it is, so a password may contain them;
+ * every other word of 4 or more characters in the name is refused. Spelling variants are listed
+ * separately; Unicode forms (য় as one code point or two) need not be, `comparable` unifies them.
+ * English first (with Bangla words as written in English letters), then Bangla.
+ */
+export const GENERIC_NAME_WORDS: readonly string[] = `
+  school schools college collegiate academy academic university madrasa madrasah madrassa
+  madrassah madrasha high higher secondary primary junior senior preparatory model ideal public
+  government govt cadet residential girls girl boys boy women womens ladies mohila mahila english
+  bangla medium version international coaching centre center institute institution kindergarten
+  kinder technical vocational polytechnic training tutorial laboratory islamia islamiya islamic
+  alia aliya aliah dakhil alim fazil kamil hafizia hafezia hifz hifzul tahfiz tahfizul quran
+  qawmi qaumi kawmi nurani noorani darul uloom ulum jamia jamea bidyalaya bidyaloy biddyaloy
+  vidyalaya bidyapith bidyaniketan niketan pathshala shikkha
+  বিদ্যালয় মহাবিদ্যালয় উচ্চ মাধ্যমিক নিম্ন প্রাথমিক জুনিয়র সিনিয়র স্কুল হাই কলেজ মাদ্রাসা
+  মাদরাসা একাডেমি একাডেমী বিশ্ববিদ্যালয় সরকারি সরকারী বেসরকারি বেসরকারী মডেল আদর্শ আইডিয়াল
+  পাবলিক ক্যাডেট আবাসিক রেসিডেন্সিয়াল বালিকা বালক মহিলা গার্লস বয়েজ ইংলিশ বাংলা মিডিয়াম ভার্সন
+  ইন্টারন্যাশনাল আন্তর্জাতিক কোচিং সেন্টার কেন্দ্র ইনস্টিটিউট ইন্সটিটিউট ইনস্টিটিউশন প্রতিষ্ঠান
+  কিন্ডারগার্টেন কিন্ডার টেকনিক্যাল কারিগরি ভোকেশনাল পলিটেকনিক প্রশিক্ষণ আলিয়া দাখিল আলিম ফাজিল
+  কামিল হাফিজিয়া হাফেজিয়া হিফজ হিফজুল তাহফিজুল কুরআন কোরআন নূরানী নুরানী কওমী কওমি ইসলামিয়া
+  ইসলামী ইসলামি দারুল উলুম জামিয়া পাঠশালা বিদ্যানিকেতন বিদ্যাপীঠ বিদ্যামন্দির নিকেতন শিক্ষা
+  শিক্ষালয় অ্যান্ড এন্ড এবং
+`
+  .split(/\s+/u)
+  .filter((w) => w !== '');
+
+const GENERIC = new Set(GENERIC_NAME_WORDS.map(comparable));
+const GENERIC_LIST = [...GENERIC];
+
+/**
+ * Where the generic words glued to the end of a word start (`কোচিংসেন্টার` → 0,
+ * `শাপলাউচ্চবিদ্যালয়` → the index of উচ্চ), so `শাপলা` is found in a name typed without spaces.
+ * Only endings: names put the kind of institute last, and a generic word at the start of an
+ * ordinary word (`highland`) is not stripped.
+ */
+function genericTailStart(word: string): number {
+  // tail[i]: word.slice(i) is made of generic words only.
+  const tail: boolean[] = [];
+  tail[word.length] = true;
+  let start = word.length;
+  for (let i = word.length - 1; i >= 0; i--) {
+    tail[i] = GENERIC_LIST.some((g) => word.startsWith(g, i) && tail[i + g.length] === true);
+    if (tail[i]) start = i;
+  }
+  return start;
+}
+
+const codePoints = (text: string): number => [...text].length;
+
+/**
+ * The words of an institute name that point at that institute (P1-I): split at spaces,
+ * punctuation and symbols, generic words dropped, 4 characters (code points) or more. A word with
+ * generic words glued to its end counts twice, whole and without them.
+ */
+export function distinctiveNameWords(name: string): string[] {
+  const words = new Set<string>();
+  const raw = name.normalize('NFC').toLowerCase().replace(ZERO_WIDTH, '');
+  for (const word of raw.split(/[\p{P}\p{S}\s]+/u)) {
+    if (word === '') continue;
+    const stem = word.slice(0, genericTailStart(word));
+    if (stem === '') continue; // only generic words
+    for (const w of [word, stem]) if (codePoints(w) >= MIN_NAME_LENGTH) words.add(w);
+  }
+  return [...words];
 }
 
 /** The 10-digit national number (`17XXXXXXXX`) of a Bangladeshi phone, or null if there is none. */
@@ -54,10 +125,12 @@ export function passwordProblems(
   const passwordDigits = toAsciiDigits(password).replace(/[\p{P}\p{S}\s]/gu, '');
   if (national && passwordDigits.includes(national)) problems.push('HAS_PHONE');
 
+  // The whole name (generic words included), or one of its distinctive words (P1-I).
   const passwordText = comparable(password);
   const hasName = about.instituteNames.some((name) => {
     const n = comparable(name);
-    return [...n].length >= MIN_NAME_LENGTH && passwordText.includes(n);
+    if (codePoints(n) >= MIN_NAME_LENGTH && passwordText.includes(n)) return true;
+    return distinctiveNameWords(name).some((w) => passwordText.includes(w));
   });
   if (hasName) problems.push('HAS_INSTITUTE_NAME');
   return problems;
