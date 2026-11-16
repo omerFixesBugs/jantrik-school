@@ -172,8 +172,8 @@ The device receiver refuses:
 
 Beyond these, every service checks its database login at start-up, against the database itself:
 
-- **No login may be a superuser, have BYPASSRLS, or be able to become such a role** (nor
-  `pg_read_all_data`, `pg_write_all_data` or the server file and program roles): the API and the
+- **No login may be a superuser, have BYPASSRLS, REPLICATION or CREATEROLE, or be able to become
+  such a role** (nor `pg_read_all_data`, `pg_write_all_data` or the server file and program roles): the API and the
   worker (`DATABASE_URL`), the platform module (`DATABASE_PLATFORM_URL`) and the receiver
   (`DATABASE_INGEST_URL`). Fail closed: while the database does not answer, the check is asked
   again for about 3 minutes, then the service exits ([database.md](database.md) → Database roles).
@@ -340,6 +340,12 @@ deploy/compose.sh ps
 
 - **Rollback:** migrations only go forward. If a release must be undone after its migrations ran,
   restore the backup you took (below) and start the previous version's images.
+- **Redis is pinned to one exact version** (`redis:7.4.11-alpine`, the same in this compose file,
+  the development `docker-compose.yml` and CI; a test checks they agree). A newer Redis comes
+  with a release that changes the three tags together, after reading Redis's release notes; at
+  the upgrade, `up -d` pulls the new tag and restarts Redis on the same volume (AOF: no data is
+  lost; queued jobs wait a few seconds). Between releases, a patched rebuild of the same tag is
+  taken with `deploy/compose.sh pull redis && deploy/compose.sh up -d redis`.
 - `NEXT_PUBLIC_API_URL` is baked into the web image: changing `API_DOMAIN` needs a rebuild.
 - `JANTRIK_BOOT_REFRESH=off` in the settings file switches the boot refresh off (docs/auth.md →
   Web client) without a rebuild: `deploy/compose.sh up -d web`.
@@ -533,7 +539,8 @@ To use a provider's Postgres 16 instead of the `postgres` service:
 - **Off-site backup storage** and **an uptime monitor** of your choice.
 - **Done in sprint 1, P0:** the `Origin` check in `PlatformAuthGuard` (Caddy's rule stays as a
   second layer), the receiver's own Redis user, the start-up check that refuses a database login
-  that is a superuser or bypasses RLS, and the receiver's 5 s query limit.
+  that is a superuser or bypasses RLS (since 2026-11-16 also REPLICATION and CREATEROLE), and the
+  receiver's 5 s query limit.
 - **Recorded, not built** (decisions-pending.md → Deployment readiness):
   - CI does not cover the compose Postgres's first start (initdb), the non-superuser branch of
     `create-roles.sh` or the image builds (all checked by hand for this release);

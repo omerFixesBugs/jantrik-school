@@ -26,15 +26,19 @@ const LOCAL_HOST = /^(localhost|127(\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0|\[::\])$/i;
 
 /**
  * A browser origin as browsers send it in `Origin` (scheme, lower-case host, port when not the
- * default; no path or trailing slash), or null when `value` is not a URL with an origin.
+ * default; no trailing slash), or null when `value` is not exactly an origin. A login, a path, a
+ * query or a fragment makes it no origin: `URL.origin` would silently drop them, and
+ * `https://app.example@evil.example` would become `https://evil.example`.
  */
 export function normaliseOrigin(value: string): string | null {
+  let url: URL;
   try {
-    const origin = new URL(value).origin;
-    return origin === 'null' ? null : origin;
+    url = new URL(value);
   } catch {
     return null;
   }
+  if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
+  return url.origin === 'null' ? null : url.origin;
 }
 
 /** Why a browser origin may not be allowed in production, or null when it may. */
@@ -46,6 +50,7 @@ export function unsafeOrigin(origin: string): string | null {
   } catch {
     return 'not a URL';
   }
+  if (normaliseOrigin(origin) === null) return 'not an origin (scheme, host and port only)';
   if (url.protocol !== 'https:') return 'not https';
   if (LOCAL_HOST.test(url.hostname) || url.hostname.endsWith('.localhost')) {
     return 'a local address';
@@ -237,7 +242,7 @@ export function apiProductionProblems(env: ApiProductionEnv): EnvProblem[] {
       "PLATFORM_ORIGINS must list the platform's web origin (https://platform.<domain>)",
     );
   }
-  const cors = new Set(env.CORS_ORIGINS.map((o) => normaliseOrigin(o) ?? o));
+  const cors = new Set(env.CORS_ORIGINS); // normalised by env.ts, as PLATFORM_ORIGINS
   for (const origin of env.PLATFORM_ORIGINS) {
     const why = unsafeOrigin(origin);
     if (why) {

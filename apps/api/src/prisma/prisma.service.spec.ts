@@ -8,6 +8,8 @@ const SAFE: LoginPrivileges = {
   login: 'jantrik_app',
   superuser: false,
   bypassRls: false,
+  replication: false,
+  createRole: false,
   canBecome: [],
 };
 
@@ -31,6 +33,8 @@ function service(...answers: (LoginPrivileges | Error)[]) {
               login: a.login,
               superuser: a.superuser,
               bypass_rls: a.bypassRls,
+              replication: a.replication,
+              create_role: a.createRole,
               can_become: a.canBecome,
             },
           ]),
@@ -60,6 +64,15 @@ describe('PrismaService startup check', () => {
   it('refuses a login with BYPASSRLS', async () => {
     await expect(service({ ...SAFE, bypassRls: true }).s.onModuleInit()).rejects.toThrow(
       /DATABASE_URL.*has BYPASSRLS/,
+    );
+  });
+
+  it('refuses a login with REPLICATION or CREATEROLE', async () => {
+    await expect(service({ ...SAFE, replication: true }).s.onModuleInit()).rejects.toThrow(
+      /DATABASE_URL.*has REPLICATION/,
+    );
+    await expect(service({ ...SAFE, createRole: true }).s.onModuleInit()).rejects.toThrow(
+      /DATABASE_URL.*has CREATEROLE/,
     );
   });
 

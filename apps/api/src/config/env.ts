@@ -26,7 +26,13 @@ export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     API_PORT: z.coerce.number().int().positive().default(4000),
-    /** Comma-separated allowlist of browser origins (credentials are allowed). */
+    /**
+     * Comma-separated allowlist of browser origins (credentials are allowed). Normalised as
+     * browsers send `Origin` (lower-case host, no trailing slash, no default port), so the CORS
+     * check (an exact match) allows what the production check passed. An entry that is not exactly
+     * an origin (not a URL, or with a login, a path, a query or a fragment) stays as written: it
+     * matches no browser's Origin, and production refuses it.
+     */
     CORS_ORIGINS: z
       .string()
       .default('http://localhost:3000')
@@ -34,7 +40,8 @@ export const envSchema = z
         v
           .split(',')
           .map((o) => o.trim())
-          .filter(Boolean),
+          .filter(Boolean)
+          .map((o) => normaliseOrigin(o) ?? o),
       ),
     /**
      * The platform web app's origins (comma-separated): the only browser origins /platform/*
@@ -52,7 +59,10 @@ export const envSchema = z
           .filter(Boolean)) {
           const origin = normaliseOrigin(entry);
           if (origin === null) {
-            ctx.addIssue({ code: 'custom', message: `PLATFORM_ORIGINS: "${entry}" is not a URL` });
+            ctx.addIssue({
+              code: 'custom',
+              message: `PLATFORM_ORIGINS: "${entry}" is not an origin (scheme, host and port only)`,
+            });
             return z.NEVER;
           }
           origins.push(origin);

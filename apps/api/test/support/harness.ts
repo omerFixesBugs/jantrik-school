@@ -33,6 +33,7 @@ import { SMS_PROVIDER, type MemorySmsProvider } from '../../src/sms/sms.provider
 import { TenantAccessService } from '../../src/tenancy/tenant-access.service.js';
 import { Clock } from '../../src/common/clock.js';
 import { TestController } from './test.controller.js';
+import { phoneSource } from './test-phones.js';
 
 export interface Harness {
   app: INestApplication;
@@ -76,8 +77,14 @@ export async function createHarness(opts: { clock?: Clock } = {}): Promise<Harne
   };
 }
 
+let phones: (() => string) | undefined;
+/**
+ * A valid Bangladeshi mobile number (E.164) that no other test user of this database has, in this
+ * run or an earlier one (`test-phones.ts`; the db package's tests draw from +88014, these from
+ * +88013).
+ */
 export const randomPhone = (): string =>
-  `+88018${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
+  (phones ??= phoneSource('+88013', process.env['DATABASE_URL']!))();
 /**
  * A distinct client IP per call (sent as X-Forwarded-For) so per-IP limits don't collide. Fully
  * random: test files run in parallel workers and share Redis, so a per-worker counter repeats.
