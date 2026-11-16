@@ -237,7 +237,7 @@ export function apiProductionProblems(env: ApiProductionEnv): EnvProblem[] {
       "PLATFORM_ORIGINS must list the platform's web origin (https://platform.<domain>)",
     );
   }
-  const cors = new Set(env.CORS_ORIGINS.map((o) => normaliseOrigin(o) ?? o));
+  const cors = new Set(env.CORS_ORIGINS); // normalised by env.ts, as PLATFORM_ORIGINS
   for (const origin of env.PLATFORM_ORIGINS) {
     const why = unsafeOrigin(origin);
     if (why) {

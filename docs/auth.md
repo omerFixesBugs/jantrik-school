@@ -454,7 +454,7 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `JWT_ACCESS_SECRET`  | at least 32 characters                                                                                                                                        |
 | `OTP_PEPPER`         | at least 32 characters                                                                                                                                        |
-| `CORS_ORIGINS`       | comma-separated allowlist; browsers may cache a preflight's answer for 2 h (`maxAge` in `app.setup.ts`), so a narrower list reaches open tabs up to 2 h later |
+| `CORS_ORIGINS`       | comma-separated allowlist, normalised like `Origin` (lower-case host, no trailing slash or default port); browsers may cache a preflight's answer for 2 h (`maxAge` in `app.setup.ts`), so a narrower list reaches open tabs up to 2 h later |
 | `PLATFORM_ORIGINS`   | the platform web app's origins: the only ones `/platform/*` answers (each also in `CORS_ORIGINS`); default `http://localhost:3000`, required in production    |
 | `COOKIE_SECURE`      | Secure flag on the refresh cookie                                                                                                                             |
 | `TRUST_PROXY`        | Express `trust proxy`; set it behind a load balancer so client IPs are right                                                                                  |

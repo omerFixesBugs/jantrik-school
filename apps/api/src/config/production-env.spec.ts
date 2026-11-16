@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { envSchema, validateEnv } from './env.js';
+import { isAllowedOrigin } from './dev-lan.js';
 import { validateIngestEnv } from './ingest-env.js';
 import {
   API_ONLY_SECRETS,
@@ -167,6 +168,35 @@ describe('production env: the API and the worker', () => {
     ).toEqual(['https://platform.jantrik.com.bd']);
     // A production list in another case or with a slash still matches its CORS entry.
     expect(apiError({ ...api, PLATFORM_ORIGINS: 'https://PLATFORM.jantrik.com.bd/' })).toBe('');
+  });
+
+  it('normalises CORS_ORIGINS too, so the CORS middleware allows what the start-up check passed', () => {
+    const dev = {
+      DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
+      DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:x@localhost:5432/jantrik',
+      DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@localhost:5432/jantrik',
+      JWT_ACCESS_SECRET: 'x'.repeat(40),
+      OTP_PEPPER: 'y'.repeat(40),
+    };
+    const parsed = envSchema.parse({
+      ...dev,
+      CORS_ORIGINS: 'HTTPS://App.Jantrik.com.bd/ , http://localhost:3000/,https://a.example.com:443',
+    });
+    expect(parsed.CORS_ORIGINS).toEqual([
+      'https://app.jantrik.com.bd',
+      'http://localhost:3000',
+      'https://a.example.com',
+    ]);
+    // The browser sends the normalised form; the middleware's check is an exact match.
+    expect(isAllowedOrigin('https://app.jantrik.com.bd', parsed)).toBe(true);
+    // An entry that is not an origin stays as written (production refuses it, see above).
+    expect(envSchema.parse({ ...dev, CORS_ORIGINS: '*,app.jantrik.com.bd' }).CORS_ORIGINS).toEqual(
+      ['*', 'app.jantrik.com.bd'],
+    );
+    // Production: an upper-case, slash-ended entry passes the check and is allowed by the middleware.
+    const prod = { ...api, CORS_ORIGINS: 'https://APP.jantrik.com.bd/,https://platform.jantrik.com.bd' };
+    expect(apiError(prod)).toBe('');
+    expect(envSchema.parse(prod).CORS_ORIGINS).toContain('https://app.jantrik.com.bd');
   });
 
   it('refuses secrets shorter than 32 characters', () => {
