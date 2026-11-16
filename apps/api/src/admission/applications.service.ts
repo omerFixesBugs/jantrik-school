@@ -243,10 +243,7 @@ export class AdmissionApplicationsService {
     return this.detail(created.id);
   }
 
-  async update(
-    id: string,
-    input: UpdateAdmissionApplication,
-  ): Promise<AdmissionApplicationDetail> {
+  async update(id: string, input: UpdateAdmissionApplication): Promise<AdmissionApplicationDetail> {
     const tx = this.db.tx;
     const old = await this.lockRow(id);
     if (old.status === 'ADMITTED') {
