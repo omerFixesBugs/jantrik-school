@@ -168,9 +168,9 @@ describe('promotion apply', () => {
       );
       expect([a!.status, b!.status].sort()).toEqual([200, 409]);
       expect([a!.body.code, b!.body.code]).toContain('RUN_APPLYING');
-      const jobs = (await promotionsQueue(h).getJobs(['waiting', 'paused', 'delayed'])).filter(
-        (j) => j.data.runId === seven.id,
-      );
+      const jobs = (
+        await promotionsQueue(h).getJobs(['waiting', 'wait', 'delayed', 'prioritized'])
+      ).filter((j) => j.data.runId === seven.id);
       expect(jobs.map((j) => j.id)).toEqual([applyJobId(seven.id)]);
       await removeJob(seven.id);
     });
