@@ -526,10 +526,10 @@ To use a provider's Postgres 16 instead of the `postgres` service:
 - **A provider and a server** (size above), the domain and its DNS.
 - **Real secrets and passwords** (generated on the server, never in the repo).
 - **An SMS gateway (a go-live blocker).** Until one is built, `SMS_PROVIDER=none` and every SMS
-  fails. **No institute user can sign in**: guardians sign in with an OTP, and staff too, as no
-  production path sets a staff member's password (invitations and first logins go through an OTP;
-  only the demo seed and the tests set passwords). Only platform admins can sign in. A gateway, or
-  a deliberate password-setting path, must exist before the first institute goes live.
+  fails. **No institute user can sign in**: guardians sign in with an OTP, and staff need one SMS
+  code too, to sign in the first time and to set a password (sprint 1 P1). After that, a staff
+  member's password works without SMS; a forgotten password needs a code again. Only platform
+  admins can sign in without SMS. A gateway must exist before the first institute goes live.
 - **Off-site backup storage** and **an uptime monitor** of your choice.
 - **Done in sprint 1, P0:** the `Origin` check in `PlatformAuthGuard` (Caddy's rule stays as a
   second layer), the receiver's own Redis user, the start-up check that refuses a database login

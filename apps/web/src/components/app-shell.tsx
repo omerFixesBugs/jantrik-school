@@ -7,6 +7,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   HouseIcon,
+  KeyRoundIcon,
   LogOutIcon,
   MenuIcon,
   MoonIcon,
@@ -44,7 +45,15 @@ import { clearRecents } from '@/lib/recents';
 import { useLabel } from '@/lib/hooks';
 import { displayUserName } from '@/lib/names';
 import { useNavLabel } from '@/lib/nav-label';
-import { canSee, NAV_GROUPS, NAV_ITEMS, navItemForPath, primaryRole } from '@/lib/navigation';
+import {
+  canSee,
+  isStaff,
+  NAV_GROUPS,
+  NAV_ITEMS,
+  navItemForPath,
+  PASSWORD_PATH,
+  primaryRole,
+} from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 
 const COLLAPSED_KEY = 'jantrik.sidebar.collapsed';
@@ -324,6 +333,13 @@ function UserMenu({ context }: { context: MeContext }) {
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
+        {/* Passwords are for staff (sprint 1 P1); guardians and students sign in with a code. */}
+        {isStaff(context.roles) && (
+          <DropdownMenuItem onClick={() => router.push(PASSWORD_PATH)} data-testid="menu-password">
+            <KeyRoundIcon aria-hidden />
+            {t('password')}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onClick={() => router.push('/select-institute')}>
           <Building2Icon aria-hidden />
           {t('switchInstitute')}
@@ -392,7 +408,7 @@ function Shell({ context, children }: { context: MeContext; children: ReactNode 
   };
 
   const current = navItemForPath(pathname);
-  const title = current ? navLabel(current.key) : '';
+  const title = current ? navLabel(current.key) : pathname === PASSWORD_PATH ? t('password') : '';
 
   return (
     <div className="flex min-h-svh w-full">

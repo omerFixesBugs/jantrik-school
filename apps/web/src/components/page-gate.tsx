@@ -1,5 +1,6 @@
 'use client';
 
+import type { MeContext } from '@jantrik/shared';
 import { ArrowLeftIcon, HammerIcon, LockIcon, type LucideIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import type { ReactNode } from 'react';
@@ -27,10 +28,21 @@ function Notice({ icon: Icon, title, text }: { icon: LucideIcon; title: string; 
 
 /** Hides a page the institute hasn't enabled or the user may not use. The API enforces it too. */
 export function PageGate({ page, children }: { page: NavKey; children: ReactNode }) {
+  return <ContextGate allow={(ctx) => canSee(navItem(page), ctx)}>{children}</ContextGate>;
+}
+
+/** PageGate for a page outside the sidebar (e.g. the password page): `allow` decides. */
+export function ContextGate({
+  allow,
+  children,
+}: {
+  allow: (ctx: MeContext) => boolean;
+  children: ReactNode;
+}) {
   const t = useTranslations('notAvailable');
   const { data } = useMeContext();
   if (!data) return null;
-  if (!canSee(navItem(page), data)) {
+  if (!allow(data)) {
     return <Notice icon={LockIcon} title={t('title')} text={t('text')} />;
   }
   return <>{children}</>;

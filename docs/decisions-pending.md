@@ -622,3 +622,37 @@ R-6. **The global rate-limit guard answers 503 `SERVICE_UNAVAILABLE`** when Redi
 - To change: `apps/api/src/common/guards.ts` → `RateLimitGuard`, `apps/api/src/redis/redis-deadline.ts`.
 
 R-7. **Smaller changes from the final review:** the rotation time is taken before the answer is stored (the stored answer outlives the database's 30-second window); a session revoked while a refresh builds its answer rolls the rotation back (401, no new pair); a stale institute is cleared only if the session still has it (an institute switch made meanwhile stays); the revoked-session marker on the reuse path is bounded like the other Redis calls (503; the database revocation stands); the lock's release is sent without delaying the answer, and a lock request that timed out is released behind itself.
+
+## Sprint 1, P1: staff set their own password (2026-11-15)
+
+Plan: [plans/sprint-1-p1-staff-password.md](plans/sprint-1-p1-staff-password.md), approved by the owner with P1-A to P1-E and one addition to P1-D.
+
+P1-A. **The routes need the current institute and a staff role there** (`OWNER`, `ADMIN`, `TEACHER`, `ACCOUNTANT`, `STAFF`), so each change is audited in that institute. Someone who is staff elsewhere switches institute first; a guardian gets 403 and no menu item.
+
+P1-B. **The app login may update only some columns of `users`:** `locale`, `color_scheme`, `name_bn`, `password_hash`, `password_changed_at`, `updated_at`. No app code can change a login's phone, email or global name.
+
+- To change: a migration granting the column (`GRANT UPDATE (<column>) ON users TO jantrik_app`), and `packages/db/test/users-rls.test.ts`.
+
+P1-C. **Passwords are NFC-normalised** before hashing and verifying (the API and the platform-admin CLI), so a Bangla password typed on another keyboard still matches. Existing hashes are unaffected (the demo password is ASCII).
+
+P1-D. **The rules:** 10 to 128 code points; not containing the person's phone number in any written form; not containing the whole name (4 characters or more) of an institute they are an active member of (the owner's addition); not on the common-password list (SecLists' 10,000 most common, MIT, plus jantrik/bangladesh/password variants), checked on the server only.
+
+- To change: `PASSWORD_RULES` and `passwordProblems` in `packages/shared/src/password.ts`; the list in `apps/api/src/auth/common-passwords.txt`.
+
+P1-E. **Password codes cost Jantrik, as login codes do** (`platform_sms_logs`), not the institute's SMS budget.
+
+P1-F. **Each code purpose has its own 60-second cooldown; the 15-minute and daily caps are shared** (a change to the plan, which shared the cooldown too). With a shared cooldown, a staff member who has just signed in with a code would always wait up to a minute before the password code could be sent: the first thing most of them do. The SMS cost is still bounded by the shared caps (5 per 15 minutes, 10 a day, for both purposes together).
+
+- To change: `cooldownKey` in `apps/api/src/auth/otp.service.ts` (one key for both purposes shares it again).
+
+P1-G. **The rules are checked before the code** (a change to the plan's order, which verified the code first): a refused password, e.g. one on the common list that the form cannot check, does not use up the code, so the person does not need another SMS. Nothing secret is revealed by checking the rules first: the route needs a signed-in staff member, and the rules are public.
+
+P1-H. **`GET /me/password` also returns the person's own phone** (an addition to the plan), so the form can check the phone rule as they type. It is their own number, returned only to them.
+
+P1-I. **Open, for the owner: catch part of an institute's name too?** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widens the rule you set, so it is not built.
+
+- To change: `passwordProblems` in `packages/shared/src/password.ts` (the server and the form share it).
+
+P1-J. **Follow-up, for the owner: hide `users.password_hash` from the app login.** Real staff hashes now exist, and `jantrik_app` may still SELECT every column of the users it can see (itself, and the members of the current institute, through `users_visible`). An injection in a request could read co-members' hashes (argon2id, so slow to attack, but still). The fix: revoke SELECT on that column from `jantrik_app` and read `hasPassword` through a definer function, as the login already does; every full-row read of `users` in the app and the tests must then name its columns. A database and security change, so it needs a plan and your approval first.
+
+P1-K. **Fixed from the review** (each with a test that failed first): a code is single use even when two requests race with it (login codes too); the phone rule ignores every punctuation mark and symbol between the digits; the other sessions are revoked in one statement; the common-password list is read at start-up; password login accepts up to 512 code points (a 128-character password typed decomposed); the wrong-code message asks to check the code before sending a new one. Kept as they are: the staff check after a correct password costs one extra query (it only confirms a password the caller already has); the login page's hint sits under the password tab, which guardians do not use.

@@ -45,3 +45,5 @@ export * from './device-people.js';
 export * from './staff-attendance.js';
 export * from './staff-attendance-api.js';
 export * from './staff-attendance-schema.js';
+export * from './password.js';
+export * from './password-schema.js';

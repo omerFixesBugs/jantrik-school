@@ -36,6 +36,9 @@ export const STAFF_ROLES: Role[] = ['OWNER', 'ADMIN', 'TEACHER', 'ACCOUNTANT', '
 
 export const isStaff = (roles: Role[]): boolean => roles.some((r) => STAFF_ROLES.includes(r));
 
+/** The person's own password page (staff only), reached from the user menu, not the sidebar. */
+export const PASSWORD_PATH = '/account/password';
+
 /** The role to show under a person's name: the most senior one they hold. */
 export function primaryRole(roles: Role[]): Role | null {
   const order: Role[] = [...STAFF_ROLES, 'GUARDIAN', 'STUDENT'];

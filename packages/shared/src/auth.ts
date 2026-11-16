@@ -22,7 +22,8 @@ export const otpVerifySchema = z.object({
 export const passwordLoginSchema = z.object({
   /** Phone (any common BD format) or email. */
   identifier: z.string().trim().min(3).max(254),
-  password: z.string().min(1).max(256),
+  /** As long as a password that can be set may be when typed decomposed (128 × up to 4). */
+  password: z.string().min(1).max(512),
   client: authClientSchema.default('web'),
 });
 

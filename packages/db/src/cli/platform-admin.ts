@@ -95,7 +95,8 @@ async function newPasswordHash(io: CliIo): Promise<string> {
     throw new CliError(`The password must be at least ${MIN_PASSWORD} characters`);
   }
   if (password.length > 256) throw new CliError('The password is too long');
-  return hash(password, ARGON2);
+  // NFC, as the API hashes and verifies every password (sprint 1 P1-C).
+  return hash(password.normalize('NFC'), ARGON2);
 }
 
 async function audit(

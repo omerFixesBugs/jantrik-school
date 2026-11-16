@@ -1,16 +1,21 @@
 import { Injectable } from '@nestjs/common';
+import { normalizePassword } from '@jantrik/shared';
 import { hash, verify } from '@node-rs/argon2';
 
 // Argon2id (the library default) with OWASP-recommended parameters: 19 MiB, 2 iterations.
 const OPTIONS = { memoryCost: 19_456, timeCost: 2, parallelism: 1 };
 
-/** Password hashing. There is deliberately no endpoint that sets a password yet. */
+/**
+ * Password hashing and checking, for staff and platform admins. A staff member's password is set
+ * only by PasswordSettingsService (PUT /me/password); a platform admin's by the CLI.
+ */
 @Injectable()
 export class PasswordService {
   private dummyHash?: Promise<string>;
 
+  /** Passwords are hashed and verified NFC-normalised (P1-C): the keyboard's form never matters. */
   hash(password: string): Promise<string> {
-    return hash(password, OPTIONS);
+    return hash(normalizePassword(password), OPTIONS);
   }
 
   /**
@@ -24,6 +29,6 @@ export class PasswordService {
       await verify(await this.dummyHash, password).catch(() => false);
       return false;
     }
-    return verify(storedHash, password).catch(() => false);
+    return verify(storedHash, normalizePassword(password)).catch(() => false);
   }
 }

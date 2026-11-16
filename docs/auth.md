@@ -13,6 +13,17 @@ Code lives in [`apps/api/src/auth`](../apps/api/src/auth) and
 
 **No self-signup.** Only people who already exist (created by staff or the seed) can log in.
 
+**Passwords are for staff** (sprint 1 P1):
+
+- A password login needs an active membership with a staff role (`OWNER`, `ADMIN`, `TEACHER`,
+  `ACCOUNTANT`, `STAFF`) in an open institute. Guardians and students sign in with a code only. A
+  correct password without such a membership gets the same `401` as a wrong one, and counts as a
+  failed attempt.
+- Passwords are compared NFC-normalised (`normalizePassword` in `@jantrik/shared`): a Bangla
+  password typed on another keyboard (e.g. য় as one code point or two) still matches. The
+  platform-admin CLI hashes the NFC form too.
+- Staff set their own password; see [Setting a password](#setting-a-password).
+
 **No account enumeration:**
 
 - `otp/request` always answers `202 {"expiresIn":300}`, and its rate limits are applied before
@@ -24,7 +35,12 @@ Code lives in [`apps/api/src/auth`](../apps/api/src/auth) and
 
 **OTP storage.** Codes are never stored in plain text. Redis holds
 `HMAC-SHA256(OTP_PEPPER, phone:code)` with a 5-minute TTL, plus an attempt counter. The 5th wrong
-attempt deletes the code. A successful verify deletes it too (single use).
+attempt deletes the code. A successful verify deletes it too (single use): only the request
+that deletes it gets through, so two requests racing with the same code cannot both succeed.
+
+A code has a purpose. A login code is under `otp:<phone>`; a password code (below) is under
+`otp:password:<phone>`, with `password:` in the MAC input and its own SMS text. Neither can be
+used for the other.
 
 **SMS** goes through `SmsService` → BullMQ queue `sms` → `SmsProvider`:
 
@@ -58,17 +74,18 @@ and exit SMS (with 90 % of the cap, leaving the rest for absent alerts).
 Per-IP limits are deliberately generous because many users share one IP (carrier CGNAT, school
 Wi-Fi). The per-phone and per-account limits are the real protection.
 
-| Limit                                | Default                                                                                                                         |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| OTP per phone                        | 1 per 60 s, 5 per 15 min, **10 per day** (SMS costs money)                                                                      |
-| OTP requests per IP                  | 200 / hour                                                                                                                      |
-| Login / OTP-verify per IP            | 300 / 15 min                                                                                                                    |
-| Failed password attempts per account | 5 / 15 min; a successful login resets it (counted before the check, cleared on success, so parallel guesses can't slip through) |
-| Authenticated requests               | 300 / min **per user**                                                                                                          |
-| Unauthenticated requests             | 600 / min per IP                                                                                                                |
-| Device receiver, per address         | 1200 / min (an IPv6 address counts by its /64)                                                                                  |
-| Device receiver, refused serials     | 30 / 10 min per address, then 429 without a database call                                                                       |
-| Device receiver, one serial number   | 300 / min from each address; 1200 / min from all the addresses it does not trust, together                                      |
+| Limit                                   | Default                                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| OTP per phone                           | 1 per 60 s per purpose (login, password); 5 per 15 min and **10 per day** for both together (SMS costs money)                   |
+| OTP requests per IP                     | 200 / hour                                                                                                                      |
+| Login / OTP-verify per IP               | 300 / 15 min                                                                                                                    |
+| Failed password attempts per account    | 5 / 15 min; a successful login resets it (counted before the check, cleared on success, so parallel guesses can't slip through) |
+| Setting a password (`PUT /me/password`) | 5 / 15 min per person                                                                                                           |
+| Authenticated requests                  | 300 / min **per user**                                                                                                          |
+| Unauthenticated requests                | 600 / min per IP                                                                                                                |
+| Device receiver, per address            | 1200 / min (an IPv6 address counts by its /64)                                                                                  |
+| Device receiver, refused serials        | 30 / 10 min per address, then 429 without a database call                                                                       |
+| Device receiver, one serial number      | 300 / min from each address; 1200 / min from all the addresses it does not trust, together                                      |
 
 Exceeding a limit returns `429` with `Retry-After`. The device receiver's limits and why they are
 shaped this way: [devices.md](devices.md) → Limits.
@@ -158,6 +175,52 @@ once get the same pair; the web client still serialises refreshes (Web Locks) to
 
 **Logout** (`POST /auth/logout`) revokes the session and puts its id on a Redis revocation list,
 so the access token dies immediately rather than after up to 15 minutes.
+
+Revoke reasons (`sessions.revoke_reason`): `LOGOUT`, `REUSE_DETECTED` (refresh token reuse),
+`ADMIN`, and `PASSWORD_CHANGED` (the person set a password: every other session of theirs).
+
+## Setting a password
+
+Staff set (or change) their own password from the user menu (`/account/password`). The three
+routes run in the current institute's request transaction, for staff roles there
+(`@RequireModule('CORE')`, `@Roles(OWNER, ADMIN, TEACHER, ACCOUNTANT, STAFF)`), so each change is
+audited in that institute. Someone who is staff elsewhere switches to that institute first.
+
+| Route                    | Answer | What it does                                                             |
+| ------------------------ | ------ | ------------------------------------------------------------------------ |
+| `GET /me/password`       | 200    | `{ hasPassword, changedAt, phone }` (the phone: their own, for the form) |
+| `POST /me/password/code` | 202    | a password code to their own phone; `{ expiresIn, phoneHint }`           |
+| `PUT /me/password`       | 204    | `{ code, password }`: sets it                                            |
+
+`PUT` checks, in this order:
+
+1. 5 tries per person per 15 minutes (`pwd-set:<userId>`), else `429` with `Retry-After`;
+2. the rules, else `422 PASSWORD_REJECTED` with `problems`:
+   - `TOO_SHORT` / `TOO_LONG`: 10 to 128 Unicode code points after NFC;
+   - `HAS_PHONE`: the person's 10-digit national number, in any form (`01…`, `+880…`, Bangla
+     digits, split by spaces, punctuation or symbols);
+   - `HAS_INSTITUTE_NAME`: the whole name of any institute they are an active member of (as a
+     guardian too), ignoring case and spaces; names under 4 characters (code points) are skipped;
+   - `TOO_COMMON`: on the list in `apps/api/src/auth/common-passwords.txt` (SecLists' 10,000 most
+     common, MIT; plus jantrik, bangladesh and password with digits and years). Server only;
+3. the code, else `422 PASSWORD_CODE_INVALID` (wrong, expired or used). Checking the rules first
+   means a refused password does not use the code up.
+
+On success, in one transaction: `users.password_hash` and `password_changed_at`, every other
+session not yet revoked (expired ones too: a refresh that passed its check just before its session
+expired may still commit, and only a revoked session makes it roll back) revoked with
+`PASSWORD_CHANGED` in one `UPDATE … RETURNING`, and an audit row (`user_password`, `UPDATE`, no
+values).
+After commit, those sessions' ids go on the Redis revocation list, so their access tokens stop at
+once (a Redis failure there is logged; their refresh fails anyway). The current session, and so
+every tab of this browser, stays signed in. The password and the code never reach logs, answers,
+audit rows or Redis (the code only as its HMAC).
+
+Password codes cost Jantrik, as login codes do (`platform_sms_logs`), not the institute's SMS
+budget. The common-password list is read at start-up: without it the API does not start.
+Password login accepts up to 512 code points, as many as a settable password can have when typed
+decomposed. `PasswordSettingsService` is the only code that writes `users.password_hash`
+(`password-writes.spec.ts` checks it).
 
 ## Tenants
 
@@ -397,7 +460,7 @@ In production `SMS_PROVIDER=none` stands in until a gateway is built: every SMS 
 recorded as failed. What else production refuses: [deploy.md](deploy.md) → Environment checks.
 
 Demo staff accounts from `pnpm db:seed` use the password `Jantrik@2026` (development only; the
-seed refuses to run when `NODE_ENV=production`, and no API endpoint sets passwords). Demo
+seed refuses to run when `NODE_ENV=production`). Staff change it from the user menu. Demo
 guardians log in with OTP, e.g. `01811000101`.
 
 ## Platform admins (Jantrik staff)
@@ -416,6 +479,7 @@ See [platform.md](platform.md).
 
 ## Not built yet
 
-- Password set/reset endpoints
+- Password reset by an institute admin (staff set their own after a code; a forgotten password
+  is replaced the same way)
 - Real SMS gateway
 - "Logged-in devices" endpoints (the data is stored)

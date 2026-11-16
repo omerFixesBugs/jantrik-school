@@ -55,7 +55,7 @@ describe('RLS on users', () => {
 
   it('a user can update only their own row, even inside their tenant', async () => {
     await withContext(app, { tenantId: tenantA, userId: userA }, async (tx) => {
-      const other = await tx.user.updateMany({ where: { id: shared }, data: { name: 'x' } });
+      const other = await tx.user.updateMany({ where: { id: shared }, data: { locale: 'en' } });
       expect(other.count).toBe(0);
       const self = await tx.user.updateMany({ where: { id: userA }, data: { locale: 'en' } });
       expect(self.count).toBe(1);
@@ -83,6 +83,52 @@ describe('RLS on users', () => {
     );
     expect(sharedRow.nameBn).toBeNull();
   });
+
+  it('the app may update its own preferences, Bangla name and password columns', async () => {
+    const id = await addMember(app, tenantA, randomPhone(), 'Columns');
+    const changedAt = new Date();
+    await withContext(app, { userId: id }, (tx) =>
+      tx.user.update({
+        where: { id },
+        data: {
+          locale: 'en',
+          colorScheme: 'DARK',
+          nameBn: 'নাম',
+          passwordHash: 'x',
+          passwordChangedAt: changedAt,
+        },
+      }),
+    );
+    const row = await withContext(app, { userId: id }, (tx) =>
+      tx.user.findUniqueOrThrow({ where: { id } }),
+    );
+    expect(row).toMatchObject({ locale: 'en', nameBn: 'নাম', passwordHash: 'x' });
+    expect(row.passwordChangedAt).toEqual(changedAt);
+  });
+
+  it.each([
+    ['phone', '+8801799999999'],
+    ['email', 'x@example.com'],
+    ['name', 'Someone else'],
+  ])(
+    'the app may not change its own %s (the login identifiers and the global name)',
+    async (column, value) => {
+      const phone = randomPhone();
+      const id = await addMember(app, tenantA, phone, 'Fixed');
+      await expect(
+        withContext(app, { userId: id }, (tx) =>
+          tx.$executeRawUnsafe(`UPDATE users SET ${column} = $1 WHERE id = $2::uuid`, value, id),
+        ),
+      ).rejects.toThrow(/permission denied/i);
+      const row = await withContext(app, { userId: id }, (tx) =>
+        tx.user.findUniqueOrThrow({
+          where: { id },
+          select: { phone: true, email: true, name: true },
+        }),
+      );
+      expect(row).toEqual({ phone, email: null, name: 'Fixed' });
+    },
+  );
 
   it('the app role cannot insert or delete users directly', async () => {
     await expect(

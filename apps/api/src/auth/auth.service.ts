@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/c
 import { ConfigService } from '@nestjs/config';
 import { withContext, type Role } from '@jantrik/db';
 import {
+  isStaffRole,
   normalizeBdPhone,
   type AuthClient,
   type AuthResponse,
@@ -82,12 +83,23 @@ export class AuthService {
     // Always verify (against a dummy hash if needed) so timing doesn't reveal unknown accounts.
     const ok = await this.passwords.verify(user?.password_hash, password);
     if (!user || !ok) throw invalidCredentials();
+    // Passwords are for staff (sprint 1 P1): an active staff membership in an open institute.
+    // Anyone else gets the same answer as a wrong password, and it counts as a failed attempt.
+    const memberships = await listMembershipsFor(this.prisma.client, user.id);
+    if (!memberships.some((m) => m.selectable && m.roles.some(isStaffRole))) {
+      throw invalidCredentials();
+    }
     await this.limiter.reset(accountKey);
-    return this.completeLogin(user, client, meta);
+    return this.completeLogin(user, client, meta, memberships);
   }
 
   /** Users with exactly one selectable tenant are switched into it automatically. */
-  private async completeLogin(login: LoginUser, client: AuthClient, meta: SessionMeta) {
+  private async completeLogin(
+    login: LoginUser,
+    client: AuthClient,
+    meta: SessionMeta,
+    memberships?: MembershipSummary[],
+  ) {
     // The login lookup (a SECURITY DEFINER function) returns only what checking credentials
     // needs. Profile fields are read afterwards as the user, under the normal users RLS.
     const { nameBn, colorScheme } = await withContext(
@@ -106,9 +118,9 @@ export class AuthService {
       locale: login.locale,
       colorScheme,
     };
-    const selectable = (await listMembershipsFor(this.prisma.client, user.id)).filter(
-      (m) => m.selectable,
-    );
+    const selectable = (
+      memberships ?? (await listMembershipsFor(this.prisma.client, user.id))
+    ).filter((m) => m.selectable);
     const active = selectable.length === 1 ? selectable[0] : undefined;
     const { sessionId, refreshToken } = await this.sessions.create({
       userId: user.id,

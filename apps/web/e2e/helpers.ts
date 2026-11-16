@@ -23,6 +23,10 @@ export const DEMO = {
   arifGuardian: '01811000702',
   sumaiyaGuardian: '01811000703',
   rafiGuardian: '01611000301',
+  // Only password.spec signs in as these two: it changes the teacher's password (and signs out
+  // her other sessions), and checks the guardian has no password page. Arpita's father.
+  aloTeacher: '01511000002',
+  arpitaGuardian: '01911000201',
   // Platform admin (Jantrik staff, /platform): password + authenticator app; enrols on first login.
   platformAdmin: '01700000001',
 };

@@ -15,6 +15,9 @@ const DEVICE_AREAS = ['devices', 'people'] as const;
 /** Staff attendance likewise: messages/staff-attendance/<area>.<locale>.json, into `staffAttendance`. */
 const STAFF_ATTENDANCE_AREAS = ['common', 'day', 'month'] as const;
 
+/** The person's own account likewise: messages/account/<area>.<locale>.json, into `account`. */
+const ACCOUNT_AREAS = ['password'] as const;
+
 /** Every message of a language (server side; the browser gets each route's part). */
 export async function loadMessages(locale: Locale): Promise<Record<string, unknown>> {
   const base = (await import(`../../messages/${locale}.json`)).default;
@@ -39,11 +42,17 @@ export async function loadMessages(locale: Locale): Promise<Record<string, unkno
         (await import(`../../messages/staff-attendance/${area}.${locale}.json`)).default,
     ),
   );
+  const account = await Promise.all(
+    ACCOUNT_AREAS.map(
+      async (area) => (await import(`../../messages/account/${area}.${locale}.json`)).default,
+    ),
+  );
   return {
     ...base,
     fees: Object.assign({}, ...fees),
     exams: Object.assign({}, ...exams),
     devices: Object.assign({}, ...devices),
     staffAttendance: Object.assign({}, ...staffAttendance),
+    account: Object.assign({}, ...account),
   };
 }
