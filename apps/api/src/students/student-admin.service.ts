@@ -215,7 +215,8 @@ export class StudentAdminService {
         const enrolled = await tx.enrolment.count({
           where: {
             sectionId: e.sectionId,
-            student: { deletedAt: null },
+            // Only students still here take a seat: a leaver frees theirs (review round 2).
+            student: { deletedAt: null, status: 'ACTIVE' },
             ...(exceptEnrolmentId ? { id: { not: exceptEnrolmentId } } : {}),
           },
         });

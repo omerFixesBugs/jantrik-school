@@ -64,8 +64,34 @@ export class RollNumberingService {
         run: { select: { id: true, rollStrategy: true, classLevelId: true } },
       },
     });
-    const byEnrolment = new Map(rows.map((r) => [r.toEnrolmentId!, r]));
-    const strategies = this.strategies(rows, classLevelId);
+    // The group comes from the class the student is in now, not from the (immutable) applied
+    // row, so a placement corrected after apply is numbered where it belongs (review round 2,
+    // SF-A): in the run's own class → a repeater; in another class → promoted.
+    const grouped = rows.map((r) => ({
+      ...r,
+      group: (r.run.classLevelId === classLevelId ? 'REPEATER' : 'PROMOTED') as RollGroup,
+    }));
+    const strategies = this.strategies(grouped, classLevelId);
+    // Old roll and merit place only count within the run whose strategy orders the group (the
+    // class's own run for repeaters, the main promoting run for the promoted): another run's
+    // figures come from another class and another exam.
+    const ordering = {
+      PROMOTED: this.promotingRun(grouped),
+      REPEATER: grouped.find((r) => r.run.classLevelId === classLevelId)?.run.id ?? null,
+    };
+    const byEnrolment = new Map(
+      grouped.map((r) => {
+        const own = ordering[r.group as 'PROMOTED' | 'REPEATER'] === r.run.id;
+        return [
+          r.toEnrolmentId!,
+          {
+            group: r.group,
+            fromRoll: own ? r.fromRoll : null,
+            meritPosition: own ? r.meritPosition : null,
+          },
+        ];
+      }),
+    );
 
     const sectionIds = [
       ...new Set(enrolments.map((e) => e.sectionId).filter((s): s is string => s !== null)),
@@ -91,7 +117,7 @@ export class RollNumberingService {
           const row = byEnrolment.get(e.id);
           return {
             id: e.id,
-            group: groupOf(row?.decision),
+            group: row?.group ?? 'NEW',
             nameBn: e.student.nameBn,
             nameEn: e.student.nameEn,
             studentCode: e.student.studentCode,
@@ -112,7 +138,7 @@ export class RollNumberingService {
           studentCode: e.student.studentCode,
           nameBn: e.student.nameBn,
           nameEn: e.student.nameEn,
-          group: groupOf(row?.decision),
+          group: row?.group ?? 'NEW',
           oldRoll: row?.fromRoll ?? null,
           meritPosition: row?.meritPosition ?? null,
           roll: e.roll,
@@ -176,26 +202,28 @@ export class RollNumberingService {
    */
   private strategies(
     rows: {
-      decision: string;
+      group: RollGroup;
       run: { id: string; rollStrategy: RollStrategy; classLevelId: string };
     }[],
     classLevelId: string,
   ): Record<RollGroup, RollStrategy> {
-    const promotedBy = new Map<string, { n: number; strategy: RollStrategy }>();
-    for (const r of rows.filter((x) => x.decision === 'PROMOTE')) {
-      const c = promotedBy.get(r.run.id) ?? { n: 0, strategy: r.run.rollStrategy };
-      c.n++;
-      promotedBy.set(r.run.id, c);
-    }
-    const promoted = [...promotedBy.entries()].sort(
-      (a, b) => b[1].n - a[1].n || (a[0] < b[0] ? -1 : 1),
-    )[0];
+    const promoting = this.promotingRun(rows);
     const own = rows.find((r) => r.run.classLevelId === classLevelId)?.run.rollStrategy;
     return {
-      PROMOTED: promoted?.[1].strategy ?? 'NAME_BN',
+      PROMOTED: rows.find((r) => r.run.id === promoting)?.run.rollStrategy ?? 'NAME_BN',
       REPEATER: own ?? 'NAME_BN',
       NEW: 'NAME_BN',
     };
+  }
+
+  /** The run that brings most of the class's promoted students (normally the class below). */
+  private promotingRun(rows: { group: RollGroup; run: { id: string } }[]): string | null {
+    const count = new Map<string, number>();
+    for (const r of rows.filter((x) => x.group === 'PROMOTED'))
+      count.set(r.run.id, (count.get(r.run.id) ?? 0) + 1);
+    return (
+      [...count.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0] ?? null
+    );
   }
 
   /**
@@ -259,12 +287,6 @@ export class RollNumberingService {
       });
     return this.preview(input.toYearId, input.classLevelId);
   }
-}
-
-function groupOf(decision: string | undefined): RollGroup {
-  if (decision === 'PROMOTE') return 'PROMOTED';
-  if (decision === 'REPEAT') return 'REPEATER';
-  return 'NEW';
 }
 
 function versionOf(enrolments: { id: string; sectionId: string | null; roll: number | null }[]) {
