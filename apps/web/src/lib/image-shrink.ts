@@ -30,7 +30,9 @@ export function fitWithin(
 export async function shrinkForUpload(file: File, opaque: boolean): Promise<File> {
   try {
     if (typeof createImageBitmap !== 'function') return file;
-    const bitmap = await createImageBitmap(file); // EXIF orientation applied by the browser
+    // Upright as the camera meant it; an engine that does not know the option throws, and the
+    // original is sent (the server turns it upright too).
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
     const size = fitWithin(bitmap.width, bitmap.height, UPLOAD_LONG_SIDE);
     if (!size.scaled && file.size <= SMALL_ENOUGH_BYTES) {
       bitmap.close();

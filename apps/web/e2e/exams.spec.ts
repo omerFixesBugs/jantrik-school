@@ -103,6 +103,12 @@ async function annualFor(classCode: string, subjectCode: string, otherCode: stri
   };
 }
 
+/** Undone after each test, passed or failed (the demo child's photo), so other specs see the seed. */
+const cleanups: (() => Promise<unknown>)[] = [];
+test.afterEach(async () => {
+  for (const undo of cleanups.splice(0)) await undo();
+});
+
 for (const c of CASES) {
   test(`${c.lang}: a teacher enters marks on a phone, the office publishes, a guardian sees the report card`, async ({
     browser,
@@ -271,7 +277,10 @@ for (const c of CASES) {
     // route (/me/children/:id/photo), checked once (sprint 1 P2, from the review).
     const office = await apiLogin(DEMO.shaplaOwner);
     const photoChild = (await api<StudentsPage>(office, `/students?q=${c.child}`)).items[0]!.id;
-    if (c.lang === 'bn') await apiUploadPhoto(office, photoChild);
+    if (c.lang === 'bn') {
+      await apiUploadPhoto(office, photoChild);
+      cleanups.push(() => api(office, `/students/${photoChild}/photo`, { method: 'DELETE' }));
+    }
 
     // ── The guardian, 390 px ──
     const guardian = await newPage(browser, baseURL, GUARDIAN_PHONE);
@@ -296,8 +305,6 @@ for (const c of CASES) {
     expect(pdf.match(/\/Type\s*\/Page[^s]/g)?.length).toBe(1);
     expect(pdf).toMatch(/\/MediaBox\s*\[\s*0\s+0\s+(594|595)(\.\d+)?\s+(841|842)(\.\d+)?\s*\]/);
     await guardian.emulateMedia({ media: 'screen' });
-    // The photo goes again, so the other specs see the demo data as seeded.
-    if (c.lang === 'bn') await api(office, `/students/${photoChild}/photo`, { method: 'DELETE' });
     const [, childId, examClassId] = /\/children\/([^/]+)\/results\/([^/?]+)/.exec(guardian.url())!;
     expect(examClassId).toBe(ids.examClassId);
 
