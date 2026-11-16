@@ -25,7 +25,8 @@
     "imageTooBig": "The image has too many pixels (at most 50 megapixels). Choose a smaller one.",
     "imageCannotShrink": "This image could not be made small enough. Choose another one.",
     "fileTooLarge": "The file is larger than 5 MB. Choose a smaller one.",
-    "storageFull": "The institute's storage for images is full. Remove old images or contact Jantrik."
+    "storageFull": "The institute's storage for images is full. Remove old images or contact Jantrik.",
+    "imageBusy": "Many images are being prepared right now. Try again in a moment."
   },
   "login": {
     "title": "Sign in",

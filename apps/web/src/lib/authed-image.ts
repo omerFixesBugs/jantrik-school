@@ -63,6 +63,7 @@ export function useImageErrorMessage() {
         if (error.code === 'IMAGE_TOO_BIG') return t('imageTooBig');
         if (error.code === 'IMAGE_CANNOT_SHRINK') return t('imageCannotShrink');
         if (error.code === 'STORAGE_FULL') return t('storageFull');
+        if (error.code === 'IMAGE_BUSY') return t('imageBusy');
         if (error.status === 413) return t('fileTooLarge');
       }
       return describe(error);

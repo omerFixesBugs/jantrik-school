@@ -38,13 +38,15 @@ export function StudentAvatar({
 export function StudentPhoto({
   studentId,
   photoId,
+  as = 'staff',
   className,
 }: {
   studentId: string;
   photoId: string | null;
+  as?: 'staff' | 'guardian';
   className?: string;
 }) {
-  const url = useAuthedImage(studentPhotoPath(studentId, photoId), photoId);
+  const url = useAuthedImage(studentPhotoPath(studentId, photoId, as), photoId);
   if (!url) return null;
   return (
     // eslint-disable-next-line @next/next/no-img-element

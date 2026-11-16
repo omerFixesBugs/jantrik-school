@@ -25,17 +25,32 @@ const WIDE = 'hidden sm:table-cell print:table-cell';
  * Bangla first. What a card may show is decided by the API (parents' names only under decision
  * #19). Black on white in print whatever the theme.
  */
-export function ReportCardsPrint({ data }: { data: ReportCards }) {
+export function ReportCardsPrint({
+  data,
+  as = 'staff',
+}: {
+  data: ReportCards;
+  /** Whose view: a guardian's photos come from their own route (/me/children/:id/photo). */
+  as?: 'staff' | 'guardian';
+}) {
   return (
     <div className="exam-print print-area flex flex-col gap-6" data-testid="report-cards">
       {data.cards.map((card) => (
-        <ReportCardPage key={card.student.id} data={data} card={card} />
+        <ReportCardPage key={card.student.id} data={data} card={card} as={as} />
       ))}
     </div>
   );
 }
 
-function ReportCardPage({ data, card }: { data: ReportCards; card: ReportCard }) {
+function ReportCardPage({
+  data,
+  card,
+  as,
+}: {
+  data: ReportCards;
+  card: ReportCard;
+  as: 'staff' | 'guardian';
+}) {
   const t = useTranslations('exams.print');
   const locale = useLocale() as Locale;
   const label = useLabel();
@@ -95,6 +110,7 @@ function ReportCardPage({ data, card }: { data: ReportCards; card: ReportCard })
         <StudentPhoto
           studentId={card.student.id}
           photoId={card.student.photoId}
+          as={as}
           className="size-24 rounded-md border"
         />
       </section>

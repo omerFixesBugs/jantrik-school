@@ -281,6 +281,7 @@ function ImageSlot({ slot, file }: { slot: InstituteImageSlot; file: FileRef | n
           disabled={pending}
           onChoose={(f) => upload.mutate(f)}
           onTooLarge={() => toast.error(tErrors('fileTooLarge'))}
+          opaque={false}
           testId={`image-${slot}-choose`}
         >
           {file ? t('imageReplace') : t('imageUpload')}

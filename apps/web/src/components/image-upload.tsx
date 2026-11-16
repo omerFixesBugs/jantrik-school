@@ -4,14 +4,18 @@ import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES } from '@jantrik/shared';
 import { ImageUpIcon } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { shrinkForUpload } from '@/lib/image-shrink';
 
 /**
- * A "choose image" button around a hidden file input. A file over 5 MB is refused here with the
- * server's own message, before anything is sent; the server decides the rest by content.
+ * A "choose image" button around a hidden file input. The chosen image is shrunk in the browser
+ * first (image-shrink.ts: a phone photo becomes about 300 KB); a file still over 5 MB is refused
+ * here with the server's own message, before anything is sent. The server decides the rest by
+ * content. `opaque`: a photo (sent as JPEG); otherwise transparency is kept (PNG).
  */
 export function ChooseImageButton({
   onChoose,
   onTooLarge,
+  opaque,
   children,
   variant = 'outline',
   size,
@@ -20,6 +24,7 @@ export function ChooseImageButton({
 }: {
   onChoose: (file: File) => void;
   onTooLarge: () => void;
+  opaque: boolean;
   children: ReactNode;
   variant?: 'outline' | 'default' | 'ghost';
   size?: 'sm' | 'default';
@@ -28,6 +33,7 @@ export function ChooseImageButton({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const id = useId();
+  const [shrinking, setShrinking] = useState(false);
   return (
     <>
       <input
@@ -42,15 +48,17 @@ export function ChooseImageButton({
           const file = e.target.files?.[0];
           e.target.value = ''; // the same file can be chosen again after an error
           if (!file) return;
-          if (file.size > UPLOAD_MAX_BYTES) onTooLarge();
-          else onChoose(file);
+          setShrinking(true);
+          void shrinkForUpload(file, opaque)
+            .then((ready) => (ready.size > UPLOAD_MAX_BYTES ? onTooLarge() : onChoose(ready)))
+            .finally(() => setShrinking(false));
         }}
       />
       <Button
         type="button"
         variant={variant}
         size={size}
-        disabled={disabled}
+        disabled={disabled || shrinking}
         onClick={() => input.current?.click()}
         data-testid={testId}
       >

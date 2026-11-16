@@ -154,7 +154,7 @@ export function ChildReportCard({
           <p className="text-muted-foreground text-sm print:hidden">
             {t('publishedOn', { date: formatDate(q.data.publishedAt, locale) })}
           </p>
-          <ReportCardsPrint data={q.data} />
+          <ReportCardsPrint data={q.data} as="guardian" />
         </>
       )}
     </div>

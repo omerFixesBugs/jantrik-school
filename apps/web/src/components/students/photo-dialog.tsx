@@ -98,6 +98,7 @@ export function PhotoDialog({
               setFile(f);
             }}
             onTooLarge={() => setError(tErrors('fileTooLarge'))}
+            opaque
             disabled={pending}
             testId="photo-choose"
           >

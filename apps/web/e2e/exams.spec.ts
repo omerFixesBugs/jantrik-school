@@ -13,6 +13,7 @@ import {
   api,
   API_URL,
   apiLogin,
+  apiUploadPhoto,
   apiOtpLogin,
   DEMO,
   otpLoginWithBanglaDigits,
@@ -266,6 +267,12 @@ for (const c of CASES) {
     );
     await admin.emulateMedia({ media: 'screen' });
 
+    // The child gets a photo; the guardian's report card shows it through the guardian's own
+    // route (/me/children/:id/photo), checked once (sprint 1 P2, from the review).
+    const office = await apiLogin(DEMO.shaplaOwner);
+    const photoChild = (await api<StudentsPage>(office, `/students?q=${c.child}`)).items[0]!.id;
+    if (c.lang === 'bn') await apiUploadPhoto(office, photoChild);
+
     // ── The guardian, 390 px ──
     const guardian = await newPage(browser, baseURL, GUARDIAN_PHONE);
     await otpLoginWithBanglaDigits(guardian, c.guardian);
@@ -282,12 +289,15 @@ for (const c of CASES) {
     const reportCard = guardian.getByTestId('report-card');
     await expect(reportCard).toBeVisible();
     await expect(reportCard.getByTestId('report-card-summary')).toBeVisible();
+    if (c.lang === 'bn') await expect(reportCard.getByTestId('student-photo')).toBeVisible();
     expect(await findLayoutProblems(guardian)).toEqual([]);
     await guardian.emulateMedia({ media: 'print' });
     const pdf = (await guardian.pdf({ preferCSSPageSize: true })).toString('latin1');
     expect(pdf.match(/\/Type\s*\/Page[^s]/g)?.length).toBe(1);
     expect(pdf).toMatch(/\/MediaBox\s*\[\s*0\s+0\s+(594|595)(\.\d+)?\s+(841|842)(\.\d+)?\s*\]/);
     await guardian.emulateMedia({ media: 'screen' });
+    // The photo goes again, so the other specs see the demo data as seeded.
+    if (c.lang === 'bn') await api(office, `/students/${photoChild}/photo`, { method: 'DELETE' });
     const [, childId, examClassId] = /\/children\/([^/]+)\/results\/([^/?]+)/.exec(guardian.url())!;
     expect(examClassId).toBe(ids.examClassId);
 
