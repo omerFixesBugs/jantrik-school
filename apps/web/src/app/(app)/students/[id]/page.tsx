@@ -9,7 +9,9 @@ import {
   formatIdentifier,
   LEAVE_STATUSES,
   type LeaveStatus,
+  type SetupClassLevel,
   type SetupSection,
+  type SetupStudyGroup,
   type StudentProfile,
 } from '@jantrik/shared';
 import {
@@ -66,6 +68,7 @@ type Dialog =
   | 'deactivate'
   | 'leave'
   | 'return'
+  | { placement: string }
   | 'photo'
   | { removeLink: string; name: string }
   | null;
@@ -106,6 +109,8 @@ function useStudentMutation<I>(
           ALREADY_LEFT: t('errorAlreadyLeft'),
           NOT_LEFT: t('errorNotLeft'),
           STUDENT_LIMIT: t('errorStudentLimit'),
+          NOT_A_NEW_YEAR: t('errorNotANewYear'),
+          ENROLMENT_IN_USE: t('errorEnrolmentInUse'),
         };
         if (e.code && known[e.code]) return void toast.error(known[e.code]!);
         if ([400, 409, 422].includes(e.status)) return void toast.error(t('errorCheckForm'));
@@ -305,6 +310,22 @@ function Profile() {
                   <span className="flex flex-wrap items-center gap-2 font-medium">
                     {e.academicYear.name}
                     {e.academicYear.isCurrent && <Badge variant="soft">{t('current')}</Badge>}
+                    {/* A year after the current one (listed above it): its placement can be
+                        corrected, e.g. a promotion applied by mistake (P5-L). */}
+                    {writable &&
+                      !e.academicYear.isCurrent &&
+                      p.enrolments.findIndex((x) => x.academicYear.isCurrent) >
+                        p.enrolments.indexOf(e) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDialog({ placement: e.id })}
+                          data-testid="change-placement"
+                        >
+                          <PencilIcon aria-hidden />
+                          {t('changePlacement')}
+                        </Button>
+                      )}
                   </span>
                   <span className="text-sm break-words">
                     {[
@@ -443,6 +464,9 @@ function Profile() {
       {dialog === 'transfer' && current && <TransferDialog profile={p} onClose={close} />}
       {dialog === 'guardian' && <AddGuardianDialog profile={p} onClose={close} />}
       {dialog === 'leave' && <LeaveDialog profile={p} name={name} onClose={close} />}
+      {dialog !== null && typeof dialog === 'object' && 'placement' in dialog && (
+        <PlacementDialog profile={p} enrolmentId={dialog.placement} onClose={close} />
+      )}
       <ConfirmDialog
         open={dialog === 'return'}
         onOpenChange={(o) => !o && close()}
@@ -598,6 +622,107 @@ function TransferDialog({ profile, onClose }: { profile: StudentProfile; onClose
         dir="ltr"
         maxLength={6}
         error={errors['roll']}
+      />
+    </FormDialog>
+  );
+}
+
+/**
+ * Corrects a placement in a year that is not current yet (P5-L): class, section and group; the
+ * roll is cleared (numbered again). Refused once that year has records for the student.
+ */
+function PlacementDialog({
+  profile,
+  enrolmentId,
+  onClose,
+}: {
+  profile: StudentProfile;
+  enrolmentId: string;
+  onClose: () => void;
+}) {
+  const t = useTranslations('profile');
+  const label = useLabel();
+  const locale = useLocale() as Locale;
+  const { client, session } = useAuth();
+  const e = profile.enrolments.find((x) => x.id === enrolmentId)!;
+  const classes = useQuery({
+    queryKey: ['setup', session?.tenant?.id, '/setup/class-levels'],
+    queryFn: () => client.api<SetupClassLevel[]>('/setup/class-levels'),
+  });
+  const sections = useQuery({
+    queryKey: ['setup', session?.tenant?.id, `/setup/sections?academicYearId=${e.academicYear.id}`],
+    queryFn: () =>
+      client.api<SetupSection[]>(`/setup/sections?academicYearId=${e.academicYear.id}`),
+  });
+  const groups = useQuery({
+    queryKey: ['setup', session?.tenant?.id, '/setup/study-groups'],
+    queryFn: () => client.api<SetupStudyGroup[]>('/setup/study-groups'),
+  });
+  const [classLevelId, setClassLevelId] = useState(e.classLevel.id);
+  const [sectionId, setSectionId] = useState(e.section?.id ?? '');
+  const [studyGroupId, setStudyGroupId] = useState(e.studyGroup?.id ?? '');
+  const serverErrors = useServerFieldErrors();
+  const save = useStudentMutation(
+    profile.id,
+    () =>
+      client.api<StudentProfile>(`/students/${profile.id}/enrolments/${enrolmentId}`, {
+        method: 'PATCH',
+        json: {
+          classLevelId,
+          sectionId: sectionId || null,
+          studyGroupId: studyGroupId || null,
+        },
+      }),
+    onClose,
+  );
+  const errors = serverErrors(save.error);
+  return (
+    <FormDialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={t('placementTitle', { year: e.academicYear.name })}
+      description={t('placementHint')}
+      submitLabel={t('save')}
+      pending={save.isPending}
+      onSubmit={() => save.mutate(undefined)}
+      testId="placement-dialog"
+    >
+      <SelectField
+        id="placement-class"
+        label={label('class_level', 'Class')}
+        value={classLevelId}
+        onChange={(v) => {
+          setClassLevelId(v);
+          setSectionId('');
+        }}
+        required
+        options={(classes.data ?? [])
+          .filter((c) => c.isActive)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((c) => ({ value: c.id, label: displayName(c.nameBn, c.nameEn, locale) }))}
+        error={errors['classLevelId']}
+      />
+      <SelectField
+        id="placement-section"
+        label={label('section', 'Section')}
+        value={sectionId}
+        onChange={setSectionId}
+        placeholder={t('choose')}
+        options={(sections.data ?? [])
+          .filter((s) => s.isActive && s.classLevelId === classLevelId)
+          .map((s) => ({ value: s.id, label: s.name }))}
+        error={errors['sectionId']}
+      />
+      <SelectField
+        id="placement-group"
+        label={label('study_group', 'Group')}
+        value={studyGroupId}
+        onChange={setStudyGroupId}
+        placeholder={t('choose')}
+        options={(groups.data ?? [])
+          .filter((g) => g.isActive)
+          .map((g) => ({ value: g.id, label: displayName(g.nameBn, g.nameEn, locale) }))}
+        error={errors['studyGroupId']}
       />
     </FormDialog>
   );

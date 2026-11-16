@@ -296,6 +296,15 @@ export interface RollsPreview {
   sections: RollsPreviewSection[];
   /** Enrolments of the class in the to-year without a section (not numbered). */
   withoutSection: number;
+  /**
+   * Runs with rows still to apply into this class: numbering before they are applied puts the
+   * students they bring after everyone numbered. Saving then needs `force`.
+   */
+  pendingRuns: {
+    runId: string;
+    classLevel: { id: string; nameBn: string; nameEn: string };
+    pending: number;
+  }[];
   /** Hash of the class's to-year enrolment ids and rolls; saving sends it back. */
   version: string;
 }
@@ -319,6 +328,8 @@ export interface SwitchCheck {
   notCarriedOver: number;
   /** Enrolments of the to-year in a section but without a roll. */
   withoutRoll: number;
+  /** Enrolments of the to-year without a section (the apply enrols rows without one so). */
+  withoutSection: number;
   /** Nothing listed above. */
   clean: boolean;
 }

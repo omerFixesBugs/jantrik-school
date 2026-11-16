@@ -39,7 +39,12 @@ export class RollNumberingService {
     });
     if (!classLevel) throw new NotFoundException('Class level not found');
     const enrolments = await tx.enrolment.findMany({
-      where: { academicYearId: toYearId, classLevelId, student: { deletedAt: null } },
+      // Leavers and deactivated students get no roll (review NIT 8).
+      where: {
+        academicYearId: toYearId,
+        classLevelId,
+        student: { deletedAt: null, status: 'ACTIVE' },
+      },
       select: {
         id: true,
         studentId: true,
@@ -121,10 +126,44 @@ export class RollNumberingService {
       );
       out.push({ section, rows: previewRows });
     }
+    // Runs with rows still to apply into this class (review SF3): numbering now would put the
+    // students they bring after everyone numbered, against S15's order.
+    const pending = await tx.promotionRunStudent.groupBy({
+      by: ['runId'],
+      where: {
+        toYearId,
+        targetClassLevelId: classLevelId,
+        appliedAt: null,
+        decision: { not: 'LEAVE' },
+      },
+      _count: { _all: true },
+    });
+    const pendingRuns =
+      pending.length === 0
+        ? []
+        : (
+            await tx.promotionRun.findMany({
+              where: { id: { in: pending.map((p) => p.runId) } },
+              select: {
+                id: true,
+                classLevel: { select: { id: true, nameBn: true, nameEn: true, sortOrder: true } },
+              },
+              orderBy: [{ classLevel: { sortOrder: 'asc' } }, { id: 'asc' }],
+            })
+          ).map((r) => ({
+            runId: r.id,
+            classLevel: {
+              id: r.classLevel.id,
+              nameBn: r.classLevel.nameBn,
+              nameEn: r.classLevel.nameEn,
+            },
+            pending: pending.find((p) => p.runId === r.id)?._count._all ?? 0,
+          }));
     return {
       toYear: { id: toYear.id, name: toYear.name },
       classLevel,
       strategies,
+      pendingRuns,
       sections: out,
       withoutSection: enrolments.filter((e) => e.sectionId === null).length,
       version: versionOf(enrolments),
@@ -169,6 +208,10 @@ export class RollNumberingService {
     const preview = await this.preview(input.toYearId, input.classLevelId);
     if (preview.version !== input.version)
       throw apiError(409, 'PREVIEW_CHANGED', 'The class changed; look at the numbers again');
+    if (preview.pendingRuns.length > 0 && !input.force)
+      throw apiError(409, 'RUNS_PENDING', 'Runs into this class are not applied yet', {
+        runs: preview.pendingRuns.map((r) => ({ runId: r.runId, pending: r.pending })),
+      });
     const written: { enrolmentId: string; sectionId: string; roll: number }[] = [];
     for (const s of input.sections) {
       const section = preview.sections.find((p) => p.section.id === s.sectionId);

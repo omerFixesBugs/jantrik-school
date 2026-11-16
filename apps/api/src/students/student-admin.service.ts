@@ -10,6 +10,7 @@ import {
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
+import { SubjectChoicesCopier } from '../exams/setup/subject-choices-copier.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
 import { StudentAccess } from './student-access.service.js';
@@ -99,6 +100,7 @@ export class StudentAdminService {
     private readonly codes: StudentCodesService,
     private readonly guardians: GuardianLinker,
     private readonly access: StudentAccess,
+    private readonly choices: SubjectChoicesCopier,
   ) {}
 
   private get tenantId(): string {
@@ -623,6 +625,86 @@ export class StudentAdminService {
         })),
       },
       newValues: { status: 'INACTIVE', softDeleted: true },
+    });
+    return this.profile(studentId);
+  }
+
+  /**
+   * Corrects a placement in a year that is not current yet (P5-L: an applied promotion is final,
+   * so a student promoted or kept back by mistake is fixed here): class, section and study group,
+   * with the same checks as an enrolment (active class, section of that year and class, capacity),
+   * the roll cleared. Only while nothing of that year depends on the placement yet: no
+   * attendance, exam roster or fee dues there (409 ENROLMENT_IN_USE). Moving to another class
+   * removes that year's subject choices of the old class's subjects. Audited.
+   */
+  async changePlacement(
+    studentId: string,
+    enrolmentId: string,
+    input: { classLevelId: string; sectionId: string | null; studyGroupId: string | null },
+  ): Promise<StudentProfile> {
+    const tx = this.db.tx;
+    const before = await this.active(studentId);
+    const e = before.enrolments.find((x) => x.id === enrolmentId);
+    if (!e) throw new NotFoundException('Enrolment not found');
+    const [year, current] = await Promise.all([
+      tx.academicYear.findUniqueOrThrow({
+        where: { id: e.academicYear.id },
+        select: { id: true, startDate: true, isCurrent: true },
+      }),
+      tx.academicYear.findFirst({ where: { isCurrent: true }, select: { startDate: true } }),
+    ]);
+    if (year.isCurrent || (current && year.startDate.getTime() <= current.startDate.getTime()))
+      throw apiError(422, 'NOT_A_NEW_YEAR', 'Only a year that is not current yet; use a transfer', {
+        field: 'enrolmentId',
+      });
+    const [attendance, exams, dues] = await Promise.all([
+      tx.attendanceRecord.count({
+        where: { studentId, session: { section: { academicYearId: year.id } } },
+      }),
+      tx.examCandidate.count({ where: { studentId, exam: { academicYearId: year.id } } }),
+      tx.feeDue.count({ where: { studentId, academicYearId: year.id } }),
+    ]);
+    if (attendance + exams + dues > 0)
+      throw apiError(409, 'ENROLMENT_IN_USE', 'This year already has records for the student', {
+        attendance,
+        exams,
+        dues,
+      });
+    await tx.$queryRaw`SELECT id FROM enrolments WHERE id = ${enrolmentId}::uuid FOR UPDATE`;
+    await this.checkEnrolment(
+      {
+        academicYearId: year.id,
+        classLevelId: input.classLevelId,
+        sectionId: input.sectionId,
+        studyGroupId: input.studyGroupId,
+        roll: null,
+      },
+      enrolmentId,
+    );
+    const removedChoices =
+      e.classLevel.id === input.classLevelId
+        ? []
+        : await this.choices.removeOtherClasses(studentId, year.id, input.classLevelId);
+    await tx.enrolment.update({
+      where: { id: enrolmentId },
+      data: {
+        classLevelId: input.classLevelId,
+        sectionId: input.sectionId,
+        studyGroupId: input.studyGroupId,
+        roll: null,
+      },
+    });
+    await this.audit.record({
+      entity: 'enrolment',
+      entityId: enrolmentId,
+      action: 'UPDATE',
+      oldValues: {
+        classLevelId: e.classLevel.id,
+        sectionId: e.section?.id ?? null,
+        studyGroupId: e.studyGroup?.id ?? null,
+        roll: e.roll,
+      },
+      newValues: { ...input, roll: null, reason: 'placement', removedChoices },
     });
     return this.profile(studentId);
   }

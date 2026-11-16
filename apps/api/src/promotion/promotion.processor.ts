@@ -64,7 +64,9 @@ export class PromotionProcessor extends WorkerHost {
           opts,
         )) > 0
       );
-      await this.jobs.run(tenantId, () => this.apply.finish(runId), opts);
+      const done = await this.jobs.run(tenantId, () => this.apply.finish(runId), opts);
+      // Rows still pending after every step (e.g. one added meanwhile): try again.
+      if (!done) throw new Error('INCOMPLETE');
     } catch (error) {
       const code = applyErrorCode(error);
       // Not the message: database errors can contain row values (personal data).

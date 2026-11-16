@@ -6,6 +6,7 @@ import type { Queue } from 'bullmq';
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
+import { SubjectChoicesCopier } from '../exams/setup/subject-choices-copier.js';
 import { Db } from '../tenancy/db.service.js';
 import {
   applyJobId,
@@ -48,6 +49,7 @@ export class PromotionApplyService {
     private readonly context: RequestContext,
     private readonly audit: AuditService,
     private readonly promotions: PromotionService,
+    private readonly choices: SubjectChoicesCopier,
     @InjectQueue(PROMOTIONS_QUEUE) private readonly queue: Queue,
   ) {}
 
@@ -335,6 +337,9 @@ export class PromotionApplyService {
       capacity = section.capacity;
     }
     const studentIds = rows.map((r) => r.studentId);
+    // The students stay as read until this transaction ends: a leave or deactivation committing
+    // meanwhile waits, so no one who just left is enrolled (review NIT 9).
+    await tx.$queryRaw`SELECT id FROM students WHERE id = ANY(${studentIds}::uuid[]) FOR SHARE`;
     const students = new Map(
       (
         await tx.student.findMany({
@@ -424,21 +429,7 @@ export class PromotionApplyService {
     const repeaters = toCreate
       .filter((r) => r.decision === 'REPEAT' && createdBy.has(r.studentId))
       .map((r) => r.studentId);
-    if (repeaters.length > 0) {
-      const choices = await tx.studentSubjectChoice.findMany({
-        where: {
-          academicYearId: run.fromYearId,
-          studentId: { in: repeaters },
-          subject: { isActive: true, classLevelId: run.classLevelId },
-        },
-        select: { studentId: true, subjectId: true, kind: true },
-      });
-      if (choices.length > 0)
-        await tx.studentSubjectChoice.createMany({
-          data: choices.map((c) => ({ ...c, tenantId, academicYearId: run.toYearId })),
-          skipDuplicates: true,
-        });
-    }
+    await this.choices.copyForRepeaters(repeaters, run.fromYearId, run.toYearId, run.classLevelId);
 
     const appliedAt = new Date();
     for (const r of rows) {
@@ -541,10 +532,17 @@ export class PromotionApplyService {
 
   /** The run stays APPLYING with a fixed error code for the admin (never a message). */
   async markError(runId: string, code: string): Promise<void> {
-    await this.db.tx.promotionRun.updateMany({
+    const { count } = await this.db.tx.promotionRun.updateMany({
       where: { id: runId, status: 'APPLYING' },
       data: { lastError: code },
     });
+    if (count > 0)
+      await this.audit.record({
+        entity: 'promotion_run',
+        entityId: runId,
+        action: 'UPDATE',
+        newValues: { step: 'stopped', lastError: code },
+      });
   }
 }
 
@@ -558,6 +556,7 @@ export function applyErrorCode(error: unknown): string {
   }
   const prismaCode = (error as { code?: unknown } | null)?.code;
   if (prismaCode === 'P2028' || prismaCode === 'P1008') return 'TIMEOUT';
+  if (error instanceof Error && error.message === 'INCOMPLETE') return 'INCOMPLETE';
   return 'ERROR';
 }
 

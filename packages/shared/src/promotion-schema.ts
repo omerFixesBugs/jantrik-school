@@ -132,6 +132,8 @@ export const numberRollsSchema = z.object({
   toYearId: z.uuid(),
   classLevelId: z.uuid(),
   version: z.string().min(1).max(128),
+  /** Number although runs into the class are not applied yet (409 RUNS_PENDING otherwise). */
+  force: z.boolean().default(false),
   sections: z
     .array(
       z.object({

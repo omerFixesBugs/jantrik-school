@@ -83,6 +83,13 @@ export class SwitchCheckService {
         student: { deletedAt: null, status: 'ACTIVE' },
       },
     });
+    const withoutSection = await tx.enrolment.count({
+      where: {
+        academicYearId: toYearId,
+        sectionId: null,
+        student: { deletedAt: null, status: 'ACTIVE' },
+      },
+    });
     return {
       toYear: { id: toYear.id, name: toYear.name, isCurrent: toYear.isCurrent },
       fromYear: fromYear ? { id: fromYear.id, name: fromYear.name } : null,
@@ -91,12 +98,14 @@ export class SwitchCheckService {
       classesWithoutPublishedAnnual,
       notCarriedOver,
       withoutRoll,
+      withoutSection,
       clean:
         classesWithoutRun.length === 0 &&
         runsNotApplied.length === 0 &&
         classesWithoutPublishedAnnual.length === 0 &&
         notCarriedOver === 0 &&
-        withoutRoll === 0,
+        withoutRoll === 0 &&
+        withoutSection === 0,
     };
   }
 }
