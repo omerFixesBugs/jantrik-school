@@ -34,7 +34,7 @@ export class TenantContextInterceptor implements NestInterceptor {
     if (this.reflector.getAllAndOverride<boolean>(OWN_TRANSACTION, targets)) return next.handle();
     const userScoped = this.reflector.getAllAndOverride<boolean>(USER_SCOPED, targets);
     return from(
-      this.transaction.run(() => lastValueFrom(next.handle(), { defaultValue: undefined }), {
+      this.transaction.around(() => lastValueFrom(next.handle(), { defaultValue: undefined }), {
         userScoped,
       }),
     );

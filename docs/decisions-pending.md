@@ -731,7 +731,7 @@ Changed after the review, round 2 (each code fix with a test that failed first):
   once with 503 `IMAGE_BUSY`, gives the slot back when the response closes (sent, failed or
   dropped by the client), and drops a body not received within 60 s.
 - **R12. `RequestTransaction.run` refuses to nest** inside a request transaction (it would replace
-  the outer one in the request context).
+  the outer one in the request context). The interceptor itself uses an unchecked entry (`around`): it is the outermost transaction, and a request made from inside a running job (as some tests do) inherits that job\'s request context.
 - **R13. The upload's transaction re-checks the session and the route's roles** (OWNER/ADMIN),
   read in the transaction, besides the institute's status and the membership: an admin
   downgraded, or a session revoked, while the body arrives stores nothing (403 / 401).

@@ -34,6 +34,7 @@ export class RequestTransaction {
     @Inject(REDIS) private readonly redis: Redis,
   ) {}
 
+  /** For services on @OwnTransaction routes. */
   async run<T>(
     fn: () => Promise<T>,
     opts: { userScoped?: boolean; roles?: readonly Role[] } = {},
@@ -45,6 +46,18 @@ export class RequestTransaction {
         'RequestTransaction.run: a transaction is already open',
       );
     }
+    return this.around(fn, opts);
+  }
+
+  /**
+   * TenantContextInterceptor's entry: the outermost transaction by definition, so no nesting
+   * check. (A request made from inside a running job, as some tests do, inherits the job's
+   * request context; the interceptor's transaction replaces it there, as it always has.)
+   */
+  async around<T>(
+    fn: () => Promise<T>,
+    opts: { userScoped?: boolean; roles?: readonly Role[] } = {},
+  ): Promise<T> {
     const principal = this.context.requirePrincipal();
     const tenantId = opts.userScoped ? null : (principal.tenantId ?? null);
     let committed: (() => unknown)[] = [];
