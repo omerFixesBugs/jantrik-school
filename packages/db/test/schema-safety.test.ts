@@ -182,9 +182,67 @@ describe('schema safety net', () => {
     expect(scoped.map((r) => r.fn).sort()).toEqual([
       'app_find_or_create_user',
       'auth_list_my_memberships',
+      'auth_my_password_is_set',
+      'auth_my_password_matches',
       'search_student_ids',
     ]);
     expect(scoped.filter((r) => !r.scoped)).toEqual([]);
+  });
+
+  // P1-J: no login reads a password hash. jantrik_app reads users column by column, and the list
+  // is pinned here: a new column, or a table-level SELECT coming back, is a deliberate change.
+  it('the app login reads users by column, never password_hash', async () => {
+    const [table] = await app.$queryRaw<{ table_select: boolean }[]>`
+      SELECT has_table_privilege('jantrik_app', 'users', 'SELECT') AS table_select`;
+    expect(table).toEqual({ table_select: false });
+    const columns = await app.$queryRaw<{ col: string }[]>`
+      SELECT a.attname::text AS col
+      FROM pg_attribute a
+      WHERE a.attrelid = 'users'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+        AND has_column_privilege('jantrik_app', 'users', a.attname, 'SELECT')
+      ORDER BY a.attname`;
+    expect(columns.map((c) => c.col)).toEqual([
+      'color_scheme',
+      'created_at',
+      'email',
+      'id',
+      'locale',
+      'name',
+      'name_bn',
+      'password_changed_at',
+      'phone',
+      'updated_at',
+    ]);
+  });
+
+  it('no login role but the owner, and not PUBLIC, may read users.password_hash', async () => {
+    const readers = await app.$queryRaw<{ name: string }[]>`
+      SELECT r.rolname::text AS name
+      FROM pg_roles r
+      WHERE (r.rolcanlogin OR r.rolname = 'public') AND NOT r.rolsuper
+        AND r.oid <> (SELECT relowner FROM pg_class WHERE oid = 'users'::regclass)
+        AND has_column_privilege(r.oid, 'users'::regclass, 'password_hash', 'SELECT')
+      UNION ALL
+      SELECT 'PUBLIC' WHERE has_column_privilege('public', 'users', 'password_hash', 'SELECT')`;
+    expect(readers).toEqual([]);
+  });
+
+  // The hash must not come back through a function either: every definer function jantrik_app
+  // may run that touches password_hash is listed here, and none returns a column of that name.
+  it('only the three login functions the app may run touch password_hash, and none returns it', async () => {
+    const rows = await app.$queryRaw<{ fn: string; result: string }[]>`
+      SELECT p.proname::text AS fn, pg_get_function_result(p.oid) AS result
+      FROM pg_proc p
+      WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
+        AND has_function_privilege('jantrik_app', p.oid, 'EXECUTE')
+        AND p.prosrc ILIKE '%password_hash%'
+      ORDER BY 1`;
+    expect(rows.map((r) => r.fn)).toEqual([
+      'auth_find_user_for_login',
+      'auth_my_password_is_set',
+      'auth_my_password_matches',
+    ]);
+    expect(rows.filter((r) => /password_hash/i.test(r.result))).toEqual([]);
   });
 
   // The login steps run before a platform session exists (the API has checked the password and
