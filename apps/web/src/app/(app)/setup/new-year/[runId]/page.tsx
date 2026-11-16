@@ -23,14 +23,13 @@ import { SectionCard, SelectField } from '@/components/form-kit';
 import { DateInput } from '@/components/date-input';
 import { Pill } from '@/components/kit/pill';
 import { PageGate } from '@/components/page-gate';
-import { usePromotionMutation, useStopReason } from '@/components/promotion/kit';
+import { pick, usePromotionMutation, useStopReason } from '@/components/promotion/kit';
 import { useSetupQuery } from '@/components/setup/setup-kit';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { pick } from '@/lib/fees';
 import { useLabel } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 

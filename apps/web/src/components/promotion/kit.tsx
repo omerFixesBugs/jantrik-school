@@ -20,6 +20,15 @@ const KNOWN = new Set([
   'YEAR_ORDER',
 ]);
 
+/** The name in the page's language, the other one when it is missing. */
+export function pick(
+  locale: string,
+  value: { nameBn?: string | null; nameEn?: string | null } | null | undefined,
+): string {
+  if (!value) return '';
+  return (locale === 'bn' ? value.nameBn || value.nameEn : value.nameEn || value.nameBn) ?? '';
+}
+
 /** The message for a promotion error code (or the general one). */
 export function usePromotionError() {
   const t = useTranslations('promotion.run.errors');

@@ -16,11 +16,11 @@ import {
 import { CalendarPlusIcon, CheckCircle2Icon, CopyIcon, PlayIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { SectionCard, SelectField, TextField, ToggleField } from '@/components/form-kit';
 import { Pill } from '@/components/kit/pill';
 import { PageGate } from '@/components/page-gate';
-import { usePromotionMutation } from '@/components/promotion/kit';
+import { pick, usePromotionMutation } from '@/components/promotion/kit';
 import { useSetupQuery } from '@/components/setup/setup-kit';
 import { YearDialog } from '@/components/setup/year-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -28,7 +28,6 @@ import { Button, ButtonLink } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { pick } from '@/lib/fees';
 import { useLabel, useMeContext } from '@/lib/hooks';
 
 /**
@@ -356,8 +355,14 @@ function RollsStep({ to }: { to: SetupAcademicYear }) {
       client.api<RollsPreview>(`/promotions/rolls?toYearId=${to.id}&classLevelId=${classLevelId}`),
     enabled: classLevelId !== '',
   });
-  const [typed, setTyped] = useState<Record<string, string>>({});
-  useEffect(() => setTyped({}), [preview.data?.version]);
+  // What the admin typed, for the preview version it was typed against (a new version starts
+  // from the proposal again).
+  const [typedFor, setTypedFor] = useState<{ version?: string; values: Record<string, string> }>({
+    values: {},
+  });
+  const typed = typedFor.version === preview.data?.version ? typedFor.values : {};
+  const setTyped = (update: (values: Record<string, string>) => Record<string, string>) =>
+    setTypedFor({ version: preview.data?.version, values: update(typed) });
   const save = usePromotionMutation(
     () => {
       const p = preview.data!;
