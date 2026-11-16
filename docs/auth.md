@@ -30,8 +30,8 @@ Code lives in [`apps/api/src/auth`](../apps/api/src/auth) and
   the user lookup. An SMS is sent only if the phone belongs to a user.
 - Every failure of `otp/verify` and `login` (unknown user, wrong code or password, expired or
   burned code, OTP-only account) returns the same `401 Invalid credentials`.
-- Password checks always run argon2, against a dummy hash if needed, so timing doesn't leak
-  either.
+- Password checks always run one argon2 hash and one database comparison, with a dummy salt
+  and the nil user if needed, so timing doesn't leak either.
 
 **OTP storage.** Codes are never stored in plain text. Redis holds
 `HMAC-SHA256(OTP_PEPPER, phone:code)` with a 5-minute TTL, plus an attempt counter. The 5th wrong
@@ -221,6 +221,27 @@ budget. The common-password list is read at start-up: without it the API does no
 Password login accepts up to 512 code points, as many as a settable password can have when typed
 decomposed. `PasswordSettingsService` is the only code that writes `users.password_hash`
 (`password-writes.spec.ts` checks it).
+
+**The API never reads a staff password hash (P1-J).** `jantrik_app` may write
+`users.password_hash` but not read it, so an SQL injection in a request cannot take hashes away
+to crack offline ([database.md](database.md) → users). Checking a password at login:
+
+1. `auth_find_user_for_login(phone, email)` returns the stored hash up to its last `$`
+   (`password_params`: argon2id, version 19, `m`, `t`, `p`, the salt), never the digest; NULL for
+   no password or any other format;
+2. `PasswordService.loginDigest` hashes the typed password (NFC) with those parameters and that
+   salt, and takes the SHA-256 of the result. Parameters above 64 MiB, 10 passes or 4 lanes are
+   treated as unusable (a hash written into someone's own row cannot make each attempt
+   arbitrarily expensive);
+3. `auth_my_password_matches(digest)`, run with `app.user_id` set to that user, compares it with
+   the SHA-256 of the stored hash and answers yes or no.
+
+With no user, no password or unusable parameters, step 2 hashes once at today's cost with a dummy
+salt and step 3 runs for the nil user, so every case costs the same. `GET /me/password` reads
+`hasPassword` from `auth_my_password_is_set()`. What is left: an injection can still ask step 3
+about guesses it hashed itself, one query per guess and only while the hole is open, which is less
+than reading the hash. The platform admins' login is separate and unchanged
+([platform.md](platform.md)).
 
 ## Tenants
 

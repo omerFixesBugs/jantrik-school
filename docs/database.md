@@ -167,6 +167,16 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   - **`password_changed_at`:** when the person last set their password themselves (null: never,
     or only by the seed). Written only by `PasswordSettingsService`, with `password_hash`
     ([auth.md](auth.md) → Setting a password).
+  - **`password_hash` is not readable by the app (P1-J).** `jantrik_app` has SELECT on every
+    other column, granted column by column (a table-level SELECT would cover the hash again), and
+    UPDATE on it (setting a password). **A new `users` column needs its own
+    `GRANT SELECT (column) ON users TO jantrik_app`**, or the app cannot read it;
+    `schema-safety.test.ts` pins the readable columns, checks that no login but the owner may read
+    the hash, and lists the app-runnable functions that touch it. Every Prisma client omits
+    `passwordHash` (`createPrismaClient`, `CLIENT_OMIT` in `packages/db/src/client.ts`), so
+    whole-row reads and updates never name the column; the package's `PrismaClient` type is that
+    client's, and the generated class is not exported. A test that needs the hash reads it through
+    the owner, in the user's context, with `select` or `omit: { passwordHash: false }`.
   - **No INSERT or DELETE for the app.** Create people with `findOrCreateUser(tx, phone, name)`,
     which needs a tenant context. It returns only the id, so a person from another tenant stays
     hidden until they get a membership here.
@@ -176,7 +186,12 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   - Each is owned by `jantrik_auth`, pins `search_path = pg_catalog, public, pg_temp` (`pg_temp`
     last, so a temporary table cannot stand in for a real one), and is executable only by
     `jantrik_app`.
-  - `auth_find_user_for_login(phone, email)`
+  - `auth_find_user_for_login(phone, email)`: the user's id, name, locale and
+    `password_params` (the stored hash up to its last `$`: parameters and salt, never the
+    digest; P1-J)
+  - `auth_my_password_matches(digest)`: whether the SHA-256 of the current user's stored hash
+    (`app.user_id`) is `digest`; the login's comparison ([auth.md](auth.md) → Setting a password)
+  - `auth_my_password_is_set()`: whether the current user has a password (`GET /me/password`)
   - `auth_list_my_memberships()`: uses `app.user_id`, with no user parameter. It also returns
     `invited_at`, so the login flow can show pending invitations.
   - `auth_resolve_tenant(slug)`
