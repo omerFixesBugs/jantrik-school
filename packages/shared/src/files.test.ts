@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { FILE_LIMITS, STORED_FILE_KINDS, UPLOAD_MAX_BYTES } from './files.js';
 import {
-  instituteProfileSchema,
+  FILE_LIMITS,
   normalizeInstitutePhone,
   normalizeWebsite,
-} from './files-schema.js';
+  STORED_FILE_KINDS,
+  UPLOAD_MAX_BYTES,
+} from './files.js';
+import { instituteProfileSchema } from './files-schema.js';
 
 describe('file limits (docs/files.md, the stored_files CHECKs)', () => {
   it('has a limit for every kind, equal to the database caps', () => {

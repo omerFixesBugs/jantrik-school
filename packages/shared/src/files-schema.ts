@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { toAsciiDigits } from './digits.js';
-import { INSTITUTE_PROFILE_LIMITS as L } from './files.js';
-import { normalizeBdPhone } from './phone.js';
+import {
+  INSTITUTE_PROFILE_LIMITS as L,
+  INSTITUTE_PROFILE_PATTERNS as P,
+  normalizeInstitutePhone,
+  normalizeWebsite,
+} from './files.js';
 
 // PUT /institute/profile (sprint 1 P2). Each rule matches a CHECK on institute_profiles, so a
 // value the schema accepts is never refused by the database.
@@ -20,45 +24,26 @@ const digitsText = z
   .nullish()
   .transform((v) => (v ? toAsciiDigits(v).replace(/\s/g, '') : '') || null);
 
-/** A mobile is stored as E.164; anything else as its digits (a landline), with an optional +. */
-export function normalizeInstitutePhone(input: string): string {
-  return (
-    normalizeBdPhone(input) ??
-    toAsciiDigits(input)
-      .trim()
-      .replace(/[\s\-().]/g, '')
-  );
-}
-
-/** `shapla.edu.bd` → `https://shapla.edu.bd`; a given http(s) scheme is kept. */
-export function normalizeWebsite(input: string): string {
-  const v = input.trim();
-  return /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : `https://${v}`;
-}
-
 export const instituteProfileSchema = z
   .object({
     nameBn: text(L.name),
     nameEn: text(L.name),
     shortName: text(L.shortName),
-    eiin: digitsText.refine((v) => v === null || /^\d{6}$/.test(v), 'EIIN is 6 digits'),
+    eiin: digitsText.refine((v) => v === null || P.eiin.test(v), 'EIIN is 6 digits'),
     addressBn: text(L.address),
     addressEn: text(L.address),
     phone: z
       .string()
       .nullish()
       .transform((v) => (v?.trim() ? normalizeInstitutePhone(v) : null))
-      .refine((v) => v === null || /^\+?\d{5,15}$/.test(v), 'A phone number of 5-15 digits'),
-    email: text(L.email).refine(
-      (v) => v === null || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v),
-      'An e-mail address',
-    ),
+      .refine((v) => v === null || P.phone.test(v), 'A phone number of 5-15 digits'),
+    email: text(L.email).refine((v) => v === null || P.email.test(v), 'An e-mail address'),
     website: z
       .string()
       .nullish()
       .transform((v) => (v?.trim() ? normalizeWebsite(v) : null))
       .refine(
-        (v) => v === null || (v.length <= L.website && /^https?:\/\/\S+$/i.test(v)),
+        (v) => v === null || (v.length <= L.website && P.website.test(v)),
         'A web address (http or https)',
       ),
     headTitleBn: text(L.headTitle),

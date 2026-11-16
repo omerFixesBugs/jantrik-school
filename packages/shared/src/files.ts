@@ -1,6 +1,9 @@
 // Stored images (sprint 1 P2, docs/files.md): the kinds, their caps and the API's shapes. No zod
 // here: the web imports these; the input schema is in files-schema.ts.
 
+import { toAsciiDigits } from './digits.js';
+import { normalizeBdPhone } from './phone.js';
+
 export const STORED_FILE_KINDS = [
   'STUDENT_PHOTO',
   'APPLICANT_PHOTO',
@@ -119,3 +122,27 @@ export const INSTITUTE_PROFILE_LIMITS = {
   yearMin: 1800,
   yearMax: 2100,
 } as const;
+
+/** The formats of institute_profiles' CHECKs, after the normalisers below. */
+export const INSTITUTE_PROFILE_PATTERNS = {
+  eiin: /^\d{6}$/,
+  phone: /^\+?\d{5,15}$/,
+  email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/,
+  website: /^https?:\/\/\S+$/i,
+} as const;
+
+/** A mobile is stored as E.164; anything else as its digits (a landline), with an optional +. */
+export function normalizeInstitutePhone(input: string): string {
+  return (
+    normalizeBdPhone(input) ??
+    toAsciiDigits(input)
+      .trim()
+      .replace(/[\s\-().]/g, '')
+  );
+}
+
+/** `shapla.edu.bd` → `https://shapla.edu.bd`; a given scheme is kept (and then checked). */
+export function normalizeWebsite(input: string): string {
+  const v = input.trim();
+  return /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : `https://${v}`;
+}
