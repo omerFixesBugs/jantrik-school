@@ -16,6 +16,7 @@ import type { Redis } from 'ioredis';
 import { TokenService } from '../auth/token.service.js';
 import type { Env } from '../config/env.js';
 import { RateLimiter } from '../redis/rate-limiter.service.js';
+import { REDIS_CALL_TIMEOUT_MS, withRedisDeadline } from '../redis/redis-deadline.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { TenantAccessService } from '../tenancy/tenant-access.service.js';
 import {
@@ -111,16 +112,13 @@ export class RateLimitGuard implements CanActivate {
       return true;
     }
     const req = ctx.switchToHttp().getRequest<AuthedRequest>();
-    if (req.platform) {
-      await this.limiter.consume({
-        key: `req-platform:${req.platform.adminId}`,
-        limit: this.config.get('RATE_LIMIT_USER_PER_MIN', { infer: true }),
-        windowSec: 60,
-      });
-      return true;
-    }
-    await this.limiter.consume(
-      req.principal
+    const rule = req.platform
+      ? {
+          key: `req-platform:${req.platform.adminId}`,
+          limit: this.config.get('RATE_LIMIT_USER_PER_MIN', { infer: true }),
+          windowSec: 60,
+        }
+      : req.principal
         ? {
             key: `req-user:${req.principal.userId}`,
             limit: this.config.get('RATE_LIMIT_USER_PER_MIN', { infer: true }),
@@ -130,7 +128,12 @@ export class RateLimitGuard implements CanActivate {
             key: `req-ip:${req.ip}`,
             limit: this.config.get('RATE_LIMIT_IP_PER_MIN', { infer: true }),
             windowSec: 60,
-          },
+          };
+    // Redis down or silent: 503 at once (a client retries), never a hang or a 500.
+    await withRedisDeadline(
+      () => this.limiter.consume(rule),
+      REDIS_CALL_TIMEOUT_MS,
+      'SERVICE_UNAVAILABLE',
     );
     return true;
   }

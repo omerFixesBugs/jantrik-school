@@ -7,6 +7,7 @@ import {
   type AuthResponse,
   type MembershipSummary,
 } from '@jantrik/shared';
+import { apiError } from '../common/api-error.js';
 import type { Principal } from '../common/request-context.js';
 import type { Env } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -21,7 +22,7 @@ import {
 } from './login-lookup.js';
 import { OtpService } from './otp.service.js';
 import { PasswordService } from './password.service.js';
-import { SessionService, type SessionMeta } from './session.service.js';
+import { newRefreshToken, SessionService, type SessionMeta } from './session.service.js';
 import { ACCESS_TOKEN_TTL_SEC, TokenService } from './token.service.js';
 
 const invalidCredentials = () => new UnauthorizedException('Invalid credentials');
@@ -118,37 +119,74 @@ export class AuthService {
     return this.buildResponse(user, sessionId, active, refreshToken);
   }
 
+  /**
+   * Exchange a refresh token for a new pair (docs/auth.md → Tokens and sessions). Refreshes of one
+   * token are serialised by its lock; inside it, in this order:
+   * 1. what the token is: a retry gets the stored answer again, reuse revokes the session;
+   * 2. a fresh token's whole answer is built (user, memberships, the new tokens);
+   * 3. the answer is stored for retries;
+   * 4. only then is the rotation committed.
+   * A failure at any step before 4 leaves the token unrotated, so the client's retry rotates it
+   * normally instead of being taken for reuse. Before step 3 the lock is fenced: if storing and
+   * committing could outlast it, the refresh stops there (503) rather than race a second one.
+   */
   async refresh(rawToken: string, meta: SessionMeta): Promise<AuthResponse> {
-    const result = await this.sessions.rotate(rawToken, meta);
-    if (result.kind === 'retry') return result.response;
+    return this.sessions.withRefreshLock(rawToken, async (lock) => {
+      const state = await this.sessions.inspect(rawToken);
+      if (state.kind === 'retry') return state.response;
 
-    const { userId, sessionId, activeTenantId, refreshToken } = result;
-    const user = await withContext(this.prisma.client, { userId }, (tx) =>
-      tx.user.findUniqueOrThrow({ where: { id: userId } }),
-    );
-    let active: MembershipSummary | undefined;
-    if (activeTenantId) {
-      active = (await listMembershipsFor(this.prisma.client, userId)).find(
-        (m) => m.selectable && m.tenant.id === activeTenantId,
+      const { token } = state;
+      const userId = token.userId;
+      const { user, activeTenantId } = await withContext(
+        this.prisma.client,
+        { userId },
+        async (tx) => ({
+          user: await tx.user.findUniqueOrThrow({ where: { id: userId } }),
+          activeTenantId: (
+            await tx.session.findUniqueOrThrow({
+              where: { id: token.sessionId },
+              select: { activeTenantId: true },
+            })
+          ).activeTenantId,
+        }),
       );
-      // Tenant suspended or membership removed since: continue without a tenant.
-      if (!active) await this.sessions.setActiveTenant(sessionId, userId, null);
-    }
+      let active: MembershipSummary | undefined;
+      if (activeTenantId) {
+        active = (await listMembershipsFor(this.prisma.client, userId)).find(
+          (m) => m.selectable && m.tenant.id === activeTenantId,
+        );
+      }
 
-    const response = await this.buildResponse(
-      {
-        id: user.id,
-        name: user.name,
-        nameBn: user.nameBn,
-        locale: user.locale,
-        colorScheme: user.colorScheme,
-      },
-      sessionId,
-      active,
-      refreshToken,
-    );
-    await this.sessions.storeGrace(rawToken, response);
-    return response;
+      const refreshToken = newRefreshToken();
+      const response = await this.buildResponse(
+        {
+          id: user.id,
+          name: user.name,
+          nameBn: user.nameBn,
+          locale: user.locale,
+          colorScheme: user.colorScheme,
+        },
+        token.sessionId,
+        active,
+        refreshToken,
+      );
+      lock.fence();
+      // Taken before the store, so the stored answer (30 s from now) outlives the database's
+      // 30-second window, which counts from this time.
+      const rotatedAt = new Date();
+      await this.sessions.storeGrace(rawToken, token.sessionId, response);
+      const outcome = await this.sessions.commitRotation(token, refreshToken, meta, {
+        rotatedAt,
+        // Tenant suspended or membership removed since: continue without a tenant.
+        staleTenantId: activeTenantId && !active ? activeTenantId : null,
+      });
+      if (outcome === 'rotated-meanwhile') {
+        // Only a lost lock lets this happen: retryable, never a sign-out.
+        throw apiError(503, 'REFRESH_BUSY', 'Another refresh of this session is in progress');
+      }
+      if (outcome === 'session-revoked') throw new UnauthorizedException('Invalid credentials');
+      return response;
+    });
   }
 
   logout(principal: Principal): Promise<void> {

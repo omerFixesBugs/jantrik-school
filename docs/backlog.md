@@ -78,6 +78,16 @@ Adding a key touches:
 - `tenant_modules` rows for existing institutes. A migration cannot backfill them: forced RLS hides
   tenant rows from the owner role, and `provisioning_only` blocks the app. Use a platform function.
 
+## Test suite: unique phone numbers for test users (owner's note, 2026-11-15)
+
+The API e2e tests give each new test user `randomPhone()`, a random number out of 10⁸. A full run
+makes thousands of users, so two can share a phone. That user then has two memberships, is not
+switched into an institute at login, and the test gets a 403. This is the `appearance.e2e-spec`
+flake (decisions-pending.md → P0-8). Fix: a phone unique per run instead of a random one, e.g. a
+counter per test file and process (the worker id, the file, then a sequence) kept in the
+`+88017` range, in `apps/api/test/support/harness.ts` (`randomPhone`) and its callers. The same
+applies to `packages/db/test/helpers.ts` (`randomPhone`).
+
 ## Exams: later work (from step 10)
 
 Agreed in the step 10 plan, not built yet. Rules today: [exams.md](exams.md).
