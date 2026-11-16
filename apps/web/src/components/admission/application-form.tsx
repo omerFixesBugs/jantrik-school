@@ -166,12 +166,18 @@ export function ApplicationFields({
   errors,
   settings,
   showNote = true,
+  hideHidden = false,
+  showPhone = true,
 }: {
   values: ApplicationValues;
   onChange: (v: ApplicationValues) => void;
   errors: Record<string, string>;
   settings: AdmissionFieldSettings | null;
   showNote?: boolean;
+  /** The public form: fields the cycle hides are not shown at all. */
+  hideHidden?: boolean;
+  /** The public form proves the phone first: it is not typed here. */
+  showPhone?: boolean;
 }) {
   const t = useTranslations('admission');
   const tf = useTranslations('admissions.staff.form');
@@ -179,6 +185,7 @@ export function ApplicationFields({
   const te = useTranslations('enums');
   const set = (k: keyof ApplicationValues) => (v: string) => onChange({ ...values, [k]: v });
   const req = (f: keyof AdmissionFieldSettings) => settings?.[f] === 'REQUIRED';
+  const show = (f: keyof AdmissionFieldSettings) => !hideHidden || settings?.[f] !== 'HIDDEN';
 
   return (
     <div className="flex flex-col gap-5">
@@ -218,36 +225,42 @@ export function ApplicationFields({
             error={errors['gender']}
             required
           />
-          <TextField
-            id="birthRegistrationNo"
-            label={t('birthReg')}
-            value={values.birthRegistrationNo}
-            onChange={set('birthRegistrationNo')}
-            hint={t('birthRegHint')}
-            inputMode="numeric"
-            error={errors['birthRegistrationNo']}
-            required={req('birth_registration_no')}
-          />
-          <SelectField
-            id="religion"
-            label={t('religion')}
-            value={values.religion}
-            onChange={set('religion')}
-            placeholder={t('none')}
-            options={RELIGIONS.map((r) => ({ value: r, label: te(`religion_${r}`) }))}
-            error={errors['religion']}
-            required={req('religion')}
-          />
-          <SelectField
-            id="bloodGroup"
-            label={t('bloodGroup')}
-            value={values.bloodGroup}
-            onChange={set('bloodGroup')}
-            placeholder={t('none')}
-            options={BLOOD_GROUPS.map((b) => ({ value: b, label: BLOOD_GROUP_LABEL[b] }))}
-            error={errors['bloodGroup']}
-            required={req('blood_group')}
-          />
+          {show('birth_registration_no') && (
+            <TextField
+              id="birthRegistrationNo"
+              label={t('birthReg')}
+              value={values.birthRegistrationNo}
+              onChange={set('birthRegistrationNo')}
+              hint={t('birthRegHint')}
+              inputMode="numeric"
+              error={errors['birthRegistrationNo']}
+              required={req('birth_registration_no')}
+            />
+          )}
+          {show('religion') && (
+            <SelectField
+              id="religion"
+              label={t('religion')}
+              value={values.religion}
+              onChange={set('religion')}
+              placeholder={t('none')}
+              options={RELIGIONS.map((r) => ({ value: r, label: te(`religion_${r}`) }))}
+              error={errors['religion']}
+              required={req('religion')}
+            />
+          )}
+          {show('blood_group') && (
+            <SelectField
+              id="bloodGroup"
+              label={t('bloodGroup')}
+              value={values.bloodGroup}
+              onChange={set('bloodGroup')}
+              placeholder={t('none')}
+              options={BLOOD_GROUPS.map((b) => ({ value: b, label: BLOOD_GROUP_LABEL[b] }))}
+              error={errors['bloodGroup']}
+              required={req('blood_group')}
+            />
+          )}
         </FormGrid>
       </SectionCard>
 
@@ -277,86 +290,104 @@ export function ApplicationFields({
             error={errors['guardianRelation']}
             required
           />
-          <TextField
-            id="phone"
-            label={t('phone')}
-            value={values.phone}
-            onChange={set('phone')}
-            hint={t('phoneHint')}
-            inputMode="tel"
-            autoComplete="off"
-            error={errors['phone']}
-            required
-          />
-          <TextField
-            id="guardianOccupation"
-            label={t('occupation')}
-            value={values.guardianOccupation}
-            onChange={set('guardianOccupation')}
-            error={errors['guardianOccupation']}
-            required={req('guardian_occupation')}
-          />
+          {showPhone && (
+            <TextField
+              id="phone"
+              label={t('phone')}
+              value={values.phone}
+              onChange={set('phone')}
+              hint={t('phoneHint')}
+              inputMode="tel"
+              autoComplete="off"
+              error={errors['phone']}
+              required
+            />
+          )}
+          {show('guardian_occupation') && (
+            <TextField
+              id="guardianOccupation"
+              label={t('occupation')}
+              value={values.guardianOccupation}
+              onChange={set('guardianOccupation')}
+              error={errors['guardianOccupation']}
+              required={req('guardian_occupation')}
+            />
+          )}
         </FormGrid>
       </SectionCard>
 
       <SectionCard id="application-more" title={tf('more')}>
         <FormGrid>
-          <TextField
-            id="fatherNameBn"
-            label={t('fatherNameBn')}
-            value={values.fatherNameBn}
-            onChange={set('fatherNameBn')}
-            error={errors['fatherNameBn']}
-            required={req('father_name')}
-          />
-          <TextField
-            id="fatherNameEn"
-            label={t('fatherNameEn')}
-            value={values.fatherNameEn}
-            onChange={set('fatherNameEn')}
-            error={errors['fatherNameEn']}
-          />
-          <TextField
-            id="motherNameBn"
-            label={t('motherNameBn')}
-            value={values.motherNameBn}
-            onChange={set('motherNameBn')}
-            error={errors['motherNameBn']}
-            required={req('mother_name')}
-          />
-          <TextField
-            id="motherNameEn"
-            label={t('motherNameEn')}
-            value={values.motherNameEn}
-            onChange={set('motherNameEn')}
-            error={errors['motherNameEn']}
-          />
-          <TextField
-            id="previousInstitute"
-            label={tf('previousInstitute')}
-            value={values.previousInstitute}
-            onChange={set('previousInstitute')}
-            error={errors['previousInstitute']}
-            required={req('previous_institute')}
-          />
-          <TextField
-            id="presentAddress"
-            label={t('presentAddress')}
-            value={values.presentAddress}
-            onChange={set('presentAddress')}
-            error={errors['presentAddress']}
-            required={req('present_address')}
-            className="md:col-span-2"
-          />
-          <TextField
-            id="permanentAddress"
-            label={t('permanentAddress')}
-            value={values.permanentAddress}
-            onChange={set('permanentAddress')}
-            error={errors['permanentAddress']}
-            required={req('permanent_address')}
-            className="md:col-span-2"
-          />
+          {show('father_name') && (
+            <TextField
+              id="fatherNameBn"
+              label={t('fatherNameBn')}
+              value={values.fatherNameBn}
+              onChange={set('fatherNameBn')}
+              error={errors['fatherNameBn']}
+              required={req('father_name')}
+            />
+          )}
+          {show('father_name') && (
+            <TextField
+              id="fatherNameEn"
+              label={t('fatherNameEn')}
+              value={values.fatherNameEn}
+              onChange={set('fatherNameEn')}
+              error={errors['fatherNameEn']}
+            />
+          )}
+          {show('mother_name') && (
+            <TextField
+              id="motherNameBn"
+              label={t('motherNameBn')}
+              value={values.motherNameBn}
+              onChange={set('motherNameBn')}
+              error={errors['motherNameBn']}
+              required={req('mother_name')}
+            />
+          )}
+          {show('mother_name') && (
+            <TextField
+              id="motherNameEn"
+              label={t('motherNameEn')}
+              value={values.motherNameEn}
+              onChange={set('motherNameEn')}
+              error={errors['motherNameEn']}
+            />
+          )}
+          {show('previous_institute') && (
+            <TextField
+              id="previousInstitute"
+              label={tf('previousInstitute')}
+              value={values.previousInstitute}
+              onChange={set('previousInstitute')}
+              error={errors['previousInstitute']}
+              required={req('previous_institute')}
+            />
+          )}
+          {show('present_address') && (
+            <TextField
+              id="presentAddress"
+              label={t('presentAddress')}
+              value={values.presentAddress}
+              onChange={set('presentAddress')}
+              error={errors['presentAddress']}
+              required={req('present_address')}
+              className="md:col-span-2"
+            />
+          )}
+          {show('permanent_address') && (
+            <TextField
+              id="permanentAddress"
+              label={t('permanentAddress')}
+              value={values.permanentAddress}
+              onChange={set('permanentAddress')}
+              error={errors['permanentAddress']}
+              required={req('permanent_address')}
+              className="md:col-span-2"
+            />
+          )}
           {showNote && (
             <TextField
               id="staffNote"

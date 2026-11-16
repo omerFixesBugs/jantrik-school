@@ -16,7 +16,7 @@ const DEVICE_AREAS = ['devices', 'people'] as const;
 const STAFF_ATTENDANCE_AREAS = ['common', 'day', 'month'] as const;
 
 /** Admission (sprint 1 P3) likewise: messages/admissions/<area>.<locale>.json, into `admissions`. */
-const ADMISSION_AREAS = ['staff'] as const;
+const ADMISSION_AREAS = ['staff', 'apply'] as const;
 
 /** The person's own account likewise: messages/account/<area>.<locale>.json, into `account`. */
 const ACCOUNT_AREAS = ['password'] as const;

@@ -123,6 +123,15 @@ export const ROUTE_MESSAGES = {
   staff: ['setup', 'staff'],
   /** Admission for staff (sprint 1 P3a): cycles, applications, approval. */
   admission: ['admission', 'admissions.staff', 'setup'],
+  /** The public admission form (sprint 1 P3b): no login, no app shell. */
+  apply: [
+    'admission',
+    'admissions.apply',
+    'admissions.staff.form',
+    'admissions.staff.detail.staffNote',
+    'dateInput',
+    'enums',
+  ],
 } as const satisfies Record<string, readonly string[]>;
 
 export type RouteArea = keyof typeof ROUTE_MESSAGES;
