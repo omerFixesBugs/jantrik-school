@@ -21,8 +21,24 @@ const files = sources(SRC).map((full) => ({
 
 const usesLoginClient = (code: string) => /login-prisma\.service/.test(code);
 const namesLookup = (code: string) => /\bauth_find_user_for_password_login\b/.test(code);
+const namesLoginUrl = (code: string) => /\bDATABASE_LOGIN_URL\b/.test(code);
+const usesLookup = (code: string) => /\bfindUserForPasswordLogin\b/.test(code);
+const where = (test: (code: string) => boolean) =>
+  files.filter((f) => test(f.code)).map((f) => f.rel);
 
 describe('the password login’s database login stays with the password login', () => {
+  it('only the env checks and LoginPrismaService read DATABASE_LOGIN_URL (no second client)', () => {
+    expect(where(namesLoginUrl)).toEqual([
+      'auth/login-prisma.service.ts',
+      'config/env.ts',
+      'config/production-env.ts',
+    ]);
+  });
+
+  it('only AuthService calls the hash lookup', () => {
+    expect(where(usesLookup)).toEqual(['auth/auth.service.ts', 'auth/login-lookup.ts']);
+  });
+
   it('only AuthService (and its module) use LoginPrismaService', () => {
     expect(files.filter((f) => usesLoginClient(f.code)).map((f) => f.rel)).toEqual([
       'auth/auth.module.ts',
@@ -43,5 +59,7 @@ describe('the password login’s database login stays with the password login', 
     );
     expect(namesLookup('SELECT * FROM auth_find_user_for_password_login($1, $2)')).toBe(true);
     expect(namesLookup('SELECT * FROM auth_find_user_for_login($1, $2)')).toBe(false);
+    expect(namesLoginUrl("createPrismaClient(config.get('DATABASE_LOGIN_URL'))")).toBe(true);
+    expect(usesLookup('await findUserForPasswordLogin(client, { phone })')).toBe(true);
   });
 });

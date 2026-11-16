@@ -18,17 +18,34 @@ const privilegeRow = (p: LoginPrivileges) => ({
   can_become: p.canBecome,
 });
 
+/** Where a client is connected: its database, port and server start (one cluster, one start). */
+interface Where {
+  db: string;
+  port: number | null;
+  started: string;
+}
+const HERE: Where = { db: 'jantrik', port: 5432, started: '2026-11-16T06:00:00.000Z' };
+
 /**
  * A client whose privilege query answers `privileges` in turn (a row or a failure; the last one
- * repeats) and whose role check (may it run the password lookup?) answers `ok` (or fails).
+ * repeats), whose role check (may it run the password lookup?) answers `ok` (or fails), and that
+ * says it is connected to `where`.
  */
-const client = (ok: boolean | Error, privileges: (LoginPrivileges | Error)[] = [SAFE]) => {
+const client = (
+  ok: boolean | Error,
+  privileges: (LoginPrivileges | Error)[] = [SAFE],
+  where: Where = HERE,
+) => {
   let i = 0;
   return {
     $queryRaw: vi.fn((strings: TemplateStringsArray) => {
-      if (strings.join('').includes('pg_roles')) {
+      const sql = strings.join('');
+      if (sql.includes('pg_roles')) {
         const p = privileges[Math.min(i++, privileges.length - 1)]!;
         return p instanceof Error ? Promise.reject(p) : Promise.resolve([privilegeRow(p)]);
+      }
+      if (sql.includes('current_database')) {
+        return Promise.resolve([{ ...where, started: new Date(where.started) }]);
       }
       return ok instanceof Error ? Promise.reject(ok) : Promise.resolve([{ ok }]);
     }),
@@ -46,11 +63,12 @@ function service(
   loginCanRun: boolean | Error,
   mainCanRun: boolean | Error,
   privileges: (LoginPrivileges | Error)[] = [SAFE],
+  loginWhere: Where = HERE,
 ) {
   const warn = vi.fn();
   const s = Object.create(LoginPrismaService.prototype) as LoginPrismaService;
   Object.assign(s, {
-    client: client(loginCanRun, privileges),
+    client: client(loginCanRun, privileges, loginWhere),
     main: { client: client(mainCanRun) },
     logger: { warn, log: vi.fn() },
     retryDelaysMs: [0, 0, 0],
@@ -70,6 +88,16 @@ describe('LoginPrismaService startup check', () => {
     ['the two are swapped', false, true],
   ])('refuses to start when %s', async (_case, login, main) => {
     await expect(service(login, main).s.onModuleInit()).rejects.toThrow(/mixed up/);
+  });
+
+  it.each([
+    ['another database', { ...HERE, db: 'jantrik_test' }],
+    ['another port', { ...HERE, port: 5433 }],
+    ['another server (started at another time)', { ...HERE, started: '2026-11-15T00:00:00.000Z' }],
+  ])('refuses to start when DATABASE_LOGIN_URL points at %s', async (_case, where) => {
+    await expect(service(true, false, [SAFE], where).s.onModuleInit()).rejects.toThrow(
+      /DATABASE_LOGIN_URL and DATABASE_URL must reach the same database/,
+    );
   });
 
   it('only warns when the role check itself fails after the privilege check passed', async () => {

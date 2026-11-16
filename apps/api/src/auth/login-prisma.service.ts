@@ -46,8 +46,9 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
    * is asked again for about 3 minutes, then the start is refused.
    *
    * Then refuse to start when the URLs are mixed up (DATABASE_URL given the login login, or the
-   * other way round): the separation would silently disappear. An error in this second check only
-   * warns (the first has just shown the database answers); logins fail on their own then.
+   * other way round: the separation would silently disappear), or reach different databases (a
+   * password login against another database than the sessions it creates). An error in these
+   * checks only warns (the first has just shown the database answers); logins fail on their own.
    */
   async onModuleInit(): Promise<void> {
     await runStartupCheck({
@@ -73,10 +74,26 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
           'public.auth_find_user_for_password_login(text, text)', 'EXECUTE') AS ok`.then(
         ([row]) => row?.ok === true,
       );
+    // Where each login is connected: the database, the port and the server's start time (one
+    // cluster has one). Not the address: "localhost" may reach ::1 on one connection and
+    // 127.0.0.1 on the next.
+    const where = (client: PrismaClient) =>
+      client.$queryRaw<{ db: string; port: number | null; started: Date }[]>`
+        SELECT current_database() AS db, inet_server_port() AS port,
+               pg_postmaster_start_time() AS started`.then(([row]) =>
+        row ? `${row.db}:${row.port ?? 'socket'}:${new Date(row.started).toISOString()}` : '',
+      );
     let login: boolean;
     let main: boolean;
+    let loginAt: string;
+    let mainAt: string;
     try {
-      [login, main] = await Promise.all([canRun(this.client), canRun(this.main.client)]);
+      [login, main, loginAt, mainAt] = await Promise.all([
+        canRun(this.client),
+        canRun(this.main.client),
+        where(this.client),
+        where(this.main.client),
+      ]);
     } catch (error) {
       this.logger.warn(`Could not check the database roles: ${(error as Error).message}`);
       return;
@@ -85,6 +102,12 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
       throw new Error(
         'Database roles are mixed up: DATABASE_LOGIN_URL must use the password login (jantrik_login_app) ' +
           'and DATABASE_URL the app login (jantrik_app). See docs/auth.md.',
+      );
+    }
+    if (loginAt !== mainAt) {
+      throw new Error(
+        'DATABASE_LOGIN_URL and DATABASE_URL must reach the same database on the same server ' +
+          `(${loginAt} and ${mainAt}). See docs/auth.md.`,
       );
     }
   }

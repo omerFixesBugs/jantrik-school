@@ -12,14 +12,23 @@ const OPTIONS = { memoryCost: 19_456, timeCost: 2, parallelism: 1 };
  */
 const COST_CEILING = { memoryCost: 65_536, timeCost: 10, parallelism: 4 };
 
-/** Whether argon2 may verify against `stored` (readable, and within the cost ceiling). */
+/**
+ * Whether argon2 may verify against `stored`: readable, within the cost ceiling, and of a normal
+ * size (salt 8 to 64 bytes, output 16 to 64 bytes, at most 255 characters in all; Jantrik writes
+ * 16 and 32, about 100 characters).
+ */
 function usableHash(stored: string): boolean {
+  if (stored.length > 255) return false;
   try {
     const o = parseOptions(stored);
     return (
       o.memoryCost <= COST_CEILING.memoryCost &&
       o.timeCost <= COST_CEILING.timeCost &&
-      o.parallelism <= COST_CEILING.parallelism
+      o.parallelism <= COST_CEILING.parallelism &&
+      o.saltLen >= 8 &&
+      o.saltLen <= 64 &&
+      o.outputLen >= 16 &&
+      o.outputLen <= 64
     );
   } catch {
     return false;

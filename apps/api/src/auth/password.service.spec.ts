@@ -40,12 +40,19 @@ describe('PasswordService.verify', () => {
     ['memory above 64 MiB', 'M_HIGH'],
     ['more than 10 passes', 'T_HIGH'],
     ['more than 4 lanes', 'P_HIGH'],
+    ['an output over 64 bytes', 'LONG_OUTPUT'],
+    ['a salt over 64 bytes', 'LONG_SALT'],
+    ['more than 255 characters', 'TOO_LONG'],
   ])('%s: refused after one full argon2 check against the dummy hash (P1-J4)', async (_, kind) => {
+    const salt = stored.split('$')[4]!; // 22 characters: 16 bytes
     const stored2 =
       {
         M_HIGH: stored.replace('m=19456', 'm=65537'),
         T_HIGH: stored.replace('t=2', 't=11'),
         P_HIGH: stored.replace('p=1', 'p=5'),
+        LONG_OUTPUT: `${stored}${'A'.repeat(85)}`, // a 128-character digest: 96 bytes
+        LONG_SALT: stored.replace(`$${salt}$`, `$${salt.repeat(4)}$`), // 88 characters: 66 bytes
+        TOO_LONG: `${stored}${'A'.repeat(200)}`,
       }[kind as string] ?? kind;
     expect(await service.verify(stored2, password)).toBe(false);
     // The time matches a real account's: one verification, at today's cost, never the stored one.
