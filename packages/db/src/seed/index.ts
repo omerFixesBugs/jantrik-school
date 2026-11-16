@@ -1,6 +1,10 @@
 import path from 'node:path';
 import { config } from 'dotenv';
-import { createPrismaClient } from '../index.js';
+import {
+  createPrismaClient,
+  loadRequestContextKeyAsOwner,
+  setRequestContextKeySource,
+} from '../index.js';
 import { seedDemo } from './demo.js';
 import { seedPlatformAdmin } from './platform.js';
 import { maySeedPlatformAdmin } from './reset-guard.js';
@@ -25,6 +29,8 @@ function requireEnv(name: string): string {
 
 const owner = createPrismaClient(requireEnv('DATABASE_MIGRATION_URL'));
 const app = createPrismaClient(requireEnv('DATABASE_URL'));
+// The demo data is written in signed institute contexts (P1-J8): the owner reads the key.
+setRequestContextKeySource(() => loadRequestContextKeyAsOwner(owner));
 
 try {
   console.log('Seeding institute types, templates and grading schemes...');
