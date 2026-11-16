@@ -458,6 +458,22 @@ session was switched to another institute in another tab and this tab's token ha
 - **`@UserScoped` account routes** (`/auth/*`, `/me/preferences`) are not checked either, so
   logout always works.
 
+## The public admission form (no login)
+
+Guardians apply without an account (sprint 1 P3b, [admission.md](admission.md)). The routes under
+`/public/admission/:slug` are `@Public()` and never open an institute's transaction: they call
+three `SECURITY DEFINER` functions (owned by the NOLOGIN `jantrik_admission`) inside a transaction
+with no institute and no person (`withContext({})`). A code-scan test keeps `Db`,
+`TenantJobRunner` and `TenantSmsService` out of `apps/api/src/admission/public/`.
+
+- **The phone is proved by a code** (Redis, HMAC with `OTP_PEPPER`, the purpose and the institute
+  in the MAC input), then carried for 30 minutes in a phone token: HS256 with a key derived from
+  `JWT_ACCESS_SECRET` by HKDF (`jantrik/admission-phone/v1`), `typ: admission-phone`, audience the
+  institute's id. The access-token guard refuses it (another key and `typ`); the admission routes
+  refuse an access token; another institute's token is refused.
+- **Turnstile** guards every code and every submit; a form ticket (its own HKDF key) dates the
+  form for the 15 s / 2 h rule. Both fail closed.
+
 ## The device receiver (no login)
 
 ZKTeco attendance devices cannot log in: the protocol sends only a serial number, over plain

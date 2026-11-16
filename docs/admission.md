@@ -107,3 +107,55 @@ keys `ON UPDATE/DELETE RESTRICT`):
 | `admission_counters`           | S I U            | last number per institute and year                       |
 
 `sms_purpose` gains `ADMISSION_OTP` and `ADMISSION_SUBMITTED` (used by P3b).
+
+## The public form (P3b)
+
+A guardian applies from a phone, without an account: `/apply/<institute slug>` (bn by default,
+an en switch; light, no app shell, no session restored) and `/apply/<slug>/status`. The cycle page
+shows the address to share.
+
+- **Steps:** class → phone → code → the form → check → submitted, with the slip (application
+  number; print or save). The status page asks for the number, then a code to the phone that
+  applied (decision P3-F).
+- **The database** is reached only through three `SECURITY DEFINER` functions owned by the
+  NOLOGIN role `jantrik_admission` and run by `jantrik_app` with no institute and no person
+  (decision S4; a public request never opens an institute's transaction, P3-C):
+  - `admission_public_form(slug, now)`: the institute (ACTIVE or TRIAL) and its cycles taking
+    applications now, with their open classes; no person's data. (It also returns the
+    institute's id and timezone, which the API keeps to itself.)
+  - `admission_submit(slug, cycle class, phone, payload, photo, width, height, now)`: one row,
+    `CREATED` with the number, or `UNKNOWN`, `CLOSED` (also for another institute's class),
+    `INVALID`, `DUPLICATE` (with the earlier number) or `PHONE_CAP`. The same duplicate and
+    per-phone rules as the staff entry, under the same per-phone lock.
+  - `admission_lookup(slug, number, phone)`: the status, only for that phone.
+    The role sees rows only through `TO jantrik_admission` policies and column grants
+    (`schema-safety.test.ts` pins them exactly).
+- **The phone:** `POST /public/admission/:slug/otp {phone, turnstileToken}` sends a 6-digit code
+  (5 minutes, 5 attempts, single use; HMAC in Redis) to any valid Bangladeshi mobile;
+  `POST …/otp/verify {phone, code}` returns a phone token (HS256 with its own key derived from
+  `JWT_ACCESS_SECRET`, `typ: admission-phone`, audience the institute, 30 minutes, decision P3-N)
+  for the `X-Admission-Token` header. It is never an access token, and an access token never works
+  here.
+- **Limits (review focus 1):** a code needs a Turnstile pass first (a refused token uses no
+  counter); then per phone 1 a minute and 5 a day, per address 20 an hour, and per institute
+  `ADMISSION_OTP_PER_TENANT_PER_DAY` (300) a day whatever the phones and addresses. The form: 60 a
+  minute per address; submit 10 an hour per address and 10 a day per phone; status 30 an hour per
+  address and 20 a day per phone.
+- **Bots (S6):** Turnstile on every code and every submit (each needs its own token); a hidden
+  `website` field (the honeypot); and the form ticket from `GET`: a submit under 15 s or over 2 h
+  after the form opened gets the same vague 422 `ADMISSION_REJECTED` as a filled honeypot
+  (decision P3-L). Turnstile fails closed: Cloudflare unreachable in 5 s → 503.
+- **The photo:** multipart, at most 5 MB (refused while it streams), re-encoded by P2's pipeline
+  (JPEG ≤ 600×800, ≤ 200 KB, no EXIF), at most two decodes at a time per process. Only the
+  re-encoded bytes reach the database.
+- **SMS** (decision P3-C, queue `admission-sms`, run by the worker in the institute's own
+  context): the code is logged in the institute's `sms_logs` (`ADMISSION_OTP`, the code masked),
+  sent outside the institute's daily cap but counted in the day's total (P3-D); "application
+  received" (`ADMISSION_SUBMITTED`, S11) goes through the normal per-institute queue and is skipped
+  over the cap (the slip is on screen). In development and tests the SMS go to the console, memory
+  or outbox providers only.
+- **Turnstile keys:** development uses Cloudflare's published always-pass **test keys**
+  (`.env.example`); the API and Playwright tests use a fake verifier (`TURNSTILE_PROVIDER=fake`,
+  test only) and never call Cloudflare; production needs a real widget's keys (the API refuses the
+  test secrets there). Without a site key built into the web app, the form shows a plain
+  "I am not a robot" box that only the fake verifier accepts.
