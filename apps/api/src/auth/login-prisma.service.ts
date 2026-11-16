@@ -2,8 +2,11 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import {
   createPrismaClient,
+  loadRequestContextKey,
   loginPrivilegeProblems,
   readLoginPrivileges,
+  requestContextKey,
+  setRequestContextKeySource,
   type PrismaClient,
 } from '@jantrik/db';
 import {
@@ -21,6 +24,12 @@ import { PrismaService } from '../prisma/prisma.service.js';
  * API (jantrik_app) may not run that function, so an SQL injection in an ordinary request never
  * reaches a password hash. Used by AuthService.loginWithPassword only
  * (login-isolation.spec.ts checks who imports it). A small pool: one lookup per login.
+ *
+ * It also reads the request context key (P1-J8), the other thing only this login may read: every
+ * institute transaction of the API and the worker is signed with it (withContext, docs/auth.md →
+ * The request context). The source is registered when the service is built, so any module may
+ * open a context during start-up; the key is loaded at start-up, and without it the API does not
+ * start.
  */
 @Injectable()
 export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
@@ -38,6 +47,12 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
     this.client = createPrismaClient(config.get('DATABASE_LOGIN_URL', { infer: true }), {
       max: 4,
     });
+    this.registerContextKeySource();
+  }
+
+  /** withContext reads the request context key through this login (once, then from memory). */
+  registerContextKeySource(): void {
+    setRequestContextKeySource(() => loadRequestContextKey(this.client));
   }
 
   /**
@@ -67,6 +82,16 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
       unchecked: 'The password login does not start unchecked.',
       label: startupErrorLabel,
     });
+
+    // P1-J8: no key, no institute context, so no start (fail closed).
+    try {
+      await requestContextKey();
+    } catch (error) {
+      throw new Error(
+        'Could not read the request context key through DATABASE_LOGIN_URL ' +
+          `(${(error as Error).message}). Run the database migrations. See docs/auth.md.`,
+      );
+    }
 
     const canRun = (client: PrismaClient) =>
       client.$queryRaw<{ ok: boolean }[]>`

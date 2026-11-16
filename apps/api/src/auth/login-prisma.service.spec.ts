@@ -1,4 +1,4 @@
-import type { LoginPrivileges } from '@jantrik/db';
+import { requestContextKey, type LoginPrivileges } from '@jantrik/db';
 import { LoginPrismaService } from './login-prisma.service.js';
 
 // The password login's own database login (P1-J), checked at start-up like the platform one.
@@ -30,6 +30,9 @@ interface Where {
 }
 const HERE: Where = { db: 'jantrik', port: 5432, started: '2026-11-16T06:00:00.000Z' };
 
+/** What auth_context_key() returns (P1-J8): 48 bytes, or a failure. */
+const KEY = Buffer.alloc(48, 7);
+
 /**
  * A client whose privilege query answers `privileges` in turn (a row or a failure; the last one
  * repeats), whose role check (may it run the password lookup?) answers `ok` (or fails), and that
@@ -39,11 +42,15 @@ const client = (
   ok: boolean | Error,
   privileges: (LoginPrivileges | Error)[] = [SAFE],
   where: Where = HERE,
+  key: Buffer | Error = KEY,
 ) => {
   let i = 0;
   return {
     $queryRaw: vi.fn((strings: TemplateStringsArray) => {
       const sql = strings.join('');
+      if (sql.includes('auth_context_key')) {
+        return key instanceof Error ? Promise.reject(key) : Promise.resolve([{ key }]);
+      }
       if (sql.includes('pg_roles')) {
         const p = privileges[Math.min(i++, privileges.length - 1)]!;
         return p instanceof Error ? Promise.reject(p) : Promise.resolve([privilegeRow(p)]);
@@ -68,16 +75,19 @@ function service(
   mainCanRun: boolean | Error,
   privileges: (LoginPrivileges | Error)[] = [SAFE],
   loginWhere: Where = HERE,
+  key: Buffer | Error = KEY,
 ) {
   const warn = vi.fn();
   const s = Object.create(LoginPrismaService.prototype) as LoginPrismaService;
   Object.assign(s, {
-    client: client(loginCanRun, privileges, loginWhere),
+    client: client(loginCanRun, privileges, loginWhere, key),
     main: { client: client(mainCanRun) },
     logger: { warn, log: vi.fn() },
     retryDelaysMs: [0, 0, 0],
     checkTimeoutMs: 50,
   });
+  // What the constructor does.
+  s.registerContextKeySource();
   return { s, warn };
 }
 
@@ -108,6 +118,26 @@ describe('LoginPrismaService startup check', () => {
     const { s, warn } = service(new Error('connect ECONNREFUSED'), false);
     await expect(s.onModuleInit()).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('ECONNREFUSED'));
+  });
+});
+
+describe('LoginPrismaService and the request context key (P1-J8)', () => {
+  it('reads the key through the login login at start-up; withContext then signs with it', async () => {
+    const { s } = service(true, false);
+    await s.onModuleInit();
+    expect((await requestContextKey()).equals(KEY)).toBe(true);
+    const asked = (s.client.$queryRaw as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([strings]) => (strings as TemplateStringsArray).join('').includes('auth_context_key'),
+    );
+    expect(asked).toHaveLength(1);
+  });
+
+  it('refuses to start without the key (no migration, or no privilege)', async () => {
+    const missing = new Error('function auth_context_key() does not exist');
+    const { s } = service(true, false, [SAFE], HERE, missing);
+    await expect(s.onModuleInit()).rejects.toThrow(
+      /request context key through DATABASE_LOGIN_URL \(.*does not exist\)\. Run the database migrations/,
+    );
   });
 });
 

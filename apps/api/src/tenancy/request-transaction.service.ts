@@ -104,7 +104,7 @@ export class RequestTransaction {
   private async recheckRoles(tx: TenantTx, roles: readonly Role[]) {
     const held = await tx.$queryRaw<{ role: Role }[]>`
       SELECT role FROM memberships
-      WHERE user_id = app_current_user_id() AND status = 'ACTIVE'`;
+      WHERE user_id = (SELECT app_current_user_id()) AND status = 'ACTIVE'`;
     if (!held.some((m) => roles.includes(m.role))) {
       throw new ForbiddenException('Your role here has changed');
     }
@@ -119,7 +119,7 @@ async function assertTenantAccess(tx: TenantTx): Promise<void> {
   const [row] = await tx.$queryRaw<{ status: string; member: boolean }[]>`
     SELECT t.status::text AS status,
            EXISTS (SELECT 1 FROM memberships m
-                   WHERE m.user_id = app_current_user_id() AND m.status = 'ACTIVE') AS member
+                   WHERE m.user_id = (SELECT app_current_user_id()) AND m.status = 'ACTIVE') AS member
     FROM tenants t`;
   if (!row || !['ACTIVE', 'TRIAL'].includes(row.status) || !row.member) {
     throw new ForbiddenException('No access to this tenant');

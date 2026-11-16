@@ -34,7 +34,11 @@ export function platformReach(code: string): string[] {
 export function tenantReach(code: string): string[] {
   const found: string[] = [];
   if (/\b(withTenant|withContext|tenantClient)\b/.test(code)) found.push('opens a tenant context');
-  if (/app\.(tenant_id|user_id)/.test(code)) found.push('sets app.tenant_id / app.user_id');
+  // app.context: the signed institute context (P1-J8); app.tenant_id / app.user_id: its old form.
+  if (/app\.(context|tenant_id|user_id)\b/.test(code)) found.push('sets an institute context');
+  if (/\b(requestContextKey|signRequestContext|setRequestContextKeySource)\b/.test(code)) {
+    found.push('reads or signs with the request context key');
+  }
   if (/tenancy\/db\.service/.test(code)) found.push('uses the institute request transaction');
   return found;
 }
@@ -50,7 +54,11 @@ describe('platform isolation (code scan)', () => {
     expect(platformReach("const platform_sms_logs = 'x'; tx.platformSmsLog.create()")).toEqual([]);
     expect(tenantReach('withTenant(prisma, id, fn)')).toEqual(['opens a tenant context']);
     expect(tenantReach("set_config('app.tenant_id', id, true)")).toEqual([
-      'sets app.tenant_id / app.user_id',
+      'sets an institute context',
+    ]);
+    expect(tenantReach("set_config('app.context', v, true)")).toEqual(['sets an institute context']);
+    expect(tenantReach('signRequestContext(key, parts)')).toEqual([
+      'reads or signs with the request context key',
     ]);
     expect(tenantReach("set_config('app.platform_session', h, true)")).toEqual([]);
   });
