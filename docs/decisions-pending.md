@@ -870,3 +870,59 @@ Also decided while building:
 - The migrations were written by hand (no development database is used in this run) and checked with `prisma migrate diff` against a scratch database: empty.
 - `sharp` 0.35.5 was already in the lockfile through Next.js; the API now depends on it directly (S8).
 - Encoding effort is moderate (PNG palette effort 4, WebP effort 4): the worst case (pure noise) stays well under the request's 15 s; a test pins it under 8 s per image on this PC.
+
+## Sprint 1, P5: promotion and new session (2026-11-17)
+
+**Built (day run 2026-11-17), for the owner's review with its PRs; nothing merged.** Plan:
+`docs/plans/sprint-1-p5-promotion.md` (PR #15, not approved yet). Built with the plan's
+recommended defaults for P5-A to P5-Q and its split: **P5a** (this PR: leaving, runs, apply and
+resume, numbering, the switch check, leave/return on the student page) and **P5b** (stacked on it:
+fee and teacher copies, previous-year dues markers, the leavers report, the new-year wizard).
+Rules as built: [promotion.md](promotion.md).
+
+Where the plan and the code disagreed (the code wins; recorded here):
+
+- **No P3 yet.** Built on `integration/sprint-1` (main + #16, #18, #17) without online admission:
+  new admits for the new year come from staff admission only, and numbering treats every
+  enrolment no run created as a new admit.
+- **The student list has no default ACTIVE filter** (the plan assumed one). Leavers stay in the
+  list, marked with their status; the status filter shows one kind at a time. Not changed (a
+  product decision: hide leavers by default?).
+- **Validation errors answer 400**, as everywhere in this API (zod), not 422: a leaving row
+  without a date, two equal numbers in one numbering request.
+
+Decided alone, each the safer option:
+
+- **P5-a1. A failed student of the top class repeats** instead of graduating (the plan: the top
+  class leaves as GRADUATED). Repeating keeps them; graduating someone by mistake removes them
+  from attendance and dues at apply.
+- **P5-a2. Leaving keeps the rolls** (one student's leave and the run's leavers alike): history,
+  and a return finds them in place. The plan said this for apply only.
+- **P5-a3. A new apply outcome, `SKIPPED_LEFT`:** a student who left another way after the run
+  was made is not enrolled into the new year (the plan only knew `SKIPPED_DEACTIVATED`).
+- **P5-a4. The roll strategy is optional when a run is made:** MERIT when a merit exam is found,
+  NAME_BN otherwise. MERIT without a published exam answers `422 MERIT_NEEDS_EXAMS` with
+  `reason: NO_EXAM` (`MODULE` without EXAMS); a given exam that is not published for that class
+  and year answers `422 MERIT_EXAM_INVALID` (new code).
+- **P5-a5. Permanent stops are not retried:** `SECTION_FULL`, `TARGET_INVALID` and
+  `ACTOR_NOT_ADMIN` end the job at once (BullMQ `UnrecoverableError`; the run stays APPLYING
+  with the code); other errors are retried 5 times with backoff, as planned.
+- **P5-a6. Resume is refused while the job is still in the queue** (`409 RUN_APPLYING`); a
+  finished or failed job of the same id is removed before the new one is queued (BullMQ would
+  ignore a second job with the same id).
+- **P5-a7. The apply-check `version` also covers the target sections' capacities and
+  enrolments**, so a run being applied into the same sections makes another admin check again
+  (`409 PREVIEW_CHANGED`) instead of applying on stale capacity figures.
+- **P5-a8. PROMOTE may go into any other active class** (skipping a class too); REPEAT must stay
+  in the run's class. Rows into a class or section deactivated since are refused at apply
+  (`422 TARGET_INVALID`).
+- **P5-a9. Numbering's PROMOTED strategy** is that of the run that promoted most of the class's
+  students (normally the class below); REPEATER: the class's own run; NEW: Bangla name.
+- **P5-a10. The study group is kept only while it is active.** Changing the merit exam takes the
+  results of pending rows again but never changes a decision.
+- **P5-a11. Audit names:** runs and their steps under `promotion_run` (create, rows, refresh,
+  apply, resume, each apply section, APPLIED); numbering under `class_level` (`step:
+number_rolls`); each leaver under `student` (old and new status).
+- **P5-a12. Setup's "in use" counts do not include promotion rows:** deleting a year, class,
+  section or group a row names answers `409 REFERENCE_CONFLICT` (the foreign key), as for other
+  references the counts do not list.

@@ -567,6 +567,38 @@ RESTRICT`) and unique. The kind column is fixed by a CHECK (`students.photo_file
   file of the right kind, a file is used in one place, and a file still in use cannot be deleted.
 - Isolation, grants, CHECKs and keys: `packages/db/test/files-rls.test.ts`.
 
+### Promotion (sprint 1 P5)
+
+Rules: [promotion.md](promotion.md). Two tenant tables (forced RLS, composite keys, every foreign
+key `ON UPDATE RESTRICT`), and two columns on `students`:
+
+- **`students.left_on`, `leave_reason`** (leaving is a status, not a deletion). CHECKs: no
+  `left_on` while `status = 'ACTIVE'`; a reason needs a date; at most 500 characters. The
+  app's table-level grants on `students` cover them.
+- **`promotion_runs`** (S I, column-level U): one per `(from_year_id, to_year_id,
+class_level_id)`. No DELETE (history; a draft is emptied, not deleted). The merit exam is
+  checked against the from-year by `(tenant_id, merit_exam_id, from_year_id) → exams (tenant_id,
+id, academic_year_id)` (a new unique index on `exams`). CHECKs: the years differ; MERIT needs
+  an exam; `(status = 'APPLIED') = (applied_at IS NOT NULL)`; a run past DRAFT has who and when;
+  `last_error` is a code (`^[A-Z_]{1,40}$`).
+- **`promotion_run_students`** (S I D, column-level U): one per run and student, and one per
+  to-year and student (a student is in at most one run into a year). A row carries its run's
+  `to_year_id` (`(tenant_id, run_id, to_year_id) → promotion_runs (tenant_id, id, to_year_id)`)
+  so its target section is checked by `(tenant_id, target_section_id, to_year_id,
+target_class_level_id) → sections (tenant_id, id, academic_year_id, class_level_id)` (a new
+  unique index on `sections`): a target can never be a section of another year or class.
+  CHECKs for LEAVE (status not ACTIVE, a date, no target) and PROMOTE/REPEAT (a class, no leaving
+  fields), outcome only with `applied_at`, an enrolment only with an enrolling outcome.
+- **Applied rows never change:** two restrictive policies, `promotion_rows_update_pending` (FOR
+  UPDATE USING `applied_at IS NULL` WITH CHECK `true`, so applying a pending row can still set
+  `applied_at`) and `promotion_rows_delete_pending`. The student, run and snapshot columns have
+  no UPDATE grant at all (the merit exam's figures may be taken again while pending).
+- The policies call the context function wrapped, `(SELECT app_current_tenant_id())`, so it runs
+  once per statement.
+- Deleting a year, class, section or study group that a promotion row still names answers
+  `409 REFERENCE_CONFLICT` (the foreign keys restrict).
+- Tests: `packages/db/test/promotion-rls.test.ts`, `students-leaving.test.ts`.
+
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
 > **In the API, services never call these.** Every authenticated request already runs inside one
