@@ -163,8 +163,11 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
     tenant A must not edit them.
   - **Only some columns (sprint 1 P1-B):** `jantrik_app` may update `locale`, `color_scheme`,
     `name_bn`, `password_hash`, `password_changed_at` and `updated_at`, and nothing else. The
-    login identifiers (`phone`, `email`) and the global `name` are out of the app's reach, so no
-    app code (or injection) can change how a person signs in. Tests that need another column set
+    login identifiers (`phone`, `email`) and the global `name` are out of the app's reach: no app
+    code (or injection) can change the phone or email a person signs in with. The password hash is
+    not: an injection can set `app.user_id` to anyone with `set_config` and then write their
+    `password_hash` (or create a session for them), which RLS allows for "your own row"
+    (P1-J8 in decisions-pending). Tests that need another column set
     it through the owner role, as that user.
   - **`password_changed_at`:** when the person last set their password themselves (null: never,
     or only by the seed). Written only by `PasswordSettingsService`, with `password_hash`

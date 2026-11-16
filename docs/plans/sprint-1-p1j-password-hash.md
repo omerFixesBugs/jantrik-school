@@ -40,6 +40,12 @@ instead, and what this plan's sections below describe only where they say so:
   role once (database.md → Database roles) and add `DATABASE_LOGIN_URL` to `.env`. On an existing
   server: deploy.md → Upgrades (create the role before the migration; the old API fails some reads
   between migrate and restart).
+- **Second review round:** the migration checks for the role before it changes anything and every
+  statement can run again (a DB test runs it twice); the role step on a server comes after the
+  checkout; a view guard; the login client must reach the same database and server as the app
+  client; stored hashes bounded in size; `create-roles.sh` run twice in CI; and two follow-ups
+  recorded for the owner: an injection can still take over an account through `set_config`
+  (P1-J8, not new), and the email lookup has no case-insensitive index (P1-J9).
 
 **Goal:** an SQL injection in any institute request (which runs as `jantrik_app`) can no longer
 read a staff member's argon2 password hash, neither of co-members nor of anyone else. Everything

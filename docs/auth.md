@@ -236,9 +236,13 @@ alone has its own database login:
   verifies with argon2 as before.
 - `jantrik_login_app` may run that one function and nothing else (no table, no other function),
   and `jantrik_app` may not run it. Only `AuthService` holds that client
-  (`login-isolation.spec.ts`). Its pool is small (4 connections).
+  (`login-isolation.spec.ts`). Its pool is small (4 connections). The queue worker builds the
+  same modules, so it gets `DATABASE_LOGIN_URL` and runs the start-up checks too, but never
+  looks a hash up; the receiver never gets it.
 - At start-up the API refuses a `DATABASE_LOGIN_URL` that is a superuser, has BYPASSRLS or can
-  become such a role (fail closed, like the other logins), and one mixed up with `DATABASE_URL`.
+  become such a role (fail closed, like the other logins), one mixed up with `DATABASE_URL`, and
+  one that reaches another database or server than `DATABASE_URL` (database, port and the
+  server's start time compared).
 - A stored hash above 64 MiB, 10 passes or 4 lanes, or one argon2 cannot read, counts as no
   password (the dummy check runs): a hash someone wrote into their own row cannot make each login
   attempt arbitrarily expensive.
@@ -247,12 +251,16 @@ alone has its own database login:
 
 - It **cannot** read any password hash or salt: its own, a co-member's or a stranger's.
 - It **cannot** run the password lookup, or anything as `jantrik_login_app`: that login's
-  password is only in the API's environment.
+  password is only in the API's (and the worker's) environment, never in the database.
 - It **can** learn whether a given person has a password at all, yes or no:
   `auth_my_password_is_set()` (for `GET /me/password`) answers for `app.user_id`, which any SQL can
   set with `set_config`. It reveals nothing about the password itself.
-- It can still set its own row's hash (the app login keeps UPDATE on the column, under RLS: its
-  own row only), as before.
+- It **can still take over an account**, as before P1-J: the request's identity is
+  `app.user_id`, which any SQL can change with `set_config`. Set to someone else's id, the RLS
+  policies let it write that person's `password_hash` (then sign in with a password it chose) or
+  create a session for them. P1-J protects the password itself (people reuse passwords
+  elsewhere), not the account against an injection. Recorded for the owner: P1-J8 in
+  decisions-pending.
 
 The platform admins' login is separate and unchanged ([platform.md](platform.md)).
 

@@ -354,18 +354,36 @@ deploy/compose.sh ps
      `ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s';`
   3. upgrade as above (`up -d` restarts Redis with the new user), then run the Redis check
      (§ 10a).
-- **A server set up before sprint 1's P1-J** (the password login's own database login):
-  1. add `DB_LOGIN_PASSWORD` (`openssl rand -hex 24`, different from every other password) to
-     the settings file (`DATABASE_LOGIN_URL` needs nothing: the compose file builds it);
-  2. create the role **before** the migration (the migration grants to it): recreate the
-     Postgres container so it gets the new password (`deploy/compose.sh up -d postgres`; the data
-     stays), then run the roles script again, which creates only what is missing
-     (`deploy/compose.sh exec -u postgres postgres sh /jantrik/postgres/create-roles.sh`);
-  3. upgrade as above. **Between `migrate` and `up -d`**, the old API still running fails: every
-     whole-row read of `users` (the session refresh, `/auth/me`) and both logins (its login
-     lookup asks for a column the function no longer returns), until it restarts. Nothing is
-     lost: a refresh that fails is retried by the browser, and nobody is signed out. Keep the
-     gap short (run the two commands together).
+- **A server set up before sprint 1's P1-J** (the password login's own database login,
+  `jantrik_login_app`). Its migration refuses to run until the role exists, and the role script
+  that creates it is the **new** one, so the order matters:
+
+  ```bash
+  cd /srv/jantrik
+  deploy/compose.sh run --rm backup                 # a backup first
+  git fetch && git checkout <new tag or commit>     # the new create-roles.sh and compose file
+  nano deploy/.env.prod                             # add DB_LOGIN_PASSWORD (openssl rand -hex 24,
+                                                    # unlike every other password)
+  deploy/compose.sh up -d postgres                  # Postgres gets the new password; data stays
+  deploy/compose.sh exec -u postgres postgres sh /jantrik/postgres/create-roles.sh
+                                                    # creates only what is missing
+  deploy/compose.sh build
+  deploy/compose.sh run --rm migrate
+  deploy/compose.sh up -d
+  ```
+
+  - `DATABASE_LOGIN_URL` needs nothing: the compose file builds it from `DB_LOGIN_PASSWORD`.
+  - **If `migrate` stopped with "create the role jantrik_login_app first"**, nothing was changed:
+    create the role as above, mark the migration rolled back, and run it again:
+    `deploy/compose.sh run --rm migrate node_modules/.bin/prisma migrate resolve --rolled-back 20261116000000_users_password_hash_hidden`,
+    then `deploy/compose.sh run --rm migrate`. (On a development machine:
+    `pnpm --filter @jantrik/db exec prisma migrate resolve --rolled-back 20261116000000_users_password_hash_hidden`,
+    then `pnpm db:deploy`.) Every statement of that migration can run again, so the same
+    recovery works after a failure half-way.
+  - **Between `migrate` and `up -d`** the old API still running fails every whole-row read of
+    `users` (the session refresh, `/auth/me`) and both logins (its lookup asks for a column the
+    function no longer returns), until it restarts. Nothing is lost: a refresh that fails is
+    retried by the browser, and nobody is signed out. Run the last two commands together.
 
 ## 12. Backups
 
