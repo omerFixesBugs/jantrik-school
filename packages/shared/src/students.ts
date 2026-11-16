@@ -258,6 +258,11 @@ export interface StudentProfile {
   /** The stored photo's id (GET …/photo serves it), or null; a replaced photo has a new id. */
   photoId: string | null;
   status: StudentStatus;
+  /** The day a leaver left (status GRADUATED, TRANSFERRED, DROPPED_OUT or INACTIVE without
+   * deactivation, P5); null while the student stays. */
+  leftOn: IsoDate | null;
+  /** Why they left (OWNER/ADMIN and the student's own teachers; null in the basic view). */
+  leaveReason: string | null;
   /** Set when deactivated (soft delete). */
   deletedAt: string | null;
   /**

@@ -23,6 +23,7 @@ import {
   admissionSchema,
   createEnrolmentSchema,
   guardianLookupQuerySchema,
+  leaveSchema,
   normalizeBdPhone,
   recentMonths,
   STUDENT_STATUSES,
@@ -63,6 +64,7 @@ class TransferDto extends zodDto(transferSchema) {}
 class CreateEnrolmentDto extends zodDto(createEnrolmentSchema) {}
 class StudentSettingsDto extends zodDto(studentSettingsSchema) {}
 class GuardianLookupDto extends zodDto(guardianLookupQuerySchema) {}
+class LeaveDto extends zodDto(leaveSchema) {}
 
 const Id = () => Param('id', ParseUUIDPipe);
 
@@ -459,6 +461,22 @@ export class StudentsController {
   @Roles('OWNER', 'ADMIN')
   deactivate(@Id() id: string): Promise<StudentProfile> {
     return this.admin.deactivate(id);
+  }
+
+  /** Leaves the institute (graduated, transferred, dropped out, inactive): not a deletion (S14). */
+  @Post(':id/leave')
+  @HttpCode(200)
+  @Roles('OWNER', 'ADMIN')
+  leave(@Id() id: string, @Body() dto: LeaveDto): Promise<StudentProfile> {
+    return this.admin.leave(id, dto);
+  }
+
+  /** A leaver comes back (P5-J). */
+  @Post(':id/return')
+  @HttpCode(200)
+  @Roles('OWNER', 'ADMIN')
+  returnStudent(@Id() id: string): Promise<StudentProfile> {
+    return this.admin.returnStudent(id);
   }
 }
 

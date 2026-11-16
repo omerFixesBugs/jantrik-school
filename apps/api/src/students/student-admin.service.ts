@@ -1,6 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { GuardianRelation, Prisma } from '@jantrik/db';
-import { dateFromDb, dateToDb, type IsoDate, type StudentProfile } from '@jantrik/shared';
+import {
+  dateFromDb,
+  dateToDb,
+  type IsoDate,
+  type LeaveInput,
+  type StudentProfile,
+} from '@jantrik/shared';
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
@@ -300,6 +306,7 @@ export class StudentAdminService {
       motherNameEn: null,
       presentAddress: null,
       permanentAddress: null,
+      leaveReason: null,
       photoId: null,
       guardians: [],
       // The basics: the current class/section/roll, not the history.
@@ -363,6 +370,8 @@ export class StudentAdminService {
       permanentAddress: s.permanentAddress,
       photoId: s.photoFileId,
       status: s.status,
+      leftOn: s.leftOn ? dateFromDb(s.leftOn) : null,
+      leaveReason: s.leaveReason,
       deletedAt: s.deletedAt?.toISOString() ?? null,
       createdAt: s.createdAt.toISOString(),
       access: 'full',
@@ -614,6 +623,63 @@ export class StudentAdminService {
         })),
       },
       newValues: { status: 'INACTIVE', softDeleted: true },
+    });
+    return this.profile(studentId);
+  }
+
+  // ─────────────────────────── Leaving (P5, S14) ───────────────────────────
+
+  /**
+   * The student leaves (graduated, transferred, dropped out, or inactive) on a date, with an
+   * optional reason. Not a deletion: the ledger, the counter and history still find them; they
+   * drop out of attendance, the due list and new dues (all read ACTIVE students). Rolls are kept
+   * (history; a return finds them in place). Only an ACTIVE student leaves: the conditional
+   * update makes two leaves at once answer ALREADY_LEFT to the second.
+   */
+  async leave(studentId: string, input: LeaveInput): Promise<StudentProfile> {
+    const before = await this.active(studentId);
+    if (before.status !== 'ACTIVE')
+      throw apiError(422, 'ALREADY_LEFT', 'This student has already left', {
+        status: before.status,
+      });
+    const { count } = await this.db.tx.student.updateMany({
+      where: { id: studentId, status: 'ACTIVE', deletedAt: null },
+      data: { status: input.status, leftOn: dateToDb(input.leftOn), leaveReason: input.reason },
+    });
+    if (count === 0) throw apiError(422, 'ALREADY_LEFT', 'This student has already left');
+    await this.audit.record({
+      entity: 'student',
+      entityId: studentId,
+      action: 'UPDATE',
+      oldValues: { status: before.status },
+      newValues: { status: input.status, leftOn: input.leftOn, leaveReason: input.reason },
+    });
+    return this.profile(studentId);
+  }
+
+  /**
+   * A leaver comes back (P5-J): ACTIVE again, the date and reason cleared. They count against
+   * the student limit again, so the limit is checked as for an admission.
+   */
+  async returnStudent(studentId: string): Promise<StudentProfile> {
+    const before = await this.active(studentId);
+    if (before.status === 'ACTIVE') throw apiError(422, 'NOT_LEFT', 'This student has not left');
+    await this.assertStudentLimit();
+    const { count } = await this.db.tx.student.updateMany({
+      where: { id: studentId, status: { not: 'ACTIVE' }, deletedAt: null },
+      data: { status: 'ACTIVE', leftOn: null, leaveReason: null },
+    });
+    if (count === 0) throw apiError(422, 'NOT_LEFT', 'This student has not left');
+    await this.audit.record({
+      entity: 'student',
+      entityId: studentId,
+      action: 'UPDATE',
+      oldValues: {
+        status: before.status,
+        leftOn: before.leftOn,
+        leaveReason: before.leaveReason,
+      },
+      newValues: { status: 'ACTIVE', returned: true },
     });
     return this.profile(studentId);
   }
