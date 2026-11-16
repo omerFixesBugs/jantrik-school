@@ -58,6 +58,93 @@ describe('promotion: review fixes', () => {
     await h.close();
   });
 
+  it('round 2 SF-A: after a placement correction, the roll group follows the class the student is in now', async () => {
+    const s = await promotionSchool(h);
+    const six = await createRun(s, 6);
+    const seven = await createRun(s, 7);
+    await api(s.tokens.admin)
+      .put(`/promotions/${seven.id}/rows`, {
+        rows: seven.rows.map((r) => ({
+          id: r.id,
+          decision: 'REPEAT',
+          targetClassLevelId: s.classes[7],
+          targetSectionId: s.sections[2027][7].ka,
+        })),
+      })
+      .expect(200);
+    for (const id of [six.id, seven.id]) {
+      await startApply(s, id);
+      await processRun(s, id);
+      await removeJob(id);
+    }
+    const enrolmentOf = async (studentId: string) =>
+      (
+        (await api(s.tokens.admin).get(`/students/${studentId}`).expect(200)).body as StudentProfile
+      ).enrolments.find((e) => e.academicYear.id === s.y2027)!;
+    const [passed, failed] = s.students.six;
+    // The failed one was kept back by mistake: moved up to 7 ক. The passed one goes back to 6 ক.
+    await api(s.tokens.admin)
+      .patch(`/students/${failed!.id}/enrolments/${(await enrolmentOf(failed!.id)).id}`, {
+        classLevelId: s.classes[7],
+        sectionId: s.sections[2027][7].ka,
+      })
+      .expect(200);
+    await api(s.tokens.admin)
+      .patch(`/students/${passed!.id}/enrolments/${(await enrolmentOf(passed!.id)).id}`, {
+        classLevelId: s.classes[6],
+        sectionId: s.sections[2027][6].ka,
+      })
+      .expect(200);
+    const preview = async (n: 6 | 7) =>
+      (
+        await api(s.tokens.admin)
+          .get(`/promotions/rolls?toYearId=${s.y2027}&classLevelId=${s.classes[n]}`)
+          .expect(200)
+      ).body as RollsPreview;
+    const rowOf = (p: RollsPreview, id: string) =>
+      p.sections.flatMap((x) => x.rows).find((r) => r.studentId === id)!;
+    // Now in class 7, coming from class 6: promoted, not a class-7 repeater.
+    expect(rowOf(await preview(7), failed!.id)).toMatchObject({ group: 'PROMOTED' });
+    // Back in class 6, the run's own class: a repeater (class 6's own run, so its merit place stays).
+    expect(rowOf(await preview(6), passed!.id)).toMatchObject({
+      group: 'REPEATER',
+      meritPosition: 2,
+    });
+  });
+
+  it('round 2 SF-B: a student who left does not hold a seat', async () => {
+    const s = await promotionSchool(h, { capacity: 2 });
+    const admin = api(s.tokens.admin);
+    const enrol = (studentId: string) =>
+      admin.post(`/students/${studentId}/enrolments`, {
+        academicYearId: s.y2027,
+        classLevelId: s.classes[7],
+        sectionId: s.sections[2027][7].ka,
+        roll: null,
+      });
+    const [a, , c] = s.students.six;
+    await enrol(a!.id).expect(201);
+    await enrol(c!.id).expect(201);
+    await admin
+      .post(`/students/${a!.id}/leave`, { status: 'TRANSFERRED', leftOn: '2026-12-01' })
+      .expect(200);
+    // The seat a left is free again.
+    await enrol(s.students.sixB[0]!.id).expect(201);
+    // The apply-check counts only students still here.
+    const run7 = await createRun(s, 7);
+    const check = (await admin.get(`/promotions/${run7.id}/apply-check`).expect(200))
+      .body as PromotionApplyCheck;
+    expect(check.sections.find((x) => x.section.id === s.sections[2027][8].ka)).toMatchObject({
+      enrolled: 0,
+    });
+    const six = await createRun(s, 6);
+    const check6 = (await admin.get(`/promotions/${six.id}/apply-check`).expect(200))
+      .body as PromotionApplyCheck;
+    expect(check6.sections.find((x) => x.section.id === s.sections[2027][7].ka)).toMatchObject({
+      enrolled: 2,
+    });
+  });
+
   it('SF2: a run comes only from the year just before the new one', async () => {
     const s = await promotionSchool(h);
     const y2025 = await withTenant(h.prisma, s.tenantId, (tx) =>
