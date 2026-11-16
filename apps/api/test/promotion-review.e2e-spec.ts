@@ -3,7 +3,9 @@ import { withTenant } from '@jantrik/db';
 import {
   addDays,
   todayIn,
+  type AttendanceRegisterReport,
   type AttendanceSheet,
+  type MySectionsResponse,
   type PromotionApplyCheck,
   type PromotionRunDetail,
   type RollsPreview,
@@ -509,13 +511,15 @@ describe('promotion: review fixes', () => {
     await removeJob(six.id);
   });
 
-  it('SF4: a leaver is on registers before the day they left, not from it', async () => {
+  it('SF4: a leaver is on registers up to the day they left (their last day), not after', async () => {
     const t = await school(h);
     const today = todayIn('Asia/Dhaka');
     const yesterday = addDays(today, -1);
+    const dayBefore = addDays(today, -2);
     const leaver = t.a[0]!;
+    // Their last day was yesterday.
     await api(t.admin)
-      .post(`/students/${leaver.id}/leave`, { status: 'TRANSFERRED', leftOn: today })
+      .post(`/students/${leaver.id}/leave`, { status: 'TRANSFERRED', leftOn: yesterday })
       .expect(200);
     const sheet = async (date: string) =>
       (
@@ -525,6 +529,7 @@ describe('promotion: review fixes', () => {
       ).body as AttendanceSheet;
     expect((await sheet(today)).students.map((x) => x.id)).not.toContain(leaver.id);
     expect((await sheet(yesterday)).students.map((x) => x.id)).toContain(leaver.id);
+    expect((await sheet(dayBefore)).students.map((x) => x.id)).toContain(leaver.id);
     // Today's register is saved without them; a record for them is refused.
     const others = t.a.slice(1).map((x) => ({ studentId: x.id, status: 'PRESENT' }));
     await api(t.admin)
@@ -545,5 +550,20 @@ describe('promotion: review fixes', () => {
         records: others,
       })
       .expect(200);
+    // The board counts them on their last day, not after.
+    const count = async (date: string) =>
+      (
+        (await api(t.admin).get(`/attendance/my-sections?date=${date}`).expect(200))
+          .body as MySectionsResponse
+      ).sections.find((x) => x.id === t.sectionA)!.studentCount;
+    expect(await count(today)).toBe(2);
+    expect(await count(yesterday)).toBe(3);
+    // The monthly register of their last day's month lists them.
+    const register = (
+      await api(t.admin)
+        .get(`/attendance/reports/register?sectionId=${t.sectionA}&month=${yesterday.slice(0, 7)}`)
+        .expect(200)
+    ).body as AttendanceRegisterReport;
+    expect(register.rows.map((r) => r.id)).toContain(leaver.id);
   });
 });

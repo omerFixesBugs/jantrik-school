@@ -428,7 +428,7 @@ export class PromotionApplyService {
     // P5-H: repeaters keep their subject choices (the same class's subjects, still active).
     const repeaters = toCreate
       .filter((r) => r.decision === 'REPEAT' && createdBy.has(r.studentId))
-      .map((r) => r.studentId);
+      .map((r) => ({ studentId: r.studentId, studyGroupId: r.targetStudyGroupId }));
     await this.choices.copyForRepeaters(repeaters, run.fromYearId, run.toYearId, run.classLevelId);
 
     const appliedAt = new Date();

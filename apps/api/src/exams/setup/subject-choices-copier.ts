@@ -16,41 +16,68 @@ export class SubjectChoicesCopier {
    * many were added.
    */
   async copyForRepeaters(
-    studentIds: string[],
+    students: { studentId: string; studyGroupId: string | null }[],
     fromYearId: string,
     toYearId: string,
     classLevelId: string,
   ): Promise<number> {
-    if (studentIds.length === 0) return 0;
+    if (students.length === 0) return 0;
     const tx = this.db.tx;
-    const choices = await tx.studentSubjectChoice.findMany({
-      where: {
-        academicYearId: fromYearId,
-        studentId: { in: studentIds },
-        subject: { isActive: true, classLevelId },
-      },
-      select: { tenantId: true, studentId: true, subjectId: true, kind: true },
-    });
+    const groupOf = new Map(students.map((s) => [s.studentId, s.studyGroupId]));
+    const choices = (
+      await tx.studentSubjectChoice.findMany({
+        where: {
+          academicYearId: fromYearId,
+          studentId: { in: [...groupOf.keys()] },
+          subject: { isActive: true, classLevelId },
+        },
+        select: {
+          tenantId: true,
+          studentId: true,
+          subjectId: true,
+          kind: true,
+          subject: { select: { studyGroupId: true } },
+        },
+      })
+    )
+      // A subject of another study group than the new year's is not taken there.
+      .filter(
+        (c) =>
+          c.subject.studyGroupId === null || c.subject.studyGroupId === groupOf.get(c.studentId),
+      );
     if (choices.length === 0) return 0;
     const { count } = await tx.studentSubjectChoice.createMany({
-      data: choices.map((c) => ({ ...c, academicYearId: toYearId })),
+      data: choices.map(({ subject: _subject, ...c }) => ({ ...c, academicYearId: toYearId })),
       skipDuplicates: true,
     });
     return count;
   }
 
   /**
-   * A student moved to another class in a year (a placement corrected, P5): their choices of that
-   * year among other classes' subjects no longer apply and are removed. Returns the subject ids.
+   * A student's placement in a year corrected (P5): their choices of that year among subjects
+   * they no longer take there (another class's, or another study group's) are removed. Returns
+   * the subject ids.
    */
-  async removeOtherClasses(
+  async removeNotTaken(
     studentId: string,
     academicYearId: string,
     classLevelId: string,
+    studyGroupId: string | null,
   ): Promise<string[]> {
     const tx = this.db.tx;
     const stale = await tx.studentSubjectChoice.findMany({
-      where: { studentId, academicYearId, subject: { classLevelId: { not: classLevelId } } },
+      where: {
+        studentId,
+        academicYearId,
+        OR: [
+          { subject: { classLevelId: { not: classLevelId } } },
+          {
+            subject: {
+              studyGroupId: studyGroupId ? { not: studyGroupId } : { not: null },
+            },
+          },
+        ],
+      },
       select: { id: true, subjectId: true },
     });
     if (stale.length > 0)

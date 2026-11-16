@@ -71,7 +71,7 @@ export class PromotionProcessor extends WorkerHost {
       const code = applyErrorCode(error);
       // Not the message: database errors can contain row values (personal data).
       this.logger.error(`Promotion run ${runId} stopped: ${code} (${(error as Error).name})`);
-      await this.jobs.run(tenantId, () => this.apply.markError(runId, code));
+      await this.jobs.run(tenantId, () => this.apply.markError(runId, code), opts);
       if (PERMANENT_ERRORS.has(code)) throw new UnrecoverableError(code);
       throw error;
     }

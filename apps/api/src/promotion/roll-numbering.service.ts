@@ -283,7 +283,13 @@ export class RollNumberingService {
         entity: 'class_level',
         entityId: input.classLevelId,
         action: 'UPDATE',
-        newValues: { step: 'number_rolls', toYearId: input.toYearId, rolls: written },
+        newValues: {
+          step: 'number_rolls',
+          toYearId: input.toYearId,
+          rolls: written,
+          // Numbered although runs into the class were not applied yet (RUNS_PENDING overridden).
+          forced: input.force && preview.pendingRuns.length > 0,
+        },
       });
     return this.preview(input.toYearId, input.classLevelId);
   }

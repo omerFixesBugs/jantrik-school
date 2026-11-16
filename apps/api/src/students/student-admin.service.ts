@@ -10,7 +10,10 @@ import {
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
+import { AttendanceUsage } from '../attendance/attendance-usage.js';
+import { ExamUsage } from '../exams/setup/exam-usage.js';
 import { SubjectChoicesCopier } from '../exams/setup/subject-choices-copier.js';
+import { FeeUsage } from '../fees/fee-usage.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
 import { StudentAccess } from './student-access.service.js';
@@ -101,6 +104,9 @@ export class StudentAdminService {
     private readonly guardians: GuardianLinker,
     private readonly access: StudentAccess,
     private readonly choices: SubjectChoicesCopier,
+    private readonly attendanceUsage: AttendanceUsage,
+    private readonly examUsage: ExamUsage,
+    private readonly feeUsage: FeeUsage,
   ) {}
 
   private get tenantId(): string {
@@ -644,6 +650,15 @@ export class StudentAdminService {
     input: { classLevelId: string; sectionId: string | null; studyGroupId: string | null },
   ): Promise<StudentProfile> {
     const tx = this.db.tx;
+    // Lock first, then read (review round 2): the enrolment for the change, the two years
+    // against a switch of the current year meanwhile.
+    const [locked] = await tx.$queryRaw<{ academic_year_id: string }[]>`
+      SELECT academic_year_id FROM enrolments
+      WHERE id = ${enrolmentId}::uuid AND student_id = ${studentId}::uuid FOR UPDATE`;
+    if (!locked) throw new NotFoundException('Enrolment not found');
+    await tx.$queryRaw`
+      SELECT id FROM academic_years
+      WHERE id = ${locked.academic_year_id}::uuid OR is_current FOR SHARE`;
     const before = await this.active(studentId);
     const e = before.enrolments.find((x) => x.id === enrolmentId);
     if (!e) throw new NotFoundException('Enrolment not found');
@@ -659,11 +674,9 @@ export class StudentAdminService {
         field: 'enrolmentId',
       });
     const [attendance, exams, dues] = await Promise.all([
-      tx.attendanceRecord.count({
-        where: { studentId, session: { section: { academicYearId: year.id } } },
-      }),
-      tx.examCandidate.count({ where: { studentId, exam: { academicYearId: year.id } } }),
-      tx.feeDue.count({ where: { studentId, academicYearId: year.id } }),
+      this.attendanceUsage.recordsInYear(studentId, year.id),
+      this.examUsage.candidatesInYear(studentId, year.id),
+      this.feeUsage.duesInYear(studentId, year.id),
     ]);
     if (attendance + exams + dues > 0)
       throw apiError(409, 'ENROLMENT_IN_USE', 'This year already has records for the student', {
@@ -671,7 +684,6 @@ export class StudentAdminService {
         exams,
         dues,
       });
-    await tx.$queryRaw`SELECT id FROM enrolments WHERE id = ${enrolmentId}::uuid FOR UPDATE`;
     await this.checkEnrolment(
       {
         academicYearId: year.id,
@@ -683,9 +695,14 @@ export class StudentAdminService {
       enrolmentId,
     );
     const removedChoices =
-      e.classLevel.id === input.classLevelId
+      e.classLevel.id === input.classLevelId && (e.studyGroup?.id ?? null) === input.studyGroupId
         ? []
-        : await this.choices.removeOtherClasses(studentId, year.id, input.classLevelId);
+        : await this.choices.removeNotTaken(
+            studentId,
+            year.id,
+            input.classLevelId,
+            input.studyGroupId,
+          );
     await tx.enrolment.update({
       where: { id: enrolmentId },
       data: {

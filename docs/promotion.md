@@ -10,6 +10,8 @@ Nothing here is automatic: the current year never switches by itself, and nothin
 
 ## Leaving (S14)
 
+- **Seats:** a section's capacity counts only students still here (ACTIVE, not deactivated):
+  a leaver frees their seat (admission, enrolment, transfer, placement, apply, import).
 - **Leaving is a status, not a deletion.** `POST /students/:id/leave {status, leftOn, reason?}`
   (OWNER/ADMIN) sets `GRADUATED`, `TRANSFERRED`, `DROPPED_OUT` or `INACTIVE`, with `students.left_on`
   and `leave_reason`. `deleted_at` stays NULL, so the ledger, the counter and history still find the
@@ -19,8 +21,8 @@ DEACTIVATED`.
   the device roster, the due list, new dues, and the student limit (a place is freed). The student
   list still shows them, marked with their status (the status filter shows only one kind).
 - **Rolls are kept** (history; a return finds them in place).
-- **Registers:** a leaver is on a section's register for the days before `left_on` (past registers
-  keep them) and gone from that day on: the daily register, the device's view of a day and the
+- **Registers:** `left_on` is a leaver's last day on a section's register (past registers keep
+  them); from the next day they are gone: the daily register, the device's view of a day and the
   monthly register alike (`apps/api/src/attendance/on-register.ts`). A student not ACTIVE without
   a leaving date (set before P5) stays on as before.
 - **Return** (`POST /students/:id/return`, P5-J): ACTIVE again, date and reason cleared, the
@@ -127,7 +129,10 @@ Rolls are numbered per class of the new year, after the runs that feed it are ap
 
 - **Groups, in this order:** promoted students (the strategy of the run that promoted most of
   them), then repeaters (this class's own run), then everyone else enrolled in the year (new
-  admits: Bangla name). `assignRolls()` in `@jantrik/shared` (pure, deterministic).
+  admits: Bangla name). The group follows the class a student is in now: a row's student now in
+  its run's own class is a repeater, in any other class promoted (a corrected placement is
+  numbered where it now belongs). Old roll and merit place count only within the run whose
+  strategy orders that group. `assignRolls()` in `@jantrik/shared` (pure, deterministic).
 - **Strategies:** MERIT (class position, unranked after; ties by the lower old roll, then Bangla
   name), NAME_BN (Bangla collator, ties by student code), NAME_EN, MANUAL (proposes NAME_BN; the
   admin edits the numbers), KEEP (an old roll is kept when free; the rest follow the highest kept

@@ -312,20 +312,17 @@ function Profile() {
                     {e.academicYear.isCurrent && <Badge variant="soft">{t('current')}</Badge>}
                     {/* A year after the current one (listed above it): its placement can be
                         corrected, e.g. a promotion applied by mistake (P5-L). */}
-                    {writable &&
-                      !e.academicYear.isCurrent &&
-                      p.enrolments.findIndex((x) => x.academicYear.isCurrent) >
-                        p.enrolments.indexOf(e) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDialog({ placement: e.id })}
-                          data-testid="change-placement"
-                        >
-                          <PencilIcon aria-hidden />
-                          {t('changePlacement')}
-                        </Button>
-                      )}
+                    {writable && laterYear(p, e) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDialog({ placement: e.id })}
+                        data-testid="change-placement"
+                      >
+                        <PencilIcon aria-hidden />
+                        {t('changePlacement')}
+                      </Button>
+                    )}
                   </span>
                   <span className="text-sm break-words">
                     {[
@@ -504,6 +501,17 @@ function Profile() {
       />
     </div>
   );
+}
+
+/**
+ * An enrolment of a year after the current one (newest first: listed above the current one), or,
+ * with no current-year enrolment at all, the newest one. The API refuses any other (NOT_A_NEW_YEAR).
+ */
+function laterYear(p: StudentProfile, e: StudentProfile['enrolments'][number]): boolean {
+  if (e.academicYear.isCurrent) return false;
+  const current = p.enrolments.findIndex((x) => x.academicYear.isCurrent);
+  const i = p.enrolments.indexOf(e);
+  return current === -1 ? i === 0 : i < current;
 }
 
 function Item({ label, children, ltr }: { label: string; children: ReactNode; ltr?: boolean }) {
