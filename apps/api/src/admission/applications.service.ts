@@ -56,7 +56,7 @@ const LIST_SELECT = {
   cycleClass: {
     select: { id: true, classLevel: { select: NAMED }, studyGroup: { select: NAMED } },
   },
-  photo: { select: { tenantId: true } },
+  photo: { select: { sha256: true } },
 } satisfies Prisma.AdmissionApplicationSelect;
 
 type ListRow = Prisma.AdmissionApplicationGetPayload<{ select: typeof LIST_SELECT }>;
@@ -661,6 +661,7 @@ function listItem(r: ListRow): AdmissionApplicationListItem {
     cycleClass: r.cycleClass,
     approvalProblem: r.approvalProblem as AdmissionApprovalProblem | null,
     hasPhoto: r.photo !== null,
+    photoVersion: r.photo?.sha256 ?? null,
     studentId: r.studentId,
   };
 }

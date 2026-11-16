@@ -63,6 +63,15 @@ exists when the period has started (or is paid ahead at the counter), starts on 
 `dues_from`, has not ended before the student was admitted, and the student's class (or group)
 has an amount for an active head. A student admitted inside a period gets at least 7 days to pay.
 
+**The admission date** the dues count from (sprint 1 P3, decision P3-K, review focus 5) is the day
+the student was created, except for a student admitted **before their first year starts** (in
+December, for January, with no enrolment in an earlier year): for them it is the year's start. So
+their admission fee is due `year start + offset` (not already late, not skipped because the fee
+"charges from" 1 January), and their first month is due on its usual day (no late-joiner days). A
+student enrolled in an earlier year keeps the real day, so a promoted student is never charged a
+one-time fee again. `admissionDateForYear` in `packages/shared/src/fees.ts`; sibling ranks still
+order by the creation time. See [admission.md](admission.md).
+
 - **Generated idempotently:** insert … ON CONFLICT DO NOTHING on student + head + year + period
   (a one-time fee once ever), so a due is never created twice.
 - **Correctness never depends on the nightly job.** Opening a ledger (counter, guardian) generates

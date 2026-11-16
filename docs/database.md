@@ -631,6 +631,26 @@ one row per staff member per day (unique `(tenant_id, user_id, date)`), composit
 - Tests: `packages/db/test/staff-attendance-rls.test.ts`; the table list in
   `schema-safety.test.ts`.
 
+### Admission (sprint 1 P3)
+
+Five tenant tables ([admission.md](admission.md)), each with forced RLS calling the signed context
+wrapped and composite foreign keys `ON UPDATE/DELETE RESTRICT`:
+
+- `admission_cycles` (S I U; no DELETE): one academic year each; CHECKs on the names, the window
+  (`closes_at > opens_at`) and `fields` (only the known keys, each `HIDDEN`, `OPTIONAL` or
+  `REQUIRED`, through `jsonb_path_exists`).
+- `admission_cycle_classes` (S I U D): `(tenant_id, id, cycle_id)` unique, so an application's
+  class always belongs to its cycle; a class and group once per cycle (a partial unique index for
+  "no group"); DELETE is refused by the applications' foreign key once a class has any.
+- `admission_applications` (S I, UPDATE by column; no DELETE): history. `application_no`,
+  `source`, `cycle_id`, `submitted_at` and `tenant_id` are not updatable. CHECKs: the number
+  format, a name and a guardian name, the 17-digit birth registration number, the E.164 phone, a
+  reason for REJECTED and WITHDRAWN, `ADMITTED` exactly when `student_id` is set (which is unique
+  and points at a student of the same institute), the known approval problems.
+- `admission_application_photos` (S I D): a re-encoded JPEG ≤ 200 KB (204 800 bytes) until approval
+  moves it into `stored_files`; primary key `(tenant_id, application_id)`.
+- `admission_counters` (S I U): the last number per institute and year.
+
 ### Files and the institute profile (sprint 1 P2)
 
 Images live in the database ([files.md](files.md), decision S7):

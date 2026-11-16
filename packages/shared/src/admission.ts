@@ -247,6 +247,8 @@ export interface AdmissionApplicationListItem {
   cycleClass: { id: string; classLevel: AdmissionNamed; studyGroup: AdmissionNamed | null };
   approvalProblem: AdmissionApprovalProblem | null;
   hasPhoto: boolean;
+  /** Changes when the photo does (the web's image cache key). */
+  photoVersion: string | null;
   studentId: string | null;
 }
 

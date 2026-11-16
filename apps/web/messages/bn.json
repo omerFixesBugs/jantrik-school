@@ -97,6 +97,7 @@
   "nav": {
     "dashboard": "ড্যাশবোর্ড",
     "students": "{student} তালিকা",
+    "admission": "ভর্তি",
     "classesAndSections": "{classLevel} ও {section}",
     "attendance": "হাজিরা",
     "fees": "ফি",

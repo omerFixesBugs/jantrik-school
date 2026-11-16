@@ -906,3 +906,42 @@ Also decided while building:
 - The migrations were written by hand (no development database is used in this run) and checked with `prisma migrate diff` against a scratch database: empty.
 - `sharp` 0.35.5 was already in the lockfile through Next.js; the API now depends on it directly (S8).
 - Encoding effort is moderate (PNG palette effort 4, WebP effort 4): the worst case (pure noise) stays well under the request's 15 s; a test pins it under 8 s per image on this PC.
+
+## Sprint 1, P3: online admission (2026-11-17)
+
+Built during the unattended day run of 2026-11-17 from the P3 plan (`docs/plans/sprint-1-p3-admission.md`,
+PR #15) with its recommended defaults P3-A to P3-V, on top of P1-J8 (#20). Staff side and the
+December dues rule: P3a (this PR). Decisions taken alone, each the safest option found:
+
+- **P3-a1. Field lengths follow the student's fields**, not the plan's numbers: names 120
+  characters (plan 100), addresses 300 (plan 500), date of birth from 1920 (plan 1990), so an
+  approved application always fits a student (`admit()` would refuse a longer value).
+- **P3-a2. Blood group is hidden by default** (P3-Q did not list it): less personal data unless
+  the institute asks for it.
+- **P3-a3. "Live" for the three-per-phone cap** is "not withdrawn and not rejected"; the duplicate
+  check counts every application not withdrawn (as the plan).
+- **P3-a4. Staff entry is JSON; the photo is a separate upload** (`PUT /admission/applications/:id/photo`,
+  P2's upload pipeline and `@OwnTransaction`), instead of one multipart request. The cycle's
+  required fields apply to staff except the photo; staff may fill fields the cycle hides.
+- **P3-a5. Staff may enter applications in any cycle status** (draft, open or closed): paper forms
+  arrive after the deadline.
+- **P3-a6. Three extra read routes for the pages:** `GET /admission/options` (years, classes,
+  groups), `GET /admission/cycles/:id`, `GET /admission/cycle-classes/:id/sections` (where to
+  approve into).
+- **P3-a7. Bulk approval:** STUDENT_LIMIT, SECTION_FULL and INACTIVE stop the run and mark the
+  rest; GUARDIAN_CHOICE_REQUIRED and DUPLICATE skip one; an unexpected error is recorded as a new
+  problem `INVALID` (logged by its error name only, never the message: it can hold personal data).
+  The job id is `admission-approve-<class id>` (BullMQ refuses `:`), removed when done so a re-run
+  can start; "running" is the job's state.
+- **P3-a8. Status changes** go between any statuses except out of `ADMITTED` (final), each with
+  who, when and the reason, audited; no further state machine (P4 adds SELECTED/WAITLISTED).
+- **P3-a9. The message namespace is `admissions.staff`**: `admission` is the student admission
+  form's (its field labels are reused).
+- **P3-a10 (money, for the owner). The December rule can charge imported existing students:** an
+  institute that imports its existing students in December **directly into next year's classes**
+  (no enrolment in an earlier year) with an admission fee that "charges from" 1 January would now
+  charge them that fee (they look like December admissions); before, it skipped them (and skipped
+  real December admissions too, the bug P3-K fixes). Workaround: import into the current year,
+  then promote; or cancel those dues. Not changed: the rule is the approved P3-K.
+- **P3-a11. No trigram index on application names:** 2 000 applications list in well under
+  300 ms with `ILIKE` (the API test measures it).
