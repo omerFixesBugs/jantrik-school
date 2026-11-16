@@ -1,4 +1,4 @@
-import type { PrismaClient } from './generated/prisma/client.js';
+import type { PrismaClient } from './client.js';
 
 /**
  * Predefined roles that pass the grants this design relies on (the platform tables, the

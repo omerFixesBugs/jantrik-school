@@ -78,6 +78,11 @@ export const envSchema = z
      */
     DATABASE_PLATFORM_URL: z.string().min(1),
     /**
+     * The password login's own login (role jantrik_login_app): the only role that may look up a
+     * password hash (the password lookup, P1-J; docs/auth.md). Same database as DATABASE_URL.
+     */
+    DATABASE_LOGIN_URL: z.string().min(1),
+    /**
      * The device receiver's own login (role jantrik_ingest_app): the only role that may run the
      * ingest_* functions. Same database as DATABASE_URL. Required when the receiver runs in this
      * process; the API itself never uses it.

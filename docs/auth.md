@@ -30,8 +30,9 @@ Code lives in [`apps/api/src/auth`](../apps/api/src/auth) and
   the user lookup. An SMS is sent only if the phone belongs to a user.
 - Every failure of `otp/verify` and `login` (unknown user, wrong code or password, expired or
   burned code, OTP-only account) returns the same `401 Invalid credentials`.
-- Password checks always run argon2, against a dummy hash if needed, so timing doesn't leak
-  either.
+- Password checks always run one argon2 verification, against a dummy hash if needed (no
+  account, no password, or a stored hash that is unreadable or above the cost ceiling), so timing
+  doesn't leak either.
 
 **OTP storage.** Codes are never stored in plain text. Redis holds
 `HMAC-SHA256(OTP_PEPPER, phone:code)` with a 5-minute TTL, plus an attempt counter. The 5th wrong
@@ -230,6 +231,47 @@ budget. The common-password list is read at start-up: without it the API does no
 Password login accepts up to 512 code points, as many as a settable password can have when typed
 decomposed. `PasswordSettingsService` is the only code that writes `users.password_hash`
 (`password-writes.spec.ts` checks it).
+
+### The API never reads a hash in a request (P1-J)
+
+Ordinary requests run as `jantrik_app`, which may write `users.password_hash` (setting a password)
+but cannot read it: not with a query (the column is not granted), and not through a function
+(`auth_find_user_for_login` returns who the person is, never password data). The password login
+alone has its own database login:
+
+- `POST /auth/login` with a password looks the person up through `LoginPrismaService`
+  (`DATABASE_LOGIN_URL`, role `jantrik_login_app`) and the function
+  `auth_find_user_for_password_login(phone, email)`, which returns the stored hash; the API
+  verifies with argon2 as before.
+- `jantrik_login_app` may run that one function and nothing else (no table, no other function),
+  and `jantrik_app` may not run it. Only `AuthService` holds that client
+  (`login-isolation.spec.ts`). Its pool is small (4 connections). The queue worker builds the
+  same modules, so it gets `DATABASE_LOGIN_URL` and runs the start-up checks too, but never
+  looks a hash up; the receiver never gets it.
+- At start-up the API refuses a `DATABASE_LOGIN_URL` that is a superuser, has BYPASSRLS or can
+  become such a role (fail closed, like the other logins), one mixed up with `DATABASE_URL`, and
+  one that reaches another database or server than `DATABASE_URL` (database, port and the
+  server's start time compared).
+- A stored hash above 64 MiB, 10 passes or 4 lanes, or one argon2 cannot read, counts as no
+  password (the dummy check runs): a hash someone wrote into their own row cannot make each login
+  attempt arbitrarily expensive.
+
+**What an SQL injection in an ordinary request can and cannot do now:**
+
+- It **cannot** read any password hash or salt: its own, a co-member's or a stranger's.
+- It **cannot** run the password lookup, or anything as `jantrik_login_app`: that login's
+  password is only in the API's (and the worker's) environment, never in the database.
+- It **can** learn whether a given person has a password at all, yes or no:
+  `auth_my_password_is_set()` (for `GET /me/password`) answers for `app.user_id`, which any SQL can
+  set with `set_config`. It reveals nothing about the password itself.
+- It **can still take over an account**, as before P1-J: the request's identity is
+  `app.user_id`, which any SQL can change with `set_config`. Set to someone else's id, the RLS
+  policies let it write that person's `password_hash` (then sign in with a password it chose) or
+  create a session for them. P1-J protects the password itself (people reuse passwords
+  elsewhere), not the account against an injection. Recorded for the owner: P1-J8 in
+  decisions-pending.
+
+The platform admins' login is separate and unchanged ([platform.md](platform.md)).
 
 ## Tenants
 

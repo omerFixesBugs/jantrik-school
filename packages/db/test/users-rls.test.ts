@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findOrCreateUser, withContext, withTenant, type PrismaClient } from '../src/index.js';
-import { appClient, createTenant, randomPhone } from './helpers.js';
+import { appClient, createTenant, ownerClient, randomPhone } from './helpers.js';
 
 async function addMember(app: PrismaClient, tenantId: string, phone: string, name: string) {
   return withTenant(app, tenantId, async (tx) => {
@@ -102,8 +102,18 @@ describe('RLS on users', () => {
     const row = await withContext(app, { userId: id }, (tx) =>
       tx.user.findUniqueOrThrow({ where: { id } }),
     );
-    expect(row).toMatchObject({ locale: 'en', nameBn: 'নাম', passwordHash: 'x' });
+    expect(row).toMatchObject({ locale: 'en', nameBn: 'নাম' });
     expect(row.passwordChangedAt).toEqual(changedAt);
+    // The app writes the hash but may not read it back (P1-J): the owner checks it, as that user.
+    const owner = ownerClient();
+    try {
+      const { passwordHash } = await withContext(owner, { userId: id }, (tx) =>
+        tx.user.findUniqueOrThrow({ where: { id }, select: { passwordHash: true } }),
+      );
+      expect(passwordHash).toBe('x');
+    } finally {
+      await owner.$disconnect();
+    }
   });
 
   it.each([

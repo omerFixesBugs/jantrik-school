@@ -25,6 +25,8 @@ x-api-env: &api-env
   API_PORT: '4000'
   DATABASE_URL: postgresql://jantrik_app:${DB_APP_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
   DATABASE_PLATFORM_URL: postgresql://jantrik_platform_app:${DB_PLATFORM_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
+  # The password login's own login (P1-J): the only one that may look up a password hash.
+  DATABASE_LOGIN_URL: postgresql://jantrik_login_app:${DB_LOGIN_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
   QUEUE_PREFIX: ${QUEUE_PREFIX:-jantrik}
   CORS_ORIGINS: https://${APP_DOMAIN:?},https://${PLATFORM_DOMAIN:?}
@@ -58,6 +60,7 @@ services:
       DB_APP_PASSWORD: ${DB_APP_PASSWORD:?}
       DB_PLATFORM_PASSWORD: ${DB_PLATFORM_PASSWORD:?}
       DB_INGEST_PASSWORD: ${DB_INGEST_PASSWORD:?}
+      DB_LOGIN_PASSWORD: ${DB_LOGIN_PASSWORD:?}
       JANTRIK_DB_NAME: ${POSTGRES_DB_NAME:-jantrik}
       TZ: UTC
     volumes:
@@ -74,7 +77,7 @@ services:
         - CMD-SHELL
         - >-
           psql -h 127.0.0.1 -U postgres -d "$$JANTRIK_DB_NAME" -XAtc
-          "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_ingest_app')
+          "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_login_app')
           AND has_schema_privilege('jantrik_app', 'public', 'USAGE')
           AND NOT has_schema_privilege('public', 'public', 'USAGE')
           AND NOT has_database_privilege('public', current_database(), 'TEMPORARY')

@@ -157,6 +157,7 @@ export const DATABASE_ADMIN_SECRETS = [
   'DB_APP_PASSWORD',
   'DB_PLATFORM_PASSWORD',
   'DB_INGEST_PASSWORD',
+  'DB_LOGIN_PASSWORD',
 ] as const;
 
 /**
@@ -193,6 +194,7 @@ export interface ApiProductionEnv {
   PLATFORM_TOTP_KEY?: string | undefined;
   DATABASE_URL: string;
   DATABASE_PLATFORM_URL: string;
+  DATABASE_LOGIN_URL: string;
   DATABASE_INGEST_URL?: string | undefined;
 }
 
@@ -268,7 +270,12 @@ export function apiProductionProblems(env: ApiProductionEnv): EnvProblem[] {
       if (env[a] === env[b]) add(b, `${b} must differ from ${a}: one secret per purpose`);
     }
   }
-  for (const key of ['DATABASE_URL', 'DATABASE_PLATFORM_URL', 'DATABASE_INGEST_URL'] as const) {
+  for (const key of [
+    'DATABASE_URL',
+    'DATABASE_PLATFORM_URL',
+    'DATABASE_LOGIN_URL',
+    'DATABASE_INGEST_URL',
+  ] as const) {
     const url = env[key];
     if (url === undefined) continue;
     const problem = databaseUrlProblem(key, url);
@@ -293,6 +300,7 @@ export interface ReceiverProductionEnv {
 export const API_ONLY_SECRETS = [
   'DATABASE_URL',
   'DATABASE_PLATFORM_URL',
+  'DATABASE_LOGIN_URL',
   'DATABASE_MIGRATION_URL',
   'JWT_ACCESS_SECRET',
   'OTP_PEPPER',
@@ -329,6 +337,7 @@ export function receiverProductionProblems(env: ReceiverProductionEnv): EnvProbl
     ...PRIVILEGED_DB_USERS,
     'jantrik_app',
     'jantrik_platform_app',
+    'jantrik_login_app',
   ]);
   if (problem) problems.push(problem);
   if (redisUser(env.REDIS_URL) !== INGEST_REDIS_USER) {
