@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bullmq';
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Module,
@@ -95,6 +96,13 @@ export class PromotionController {
   @Patch(':id')
   update(@Id() id: string, @Body() dto: UpdateRunDto): Promise<PromotionRunDetail> {
     return this.promotions.update(id, dto);
+  }
+
+  /** A run with no applied row, made by mistake (its pending rows go with it). */
+  @Delete(':id')
+  @HttpCode(204)
+  remove(@Id() id: string): Promise<void> {
+    return this.promotions.remove(id);
   }
 
   @Put(':id/rows')

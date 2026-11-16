@@ -7,11 +7,15 @@ import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import { Db } from '../tenancy/db.service.js';
+import {
+  applyJobId,
+  LIVE_JOB_STATES,
+  PROMOTION_APPLY_JOB,
+  PROMOTIONS_QUEUE,
+} from './promotion-queue.js';
 import { PromotionService } from './promotion.service.js';
 
-export const PROMOTIONS_QUEUE = 'promotions';
-export const PROMOTION_APPLY_JOB = 'promotion-apply';
-export const applyJobId = (runId: string) => `promotion-apply-${runId}`;
+export { applyJobId, PROMOTION_APPLY_JOB, PROMOTIONS_QUEUE } from './promotion-queue.js';
 
 /** Ids only (never personal data in Redis). */
 export interface PromotionApplyJobData {
@@ -22,9 +26,6 @@ export interface PromotionApplyJobData {
 
 /** Leavers per transaction. */
 export const LEAVERS_PER_CHUNK = 200;
-
-/** Job states in which a job will still run (so another must not be queued). */
-const LIVE_STATES = new Set(['active', 'waiting', 'delayed', 'prioritized', 'waiting-children']);
 
 export interface SectionOutcome {
   enrolled: number;
@@ -226,7 +227,11 @@ export class PromotionApplyService {
         runId: id,
         appliedAt: null,
         decision: { not: 'LEAVE' },
-        OR: [{ targetSection: { isActive: false } }, { targetClassLevel: { isActive: false } }],
+        OR: [
+          { targetSection: { isActive: false } },
+          { targetClassLevel: { isActive: false } },
+          { targetStudyGroup: { isActive: false } },
+        ],
       },
       select: { id: true },
     });
@@ -236,10 +241,8 @@ export class PromotionApplyService {
       });
   }
 
-  async jobIsLive(runId: string): Promise<boolean> {
-    const job = await this.queue.getJob(applyJobId(runId));
-    if (!job) return false;
-    return LIVE_STATES.has(await job.getState());
+  jobIsLive(runId: string): Promise<boolean> {
+    return this.promotions.jobIsLive(runId);
   }
 
   /**
@@ -250,7 +253,7 @@ export class PromotionApplyService {
     const jobId = applyJobId(data.runId);
     const old = await this.queue.getJob(jobId);
     if (old) {
-      if (LIVE_STATES.has(await old.getState())) return;
+      if (LIVE_JOB_STATES.has(await old.getState())) return;
       await old.remove();
     }
     await this.queue.add(PROMOTION_APPLY_JOB, data, {

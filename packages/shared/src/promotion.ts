@@ -189,7 +189,8 @@ export interface PromotionRunCounts {
 
 export interface PromotionRunSummary {
   id: string;
-  fromYear: { id: string; name: string };
+  /** With its last day (the default leaving date of a run's rows). */
+  fromYear: { id: string; name: string; endDate: IsoDate };
   toYear: { id: string; name: string };
   classLevel: { id: string; nameBn: string; nameEn: string; sortOrder: number };
   rollStrategy: RollStrategy;

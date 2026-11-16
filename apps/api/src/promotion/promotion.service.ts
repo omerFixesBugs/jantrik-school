@@ -1,5 +1,7 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@jantrik/db';
+import type { Queue } from 'bullmq';
 import {
   dateFromDb,
   dateToDb,
@@ -20,11 +22,12 @@ import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import { ExamResultsReader } from '../exams/results/exam-results-reader.js';
 import { Db } from '../tenancy/db.service.js';
+import { applyJobId, LIVE_JOB_STATES, PROMOTIONS_QUEUE } from './promotion-queue.js';
 
 const NAMES = { select: { id: true, nameBn: true, nameEn: true } } as const;
 
 const RUN_INCLUDE = {
-  fromYear: { select: { id: true, name: true } },
+  fromYear: { select: { id: true, name: true, endDate: true } },
   toYear: { select: { id: true, name: true } },
   classLevel: { select: { id: true, nameBn: true, nameEn: true, sortOrder: true } },
   meritExam: NAMES,
@@ -77,6 +80,7 @@ export class PromotionService {
     private readonly context: RequestContext,
     private readonly audit: AuditService,
     private readonly results: ExamResultsReader,
+    @InjectQueue(PROMOTIONS_QUEUE) private readonly queue: Queue,
   ) {}
 
   private get tenantId(): string {
@@ -267,6 +271,12 @@ export class PromotionService {
     if (toYear.startDate.getTime() <= fromYear.startDate.getTime())
       throw apiError(422, 'YEAR_ORDER', 'The new year must start after the year it comes from', {
         field: 'toYearId',
+      });
+    // Only from the year just before (review SF2): a run from an earlier year would read last
+    // year's classes as if they were this year's.
+    if ((await this.previousYear(toYear))?.id !== fromYear.id)
+      throw apiError(422, 'YEAR_ORDER', 'A run comes from the year just before the new one', {
+        field: 'fromYearId',
       });
     const classLevel = await tx.classLevel.findUnique({
       where: { id: input.classLevelId },
@@ -483,16 +493,64 @@ export class PromotionService {
     return tx.promotionRun.findUniqueOrThrow({ where: { id } });
   }
 
-  private refuseWhileApplying(run: { status: string }) {
-    if (run.status === 'APPLYING')
+  /**
+   * Edits wait for a running apply: refused while the run is APPLYING and its job is still in the
+   * queue (409 RUN_APPLYING). A run whose job stopped (APPLYING with `last_error`, no live job)
+   * may be edited to fix the cause, e.g. rows moved out of a full section (review SF5); the
+   * per-run advisory lock keeps such an edit and a section being applied apart.
+   */
+  private async refuseWhileApplying(run: { id: string; status: string }) {
+    if (run.status !== 'APPLYING') return;
+    if (await this.jobIsLive(run.id))
       throw apiError(409, 'RUN_APPLYING', 'This run is being applied; wait for it to finish');
+    await this.db.tx
+      .$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('promotion:' || ${run.id}, 0))`;
+  }
+
+  /** Is the run's apply job still queued, waiting for a retry, or running? */
+  async jobIsLive(runId: string): Promise<boolean> {
+    const job = await this.queue.getJob(applyJobId(runId));
+    if (!job) return false;
+    return LIVE_JOB_STATES.has(await job.getState());
+  }
+
+  /**
+   * Deletes a run none of whose rows is applied (review SF6), with its pending rows: a draft made
+   * by mistake would otherwise keep its year, class and merit exam from ever being deleted.
+   * Refused while it is being applied, and once any row is applied (history). Audited.
+   */
+  async remove(id: string): Promise<void> {
+    const tx = this.db.tx;
+    const run = await this.lockRun(id);
+    await this.refuseWhileApplying(run);
+    const applied = await tx.promotionRunStudent.count({
+      where: { runId: id, appliedAt: { not: null } },
+    });
+    if (applied > 0)
+      throw apiError(409, 'RUN_HAS_APPLIED', 'Applied rows are history; the run stays', {
+        applied,
+      });
+    const rows = await tx.promotionRunStudent.deleteMany({ where: { runId: id } });
+    await tx.promotionRun.delete({ where: { id } });
+    await this.audit.record({
+      entity: 'promotion_run',
+      entityId: id,
+      action: 'DELETE',
+      oldValues: {
+        fromYearId: run.fromYearId,
+        toYearId: run.toYearId,
+        classLevelId: run.classLevelId,
+        status: run.status,
+        rows: rows.count,
+      },
+    });
   }
 
   /** Roll strategy and merit exam; a new exam takes the results of pending rows again. */
   async update(id: string, input: UpdatePromotionRunInput): Promise<PromotionRunDetail> {
     const tx = this.db.tx;
     const run = await this.lockRun(id);
-    this.refuseWhileApplying(run);
+    await this.refuseWhileApplying(run);
     const examChanged = input.meritExamId !== undefined && input.meritExamId !== run.meritExamId;
     const merit = await this.meritChoice({
       examId: input.meritExamId !== undefined ? input.meritExamId : run.meritExamId,
@@ -541,7 +599,7 @@ export class PromotionService {
   async editRows(id: string, edits: PromotionRowEdit[]): Promise<PromotionRunDetail> {
     const tx = this.db.tx;
     const run = await this.lockRun(id);
-    this.refuseWhileApplying(run);
+    await this.refuseWhileApplying(run);
     const rows = await tx.promotionRunStudent.findMany({
       where: { runId: id, id: { in: edits.map((e) => e.id) } },
       select: { id: true, appliedAt: true },
@@ -629,7 +687,7 @@ export class PromotionService {
   async refresh(id: string): Promise<PromotionRunDetail> {
     const tx = this.db.tx;
     const run = await this.lockRun(id);
-    this.refuseWhileApplying(run);
+    await this.refuseWhileApplying(run);
     const removed = await tx.promotionRunStudent.deleteMany({
       where: {
         runId: id,
@@ -670,7 +728,7 @@ function emptyCounts(): PromotionRunCounts {
 function toSummary(r: RunRow, counts: PromotionRunCounts): PromotionRunSummary {
   return {
     id: r.id,
-    fromYear: r.fromYear,
+    fromYear: { id: r.fromYear.id, name: r.fromYear.name, endDate: dateFromDb(r.fromYear.endDate) },
     toYear: r.toYear,
     classLevel: r.classLevel,
     rollStrategy: r.rollStrategy,

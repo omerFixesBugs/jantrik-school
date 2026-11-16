@@ -347,13 +347,88 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
     expect(after.row).toMatchObject({ decision: 'REPEAT', applyOutcome: 'ENROLLED' });
   });
 
-  it('the app cannot delete a run or change its years, class or a row’s student', async () => {
-    const del = await failure(
+  it('a run with an applied row is never deleted; one without may be (review SF6)', async () => {
+    // a's run has an applied row (the test above): the restrictive policy keeps it.
+    const kept = await withTenant(
       app,
       a.tenantId,
       (tx) => tx.$executeRaw`DELETE FROM promotion_runs WHERE id = ${a.runId}::uuid`,
     );
-    expect(del?.message).toMatch(/permission denied/i);
+    expect(kept).toBe(0);
+    // An empty draft goes.
+    const draft = await withTenant(app, a.tenantId, async (tx) =>
+      tx.promotionRun.create({
+        data: {
+          tenantId: a.tenantId,
+          fromYearId: a.y2026,
+          toYearId: a.y2027,
+          classLevelId: (await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_10' } })).id,
+          rollStrategy: 'NAME_BN',
+          createdById: a.adminId,
+        },
+        select: { id: true },
+      }),
+    );
+    const gone = await withTenant(
+      app,
+      a.tenantId,
+      (tx) => tx.$executeRaw`DELETE FROM promotion_runs WHERE id = ${draft.id}::uuid`,
+    );
+    expect(gone).toBe(1);
+  });
+
+  it("a row's enrolments are its own student's, the new one in its run's to-year", async () => {
+    const other = await withTenant(app, a.tenantId, async (tx) => {
+      const st = await tx.student.create({
+        data: { tenantId: a.tenantId, studentCode: `O-${randomUUID().slice(0, 8)}`, nameEn: 'O' },
+      });
+      const e26 = await tx.enrolment.create({
+        data: {
+          tenantId: a.tenantId,
+          studentId: st.id,
+          academicYearId: a.y2026,
+          classLevelId: a.c6,
+        },
+      });
+      return { studentId: st.id, e26: e26.id };
+    });
+    const run8 = await withTenant(app, a.tenantId, async (tx) =>
+      tx.promotionRun.create({
+        data: {
+          tenantId: a.tenantId,
+          fromYearId: a.y2026,
+          toYearId: a.y2027,
+          classLevelId: (await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_9' } })).id,
+          rollStrategy: 'NAME_BN',
+          createdById: a.adminId,
+        },
+        select: { id: true },
+      }),
+    );
+    // Someone else's enrolment as the from-enrolment.
+    const wrongFrom = await failure(app, a.tenantId, (tx) =>
+      tx.promotionRunStudent.create({
+        data: promoteRow(a, { runId: run8.id, studentId: other.studentId }),
+      }),
+    );
+    expect(wrongFrom?.message).toMatch(/foreign key/i);
+    // A new enrolment of the old year (not the run's to-year).
+    const wrongTo = await failure(app, a.tenantId, (tx) =>
+      tx.promotionRunStudent.create({
+        data: promoteRow(a, {
+          runId: run8.id,
+          studentId: other.studentId,
+          fromEnrolmentId: other.e26,
+          appliedAt: new Date(),
+          applyOutcome: 'ENROLLED',
+          toEnrolmentId: other.e26,
+        }),
+      }),
+    );
+    expect(wrongTo?.message).toMatch(/foreign key/i);
+  });
+
+  it('the app cannot change a run’s years or class, or a row’s student', async () => {
     for (const col of ['from_year_id', 'to_year_id', 'class_level_id', 'created_by_id']) {
       const err = await failure(app, a.tenantId, (tx) =>
         tx.$executeRawUnsafe(
