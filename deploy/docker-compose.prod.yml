@@ -88,7 +88,7 @@ services:
     logging: *logging
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
     # Deployment requirement 2: never evict a key, and keep every write (AOF, fsync each second).
     # At REDIS_MAXMEMORY, writes fail loudly (noeviction) instead of Redis growing until the

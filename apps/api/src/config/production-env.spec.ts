@@ -170,6 +170,26 @@ describe('production env: the API and the worker', () => {
     expect(apiError({ ...api, PLATFORM_ORIGINS: 'https://PLATFORM.jantrik.com.bd/' })).toBe('');
   });
 
+  it('pins Redis to one exact version in the production compose, the development compose and CI', () => {
+    const images = [
+      'deploy/docker-compose.prod.yml',
+      'docker-compose.yml',
+      '.github/workflows/ci.yml',
+    ].flatMap((file) =>
+      [
+        ...readFileSync(path.resolve(import.meta.dirname, '../../../..', file), 'utf8').matchAll(
+          /image:\s*(redis:\S+)/g,
+        ),
+      ].map((m) => ({ file, image: m[1]! })),
+    );
+    // The production compose and the development one once each, CI's two jobs.
+    expect(images).toHaveLength(4);
+    for (const { file, image } of images) {
+      expect(image, file).toMatch(/^redis:\d+\.\d+\.\d+-alpine$/);
+    }
+    expect(new Set(images.map((i) => i.image)).size).toBe(1);
+  });
+
   it('normalises CORS_ORIGINS too, so the CORS middleware allows what the start-up check passed', () => {
     const dev = {
       DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
@@ -180,7 +200,8 @@ describe('production env: the API and the worker', () => {
     };
     const parsed = envSchema.parse({
       ...dev,
-      CORS_ORIGINS: 'HTTPS://App.Jantrik.com.bd/ , http://localhost:3000/,https://a.example.com:443',
+      CORS_ORIGINS:
+        'HTTPS://App.Jantrik.com.bd/ , http://localhost:3000/,https://a.example.com:443',
     });
     expect(parsed.CORS_ORIGINS).toEqual([
       'https://app.jantrik.com.bd',
@@ -190,11 +211,15 @@ describe('production env: the API and the worker', () => {
     // The browser sends the normalised form; the middleware's check is an exact match.
     expect(isAllowedOrigin('https://app.jantrik.com.bd', parsed)).toBe(true);
     // An entry that is not an origin stays as written (production refuses it, see above).
-    expect(envSchema.parse({ ...dev, CORS_ORIGINS: '*,app.jantrik.com.bd' }).CORS_ORIGINS).toEqual(
-      ['*', 'app.jantrik.com.bd'],
-    );
+    expect(envSchema.parse({ ...dev, CORS_ORIGINS: '*,app.jantrik.com.bd' }).CORS_ORIGINS).toEqual([
+      '*',
+      'app.jantrik.com.bd',
+    ]);
     // Production: an upper-case, slash-ended entry passes the check and is allowed by the middleware.
-    const prod = { ...api, CORS_ORIGINS: 'https://APP.jantrik.com.bd/,https://platform.jantrik.com.bd' };
+    const prod = {
+      ...api,
+      CORS_ORIGINS: 'https://APP.jantrik.com.bd/,https://platform.jantrik.com.bd',
+    };
     expect(apiError(prod)).toBe('');
     expect(envSchema.parse(prod).CORS_ORIGINS).toContain('https://app.jantrik.com.bd');
   });
