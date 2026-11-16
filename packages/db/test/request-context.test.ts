@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   findOrCreateUser,
@@ -313,6 +313,27 @@ describe('who may read the key', () => {
     } finally {
       await app.$disconnect();
     }
+  });
+
+  it('rotation is one UPDATE of the key: the trigger derives both HMAC pads from it', async () => {
+    class Rollback extends Error {}
+    const next = randomBytes(48);
+    let seen: { mac: string } | undefined;
+    try {
+      await owner.$transaction(async (tx) => {
+        await tx.$executeRaw`UPDATE app_context_key SET key = ${next}, created_at = now() WHERE id = 1`;
+        [seen] = await tx.$queryRaw<{ mac: string }[]>`
+          SELECT encode(sha256(k.outer_pad || sha256(k.inner_pad || convert_to('probe', 'UTF8'))), 'hex') AS mac
+          FROM app_context_key k WHERE k.id = 1`;
+        throw new Rollback(); // never commit a new key in the shared test database
+      });
+    } catch (error) {
+      if (!(error instanceof Rollback)) throw error;
+    }
+    expect(seen?.mac).toBe(createHmac('sha256', next).update('probe').digest('hex'));
+    await expect(
+      owner.$executeRaw`UPDATE app_context_key SET key = ${randomBytes(16)} WHERE id = 1`,
+    ).rejects.toThrow(/48 bytes/);
   });
 
   it('the privileges, exactly', async () => {

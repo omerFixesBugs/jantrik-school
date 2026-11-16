@@ -69,5 +69,8 @@ for db in jantrik jantrik_test jantrik_e2e; do
 ALTER SCHEMA public OWNER TO jantrik_owner;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO jantrik_app;
+-- No temporary objects for the runtime logins, as in production (P1-J8 review, docs/database.md →
+-- The request context). The owner keeps the right.
+SELECT format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()) \gexec
 SQL
 done

@@ -29,6 +29,14 @@ export interface LoginPrivileges {
    * PRIVILEGED_PREDEFINED_ROLES.
    */
   canBecome: string[];
+  /**
+   * It may create temporary tables, views and functions in this database. On a pooled connection
+   * they outlive the request: an SQL injection could plant a temporary view named like a table
+   * (`pg_temp` is searched first for relations) that the next request on that connection, someone
+   * else's, runs in its own signed context (P1-J8 review). Production revokes it
+   * (deploy/postgres/database-setup.sql), and so does a migration; see `loginTempWarning`.
+   */
+  temp: boolean;
 }
 
 /**
@@ -47,12 +55,14 @@ export async function readLoginPrivileges(client: PrismaClient): Promise<LoginPr
       replication: boolean;
       create_role: boolean;
       can_become: string[];
+      temp: boolean;
     }[]
   >`
     SELECT session_user::text AS login, r.rolsuper AS superuser, r.rolbypassrls AS bypass_rls,
            r.rolreplication AS replication, r.rolcreaterole AS create_role,
            COALESCE(array_agg(o.rolname::text ORDER BY o.rolname)
-                    FILTER (WHERE o.rolname IS NOT NULL), '{}') AS can_become
+                    FILTER (WHERE o.rolname IS NOT NULL), '{}') AS can_become,
+           has_database_privilege(session_user, current_database(), 'TEMPORARY') AS temp
       FROM pg_roles r
       LEFT JOIN pg_roles o
         ON o.rolname <> session_user
@@ -69,6 +79,7 @@ export async function readLoginPrivileges(client: PrismaClient): Promise<LoginPr
     replication: row.replication,
     createRole: row.create_role,
     canBecome: row.can_become,
+    temp: row.temp,
   };
 }
 
@@ -84,4 +95,17 @@ export function loginPrivilegeProblems(p: LoginPrivileges): string[] {
     ...(p.createRole ? ['has CREATEROLE'] : []),
     ...p.canBecome.map((r) => `can become ${r}`),
   ];
+}
+
+/**
+ * Why the login should not run institute requests, beyond `loginPrivilegeProblems`: it may create
+ * temporary objects (`LoginPrivileges.temp`). Production refuses to start with it
+ * (PrismaService); development and tests warn. Empty when there is nothing to say.
+ */
+export function loginTempWarning(p: LoginPrivileges): string {
+  return p.temp
+    ? `${p.login} may create temporary objects in this database (TEMP): an SQL injection could ` +
+        'plant one that a later request on the same pooled connection runs. Revoke it: ' +
+        'REVOKE TEMPORARY ON DATABASE <database> FROM PUBLIC (docs/database.md → The request context).'
+    : '';
 }

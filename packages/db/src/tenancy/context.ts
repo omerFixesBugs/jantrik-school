@@ -112,7 +112,7 @@ async function reloadKey(stale: LoadedKey): Promise<LoadedKey> {
  */
 export async function loadRequestContextKey(loginClient: PrismaClient): Promise<Buffer> {
   const [row] = await loginClient.$queryRaw<{ key: Uint8Array | null }[]>`
-    SELECT auth_context_key() AS key`;
+    SELECT public.auth_context_key() AS key`;
   if (!row?.key) throw new Error('auth_context_key() returned no key: run the migrations.');
   return Buffer.from(row.key);
 }
@@ -120,7 +120,7 @@ export async function loadRequestContextKey(loginClient: PrismaClient): Promise<
 /** Read the key from its table as the schema owner (DATABASE_MIGRATION_URL): seed and tests. */
 export async function loadRequestContextKeyAsOwner(ownerClient: PrismaClient): Promise<Buffer> {
   const [row] = await ownerClient.$queryRaw<{ key: Uint8Array }[]>`
-    SELECT key FROM app_context_key WHERE id = 1`;
+    SELECT key FROM public.app_context_key WHERE id = 1`;
   if (!row?.key) throw new Error('app_context_key has no key: run the migrations.');
   return Buffer.from(row.key);
 }
@@ -163,7 +163,7 @@ async function setSignedContext(
   const [here] = await tx.$queryRaw<{ pid: string; started: string; key_id: string | null }[]>`
     SELECT pg_backend_pid()::text AS pid,
            (extract(epoch FROM now()) * 1000000)::bigint::text AS started,
-           app_context_key_id() AS key_id`;
+           public.app_context_key_id() AS key_id`;
   if (!here) throw new Error('Could not read the transaction to sign its context.');
   let key = loaded;
   if (here.key_id !== key.id) {
@@ -181,7 +181,7 @@ async function setSignedContext(
     pid: here.pid,
     startedMicros: here.started,
   });
-  await tx.$executeRaw`SELECT set_config('app.context', ${value}, true)`;
+  await tx.$executeRaw`SELECT pg_catalog.set_config('app.context', ${value}, true)`;
 }
 
 /**

@@ -37,7 +37,11 @@ export interface TenantJobData {
 }
 /** Institutes that use fees (ZSET, score = last seen): the nightly run visits only these. */
 export const FEES_TENANTS_KEY = 'fees:tenants';
-const ensuredKey = (tenantId: string, today: IsoDate) => `fees:ensured:${tenantId}:${today}`;
+/**
+ * "Today's dues are queued": g2 since P1-J8, so a marker an API of the previous release set during
+ * the upgrade (its job saw no institute data and generated nothing) is not taken as done.
+ */
+const ensuredKey = (tenantId: string, today: IsoDate) => `fees:ensured:g2:${tenantId}:${today}`;
 const CHUNK = 500;
 
 /** Everything the dues plan needs about an institute, loaded once per run. */

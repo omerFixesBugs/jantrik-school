@@ -31,6 +31,7 @@ const SAFE: LoginPrivileges = {
   bypassRls: false,
   replication: false,
   createRole: false,
+  temp: false,
   canBecome: [],
 };
 
@@ -64,6 +65,7 @@ function serviceWith(privileges: LoginPrivileges, ...answers: (Check | Error | t
         bypass_rls: privileges.bypassRls,
         replication: privileges.replication,
         create_role: privileges.createRole,
+        temp: privileges.temp,
         can_become: privileges.canBecome,
       },
     ]),

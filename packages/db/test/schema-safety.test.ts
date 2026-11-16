@@ -223,48 +223,71 @@ describe('schema safety net', () => {
     expect(scoped.filter((r) => !r.scoped)).toEqual([]);
   });
 
-  // P1-J8: the context functions check a signature, so every policy and function calls them as a
-  // scalar subquery, `(SELECT app_current_tenant_id())`: PostgreSQL then runs them once per
-  // statement (an InitPlan) instead of once per row a scan looks at.
+  // P1-J8: the context functions check a signature, so every policy, function and view calls them
+  // as a scalar subquery, `(SELECT app_current_tenant_id())`: PostgreSQL then runs them once per
+  // statement (an InitPlan) instead of once per row a scan looks at. Column defaults and CHECKs
+  // (which cannot hold a subquery) must not call them at all, and nothing but the two functions
+  // calls app_verified_context() itself. Spaces, quoted names and a schema prefix are caught too.
   const UNWRAPPED_CONTEXT_CALLS = `
     SELECT 'policy ' || c.relname || '.' || p.polname AS what
     FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
     WHERE regexp_replace(coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' ||
                          coalesce(pg_get_expr(p.polwithcheck, p.polrelid), ''),
-                         $1, '', 'gi') ~ $2
+                         $1, '', 'gi') ~* $2
     UNION ALL
     SELECT 'function ' || p.proname
     FROM pg_proc p
     WHERE p.pronamespace = 'public'::regnamespace
-      AND p.proname NOT IN ('app_current_tenant_id', 'app_current_user_id')
-      AND regexp_replace(p.prosrc, $1, '', 'gi') ~ $2
+      AND p.proname NOT IN ('app_current_tenant_id', 'app_current_user_id', 'app_verified_context')
+      AND regexp_replace(p.prosrc, $1, '', 'gi') ~* $2
+    UNION ALL
+    SELECT 'view ' || v.viewname FROM pg_views v
+    WHERE v.schemaname = 'public' AND regexp_replace(v.definition, $1, '', 'gi') ~* $2
+    UNION ALL
+    SELECT 'default ' || c.relname || '.' || a.attname
+    FROM pg_attrdef d JOIN pg_class c ON c.oid = d.adrelid
+    JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+    WHERE c.relnamespace = 'public'::regnamespace AND pg_get_expr(d.adbin, d.adrelid) ~* $3
+    UNION ALL
+    SELECT 'constraint ' || c.relname || '.' || k.conname
+    FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid
+    WHERE c.relnamespace = 'public'::regnamespace AND k.contype = 'c'
+      AND pg_get_constraintdef(k.oid) ~* $3
     ORDER BY 1`;
-  const WRAPPED_CALL = String.raw`\(\s*SELECT\s+(public\.)?app_current_(tenant|user)_id\(\)(\s+AS\s+app_current_(tenant|user)_id)?\s*\)`;
-  const BARE_CALL = String.raw`app_current_(tenant|user)_id\(\)`;
+  const NAME = String.raw`"?app_current_(tenant|user)_id"?\s*\(\s*\)`;
+  const WRAPPED_CALL = String.raw`\(\s*SELECT\s+("?public"?\.)?${NAME}(\s+AS\s+"?\w+"?)?\s*\)`;
+  const BARE_CALL = String.raw`${NAME}|"?app_verified_context"?\s*\(`;
+  const ANY_CALL = String.raw`app_current_(tenant|user)_id|app_verified_context`;
+  const unwrappedCalls = (client: PrismaClient) =>
+    client.$queryRawUnsafe<{ what: string }[]>(
+      UNWRAPPED_CONTEXT_CALLS,
+      WRAPPED_CALL,
+      BARE_CALL,
+      ANY_CALL,
+    );
 
-  it('every policy and function calls the context functions wrapped, once per statement', async () => {
-    expect(
-      await app.$queryRawUnsafe<{ what: string }[]>(
-        UNWRAPPED_CONTEXT_CALLS,
-        WRAPPED_CALL,
-        BARE_CALL,
-      ),
-    ).toEqual([]);
+  it('every policy, function and view calls the context functions wrapped, once per statement', async () => {
+    expect(await unwrappedCalls(app)).toEqual([]);
   });
 
-  it('the wrapped-call check finds an unwrapped call', async () => {
+  it('the wrapped-call check finds an unwrapped call, in every form and place', async () => {
     const owner = ownerClient();
     class Rollback extends Error {}
     let found: unknown;
     try {
       await owner.$transaction(async (tx) => {
-        await tx.$executeRawUnsafe(
+        for (const sql of [
           `CREATE FUNCTION p1j8_probe() RETURNS uuid LANGUAGE sql AS 'SELECT app_current_tenant_id()'`,
-        );
-        await tx.$executeRawUnsafe(
           'CREATE POLICY p1j8_probe ON students FOR SELECT USING (tenant_id = app_current_tenant_id())',
-        );
-        found = await tx.$queryRawUnsafe(UNWRAPPED_CONTEXT_CALLS, WRAPPED_CALL, BARE_CALL);
+          `CREATE FUNCTION p1j8_probe_space() RETURNS uuid LANGUAGE sql AS 'SELECT "app_current_user_id" ( )'`,
+          `CREATE FUNCTION p1j8_probe_direct() RETURNS uuid LANGUAGE sql AS 'SELECT (public.app_verified_context()).tenant_id'`,
+          'CREATE VIEW p1j8_probe_view AS SELECT id FROM students WHERE tenant_id = app_current_tenant_id()',
+          'ALTER TABLE grade_bands ADD COLUMN p1j8_probe uuid DEFAULT app_current_tenant_id()',
+          'ALTER TABLE grade_bands ADD CONSTRAINT p1j8_probe CHECK (tenant_id = app_current_tenant_id()) NOT VALID',
+        ]) {
+          await tx.$executeRawUnsafe(sql);
+        }
+        found = await unwrappedCalls(tx as unknown as PrismaClient);
         throw new Rollback();
       });
     } catch (error) {
@@ -273,8 +296,13 @@ describe('schema safety net', () => {
       await owner.$disconnect();
     }
     expect(found).toEqual([
+      { what: 'constraint grade_bands.p1j8_probe' },
+      { what: 'default grade_bands.p1j8_probe' },
       { what: 'function p1j8_probe' },
+      { what: 'function p1j8_probe_direct' },
+      { what: 'function p1j8_probe_space' },
       { what: 'policy students.p1j8_probe' },
+      { what: 'view p1j8_probe_view' },
     ]);
   });
 
@@ -476,6 +504,17 @@ describe('schema safety net', () => {
   // The definer bodies use unqualified pg_catalog operators (enum =, text[] || text, …). A more
   // specific operator or function created in public would win over them, so no login role may
   // create anything there (only the NOLOGIN function owners may).
+  // P1-J8 review: a temporary object made through an SQL injection outlives the request on a
+  // pooled connection, and pg_temp is searched first for relations. No runtime login may create
+  // one (the migration revokes TEMPORARY from PUBLIC; the owner keeps it).
+  it('no runtime login may create temporary objects', async () => {
+    const rows = await app.$queryRaw<{ login: string; temp: boolean }[]>`
+      SELECT r AS login, has_database_privilege(r, current_database(), 'TEMPORARY') AS temp
+      FROM unnest(${RUNTIME_LOGINS}::text[]) AS r ORDER BY 1`;
+    expect(rows.filter((r) => r.temp)).toEqual([]);
+    expect(rows).toHaveLength(RUNTIME_LOGINS.length);
+  });
+
   it('no login role can create objects in schema public', async () => {
     const rows = await app.$queryRaw<{ role: string; can_create: boolean }[]>`
       SELECT r.rolname AS role, has_schema_privilege(r.oid, 'public', 'CREATE') AS can_create

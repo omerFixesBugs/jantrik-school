@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   createPrismaClient,
   loginPrivilegeProblems,
+  loginTempWarning,
   readLoginPrivileges,
   type PrismaClient,
 } from '@jantrik/db';
@@ -22,6 +23,8 @@ import type { Env } from '../config/env.js';
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('Database');
   readonly client: PrismaClient;
+  /** Production refuses a login that may create temporary objects; elsewhere it warns. */
+  private readonly production: boolean;
   /** Waits between failed start-up checks (about 3 minutes in all; tests shorten them). */
   retryDelaysMs: readonly number[] = STARTUP_RETRY_DELAYS_MS;
   /** How long one start-up check may take. */
@@ -29,6 +32,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   constructor(config: ConfigService<Env, true>) {
     this.client = createPrismaClient(config.get('DATABASE_URL', { infer: true }));
+    this.production = config.get('NODE_ENV', { infer: true }) === 'production';
   }
 
   /**
@@ -36,12 +40,21 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * with BYPASSRLS, or one that can become such a role. Fail closed: while the check cannot run
    * (the database is not reachable yet) it is asked again for about 3 minutes, then the start is
    * refused.
+   *
+   * A login that may create temporary objects (TEMP on the database) is refused in production and
+   * warned about elsewhere: the signed request context (P1-J8) assumes an SQL injection cannot
+   * leave objects behind on a pooled connection for the next request to run.
    */
   async onModuleInit(): Promise<void> {
     await runStartupCheck({
       run: () => readLoginPrivileges(this.client),
       verdict: (p) => {
-        const problems = loginPrivilegeProblems(p);
+        const temp = loginTempWarning(p);
+        if (temp && !this.production) this.logger.warn(temp);
+        const problems = [
+          ...loginPrivilegeProblems(p),
+          ...(temp && this.production ? ['may create temporary objects (TEMP)'] : []),
+        ];
         return problems.length === 0
           ? true
           : `DATABASE_URL must use the app login (jantrik_app), which Row-Level Security applies ` +

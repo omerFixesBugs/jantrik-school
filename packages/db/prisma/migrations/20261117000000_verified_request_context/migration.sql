@@ -14,6 +14,20 @@
 -- LANGUAGE sql STABLE PARALLEL SAFE, and deploy the previous API. The wrapped policies below work
 -- with either version.
 
+-- ───────────── No temporary objects for the runtime logins ─────────────
+-- The signed context assumes an SQL injection cannot leave anything behind on a pooled connection:
+-- a temporary view named like a table (pg_temp is searched first for relations) would be run by
+-- the next request on that connection, someone else's, inside THEIR signed context (P1-J8 review).
+-- Production already revokes this (deploy/postgres/database-setup.sql); now every database the
+-- migrations reach does: development, the test databases, CI and Playwright's. The owner keeps it
+-- (database owners always do). Run by a role that does not own the database it only warns, and
+-- the API refuses such a login in production at start-up (PrismaService).
+DO $$
+BEGIN
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
+END
+$$;
+
 -- ───────────── The key ─────────────
 -- One row, made here from pg_strong_random (three gen_random_uuid(), 366 random bits): this file
 -- holds no secret and every database has its own key. inner_pad / outer_pad are the key XOR the
@@ -38,27 +52,40 @@ BEGIN
 END
 $$;
 
-DO $$
-DECLARE
-  v_key bytea;
-  v_block bytea;
-  v_inner bytea;
-  v_outer bytea;
-BEGIN
-  IF EXISTS (SELECT FROM app_context_key) THEN
-    RETURN; -- a re-run keeps the key it made
-  END IF;
-  v_key := uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid());
-  v_block := v_key || '\x00000000000000000000000000000000'::bytea;
-  v_inner := v_block;
-  v_outer := v_block;
-  FOR i IN 0..63 LOOP
-    v_inner := set_byte(v_inner, i, get_byte(v_block, i) # 54);  -- 0x36
-    v_outer := set_byte(v_outer, i, get_byte(v_block, i) # 92);  -- 0x5c
-  END LOOP;
-  INSERT INTO app_context_key (id, key, inner_pad, outer_pad) VALUES (1, v_key, v_inner, v_outer);
-END
-$$;
+-- The pads are always derived from the key, by a trigger (they cannot drift from it), so a
+-- rotation is one statement, as the owner (docs/database.md → The request context):
+--   UPDATE app_context_key SET key = uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid())
+--                                    || uuid_send(gen_random_uuid()), created_at = now() WHERE id = 1;
+-- Running APIs notice the new key's fingerprint on their next transaction and reload it.
+CREATE OR REPLACE FUNCTION app_context_key_pads() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp
+  AS $$
+  DECLARE
+    v_block bytea := NEW.key || '\x00000000000000000000000000000000'::bytea;
+  BEGIN
+    IF length(NEW.key) IS DISTINCT FROM 48 THEN
+      RAISE EXCEPTION 'the request context key must be 48 bytes' USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.inner_pad := v_block;
+    NEW.outer_pad := v_block;
+    FOR i IN 0..63 LOOP
+      NEW.inner_pad := set_byte(NEW.inner_pad, i, get_byte(v_block, i) # 54);  -- 0x36
+      NEW.outer_pad := set_byte(NEW.outer_pad, i, get_byte(v_block, i) # 92);  -- 0x5c
+    END LOOP;
+    RETURN NEW;
+  END
+  $$;
+REVOKE ALL ON FUNCTION app_context_key_pads() FROM PUBLIC;
+DROP TRIGGER IF EXISTS app_context_key_pads ON app_context_key;
+CREATE TRIGGER app_context_key_pads BEFORE INSERT OR UPDATE ON app_context_key
+  FOR EACH ROW EXECUTE FUNCTION app_context_key_pads();
+
+-- A re-run keeps the key it made.
+INSERT INTO app_context_key (id, key, inner_pad, outer_pad)
+SELECT 1, uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid()),
+       '', ''
+WHERE NOT EXISTS (SELECT FROM app_context_key);
 
 -- Only the owner (this file's login) and jantrik_auth, the owner of the two functions below. No
 -- runtime login reads the table.
@@ -321,3 +348,31 @@ CREATE FUNCTION search_student_ids(p_term text, p_phone text DEFAULT NULL, p_lim
 REVOKE ALL ON FUNCTION search_student_ids(text, text, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION search_student_ids(text, text, integer) TO jantrik_app;
 ALTER FUNCTION search_student_ids(text, text, integer) OWNER TO jantrik_search;
+
+-- ───────────── student_imports.created_by_id: the signed person, not a row anyone may edit ─────────────
+-- The import job signs its context as the import's creator (it re-checks OWNER/ADMIN), read from
+-- this column. jantrik_app could UPDATE it, or INSERT an import naming someone else, so an
+-- injection could have the worker act as another admin of its institute (P1-J8 review). Now the
+-- column is not updatable, and a request (a signed person) can only create imports as itself.
+REVOKE UPDATE ON student_imports FROM jantrik_app;
+GRANT UPDATE (status, file_name, headers, rows, mapping, results, row_count, processed, failure,
+              finished_at, updated_at, duplicate_overrides)
+  ON student_imports TO jantrik_app;
+
+CREATE OR REPLACE FUNCTION app_student_import_creator() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp
+  AS $$
+  BEGIN
+    IF (SELECT public.app_current_user_id()) IS NOT NULL
+       AND NEW.created_by_id IS DISTINCT FROM (SELECT public.app_current_user_id()) THEN
+      RAISE EXCEPTION 'an import is created by the signed-in person only'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN NEW;
+  END
+  $$;
+REVOKE ALL ON FUNCTION app_student_import_creator() FROM PUBLIC;
+DROP TRIGGER IF EXISTS student_imports_creator ON student_imports;
+CREATE TRIGGER student_imports_creator BEFORE INSERT ON student_imports
+  FOR EACH ROW EXECUTE FUNCTION app_student_import_creator();

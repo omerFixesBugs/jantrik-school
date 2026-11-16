@@ -154,6 +154,58 @@ describe('P1-J8: an injection cannot take over another account or institute', ()
     expect(row?.set).toBe(true);
   });
 
+  it('cannot plant a temporary view for the next request on the same connection (no TEMP)', async () => {
+    // A temp view named like a table would be found before public.tenants (pg_temp is searched
+    // first for relations) by a later request on this pooled connection, someone else's, inside
+    // their signed context (P1-J8 review). The runtime login may not create temporary objects.
+    await expect(
+      asAttacker((tx) =>
+        tx.$executeRawUnsafe('CREATE TEMP VIEW tenants AS SELECT t.* FROM public.tenants t'),
+      ),
+    ).rejects.toThrow(/permission denied to create temporary tables/);
+    await expect(
+      asAttacker((tx) =>
+        tx.$executeRawUnsafe(
+          'CREATE FUNCTION pg_temp.plant() RETURNS boolean LANGUAGE sql AS $f$ SELECT true $f$',
+        ),
+      ),
+    ).rejects.toThrow(/permission denied to create temporary tables/);
+  });
+
+  it('cannot make the import worker act as a colleague (student_imports.created_by_id)', async () => {
+    // The import job signs its context as the import's creator, read from the row.
+    const colleague = await addMember(app, tenantA, 'Colleague');
+    await expect(
+      asAttacker(
+        (tx) =>
+          tx.$executeRaw`INSERT INTO student_imports (id, tenant_id, created_by_id, file_name, headers,
+                                                         row_count, updated_at)
+                         VALUES (${randomUUID()}::uuid, ${tenantA}::uuid, ${colleague}::uuid, 'x.xlsx',
+                                 '[]'::jsonb, 0, now())`,
+      ),
+    ).rejects.toThrow(/created by the signed-in person only/);
+    // Its own import, then re-pointed at the colleague: the column is not updatable.
+    const own = randomUUID();
+    await withContext(app, { tenantId: tenantA, userId: attacker }, (tx) =>
+      tx.studentImport.create({
+        data: {
+          id: own,
+          tenantId: tenantA,
+          createdById: attacker,
+          fileName: 'x.xlsx',
+          headers: [],
+          rowCount: 0,
+        },
+      }),
+    );
+    await expect(
+      asAttacker(
+        (tx) =>
+          tx.$executeRaw`UPDATE student_imports SET created_by_id = ${colleague}::uuid WHERE id = ${own}::uuid`,
+      ),
+    ).rejects.toThrow(/permission denied/);
+  });
+
   it('the attacker still has its own context (the attacks were refused, not the request)', async () => {
     const own = await asAttacker(
       (tx) => tx.$queryRaw<{ me: string | null; at: string | null }[]>`

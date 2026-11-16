@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createPrismaClient,
   loginPrivilegeProblems,
+  loginTempWarning,
   readLoginPrivileges,
   type LoginPrivileges,
   type PrismaClient,
@@ -63,6 +64,25 @@ describe('login privileges', () => {
     for (const url of [APP_URL, PLATFORM_URL, INGEST_URL, OWNER_URL]) {
       const p = await withClient(url, readLoginPrivileges);
       expect(loginPrivilegeProblems(p)).toEqual([]);
+    }
+  });
+
+  it('reads TEMP: the runtime logins have none, the owner keeps it, a login granted it has it', async () => {
+    for (const url of [APP_URL, PLATFORM_URL, INGEST_URL]) {
+      const p = await withClient(url, readLoginPrivileges);
+      expect({ login: p.login, temp: p.temp }).toEqual({ login: p.login, temp: false });
+      expect(loginTempWarning(p)).toBe('');
+    }
+    expect((await withClient(OWNER_URL, readLoginPrivileges)).temp).toBe(true);
+    const url = await tempLogin('');
+    const login = new URL(url).username;
+    await su.$executeRawUnsafe(`GRANT TEMPORARY ON DATABASE ${database} TO ${login}`);
+    try {
+      const p = await withClient(url, readLoginPrivileges);
+      expect(p.temp).toBe(true);
+      expect(loginTempWarning(p)).toMatch(/may create temporary objects/);
+    } finally {
+      await su.$executeRawUnsafe(`REVOKE TEMPORARY ON DATABASE ${database} FROM ${login}`);
     }
   });
 
@@ -145,6 +165,7 @@ describe('loginPrivilegeProblems', () => {
     bypassRls: false,
     replication: false,
     createRole: false,
+    temp: false,
     canBecome: [],
   };
 
