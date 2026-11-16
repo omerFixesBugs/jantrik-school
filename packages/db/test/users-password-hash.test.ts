@@ -1,20 +1,16 @@
-import { createHash } from 'node:crypto';
 import { hash } from '@node-rs/argon2';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findOrCreateUser, withContext, withTenant, type PrismaClient } from '../src/index.js';
-import { appClient, createTenant, ownerClient, randomPhone } from './helpers.js';
+import { appClient, createTenant, loginClient, ownerClient, randomPhone } from './helpers.js';
 
-// P1-J: the app login (jantrik_app) never reads a password hash, its own or anyone's. The
-// login gets the hash's parameters and salt, and the database compares (docs/database.md → users).
-
-const sha256 = (s: string): Buffer => createHash('sha256').update(s, 'utf8').digest();
-/** The PHC string up to its last `$`: algorithm, version, parameters and salt, no digest. */
-const paramsOf = (phc: string): string => phc.slice(0, phc.lastIndexOf('$'));
-const NIL = '00000000-0000-0000-0000-000000000000';
+// P1-J: the app login (jantrik_app) never reads a password hash, its own or anyone's. Only the
+// password login's own login (jantrik_login_app) may look one up, through one function
+// (docs/database.md → users).
 
 describe('users.password_hash is out of the app login’s reach (P1-J)', () => {
   let app: PrismaClient;
   let owner: PrismaClient;
+  let login: PrismaClient;
   let tenantId: string;
   let staff: { id: string; phone: string; hash: string };
   let coMember: { id: string; phone: string };
@@ -29,6 +25,7 @@ describe('users.password_hash is out of the app login’s reach (P1-J)', () => {
   beforeAll(async () => {
     app = appClient();
     owner = ownerClient();
+    login = loginClient();
     tenantId = (await createTenant(app)).id;
     const make = (role: 'ADMIN' | 'TEACHER') => {
       const phone = randomPhone();
@@ -47,8 +44,7 @@ describe('users.password_hash is out of the app login’s reach (P1-J)', () => {
   });
 
   afterAll(async () => {
-    await app.$disconnect();
-    await owner.$disconnect();
+    await Promise.all([app.$disconnect(), owner.$disconnect(), login.$disconnect()]);
   });
 
   it('cannot select password_hash: not its own, not a co-member’s, not with SELECT *', async () => {
@@ -91,59 +87,43 @@ describe('users.password_hash is out of the app login’s reach (P1-J)', () => {
     expect(rows.map((r) => r.id)).toEqual([staff.id]);
   });
 
-  it('the login lookup returns the parameters and salt, never the digest', async () => {
+  it('the app’s login lookup returns who the person is, no password data', async () => {
     const rows = await app.$queryRaw<Record<string, unknown>[]>`
       SELECT * FROM auth_find_user_for_login(${staff.phone}, NULL)`;
     expect(rows).toHaveLength(1);
-    expect(Object.keys(rows[0]!).sort()).toEqual(['id', 'locale', 'name', 'password_params']);
-    expect(rows[0]!['password_params']).toBe(paramsOf(staff.hash));
-    expect(staff.hash.startsWith(`${paramsOf(staff.hash)}$`)).toBe(true);
+    expect(Object.keys(rows[0]!).sort()).toEqual(['id', 'locale', 'name']);
+    expect(rows[0]!['id']).toBe(staff.id);
   });
 
-  it('no parameters for a user without a password or with a hash in another format', async () => {
-    const paramsFor = async (phone: string) =>
-      (
-        await app.$queryRaw<{ password_params: string | null }[]>`
-          SELECT password_params FROM auth_find_user_for_login(${phone}, NULL)`
-      )[0]?.password_params;
-    expect(await paramsFor(noPassword.phone)).toBeNull();
-
-    const odd = randomPhone();
-    const oddId = await withTenant(app, tenantId, async (tx) => {
-      const id = await findOrCreateUser(tx, odd, 'Odd Hash');
-      await tx.membership.create({ data: { tenantId, userId: id, role: 'STAFF' } });
-      return id;
-    });
-    const good = await hash('a long enough password');
-    for (const stored of [
-      'not-a-real-hash',
-      good.replace('$argon2id$', '$argon2i$'),
-      good.replace('$v=19$', '$v=16$'),
-      `${paramsOf(good)}$AAAA`, // a digest that is not 32 bytes
-      `${good}$extra`,
-    ]) {
-      await setOwnHash(oddId, stored);
-      expect(await paramsFor(odd), stored).toBeNull();
-    }
+  it('the app login may not run the password lookup', async () => {
+    await expect(
+      app.$queryRaw`SELECT * FROM auth_find_user_for_password_login(${staff.phone}, NULL)`,
+    ).rejects.toThrow(/permission denied/i);
   });
 
-  it('auth_my_password_matches compares inside the database, for the current user only', async () => {
-    const matches = (userId: string | null, digest: Buffer) =>
-      withContext(
-        app,
-        userId ? { userId } : {},
-        async (tx) =>
-          (
-            await tx.$queryRaw<{ ok: boolean }[]>`
-              SELECT auth_my_password_matches(${digest}) AS ok`
-          )[0]!.ok,
-      );
-    expect(await matches(staff.id, sha256(staff.hash))).toBe(true);
-    expect(await matches(staff.id, sha256(`${staff.hash}x`))).toBe(false);
-    expect(await matches(coMember.id, sha256(staff.hash))).toBe(false);
-    expect(await matches(noPassword.id, sha256(staff.hash))).toBe(false);
-    expect(await matches(NIL, sha256(staff.hash))).toBe(false);
-    expect(await matches(null, sha256(staff.hash))).toBe(false);
+  it('the login login gets the hash for a phone or an email, and nothing for anyone else', async () => {
+    const byPhone = await login.$queryRaw<{ id: string; password_hash: string | null }[]>`
+      SELECT id::text, password_hash FROM auth_find_user_for_password_login(${staff.phone}, NULL)`;
+    expect(byPhone).toEqual([{ id: staff.id, password_hash: staff.hash }]);
+    const none = await login.$queryRaw<{ password_hash: string | null }[]>`
+      SELECT password_hash FROM auth_find_user_for_password_login(${noPassword.phone}, NULL)`;
+    expect(none).toEqual([{ password_hash: null }]);
+    expect(
+      await login.$queryRaw<unknown[]>`
+        SELECT * FROM auth_find_user_for_password_login(${randomPhone()}, NULL)`,
+    ).toEqual([]);
+  });
+
+  it('the login login reads no table and runs no other function', async () => {
+    await expect(login.$queryRaw`SELECT id FROM users LIMIT 1`).rejects.toThrow(
+      /permission denied/i,
+    );
+    await expect(
+      login.$queryRaw`SELECT * FROM auth_find_user_for_login(${staff.phone}, NULL)`,
+    ).rejects.toThrow(/permission denied/i);
+    await expect(login.$queryRaw`SELECT auth_my_password_is_set()`).rejects.toThrow(
+      /permission denied/i,
+    );
   });
 
   it('auth_my_password_is_set says whether the current user has a password', async () => {

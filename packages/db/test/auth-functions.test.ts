@@ -8,7 +8,6 @@ const FUNCTIONS = [
   'auth_resolve_tenant',
   'auth_find_refresh_token',
   'app_find_or_create_user',
-  'auth_my_password_matches',
   'auth_my_password_is_set',
 ];
 

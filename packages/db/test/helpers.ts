@@ -8,7 +8,7 @@ import {
   type ProvisionTenantInput,
   type Tenant,
 } from '../src/index.js';
-import { APP_URL, INGEST_URL, OWNER_URL, PLATFORM_URL } from './env.js';
+import { APP_URL, INGEST_URL, LOGIN_URL, OWNER_URL, PLATFORM_URL } from './env.js';
 
 export const appClient = (): PrismaClient => createPrismaClient(APP_URL);
 
@@ -18,6 +18,8 @@ export const randomPhone = (): string =>
 export const ownerClient = (): PrismaClient => createPrismaClient(OWNER_URL);
 /** The API platform module's role: the only one that may run the platform_* functions. */
 export const platformClient = (): PrismaClient => createPrismaClient(PLATFORM_URL);
+/** The password login's login (P1-J): only auth_find_user_for_password_login. */
+export const loginClient = (): PrismaClient => createPrismaClient(LOGIN_URL);
 /** The device receiver's login: no table grants, only the ingest_* functions. */
 export const ingestClient = (): PrismaClient => createPrismaClient(INGEST_URL);
 
