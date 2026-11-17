@@ -239,6 +239,7 @@ export class FeeDuesService implements OnModuleInit {
             admissionDateForDues: s.admissionDateForDues
               ? dateFromDb(s.admissionDateForDues)
               : null,
+            yearStart: year.startDate,
           }),
           classLevelId: s.enrolments[0]!.classLevelId,
           studyGroupId: s.enrolments[0]!.studyGroupId,

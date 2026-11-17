@@ -103,7 +103,14 @@ export class StudentAdminService {
 
   // ─────────────────────────── Admission ───────────────────────────
 
-  async admit(input: AdmissionData): Promise<StudentProfile> {
+  /**
+   * `fromApplication`: an approved admission application (sprint 1 P3a), always a new child, so the
+   * December rule below holds even when the institute already marked that year current (P3-a18).
+   */
+  async admit(
+    input: AdmissionData,
+    opts: { fromApplication?: boolean } = {},
+  ): Promise<StudentProfile> {
     const tx = this.db.tx;
     await this.assertStudentLimit();
     const { year } = await this.checkEnrolment(input.enrolment, null);
@@ -112,10 +119,13 @@ export class StudentAdminService {
       input.studentCode ?? (await this.codes.next(year.startDate.getUTCFullYear()));
     // A child admitted into a year that has not started and is not current yet (in December, for
     // January) owes from that year's start (decision P3-K): recorded now, never derived later.
+    // A current year that has not started is an institute's first year (existing students typed
+    // in, P3-a10) or an early switch: only an approved application is known to be a new child.
     const tenant = await tx.tenant.findFirstOrThrow({ select: { timezone: true } });
     const yearStart = dateFromDb(year.startDate);
     const admissionDateForDues =
-      !year.isCurrent && yearStart > todayAt(tenant.timezone, this.clock.now())
+      (opts.fromApplication || !year.isCurrent) &&
+      yearStart > todayAt(tenant.timezone, this.clock.now())
         ? year.startDate
         : null;
 

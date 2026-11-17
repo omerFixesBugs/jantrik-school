@@ -6,6 +6,12 @@ import {
   type FeeLedger,
   type StudentProfile,
 } from '@jantrik/shared';
+import {
+  admissionCycle,
+  admissionSchool,
+  api as admissionApi,
+  staffApplication,
+} from './support/admission.js';
 import { FakeClock } from './support/clock.js';
 import { feesSchool, type FeesSchool } from './support/fees.js';
 import { bearer, createHarness, http, randomPhone, type Harness } from './support/harness.js';
@@ -168,6 +174,36 @@ describe('fees: the admission date of a child admitted before the year starts', 
     // The fee "from the year's start" does not reach a student created before it: as before.
     expect(dues.some((d) => d.head.id === admission.id)).toBe(false);
     expect(dues.length).toBeGreaterThan(0);
+  });
+
+  it('an approved application records the year start even when the institute marked that year current early (review round 2, NIT 6)', async () => {
+    // An application is always a new child, so the year being current already (an institute
+    // that switched in December) does not matter; the staff form keeps the rule above.
+    const t = await admissionSchool(h);
+    await withTenant(h.prisma, t.tenantId, async (tx) => {
+      await tx.academicYear.updateMany({ data: { isCurrent: false } });
+      await tx.academicYear.update({ where: { id: t.nextYearId }, data: { isCurrent: true } });
+    });
+    clock.set('2026-12-10T06:00:00.000Z');
+    try {
+      const c = await admissionCycle(h, t);
+      const cc = c.classes.find((x) => x.classLevel.id === t.class6)!.id;
+      const a = await staffApplication(h, t, cc, { nameEn: 'Early Switch' });
+      const approved = (
+        await admissionApi(h, t.tokens.admin)
+          .post(`/admission/applications/${a.id}/approve`, { sectionId: t.sectionB })
+          .expect(200)
+      ).body as { studentId: string };
+      const row = await withTenant(h.prisma, t.tenantId, (tx) =>
+        tx.student.findUniqueOrThrow({
+          where: { id: approved.studentId },
+          select: { admissionDateForDues: true },
+        }),
+      );
+      expect(row.admissionDateForDues).toEqual(dateToDb('2027-01-01'));
+    } finally {
+      clock.set(new Date());
+    }
   });
 
   it('admitted mid-year: unchanged, the fee is due 15 days after the admission day', async () => {

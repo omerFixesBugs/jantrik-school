@@ -55,9 +55,12 @@ Plan: `docs/plans/sprint-1-p3-admission.md` (PR #15). Decisions taken while buil
 - **Status:** staff set `SUBMITTED`, `SHORTLISTED`, `SELECTED` (only in a cycle without an
   admission test: with one, the merit list selects, P4; 409 `SELECTED_BY_TEST`), `REJECTED`
   (reason required) or `WITHDRAWN` (reason required). `ADMITTED` is set by approval only. Each
-  change keeps who, when and why, and is audited. Bringing a withdrawn or rejected application back
-  runs the duplicate and per-phone checks again (review S1). An edit cannot empty a field the cycle
-  requires (422 `ADMISSION_FIELDS_REQUIRED`).
+  change keeps who, when and why, and is audited. Any move out of `WITHDRAWN` (to `REJECTED`
+  too: a rejected application still counts as a duplicate) runs the duplicate check again, and
+  bringing a withdrawn or rejected application back to a live status also runs the per-phone cap
+  (review S1, round 2 NIT 5). An edit cannot empty a field the cycle requires (422
+  `ADMISSION_FIELDS_REQUIRED`). A staff entry takes the cycle's shared lock before it reads the
+  cycle (round 2 NIT 2), so a cycle edit that commits first is always seen.
 - **List and CSV:** filters (cycle, class, status, source) and a search on the names, the phone
   (Bangla digits accepted) and the number. The CSV has a BOM and ASCII digits, at most 10 000
   rows.
@@ -82,8 +85,9 @@ createNew?}` runs in the staff member's request transaction: the application row
   approved sprint plan; review S2): `POST /admission/cycle-classes/:id/bulk-approve {sectionId}`
   queues one job per class (`admission` queue, job id `admission-approve-<class id>`; 409
   `BULK_RUNNING` while one runs). The job acts as the admin who started it (their OWNER/ADMIN role
-  is checked again for each application) and approves each approvable application in its own
-  transaction. A guardian choice or a duplicate birth registration number is recorded on that
+  is checked again for each application) and approves each application in its own transaction,
+  only if it is still `SELECTED` under the row lock (round 2 NIT 7: one moved back to shortlisted
+  meanwhile is skipped). A guardian choice or a duplicate birth registration number is recorded on that
   application (`approval_problem`) and skipped; the student limit, a full section or a deactivated
   class or section stops the run and marks the rest. A re-run picks up what is left. `GET` the same
   path for `{running, admitted, problems}`.
@@ -92,10 +96,13 @@ createNew?}` runs in the staff member's request transaction: the application row
 
 A child admitted (by staff or from an application) into a year that has not started and is not
 current yet (in December, for January) owes from that year's start: `admit()` records it in
-`students.admission_date_for_dues` (decision P3-K, as fixed after the review: M1). So the admission
-fee is due `year start + offset` (not already late) and the first month is not extended as for a
-late joiner. Nothing is derived for anyone else: imports, existing students and admissions into the
-current year keep the creation day, exactly as before. See [fees.md](fees.md).
+`students.admission_date_for_dues` (decision P3-K, as fixed after the review: M1). An approved
+application records it even when the institute already marked that year current (round 2 NIT 6,
+P3-a18: an application is always a new child). So the admission fee is due `year start + offset`
+(not already late) and the first month is not extended as for a late joiner. The recorded date
+counts only for a year that starts on or after it; for an earlier year the dues count from the day
+the child joined (P3-a19). Nothing is derived for anyone else: imports, existing students and staff
+admissions into the current year keep the creation day, exactly as before. See [fees.md](fees.md).
 
 ## Database
 

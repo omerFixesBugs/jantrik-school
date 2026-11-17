@@ -64,7 +64,12 @@ export class AdmissionApprovalService {
     @InjectQueue(ADMISSION_QUEUE) private readonly queue: Queue<BulkApproveJob>,
   ) {}
 
-  async approve(id: string, input: ApproveAdmission): Promise<ApproveResult> {
+  /** `bulk`: the bulk job, which approves only applications still SELECTED under the lock. */
+  async approve(
+    id: string,
+    input: ApproveAdmission,
+    opts: { bulk?: boolean } = {},
+  ): Promise<ApproveResult> {
     const tx = this.db.tx;
     const app = await this.applications.lockRow(id);
     if (app.studentId) {
@@ -77,46 +82,54 @@ export class AdmissionApprovalService {
         cycleClass: { select: { classLevelId: true, studyGroupId: true } },
       },
     });
-    if (!approvableStatuses(ctx.cycle.requiresTest).includes(app.status)) {
+    // The bulk job read SELECTED without the lock; a status changed since is seen here (review
+    // round 2, NIT 7).
+    if (
+      !approvableStatuses(ctx.cycle.requiresTest).includes(app.status) ||
+      (opts.bulk && app.status !== 'SELECTED')
+    ) {
       throw apiError(409, 'APPLICATION_NOT_APPROVABLE', 'This application cannot be approved', {
         status: app.status,
       });
     }
-    const profile: StudentProfile = await this.students.admit({
-      nameBn: app.nameBn,
-      nameEn: app.nameEn,
-      dateOfBirth: dateFromDb(app.dateOfBirth),
-      gender: app.gender,
-      religion: app.religion,
-      bloodGroup: app.bloodGroup,
-      birthRegistrationNo: app.birthRegistrationNo,
-      fatherNameBn: app.fatherNameBn,
-      fatherNameEn: app.fatherNameEn,
-      motherNameBn: app.motherNameBn,
-      motherNameEn: app.motherNameEn,
-      presentAddress: app.presentAddress,
-      permanentAddress: app.permanentAddress,
-      studentCode: input.studentCode ?? null,
-      guardians: [
-        {
-          phone: app.phone,
-          nameBn: app.guardianNameBn,
-          nameEn: app.guardianNameEn,
-          relation: app.guardianRelation,
-          isPrimary: true,
-          occupation: app.guardianOccupation,
-          guardianId: input.guardianId ?? null,
-          createNew: input.createNew ?? false,
+    const profile: StudentProfile = await this.students.admit(
+      {
+        nameBn: app.nameBn,
+        nameEn: app.nameEn,
+        dateOfBirth: dateFromDb(app.dateOfBirth),
+        gender: app.gender,
+        religion: app.religion,
+        bloodGroup: app.bloodGroup,
+        birthRegistrationNo: app.birthRegistrationNo,
+        fatherNameBn: app.fatherNameBn,
+        fatherNameEn: app.fatherNameEn,
+        motherNameBn: app.motherNameBn,
+        motherNameEn: app.motherNameEn,
+        presentAddress: app.presentAddress,
+        permanentAddress: app.permanentAddress,
+        studentCode: input.studentCode ?? null,
+        guardians: [
+          {
+            phone: app.phone,
+            nameBn: app.guardianNameBn,
+            nameEn: app.guardianNameEn,
+            relation: app.guardianRelation,
+            isPrimary: true,
+            occupation: app.guardianOccupation,
+            guardianId: input.guardianId ?? null,
+            createNew: input.createNew ?? false,
+          },
+        ],
+        enrolment: {
+          academicYearId: ctx.cycle.academicYearId,
+          classLevelId: ctx.cycleClass.classLevelId,
+          studyGroupId: ctx.cycleClass.studyGroupId,
+          sectionId: input.sectionId ?? null,
+          roll: input.roll ?? null,
         },
-      ],
-      enrolment: {
-        academicYearId: ctx.cycle.academicYearId,
-        classLevelId: ctx.cycleClass.classLevelId,
-        studyGroupId: ctx.cycleClass.studyGroupId,
-        sectionId: input.sectionId ?? null,
-        roll: input.roll ?? null,
       },
-    });
+      { fromApplication: true },
+    );
     const photo = await this.movePhoto(id, profile.id);
     await tx.admissionApplication.update({
       where: { id },
@@ -306,13 +319,11 @@ export class AdmissionApprovalService {
     });
     if (!app || app.studentId || app.status !== 'SELECTED') return true;
     try {
-      await this.approve(id, {
-        sectionId,
-        roll: null,
-        studentCode: null,
-        guardianId: null,
-        createNew: false,
-      });
+      await this.approve(
+        id,
+        { sectionId, roll: null, studentCode: null, guardianId: null, createNew: false },
+        { bulk: true },
+      );
     } catch (error) {
       // ALREADY_ADMITTED / NOT_APPROVABLE under the lock: someone else got there first.
       const code = (error as HttpException).getResponse?.() as { code?: string } | undefined;

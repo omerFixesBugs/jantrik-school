@@ -550,7 +550,11 @@ describe('duesAdmissionDate (sprint 1 P3, review focus 5: admitted in December f
       ],
       student: {
         id: 's1',
-        admittedOn: duesAdmissionDate({ createdOn, admissionDateForDues }),
+        admittedOn: duesAdmissionDate({
+          createdOn,
+          admissionDateForDues,
+          yearStart: year.startDate,
+        }),
         classLevelId: 'c1',
         studyGroupId: null,
         siblingRank: null,
@@ -559,12 +563,26 @@ describe('duesAdmissionDate (sprint 1 P3, review focus 5: admitted in December f
     });
 
   it('the recorded date wins; otherwise the creation day', () => {
-    expect(duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: '2027-01-01' })).toBe(
-      '2027-01-01',
-    );
-    expect(duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: null })).toBe(
-      '2026-12-10',
-    );
+    const yearStart = '2027-01-01';
+    expect(
+      duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: '2027-01-01', yearStart }),
+    ).toBe('2027-01-01');
+    expect(
+      duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: null, yearStart }),
+    ).toBe('2026-12-10');
+  });
+
+  it('the recorded date counts only for a year that starts on or after it (review round 2, NIT 6: never fewer dues)', () => {
+    const at = (yearStart: string) =>
+      duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: '2027-01-01', yearStart });
+    // A later year: the recorded date, before it starts (a member from its first day).
+    expect(at('2028-01-01')).toBe('2027-01-01');
+    // An earlier year (the child enrolled there too, e.g. moved back by staff): the day the child
+    // really joined, so December is charged as for any late joiner, not skipped.
+    expect(at('2026-01-01')).toBe('2026-12-10');
+    // The year's start moved earlier after the admission, still after the creation day: from that
+    // start.
+    expect(at('2026-12-20')).toBe('2026-12-20');
   });
 
   it('admitted on 10 December for January: the admission fee is due 15 days after the year starts, January on the 10th, no fine on 5 January', () => {
