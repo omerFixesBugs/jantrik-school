@@ -1,9 +1,11 @@
+import { withTenant } from '@jantrik/db';
 import { TURNSTILE_DUMMY_TOKEN } from '../src/admission/public/turnstile.js';
 import { admissionCycle, admissionSchool } from './support/admission.js';
 import { FakeClock } from './support/clock.js';
 import { createHarness, http, randomIp, randomPhone, type Harness } from './support/harness.js';
 
-// A small ceiling and a 1 s cooldown, before the app reads its settings.
+// A small ceiling and a 1 s cooldown, before the app reads its settings. The ceiling is the
+// institute's total of codes a day: the form gets 5 of the 6, the status page 1.
 vi.hoisted(() => {
   process.env['ADMISSION_OTP_PER_TENANT_PER_DAY'] = '6';
   process.env['ADMISSION_OTP_PHONE_COOLDOWN_SEC'] = '1';
@@ -18,6 +20,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * ceiling or a spent per-phone day made a match answer 429 (with Retry-After) and a non-match 202.
  * Nor may a probe leave a trace a later request can read: a match used to spend the form's shared
  * budgets, so the next ordinary code request answered 429 only after a match (follow-up review).
+ * A status code proves the phone for the status only (its own slot and token), and the configured
+ * ceiling caps all of an institute's codes together (second follow-up).
  */
 describe('admission (public): the status code request is no oracle', () => {
   const clock = new FakeClock('2026-11-20T06:00:00.000Z');
@@ -44,7 +48,7 @@ describe('admission (public): the status code request is no oracle', () => {
       },
       { timeout: 15_000, interval: 100 },
     );
-  /** An application made through the form; returns its phone and number. */
+  /** An application made through the form; returns its phone, number and form token. */
   const applied = async (slug: string, cycleClassId: string) => {
     const form = (await http(h).get(pub(slug)).set('X-Forwarded-For', randomIp()).expect(200))
       .body as { formTicket: string };
@@ -59,29 +63,38 @@ describe('admission (public): the status code request is no oracle', () => {
         .expect(200)
     ).body.phoneToken as string;
     clock.advance(20_000);
-    const no = (
-      await http(h)
-        .post(pub(slug, '/applications'))
-        .set('X-Forwarded-For', randomIp())
-        .set('X-Admission-Token', token)
-        .field(
-          'payload',
-          JSON.stringify({
-            nameBn: 'অবস্থার শিশু',
-            dateOfBirth: '2019-05-01',
-            gender: 'MALE',
-            guardianNameBn: 'অভিভাবক',
-            guardianRelation: 'FATHER',
-          }),
-        )
-        .field('cycleClassId', cycleClassId)
-        .field('turnstileToken', TURNSTILE_DUMMY_TOKEN)
-        .field('formTicket', form.formTicket)
-        .field('website', '')
-        .expect(201)
-    ).body.applicationNo as string;
-    return { phone, no };
+    const no = (await submit(slug, token, cycleClassId, form.formTicket).expect(201)).body
+      .applicationNo as string;
+    return { phone, no, token };
   };
+  const submit = (slug: string, token: string, cycleClassId: string, ticket: string) =>
+    http(h)
+      .post(pub(slug, '/applications'))
+      .set('X-Forwarded-For', randomIp())
+      .set('X-Admission-Token', token)
+      .field(
+        'payload',
+        JSON.stringify({
+          nameBn: 'অবস্থার শিশু',
+          dateOfBirth: '2019-05-01',
+          gender: 'MALE',
+          guardianNameBn: 'অভিভাবক',
+          guardianRelation: 'FATHER',
+        }),
+      )
+      .field('cycleClassId', cycleClassId)
+      .field('turnstileToken', TURNSTILE_DUMMY_TOKEN)
+      .field('formTicket', ticket)
+      .field('website', '');
+  const verify = (slug: string, phone: string, code: string, purpose?: 'status') =>
+    http(h)
+      .post(pub(slug, '/otp/verify'))
+      .set('X-Forwarded-For', randomIp())
+      .send({ phone, code, ...(purpose ? { purpose } : {}) });
+  const otpLogs = (tenantId: string) =>
+    withTenant(h.prisma, tenantId, (tx) =>
+      tx.smsLog.count({ where: { purpose: 'ADMISSION_OTP' } }),
+    );
   /** Status, body and Retry-After: what a caller can tell apart. */
   const seen = (r: { status: number; body: unknown; headers: Record<string, string> }) => [
     r.status,
@@ -97,8 +110,9 @@ describe('admission (public): the status code request is no oracle', () => {
   it("the institute's ceiling spent: a matching pair answers exactly as a wrong number and a stranger's phone", async () => {
     const t = await admissionSchool(h);
     const cc = (await admissionCycle(h, t)).classes.find((x) => x.classLevel.id === t.class6)!.id;
-    const { phone, no } = await applied(t.slug, cc); // ceiling 1 of 6
-    for (let i = 0; i < 5; i++) await askCode(t.slug, randomPhone()).expect(202); // 6 of 6
+    const { phone, no } = await applied(t.slug, cc); // the form's share 1 of 5
+    for (let i = 0; i < 4; i++) await askCode(t.slug, randomPhone()).expect(202); // 5 of 5
+    await askCode(t.slug, randomPhone()).expect(429);
     await sleep(1_200);
     const match = await askStatusCode(t.slug, phone, no);
     await sleep(1_200);
@@ -153,4 +167,70 @@ describe('admission (public): the status code request is no oracle', () => {
     expect(afterMatch).toEqual(afterOther);
     expect(afterMatch[0]).toBe(202);
   }, 90_000);
+
+  it('a status code proves the phone for the status only: it cannot submit, a form code cannot read the status, neither verifies as the other', async () => {
+    const v = await admissionSchool(h);
+    const cc = (await admissionCycle(h, v)).classes.find((x) => x.classLevel.id === v.class6)!.id;
+    const { phone, no, token: formToken } = await applied(v.slug, cc);
+    // The form's token never reads the status.
+    const byForm = await http(h)
+      .post(pub(v.slug, '/status'))
+      .set('X-Forwarded-For', randomIp())
+      .set('X-Admission-Token', formToken)
+      .send({ applicationNo: no });
+    expect(byForm.status).toBe(401);
+    expect(byForm.body.code).toBe('ADMISSION_TOKEN_INVALID');
+
+    await sleep(1_200);
+    await askStatusCode(v.slug, phone, no).expect(202);
+    const statusCode = await lastCode(phone);
+    // A status code is not a form code (its own slot) ...
+    expect((await verify(v.slug, phone, statusCode)).status).toBe(422);
+    // ... it verifies only as a status code, into a token that reads the status ...
+    const statusToken = (await verify(v.slug, phone, statusCode, 'status').expect(200)).body
+      .phoneToken as string;
+    await http(h)
+      .post(pub(v.slug, '/status'))
+      .set('X-Forwarded-For', randomIp())
+      .set('X-Admission-Token', statusToken)
+      .send({ applicationNo: no })
+      .expect(200);
+    // ... and is refused by the submit (before the body is read, by the upload guard).
+    const form = (await http(h).get(pub(v.slug)).set('X-Forwarded-For', randomIp()).expect(200))
+      .body as { formTicket: string };
+    clock.advance(20_000);
+    const bySubmit = await submit(v.slug, statusToken, cc, form.formTicket);
+    expect(bySubmit.status).toBe(401);
+    expect(bySubmit.body.code).toBe('ADMISSION_TOKEN_INVALID');
+
+    // A form code does not verify as a status code.
+    await sleep(1_200);
+    await askCode(v.slug, phone).expect(202);
+    const formCode = await lastCode(phone);
+    expect((await verify(v.slug, phone, formCode, 'status')).status).toBe(422);
+  });
+
+  it("all of an institute's codes in a day stay within ADMISSION_OTP_PER_TENANT_PER_DAY (6 here: the form 5, the status page 1)", async () => {
+    const z = await admissionSchool(h);
+    const cc = (await admissionCycle(h, z)).classes.find((x) => x.classLevel.id === z.class6)!.id;
+    const first = await applied(z.slug, cc); // the form 1 of 5
+    const second = await applied(z.slug, cc); // 2 of 5
+    for (let i = 0; i < 3; i++) await askCode(z.slug, randomPhone()).expect(202); // 5 of 5
+    await askCode(z.slug, randomPhone()).expect(429);
+    await sleep(1_200);
+    const sent = (phone: string) => h.sms.sentTo(phone).length;
+    const before = sent(first.phone) + sent(second.phone);
+    await askStatusCode(z.slug, first.phone, first.no).expect(202); // the status page 1 of 1
+    await askStatusCode(z.slug, second.phone, second.no).expect(202); // none left: nothing sent
+    await vi.waitFor(() => expect(sent(first.phone) + sent(second.phone)).toBe(before + 1), {
+      timeout: 15_000,
+      interval: 100,
+    });
+    await sleep(1_500);
+    expect(sent(first.phone) + sent(second.phone)).toBe(before + 1);
+    await vi.waitFor(async () => expect(await otpLogs(z.tenantId)).toBe(6), {
+      timeout: 15_000,
+      interval: 250,
+    });
+  }, 60_000);
 });
