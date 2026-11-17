@@ -1005,8 +1005,11 @@ YEAR_ORDER`); amounts from any earlier year (they carry no dates). The wizard co
 - **P5-b13. Concession copies into one year take turns** (an advisory lock per target year):
   only open concessions are unique, so two copies at once could each add an ended one. No test
   forces the race.
-- **P5-b14. A section teacher needs a staff profile** (`PUT /attendance/sections/:id/teachers`),
-  as subject teachers and the teacher copy do: stricter than before (an active role alone was
-  enough).
+- **P5-b14. The teacher copy follows each assignment path's own rule** (instead of making the
+  section-teacher route stricter): a section teacher needs an ACTIVE OWNER, ADMIN or TEACHER
+  membership, legacy teachers without a staff profile included, as
+  `PUT /attendance/sections/:id/teachers` allows and its tests rely on; a subject teacher also a
+  staff profile, as the exams setup requires. P5-b7's single rule (profile for both) dropped
+  legacy class teachers.
 - **P5-b15. The run page lets a stopped run be fixed** (APPLYING with an error): rows edited,
   refreshed, the run deleted when nothing is applied; the API refuses while a retry is queued.

@@ -252,8 +252,13 @@ export class SetupService {
       }),
       tx.staffProfile.findMany({ select: { userId: true } }),
     ]);
+    // Each assignment path's own rule (review rounds 1 and 2): a section teacher needs an ACTIVE
+    // OWNER, ADMIN or TEACHER membership (legacy teachers without a staff profile included, as
+    // PUT /attendance/sections/:id/teachers allows); a subject teacher also a staff profile (as
+    // the exams setup requires). An accountant is neither.
     const profiled = new Set(profiles.map((p) => p.userId));
-    const staff = new Set(members.map((m) => m.userId).filter((id) => profiled.has(id)));
+    const sectionStaff = new Set(members.map((m) => m.userId));
+    const subjectStaff = new Set([...sectionStaff].filter((id) => profiled.has(id)));
     const result: TeacherCopyResult = { sectionTeachers: 0, subjectTeachers: 0, skipped: 0 };
     const fromSectionIds = sections.filter((s) => s.academicYearId === from.id).map((s) => s.id);
 
@@ -273,7 +278,7 @@ export class SetupService {
       );
       for (const r of rows) {
         const sectionId = mapped.get(r.sectionId);
-        if (!sectionId || !staff.has(r.userId) || have.has(`${sectionId}|${r.userId}`)) {
+        if (!sectionId || !sectionStaff.has(r.userId) || have.has(`${sectionId}|${r.userId}`)) {
           result.skipped++;
           continue;
         }
@@ -310,7 +315,7 @@ export class SetupService {
       for (const r of rows) {
         const sectionId = mapped.get(r.sectionId);
         const key = `${sectionId}|${r.subjectId}|${r.userId}`;
-        if (!sectionId || !staff.has(r.userId) || !r.subject.isActive || existing.has(key)) {
+        if (!sectionId || !subjectStaff.has(r.userId) || !r.subject.isActive || existing.has(key)) {
           result.skipped++;
           continue;
         }

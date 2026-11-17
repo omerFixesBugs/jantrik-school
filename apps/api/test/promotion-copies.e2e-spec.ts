@@ -9,7 +9,6 @@ import {
   type Harness,
 } from './support/harness.js';
 import { promotionSchool, type PromotionSchool } from './support/promotion.js';
-import { school } from './support/school.js';
 
 /** P5 Task 7 (S16, P5-M, P5-N): fee terms, running concessions and teachers into the new year. */
 describe('promotion: copies into the new year', () => {
@@ -314,19 +313,45 @@ describe('promotion: copies into the new year', () => {
     await api(s.tokens.admin).post('/fees/amounts/copy', skip).expect(200);
   });
 
-  it('a section teacher needs a staff profile, as for the copy (review round 2)', async () => {
-    const t = await school(h);
-    const userId = await withTenant(h.prisma, t.tenantId, async (tx) => {
-      const id = await findOrCreateUser(tx, randomPhone(), 'No profile');
-      await tx.membership.create({ data: { tenantId: t.tenantId, userId: id, role: 'TEACHER' } });
+  it('a legacy teacher without a staff profile keeps their section in the copy, not a subject (review round 2)', async () => {
+    const legacy = await withTenant(h.prisma, s.tenantId, async (tx) => {
+      const id = await findOrCreateUser(tx, randomPhone(), 'Legacy');
+      await tx.membership.create({ data: { tenantId: s.tenantId, userId: id, role: 'TEACHER' } });
+      const subject = await tx.subject.findFirstOrThrow({
+        where: { classLevelId: s.classes[9] },
+        orderBy: { sortOrder: 'asc' },
+      });
+      await tx.sectionTeacher.create({
+        data: { tenantId: s.tenantId, sectionId: s.sections[2026][9].ka, userId: id },
+      });
+      await tx.sectionSubjectTeacher.create({
+        data: {
+          tenantId: s.tenantId,
+          sectionId: s.sections[2026][9].ka,
+          subjectId: subject.id,
+          classLevelId: s.classes[9],
+          userId: id,
+        },
+      });
       return id;
     });
-    const res = await api(t.admin)
-      .put(`/attendance/sections/${t.sectionA}/teachers`, {
-        teachers: [{ userId, isClassTeacher: false }],
+    await api(s.tokens.admin)
+      .post(`/setup/academic-years/${s.y2027}/copy-teachers`, {
+        fromAcademicYearId: s.y2026,
+        classTeachers: true,
+        subjectTeachers: true,
       })
-      .expect(422);
-    expect(res.body).toMatchObject({ code: 'NOT_STAFF', userIds: [userId] });
+      .expect(200);
+    const [sections, subjects] = await withTenant(h.prisma, s.tenantId, async (tx) => [
+      await tx.sectionTeacher.count({
+        where: { userId: legacy, sectionId: s.sections[2027][9].ka },
+      }),
+      await tx.sectionSubjectTeacher.count({
+        where: { userId: legacy, sectionId: s.sections[2027][9].ka },
+      }),
+    ]);
+    expect(sections).toBe(1);
+    expect(subjects).toBe(0);
   });
 
   it("an accountant's (or a former teacher's) old subject assignment is not copied (review SF1)", async () => {
