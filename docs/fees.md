@@ -65,8 +65,10 @@ has an amount for an active head. A student admitted inside a period gets at lea
 
 **The admission date** the dues count from (sprint 1 P3, decision P3-K, review focus 5) is the day
 the student was created, except for a child **admitted into a year that has not started and is not
-current yet** (in December, for January), by staff or from an application: `admit()` then records
-that year's start in `students.admission_date_for_dues`, and the dues count from it. So their
+current yet** (in December, for January), by staff or from an application (from an application also
+when that year is already current, P3-a18): `admit()` then records that year's start in
+`students.admission_date_for_dues`, and the dues of that year and later ones count from it (for an
+earlier year, from the later of the creation day and that year's start, P3-a19). So their
 admission fee is due `year start + offset` (not already late, not skipped because the fee "charges
 from" 1 January) and their first month is due on its usual day (no late-joiner days). Nothing is
 derived: imports, existing students and admissions into the current year keep the creation day

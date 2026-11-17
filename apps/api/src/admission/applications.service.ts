@@ -119,9 +119,14 @@ export class AdmissionApplicationsService {
    * Holds the institute's lock for this phone until the transaction ends, then refuses a
    * duplicate (the same birth registration number, or the same phone, name and date of birth, in
    * this cycle, not withdrawn: 409 with its number, decision P3-S) and a phone's fourth live
-   * application in the cycle (422). `exceptId`: the application being edited.
+   * application in the cycle (422). `exceptId`: the application being edited. `cap: false`: the
+   * duplicate check only (a withdrawn application moved to REJECTED, which is not live).
    */
-  async checkCandidate(c: AdmissionCandidate, exceptId: string | null = null): Promise<void> {
+  async checkCandidate(
+    c: AdmissionCandidate,
+    exceptId: string | null = null,
+    opts: { cap?: boolean } = {},
+  ): Promise<void> {
     const tx = this.db.tx;
     const key = `admission:${this.tenantId}:${c.phone}`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
@@ -151,6 +156,7 @@ export class AdmissionApplicationsService {
         applicationNo: duplicate.applicationNo,
       });
     }
+    if (opts.cap === false) return;
     const live = await tx.admissionApplication.count({
       where: {
         cycleId: c.cycleId,
@@ -188,6 +194,14 @@ export class AdmissionApplicationsService {
 
   async create(input: StaffAdmissionApplication): Promise<AdmissionApplicationDetail> {
     const tx = this.db.tx;
+    // The cycle's lock before the cycle is read (review round 2, NIT 2): a cycle edit that
+    // committed while this waited is seen (its fields, the admission test, a removed class).
+    const ref = await tx.admissionCycleClass.findUnique({
+      where: { id: input.cycleClassId },
+      select: { cycleId: true },
+    });
+    if (!ref) throw new NotFoundException('Admission class not found');
+    await this.shareCycleLock(ref.cycleId);
     const cc = await tx.admissionCycleClass.findUnique({
       where: { id: input.cycleClassId },
       select: {
@@ -217,7 +231,6 @@ export class AdmissionApplicationsService {
       });
     }
     const nameKey = applicationNameKey(fields);
-    await this.shareCycleLock(cc.cycleId);
     await this.checkCandidate({
       cycleId: cc.cycleId,
       phone: input.phone,
@@ -378,11 +391,14 @@ export class AdmissionApplicationsService {
         throw apiError(409, 'SELECTED_BY_TEST', 'With an admission test, the merit list selects');
       }
     }
+    // Out of WITHDRAWN to anything (REJECTED too: it counts as a duplicate, and in the unique
+    // index) runs the duplicate check; back to a live status also the per-phone cap (review S1,
+    // round 2 NIT 5).
     const reviving =
       (old.status === 'WITHDRAWN' || old.status === 'REJECTED') &&
       status !== 'WITHDRAWN' &&
       status !== 'REJECTED';
-    if (reviving) {
+    if (reviving || (old.status === 'WITHDRAWN' && status !== 'WITHDRAWN')) {
       await this.checkCandidate(
         {
           cycleId: old.cycleId,
@@ -392,6 +408,7 @@ export class AdmissionApplicationsService {
           birthRegistrationNo: old.birthRegistrationNo,
         },
         id,
+        { cap: reviving },
       );
     }
     const at = this.clock.now();

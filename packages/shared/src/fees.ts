@@ -252,8 +252,17 @@ export function duesAdmissionDate(input: {
   createdOn: IsoDate;
   /** students.admission_date_for_dues, or null. */
   admissionDateForDues: IsoDate | null;
+  /** The start of the year whose dues are planned. */
+  yearStart: IsoDate;
 }): IsoDate {
-  return input.admissionDateForDues ?? input.createdOn;
+  const recorded = input.admissionDateForDues;
+  if (recorded === null) return input.createdOn;
+  // The recorded date is a year's start; it holds for that year and later ones. For a year that
+  // starts before it (the child also enrolled in an earlier year, or the year's start was moved
+  // earlier) the dues count from when the child really joined, never later (review round 2, NIT 6:
+  // a later date would skip months).
+  if (recorded <= input.yearStart) return recorded;
+  return maxDate(input.createdOn, input.yearStart);
 }
 
 function lastDayOfMonth(year: number, month: number): IsoDate {

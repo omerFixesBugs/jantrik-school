@@ -451,4 +451,54 @@ describe('admission (staff): cycles and applications', () => {
       expect(res.body.code).toBe('SELECTED_BY_TEST');
     });
   });
+
+  describe('after review round 2 (NIT 5)', () => {
+    const status = (id: string, body: object) =>
+      api(h, s.tokens.admin).post(`/admission/applications/${id}/status`, body);
+
+    it('withdrawn → rejected runs the duplicate check: the same birth registration number, or the same phone, name and birthday', async () => {
+      const first = await staffApplication(h, s, class6, { nameEn: 'Round Two Twin' });
+      await status(first.id, { status: 'WITHDRAWN', reason: 'By mistake' }).expect(200);
+      const second = await staffApplication(h, s, class6, {
+        nameEn: 'Round Two Twin',
+        birthRegistrationNo: first.birthRegistrationNo,
+      });
+      const res = await status(first.id, { status: 'REJECTED', reason: 'Cleanup' });
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        code: 'ADMISSION_DUPLICATE',
+        applicationNo: second.applicationNo,
+      });
+
+      const phone = randomPhone();
+      const a1 = await staffApplication(h, s, class6, {
+        nameEn: 'Round Two Plain',
+        birthRegistrationNo: null,
+        phone,
+      });
+      await status(a1.id, { status: 'WITHDRAWN', reason: 'By mistake' }).expect(200);
+      const a2 = await staffApplication(h, s, class6, {
+        nameEn: 'Round Two Plain',
+        birthRegistrationNo: null,
+        phone,
+      });
+      const plain = await status(a1.id, { status: 'REJECTED', reason: 'Cleanup' });
+      expect(plain.status).toBe(409);
+      expect(plain.body).toMatchObject({
+        code: 'ADMISSION_DUPLICATE',
+        applicationNo: a2.applicationNo,
+      });
+    });
+
+    it('withdrawn → rejected does not count against the three-per-phone cap; rejected → withdrawn needs no check', async () => {
+      const phone = randomPhone();
+      const w = await staffApplication(h, s, class6, { phone, nameBn: 'চতুর্থ', nameEn: null });
+      await status(w.id, { status: 'WITHDRAWN', reason: 'By mistake' }).expect(200);
+      for (const name of ['এক', 'দুই', 'তিন']) {
+        await staffApplication(h, s, class6, { phone, nameBn: name, nameEn: null });
+      }
+      await status(w.id, { status: 'REJECTED', reason: 'Too young' }).expect(200);
+      await status(w.id, { status: 'WITHDRAWN', reason: 'Asked to' }).expect(200);
+    });
+  });
 });

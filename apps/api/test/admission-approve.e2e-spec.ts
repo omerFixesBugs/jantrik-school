@@ -13,6 +13,9 @@ import {
   staffApplication,
   type AdmissionSchool,
 } from './support/admission.js';
+import { AdmissionApplicationsService } from '../src/admission/applications.service.js';
+import { AdmissionApprovalService } from '../src/admission/approval.service.js';
+import { TenantJobRunner } from '../src/tenancy/tenant-job-runner.service.js';
 import { bearer, createHarness, http, randomPhone, type Harness } from './support/harness.js';
 import { platform, platformAdminCookie } from './support/platform.js';
 
@@ -390,6 +393,48 @@ describe('admission (staff): approval', () => {
         );
         expect(n).toBe(1);
       }
+    });
+
+    it('an application moved off SELECTED between the run reading it and locking it is not approved (review round 2, NIT 7)', async () => {
+      const t = await admissionSchool(h);
+      const c = await admissionCycle(h, t);
+      const cc = c.classes.find((x) => x.classLevel.id === t.class6)!.id;
+      const a = await selected(t, cc, { nameEn: 'Moved Off', nameBn: 'সরানো' });
+      // The run has read SELECTED (no lock); before it locks the row, staff shortlist it again.
+      const applications = h.app.get(AdmissionApplicationsService);
+      const real = applications.lockRow.bind(applications);
+      let moved = false;
+      vi.spyOn(applications, 'lockRow').mockImplementation(async (id: string) => {
+        if (id === a.id && !moved) {
+          moved = true;
+          await api(h, t.tokens.admin)
+            .post(`/admission/applications/${a.id}/status`, { status: 'SHORTLISTED' })
+            .expect(200);
+        }
+        return real(id);
+      });
+      try {
+        const go = await h.app
+          .get(TenantJobRunner)
+          .run(
+            t.tenantId,
+            () =>
+              h.app.get(AdmissionApprovalService).approveInBulk(a.id, t.sectionB, t.userIds.admin),
+            { actorUserId: t.userIds.admin },
+          );
+        expect(go).toBe(true);
+      } finally {
+        vi.restoreAllMocks();
+      }
+      expect(moved).toBe(true);
+      expect(await studentsNamed('Moved Off')).toBe(0);
+      const after = await withTenant(h.prisma, t.tenantId, (tx) =>
+        tx.admissionApplication.findUniqueOrThrow({
+          where: { id: a.id },
+          select: { status: true, studentId: true },
+        }),
+      );
+      expect(after).toEqual({ status: 'SHORTLISTED', studentId: null });
     });
 
     it('a second start while one runs is refused; other institutes and teachers cannot start one', async () => {

@@ -966,6 +966,23 @@ December dues rule: P3a (this PR). Decisions taken alone, each the safest option
 - **P3-a17 (review N6).** The admission Playwright spec uses its own phone and birth registration
   number per run and deactivates the student it made in a `finally` (the suite shares one database
   and other specs count the demo school's students).
+- **P3-a18 (money, review round 2 NIT 6). An institute that marks next year current in December:**
+  an approved application still records the year's start (an application is always a new child, so
+  its admission fee is charged from the year's start instead of never). The staff "new student" form
+  and imports keep `!isCurrent`: they cannot tell a new child from an existing student typed in by
+  an institute in its first year (current from the day it was made), which P3-a10 protects from a
+  back-dated admission fee. **Owner:** a December admission typed on the staff form after an early
+  switch owes no "from the year's start" admission fee, as before P3; staff can approve it through
+  an application instead, or a later "new admission" switch on the form can decide it.
+- **P3-a19 (money, review round 2 NIT 6). The recorded date counts only for a year that starts on
+  or after it:** for an earlier year (the child also enrolled there, e.g. moved back by staff), or a
+  year whose start was moved earlier, the dues count from the later of the creation day and that
+  year's start, never from a date after the child joined (which would skip months: an under-charge).
+- **P3-a20 (review round 2 NIT 5, NIT 2, NIT 7).** Any move out of `WITHDRAWN` runs the duplicate
+  check (`REJECTED` counts as a duplicate and in the unique index); moving from `WITHDRAWN` or
+  `REJECTED` to a live status also runs the per-phone cap. A staff entry takes the cycle's shared
+  lock before reading the cycle. A bulk run approves an application only if it is still `SELECTED`
+  under the row lock.
 
 The public form, P3b (its own PR, stacked on P3a):
 
