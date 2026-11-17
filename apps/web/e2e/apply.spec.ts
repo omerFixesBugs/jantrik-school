@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { api, apiLogin, DEMO, passwordLogin, readOtp } from './helpers';
+import { api, apiLogin, DEMO, readOtp } from './helpers';
 
 // Sprint 1 P3b: a guardian applies on a phone (390 px, bn) without an account: class, phone in
 // Bangla digits, the code from the SMS outbox, the form (birth registration in Bangla digits),
@@ -42,68 +42,74 @@ test('apply → status → the owner approves → the student appears', async ({
     json: { status: 'OPEN' },
   });
 
-  // The guardian, signed out.
-  await page.goto('/apply/shapla-school');
-  await expect(page.getByTestId('apply-class')).toBeVisible();
-  await page.getByText('অষ্টম শ্রেণি').first().tap();
-  await page.getByRole('button', { name: 'পরের ধাপ' }).tap();
+  let studentId: string | null = null;
+  try {
+    // The guardian, signed out.
+    await page.goto('/apply/shapla-school');
+    await expect(page.getByTestId('apply-class')).toBeVisible();
+    await page.getByText('অষ্টম শ্রেণি').first().tap();
+    await page.getByRole('button', { name: 'পরের ধাপ' }).tap();
 
-  await page.locator('#apply-phone').fill(phoneBn);
-  await page.getByTestId('turnstile-standin').check();
-  await page.getByRole('button', { name: 'কোড পাঠান' }).tap();
-  const code = await readOtp(phone);
-  const firstCodeAt = Date.now();
-  await page.locator('#apply-code').fill(code);
-  await page.getByRole('button', { name: 'এগিয়ে যান' }).tap();
+    await page.locator('#apply-phone').fill(phoneBn);
+    await page.getByTestId('turnstile-standin').check();
+    await page.getByRole('button', { name: 'কোড পাঠান' }).tap();
+    const code = await readOtp(phone);
+    await page.locator('#apply-code').fill(code);
+    await page.getByRole('button', { name: 'এগিয়ে যান' }).tap();
 
-  await expect(page.getByTestId('apply-form')).toBeVisible();
-  await page.locator('#nameBn').fill('সাদিয়া ইসলাম');
-  await page.locator('#dateOfBirth').fill('১৫/০৩/২০১২');
-  await page.locator('#gender').selectOption('FEMALE');
-  // Its own birth registration number per attempt too (an earlier attempt's would be a duplicate).
-  await page
-    .locator('#birthRegistrationNo')
-    .fill(`২০১২ ২৬৯২ ৫১২৩ ৭৭৭৭ ${'০১২৩৪৫৬৭৮৯'[testInfo.retry]}`);
-  await page.locator('#guardianNameBn').fill('রফিকুল ইসলাম');
-  await page.getByTestId('apply-next').tap();
-  await expect(page.getByTestId('apply-review')).toContainText(
-    `${phone.slice(0, 5)}-${phone.slice(5)}`,
-  );
-  // The form ticket refuses a submit under 15 s after the form opened (decision P3-L).
-  await page.waitForTimeout(15_000);
-  await page.getByTestId('turnstile-standin').check();
-  await page.getByTestId('apply-submit').tap();
-  const slip = page.getByTestId('application-no');
-  await expect(slip).toHaveText(/^\d{4}-\d{4,6}$/);
-  const applicationNo = (await slip.textContent())!.trim();
+    await expect(page.getByTestId('apply-form')).toBeVisible();
+    await page.locator('#nameBn').fill('সাদিয়া ইসলাম');
+    await page.locator('#dateOfBirth').fill('১৫/০৩/২০১২');
+    await page.locator('#gender').selectOption('FEMALE');
+    // Its own birth registration number per attempt too (an earlier attempt's would be a duplicate).
+    await page
+      .locator('#birthRegistrationNo')
+      .fill(`২০১২ ২৬৯২ ৫১২৩ ৭৭৭৭ ${'০১২৩৪৫৬৭৮৯'[testInfo.retry]}`);
+    await page.locator('#guardianNameBn').fill('রফিকুল ইসলাম');
+    await page.getByTestId('apply-next').tap();
+    await expect(page.getByTestId('apply-review')).toContainText(
+      `${phone.slice(0, 5)}-${phone.slice(5)}`,
+    );
+    // The form ticket refuses a submit under 15 s after the form opened (decision P3-L).
+    await page.waitForTimeout(15_000);
+    await page.getByTestId('turnstile-standin').check();
+    await page.getByTestId('apply-submit').tap();
+    const slip = page.getByTestId('application-no');
+    await expect(slip).toHaveText(/^\d{4}-\d{4,6}$/);
+    const applicationNo = (await slip.textContent())!.trim();
 
-  // The status, with a new code to the same phone (one code a minute per phone).
-  await page.waitForTimeout(Math.max(0, firstCodeAt + 61_000 - Date.now()));
-  await page.goto('/apply/shapla-school/status');
-  await page.locator('#status-no').fill(applicationNo);
-  await page.locator('#status-phone').fill(phone);
-  await page.getByTestId('turnstile-standin').check();
-  await page.getByRole('button', { name: 'কোড পাঠান' }).tap();
-  const second = await readOtp(phone, code);
-  await page.locator('#status-code').fill(second);
-  await page.getByRole('button', { name: 'অবস্থা দেখুন' }).tap();
-  await expect(page.getByTestId('status-shown')).toContainText('জমা হয়েছে');
+    // The status, with a new code to the same phone (the suite's cooldown is 1 s).
+    await page.goto('/apply/shapla-school/status');
+    await page.locator('#status-no').fill(applicationNo);
+    await page.locator('#status-phone').fill(phone);
+    await page.getByTestId('turnstile-standin').check();
+    await page.getByRole('button', { name: 'কোড পাঠান' }).tap();
+    const second = await readOtp(phone, code);
+    await page.locator('#status-code').fill(second);
+    await page.getByRole('button', { name: 'অবস্থা দেখুন' }).tap();
+    await expect(page.getByTestId('status-shown')).toContainText('জমা হয়েছে');
 
-  // The owner approves it; the student appears.
-  const list = await api<{ items: { id: string; applicationNo: string }[] }>(
-    owner,
-    `/admission/applications?q=${encodeURIComponent(applicationNo)}`,
-  );
-  const application = list.items.find((i) => i.applicationNo === applicationNo)!;
-  const approved = await api<{ studentId: string }>(
-    owner,
-    `/admission/applications/${application.id}/approve`,
-    { method: 'POST', json: {} },
-  );
-  await passwordLogin(page, DEMO.shaplaOwner);
-  await page.goto(`/students/${approved.studentId}`);
-  await expect(page.getByTestId('student-profile')).toContainText('সাদিয়া ইসলাম');
-
-  // The suite shares one database: the specs after this one count the demo school's students.
-  await api(owner, `/students/${approved.studentId}/deactivate`, { method: 'POST' });
+    // The owner approves it; the student appears.
+    const list = await api<{ items: { id: string; applicationNo: string }[] }>(
+      owner,
+      `/admission/applications?q=${encodeURIComponent(applicationNo)}`,
+    );
+    const application = list.items.find((i) => i.applicationNo === applicationNo)!;
+    const approved = await api<{ studentId: string }>(
+      owner,
+      `/admission/applications/${application.id}/approve`,
+      { method: 'POST', json: {} },
+    );
+    studentId = approved.studentId;
+    const student = await api<{ nameBn: string; enrolments: { classLevel: { nameBn: string } }[] }>(
+      owner,
+      `/students/${approved.studentId}`,
+    );
+    expect(student.nameBn).toBe('সাদিয়া ইসলাম');
+    expect(student.enrolments[0]?.classLevel.nameBn).toBe('অষ্টম শ্রেণি');
+  } finally {
+    // The suite shares one database: the specs after this one count the demo school's students,
+    // so the student made here is deactivated again, also when a step above failed.
+    if (studentId) await api(owner, `/students/${studentId}/deactivate`, { method: 'POST' });
+  }
 });

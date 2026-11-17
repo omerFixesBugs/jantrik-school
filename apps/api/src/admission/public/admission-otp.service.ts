@@ -61,7 +61,11 @@ export class AdmissionOtpService {
     const { tenantId, phone } = input;
     await this.limiter.consume(
       { key: `adm-otp-ip:${input.ip}`, limit: 20, windowSec: 3600 },
-      { key: `adm-otp-phone-1m:${tenantId}:${phone}`, limit: 1, windowSec: 60 },
+      {
+        key: `adm-otp-phone-1m:${tenantId}:${phone}`,
+        limit: 1,
+        windowSec: this.config.get('ADMISSION_OTP_PHONE_COOLDOWN_SEC', { infer: true }),
+      },
       { key: `adm-otp-phone-day:${phone}`, limit: 5, windowSec: 86_400 },
       {
         key: `adm-otp-tenant:${tenantId}:${input.today}`,
