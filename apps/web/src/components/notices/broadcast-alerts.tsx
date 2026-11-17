@@ -38,7 +38,10 @@ export function BroadcastAlerts() {
             <span className="text-muted-foreground">
               “{a.bodyStart}” · {formatDate(a.at, locale)}
             </span>
-            <Link href={`/broadcasts/${a.id}`} className="text-link underline-offset-4 hover:underline">
+            <Link
+              href={`/broadcasts/${a.id}`}
+              className="text-link underline-offset-4 hover:underline"
+            >
               {t('alertOpen')}
             </Link>
           </li>

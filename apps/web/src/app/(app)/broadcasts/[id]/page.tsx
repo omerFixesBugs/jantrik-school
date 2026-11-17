@@ -1,7 +1,13 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { formatCount, formatDate, formatTaka, formatTime, type BroadcastView } from '@jantrik/shared';
+import {
+  formatCount,
+  formatDate,
+  formatTaka,
+  formatTime,
+  type BroadcastView,
+} from '@jantrik/shared';
 import { ArrowLeftIcon, BanIcon } from 'lucide-react';
 import { useParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
@@ -33,10 +39,12 @@ export default function BroadcastPage() {
     queryKey: key,
     queryFn: () => client.api<BroadcastView>(`/broadcasts/${id}`),
     // While it is being sent, the counts move: refresh every few seconds.
-    refetchInterval: (q) => (q.state.data?.status === 'SENT' && q.state.data.sms.queued > 0 ? 5000 : false),
+    refetchInterval: (q) =>
+      q.state.data?.status === 'SENT' && q.state.data.sms.queued > 0 ? 5000 : false,
   });
   const cancel = useMutation({
-    mutationFn: () => client.api<BroadcastView>(`/broadcasts/${id}/cancel`, { method: 'POST', json: {} }),
+    mutationFn: () =>
+      client.api<BroadcastView>(`/broadcasts/${id}/cancel`, { method: 'POST', json: {} }),
     onSuccess: async (b) => {
       toast.success(t('cancelled'));
       queryClient.setQueryData(key, b);

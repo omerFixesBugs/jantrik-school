@@ -17,7 +17,10 @@ export const broadcastInputSchema = z.object({
   recipients: z.enum(BROADCAST_RECIPIENTS),
   /** Guardian recipients only; empty = every guardian. A STAFF broadcast takes none. */
   targets: z.array(noticeTargetSchema).max(BROADCAST_LIMITS.targets).default([]),
-  noticeId: z.uuid().nullish().transform((v) => v ?? null),
+  noticeId: z
+    .uuid()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 export type BroadcastInput = z.output<typeof broadcastInputSchema>;
 export type BroadcastInputBody = z.input<typeof broadcastInputSchema>;

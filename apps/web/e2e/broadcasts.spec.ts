@@ -25,7 +25,9 @@ for (const width of [1366, 390]) {
     const body = page.getByLabel('বার্তা', { exact: false }).first();
     // The composer starts with the institute's name.
     await expect(body).toHaveValue(new RegExp(`^${DEMO.shaplaName}: `));
-    await body.fill('আগামীকাল বিকেল ৩টায় শিক্ষক সভা। সবাই সময়মতো উপস্থিত থাকবেন। অভিভাবক সভার তারিখ পরে জানানো হবে।');
+    await body.fill(
+      'আগামীকাল বিকেল ৩টায় শিক্ষক সভা। সবাই সময়মতো উপস্থিত থাকবেন। অভিভাবক সভার তারিখ পরে জানানো হবে।',
+    );
     await expect(page.getByTestId('broadcast-counter')).toContainText('২টি এসএমএস');
     await page.getByLabel('কাকে পাঠাবেন').selectOption('STAFF');
     await page.getByTestId('broadcast-preview').click();

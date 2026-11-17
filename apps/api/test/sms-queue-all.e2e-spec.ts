@@ -4,7 +4,13 @@ import { todayIn } from '@jantrik/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TenantSmsService, type QueueTenantSmsInput } from '../src/sms/tenant-sms.service.js';
 import { TenantJobRunner } from '../src/tenancy/tenant-job-runner.service.js';
-import { addMember, createHarness, createTenant, randomPhone, type Harness } from './support/harness.js';
+import {
+  addMember,
+  createHarness,
+  createTenant,
+  randomPhone,
+  type Harness,
+} from './support/harness.js';
 
 type BatchInput = Omit<QueueTenantSmsInput, 'dailyCap' | 'overCap' | 'localDate' | 'delayMs'>;
 
@@ -40,24 +46,45 @@ describe('queueAll: all or nothing over the daily cap', () => {
 
   it('cap 10 with 4 used: 6 fit, 7 do not (zero rows), and known keys do not count', async () => {
     const used = batch(4, 'used');
-    await expect(queueAll(used, 10)).resolves.toEqual({ outcome: 'QUEUED', queued: 4, duplicates: 0 });
+    await expect(queueAll(used, 10)).resolves.toEqual({
+      outcome: 'QUEUED',
+      queued: 4,
+      duplicates: 0,
+    });
     const seven = batch(7, 'seven');
-    await expect(queueAll(seven, 10)).resolves.toEqual({ outcome: 'OVER_CAP', needed: 7, capLeft: 6 });
+    await expect(queueAll(seven, 10)).resolves.toEqual({
+      outcome: 'OVER_CAP',
+      needed: 7,
+      capLeft: 6,
+    });
     expect(await rows('qa:seven:')).toBe(0);
     // Two of the seven were sent already (their keys exist): the other five fit.
     await expect(queueAll(seven.slice(0, 2), 10)).resolves.toMatchObject({ queued: 2 });
-    await expect(queueAll(seven, 10)).resolves.toEqual({ outcome: 'QUEUED', queued: 5, duplicates: 2 });
+    await expect(queueAll(seven, 10)).resolves.toEqual({
+      outcome: 'QUEUED',
+      queued: 5,
+      duplicates: 2,
+    });
     expect(await rows('qa:seven:')).toBe(7);
     // Exactly at the cap: 10 used, nothing more fits, an empty batch is fine.
-    await expect(queueAll(batch(1), 10)).resolves.toMatchObject({ outcome: 'OVER_CAP', capLeft: 0 });
-    await expect(queueAll([], 10)).resolves.toEqual({ outcome: 'QUEUED', queued: 0, duplicates: 0 });
+    await expect(queueAll(batch(1), 10)).resolves.toMatchObject({
+      outcome: 'OVER_CAP',
+      capLeft: 0,
+    });
+    await expect(queueAll([], 10)).resolves.toEqual({
+      outcome: 'QUEUED',
+      queued: 0,
+      duplicates: 0,
+    });
   });
 
   it('rolled back with its transaction: no rows and no jobs', async () => {
     const tag = randomUUID();
     await expect(
       run(async () => {
-        await h.app.get(TenantSmsService).queueAll(batch(3, tag), { dailyCap: 1000, localDate: today });
+        await h.app
+          .get(TenantSmsService)
+          .queueAll(batch(3, tag), { dailyCap: 1000, localDate: today });
         throw new Error('rollback');
       }),
     ).rejects.toThrow('rollback');

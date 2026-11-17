@@ -46,7 +46,9 @@ const HEAL_AFTER_MS = 2 * 60_000;
 /** The dashboard warning looks back this far (P6-D). */
 const ALERT_DAYS = 3;
 
-type Row = Prisma.SmsBroadcastGetPayload<{ include: { targets: { include: { classLevel: true; section: true } } } }>;
+type Row = Prisma.SmsBroadcastGetPayload<{
+  include: { targets: { include: { classLevel: true; section: true } } };
+}>;
 
 /** The outcome of one run of the send job, for its caller to finish after commit. */
 export type SendOutcome =
@@ -199,7 +201,10 @@ export class BroadcastsService implements OnModuleInit {
     return rows.map((b) => ({
       id: b.id,
       status: b.status === 'SCHEDULED' ? 'OVERDUE' : (b.status as 'FAILED_OVER_CAP' | 'CANCELLED'),
-      at: (b.status === 'SCHEDULED' ? b.scheduledAt! : (b.cancelledAt ?? b.updatedAt)).toISOString(),
+      at: (b.status === 'SCHEDULED'
+        ? b.scheduledAt!
+        : (b.cancelledAt ?? b.updatedAt)
+      ).toISOString(),
       bodyStart: b.body.length > 60 ? `${b.body.slice(0, 60)}…` : b.body,
     }));
   }
@@ -287,7 +292,11 @@ export class BroadcastsService implements OnModuleInit {
       entity: 'sms_broadcast',
       entityId: id,
       action: 'UPDATE',
-      oldValues: { status: before.status, bodyLength: before.body.length, recipients: before.recipients },
+      oldValues: {
+        status: before.status,
+        bodyLength: before.body.length,
+        recipients: before.recipients,
+      },
       newValues: { status: 'DRAFT', ...(this.auditValues(input, targets) as object) },
     });
     if (before.status === 'SCHEDULED') await this.dequeueAfterCommit(tenantId, id);
@@ -325,7 +334,9 @@ export class BroadcastsService implements OnModuleInit {
   // ── Preview, send, schedule, cancel ──────────────────────────────────────────────────────
 
   private async tenantNow() {
-    const tenant = await this.db.tx.tenant.findFirstOrThrow({ select: { timezone: true, name: true } });
+    const tenant = await this.db.tx.tenant.findFirstOrThrow({
+      select: { timezone: true, name: true },
+    });
     const now = this.clock.now();
     return { now, timeZone: tenant.timezone, today: todayIn(tenant.timezone, now) };
   }
@@ -385,7 +396,11 @@ export class BroadcastsService implements OnModuleInit {
     return this.markScheduled(b, this.clock.now(), preview);
   }
 
-  async schedule(id: string, scheduledAt: Date, expectedRecipients: number): Promise<BroadcastView> {
+  async schedule(
+    id: string,
+    scheduledAt: Date,
+    expectedRecipients: number,
+  ): Promise<BroadcastView> {
     const b = await this.lockRow(id);
     this.assertDraft(b);
     const { now, timeZone } = await this.tenantNow();

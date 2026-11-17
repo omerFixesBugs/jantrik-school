@@ -45,7 +45,10 @@ export class AudienceService {
     targets: NoticeTargetRef[],
   ): Promise<Audience> {
     const tx = this.db.tx;
-    const year = await tx.academicYear.findFirst({ where: { isCurrent: true }, select: { id: true } });
+    const year = await tx.academicYear.findFirst({
+      where: { isCurrent: true },
+      select: { id: true },
+    });
     const enrolment: Prisma.EnrolmentWhereInput = {
       academicYearId: year?.id ?? NO_ID,
       ...(targets.length

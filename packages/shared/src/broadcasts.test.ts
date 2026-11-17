@@ -25,9 +25,15 @@ describe('quiet hours 21:00–08:00 in the institute timezone (review focus 3)',
     const noon = dhaka('2026-11-17T12:00:00');
     expect(nextAllowedAt(noon, DHAKA)).toEqual(noon);
     // 23:30 → 08:00 the next day; 02:00 → 08:00 the same day.
-    expect(nextAllowedAt(dhaka('2026-11-17T23:30:00'), DHAKA)).toEqual(dhaka('2026-11-18T08:00:00'));
-    expect(nextAllowedAt(dhaka('2026-11-18T02:00:00'), DHAKA)).toEqual(dhaka('2026-11-18T08:00:00'));
-    expect(nextAllowedAt(dhaka('2026-12-31T21:00:00'), DHAKA)).toEqual(dhaka('2027-01-01T08:00:00'));
+    expect(nextAllowedAt(dhaka('2026-11-17T23:30:00'), DHAKA)).toEqual(
+      dhaka('2026-11-18T08:00:00'),
+    );
+    expect(nextAllowedAt(dhaka('2026-11-18T02:00:00'), DHAKA)).toEqual(
+      dhaka('2026-11-18T08:00:00'),
+    );
+    expect(nextAllowedAt(dhaka('2026-12-31T21:00:00'), DHAKA)).toEqual(
+      dhaka('2027-01-01T08:00:00'),
+    );
   });
 
   it('a zone with summer time: nothing assumes UTC+6 (Europe/London, 25 October 2026)', () => {
@@ -72,9 +78,9 @@ describe('broadcast schemas', () => {
     expect(
       broadcastInputSchema.safeParse({ body: 'x'.repeat(481), recipients: 'STAFF' }).success,
     ).toBe(false);
-    expect(
-      broadcastInputSchema.safeParse({ body: 'x', recipients: 'EVERYONE' }).success,
-    ).toBe(false);
+    expect(broadcastInputSchema.safeParse({ body: 'x', recipients: 'EVERYONE' }).success).toBe(
+      false,
+    );
   });
 
   it('a schedule needs an instant with an offset and the confirmed count', () => {

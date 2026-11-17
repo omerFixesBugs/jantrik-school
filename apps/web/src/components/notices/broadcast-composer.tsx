@@ -99,10 +99,12 @@ export function BroadcastComposer({
 
   const length = smsLength(body);
   const tooLong = broadcastProblems(body).includes('SMS_TOO_LONG');
-  const changed = <T,>(set: (v: T) => void) => (v: T) => {
-    set(v);
-    setPreview(null);
-  };
+  const changed =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      set(v);
+      setPreview(null);
+    };
 
   const input = (): BroadcastInputBody => ({
     body,
@@ -155,7 +157,10 @@ export function BroadcastComposer({
   const error = doPreview.error ?? go.error;
 
   return (
-    <SectionCard id="broadcast-compose" title={broadcast ? t('compose.editTitle') : t('compose.newTitle')}>
+    <SectionCard
+      id="broadcast-compose"
+      title={broadcast ? t('compose.editTitle') : t('compose.newTitle')}
+    >
       <div className="flex flex-col gap-4">
         <Field
           id="broadcast-body"
@@ -254,7 +259,11 @@ export function BroadcastComposer({
                 setPreview(null);
                 setTargets((all) => [
                   ...all,
-                  { key: Math.max(-1, ...all.map((x) => x.key)) + 1, classLevelId: '', sectionId: '' },
+                  {
+                    key: Math.max(-1, ...all.map((x) => x.key)) + 1,
+                    classLevelId: '',
+                    sectionId: '',
+                  },
                 ]);
               }}
             >
@@ -361,7 +370,9 @@ export function BroadcastComposer({
                     onChange={(e) => setTime(e.target.value)}
                   />
                 </Field>
-                <p className="text-muted-foreground col-span-2 text-sm">{t('preview.scheduleHint')}</p>
+                <p className="text-muted-foreground col-span-2 text-sm">
+                  {t('preview.scheduleHint')}
+                </p>
               </div>
             )}
             <Button

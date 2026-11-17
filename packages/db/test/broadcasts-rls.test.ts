@@ -69,9 +69,15 @@ describe('broadcasts RLS', () => {
       withTenant(app, a, (tx) => tx.$executeRaw`DELETE FROM sms_broadcasts`),
     ).rejects.toThrow(/permission denied/);
     await expect(
-      withTenant(app, a, (tx) => tx.$executeRaw`UPDATE sms_broadcasts SET created_by_id = created_by_id`),
+      withTenant(
+        app,
+        a,
+        (tx) => tx.$executeRaw`UPDATE sms_broadcasts SET created_by_id = created_by_id`,
+      ),
     ).rejects.toThrow(/permission denied/);
-    await withTenant(app, a, (tx) => tx.smsBroadcastTarget.deleteMany({ where: { broadcastId: broadcastA } }));
+    await withTenant(app, a, (tx) =>
+      tx.smsBroadcastTarget.deleteMany({ where: { broadcastId: broadcastA } }),
+    );
   });
 
   it('the CHECKs', async () => {
@@ -84,7 +90,13 @@ describe('broadcasts RLS', () => {
       { ...base, body: 'x', status: 'SENT' as const, scheduledAt: at, scheduledById: userA },
       { ...base, body: 'x', status: 'CANCELLED' as const },
       { ...base, body: 'x', status: 'CANCELLED' as const, cancelledAt: at, cancelReason: 'OOPS' },
-      { ...base, body: 'x', status: 'FAILED_OVER_CAP' as const, scheduledAt: at, scheduledById: userA },
+      {
+        ...base,
+        body: 'x',
+        status: 'FAILED_OVER_CAP' as const,
+        scheduledAt: at,
+        scheduledById: userA,
+      },
       { ...base, body: 'x', segments: 0 },
       { ...base, body: 'x', segments: 4 },
       { ...base, body: 'x', queuedCount: -1 },

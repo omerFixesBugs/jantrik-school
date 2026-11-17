@@ -51,7 +51,12 @@ describe('SMS broadcasts', () => {
   let rate: number;
   /** Phones: a shared primary guardian of two siblings in 1 ক, a second guardian of one of them,
    * a primary guardian in 1 খ, one in class 2. One student in 1 ক has no guardian. */
-  const p = { siblings: randomPhone(), second: randomPhone(), kha: randomPhone(), c2: randomPhone() };
+  const p = {
+    siblings: randomPhone(),
+    second: randomPhone(),
+    kha: randomPhone(),
+    c2: randomPhone(),
+  };
 
   const api = (token: string) => ({
     get: (path: string) => http(h).get(path).set(bearer(token)),
@@ -78,7 +83,10 @@ describe('SMS broadcasts', () => {
       .expect(200);
   const logsOf = (id: string) =>
     withTenant(h.prisma, tenantId, (tx) =>
-      tx.smsLog.findMany({ where: { relatedEntity: `broadcast:${id}` }, orderBy: { phone: 'asc' } }),
+      tx.smsLog.findMany({
+        where: { relatedEntity: `broadcast:${id}` },
+        orderBy: { phone: 'asc' },
+      }),
     );
   const statusOf = async (id: string) =>
     ((await api(admin).get(`/broadcasts/${id}`).expect(200)).body as BroadcastView).status;
@@ -100,7 +108,13 @@ describe('SMS broadcasts', () => {
           (await tx.guardian.findFirst({ where: { phone } })) ??
           (await tx.guardian.create({ data: { tenantId, nameEn: 'Parent', phone } }));
         await tx.studentGuardian.create({
-          data: { tenantId, studentId: s.id, guardianId: g.id, relation: 'FATHER', isPrimary: i === 0 },
+          data: {
+            tenantId,
+            studentId: s.id,
+            guardianId: g.id,
+            relation: 'FATHER',
+            isPrimary: i === 0,
+          },
         });
       }
       return s.id;
@@ -122,7 +136,9 @@ describe('SMS broadcasts', () => {
       return { class1: c1!.id, class2: c2!.id, secKa: ka.id };
     }));
     const secKha = (
-      await withTenant(h.prisma, tenantId, (tx) => tx.section.findFirstOrThrow({ where: { name: 'খ' } }))
+      await withTenant(h.prisma, tenantId, (tx) =>
+        tx.section.findFirstOrThrow({ where: { name: 'খ' } }),
+      )
     ).id;
     await enrol(class1, secKa, [p.siblings, p.second]);
     await enrol(class1, secKa, [p.siblings]);
@@ -149,7 +165,8 @@ describe('SMS broadcasts', () => {
 
   it('preview: siblings merged, without phone counted, every guardian, staff once; cost', async () => {
     clock.set(dhaka('2026-11-17T10:00:00'));
-    const body = 'প্রিয় অভিভাবক, আগামীকাল স্কুল বন্ধ থাকবে। কাল সকাল থেকে পরীক্ষা শুরু হবে, সবাই সময়মতো আসবে।';
+    const body =
+      'প্রিয় অভিভাবক, আগামীকাল স্কুল বন্ধ থাকবে। কাল সকাল থেকে পরীক্ষা শুরু হবে, সবাই সময়মতো আসবে।';
     const primary = await preview((await create({ body, recipients: 'PRIMARY_GUARDIANS' })).id);
     const { segments } = smsLength(body);
     expect(segments).toBeGreaterThanOrEqual(2);
@@ -163,8 +180,12 @@ describe('SMS broadcasts', () => {
       fits: true,
       quietNow: false,
     });
-    expect((await preview((await create({ body, recipients: 'ALL_GUARDIANS' })).id)).recipients).toBe(4);
-    expect((await preview((await create({ body: 'Meeting at 3', recipients: 'STAFF' })).id)).recipients).toBe(2);
+    expect(
+      (await preview((await create({ body, recipients: 'ALL_GUARDIANS' })).id)).recipients,
+    ).toBe(4);
+    expect(
+      (await preview((await create({ body: 'Meeting at 3', recipients: 'STAFF' })).id)).recipients,
+    ).toBe(2);
     // Targets: section ক of class 1 only (the siblings' shared phone; one child without).
     const ka = await create({
       body: 'x',
@@ -211,11 +232,16 @@ describe('SMS broadcasts', () => {
   it('a changed count is 409 PREVIEW_CHANGED; quiet hours and the schedule window', async () => {
     clock.set(dhaka('2026-11-17T10:00:00'));
     const b = await create({ body: 'Sports day', recipients: 'STAFF' });
-    const changed = await api(admin).post(`/broadcasts/${b.id}/send`, { expectedRecipients: 5 }).expect(409);
+    const changed = await api(admin)
+      .post(`/broadcasts/${b.id}/send`, { expectedRecipients: 5 })
+      .expect(409);
     expect(changed.body).toMatchObject({ code: 'PREVIEW_CHANGED', recipients: 2 });
     // Scheduling at 22:00 Dhaka: refused with the next allowed time.
     const night = await api(admin)
-      .post(`/broadcasts/${b.id}/schedule`, { scheduledAt: '2026-11-17T22:00:00+06:00', expectedRecipients: 2 })
+      .post(`/broadcasts/${b.id}/schedule`, {
+        scheduledAt: '2026-11-17T22:00:00+06:00',
+        expectedRecipients: 2,
+      })
       .expect(422);
     expect(night.body).toMatchObject({
       code: 'QUIET_HOURS',
@@ -226,13 +252,18 @@ describe('SMS broadcasts', () => {
       new Date(clock.now().getTime() + 31 * 86_400_000),
     ]) {
       const r = await api(admin)
-        .post(`/broadcasts/${b.id}/schedule`, { scheduledAt: at.toISOString(), expectedRecipients: 2 })
+        .post(`/broadcasts/${b.id}/schedule`, {
+          scheduledAt: at.toISOString(),
+          expectedRecipients: 2,
+        })
         .expect(422);
       expect(r.body.code).toBe('SCHEDULE_OUT_OF_RANGE');
     }
     // Send now at 21:30 → refused; at 08:00 → accepted.
     clock.set(dhaka('2026-11-17T21:30:00'));
-    const quiet = await api(admin).post(`/broadcasts/${b.id}/send`, { expectedRecipients: 2 }).expect(422);
+    const quiet = await api(admin)
+      .post(`/broadcasts/${b.id}/send`, { expectedRecipients: 2 })
+      .expect(422);
     expect(quiet.body.code).toBe('QUIET_HOURS');
     clock.set(dhaka('2026-11-18T08:00:00'));
     await api(admin).post(`/broadcasts/${b.id}/send`, { expectedRecipients: 2 }).expect(200);
@@ -240,7 +271,9 @@ describe('SMS broadcasts', () => {
     await expect.poll(() => statusOf(b.id), { timeout: 10_000 }).toBe('SENT');
     expect((await logsOf(b.id)).map((l) => l.purpose)).toEqual(['BROADCAST', 'BROADCAST']);
     // A sent broadcast cannot be cancelled or edited.
-    expect((await api(admin).post(`/broadcasts/${b.id}/cancel`).expect(409)).body.code).toBe('NOT_EDITABLE');
+    expect((await api(admin).post(`/broadcasts/${b.id}/cancel`).expect(409)).body.code).toBe(
+      'NOT_EDITABLE',
+    );
     await api(admin).put(`/broadcasts/${b.id}`, { body: 'y', recipients: 'STAFF' }).expect(409);
   });
 
@@ -248,16 +281,22 @@ describe('SMS broadcasts', () => {
     clock.set(dhaka('2026-11-18T10:00:00'));
     const b = await create({ body: 'Trip', recipients: 'PRIMARY_GUARDIANS' });
     await api(admin)
-      .post(`/broadcasts/${b.id}/schedule`, { scheduledAt: '2026-11-18T12:00:00+06:00', expectedRecipients: 3 })
+      .post(`/broadcasts/${b.id}/schedule`, {
+        scheduledAt: '2026-11-18T12:00:00+06:00',
+        expectedRecipients: 3,
+      })
       .expect(200);
     expect(await queue().getJob(broadcastJobId(b.id))).toBeTruthy();
     expect(await due(b.id)).not.toBeNull();
-    const cancelled = (await api(admin).post(`/broadcasts/${b.id}/cancel`).expect(200)).body as BroadcastView;
+    const cancelled = (await api(admin).post(`/broadcasts/${b.id}/cancel`).expect(200))
+      .body as BroadcastView;
     expect(cancelled).toMatchObject({ status: 'CANCELLED', cancelReason: 'BY_ADMIN' });
     await expect.poll(async () => (await queue().getJob(broadcastJobId(b.id))) ?? null).toBeNull();
     expect(await due(b.id)).toBeNull();
     clock.set(dhaka('2026-11-18T12:01:00'));
-    await expect(processor().send({ tenantId, broadcastId: b.id })).resolves.toEqual({ kind: 'STOP' });
+    await expect(processor().send({ tenantId, broadcastId: b.id })).resolves.toEqual({
+      kind: 'STOP',
+    });
     expect(await logsOf(b.id)).toEqual([]);
     const audits = await withTenant(h.prisma, tenantId, (tx) =>
       tx.auditLog.findMany({ where: { entity: 'sms_broadcast', entityId: b.id } }),
@@ -274,7 +313,10 @@ describe('SMS broadcasts', () => {
     clock.set(dhaka('2026-11-19T10:00:00'));
     const b = await create({ body: 'বার্ষিক ক্রীড়া', recipients: 'ALL_GUARDIANS' });
     await api(admin)
-      .post(`/broadcasts/${b.id}/schedule`, { scheduledAt: '2026-11-19T10:10:00+06:00', expectedRecipients: 4 })
+      .post(`/broadcasts/${b.id}/schedule`, {
+        scheduledAt: '2026-11-19T10:10:00+06:00',
+        expectedRecipients: 4,
+      })
       .expect(200);
     // Redis lost the job: removed by hand. The sweep re-adds it once it is due.
     await (await queue().getJob(broadcastJobId(b.id)))!.remove();
@@ -287,7 +329,9 @@ describe('SMS broadcasts', () => {
     expect(logs.every((l) => l.segments === smsLength('বার্ষিক ক্রীড়া').segments)).toBe(true);
     await expect.poll(() => due(b.id)).toBeNull();
     // Run again (a retried job): nothing more.
-    await expect(processor().send({ tenantId, broadcastId: b.id })).resolves.toEqual({ kind: 'STOP' });
+    await expect(processor().send({ tenantId, broadcastId: b.id })).resolves.toEqual({
+      kind: 'STOP',
+    });
     expect(await logsOf(b.id)).toHaveLength(4);
   });
 
@@ -295,18 +339,24 @@ describe('SMS broadcasts', () => {
     clock.set(dhaka('2026-11-20T20:00:00'));
     const b = await create({ body: 'Night', recipients: 'STAFF' });
     await api(admin)
-      .post(`/broadcasts/${b.id}/schedule`, { scheduledAt: '2026-11-20T20:55:00+06:00', expectedRecipients: 2 })
+      .post(`/broadcasts/${b.id}/schedule`, {
+        scheduledAt: '2026-11-20T20:55:00+06:00',
+        expectedRecipients: 2,
+      })
       .expect(200);
     clock.set(dhaka('2026-11-20T23:30:00'));
     const later = await processor().send({ tenantId, broadcastId: b.id });
     expect(later).toEqual({ kind: 'LATER', at: dhaka('2026-11-21T08:00:00') });
     expect(Number(await due(b.id))).toBe(dhaka('2026-11-21T08:00:00').getTime());
-    expect(((await api(admin).get(`/broadcasts/${b.id}`).expect(200)).body as BroadcastView).scheduledAt).toBe(
-      dhaka('2026-11-21T08:00:00').toISOString(),
-    );
+    expect(
+      ((await api(admin).get(`/broadcasts/${b.id}`).expect(200)).body as BroadcastView).scheduledAt,
+    ).toBe(dhaka('2026-11-21T08:00:00').toISOString());
     expect(await logsOf(b.id)).toEqual([]);
     clock.set(dhaka('2026-11-21T08:00:00'));
-    await expect(processor().send({ tenantId, broadcastId: b.id })).resolves.toMatchObject({ kind: 'SENT', queued: 2 });
+    await expect(processor().send({ tenantId, broadcastId: b.id })).resolves.toMatchObject({
+      kind: 'SENT',
+      queued: 2,
+    });
   });
 
   it('review focus 1 and 4 at send time: the cap used up meanwhile; the audience then; the admin role', async () => {
@@ -314,25 +364,41 @@ describe('SMS broadcasts', () => {
     // The cap used up after scheduling: nothing at all is sent, and the dashboard says so.
     const capped = await create({ body: 'Capped', recipients: 'PRIMARY_GUARDIANS' });
     await api(admin)
-      .post(`/broadcasts/${capped.id}/schedule`, { scheduledAt: '2026-11-22T10:30:00+06:00', expectedRecipients: 3 })
+      .post(`/broadcasts/${capped.id}/schedule`, {
+        scheduledAt: '2026-11-22T10:30:00+06:00',
+        expectedRecipients: 3,
+      })
       .expect(200);
     const used = await withTenant(h.prisma, tenantId, (tx) =>
-      tx.smsLog.count({ where: { localDate: new Date('2026-11-22'), status: { in: ['QUEUED', 'SENT'] } } }),
+      tx.smsLog.count({
+        where: { localDate: new Date('2026-11-22'), status: { in: ['QUEUED', 'SENT'] } },
+      }),
     );
     await setCap(used + 2);
     clock.set(dhaka('2026-11-22T10:31:00'));
-    await expect(processor().send({ tenantId, broadcastId: capped.id })).resolves.toEqual({ kind: 'FAILED_OVER_CAP' });
+    await expect(processor().send({ tenantId, broadcastId: capped.id })).resolves.toEqual({
+      kind: 'FAILED_OVER_CAP',
+    });
     expect(await logsOf(capped.id)).toEqual([]);
-    const failed = (await api(admin).get(`/broadcasts/${capped.id}`).expect(200)).body as BroadcastView;
+    const failed = (await api(admin).get(`/broadcasts/${capped.id}`).expect(200))
+      .body as BroadcastView;
     expect(failed).toMatchObject({ status: 'FAILED_OVER_CAP', failure: { needed: 3, capLeft: 2 } });
-    const alerts = (await api(admin).get('/broadcasts/alerts').expect(200)).body as BroadcastAlert[];
+    const alerts = (await api(admin).get('/broadcasts/alerts').expect(200))
+      .body as BroadcastAlert[];
     expect(alerts.find((a) => a.id === capped.id)?.status).toBe('FAILED_OVER_CAP');
     await setCap(1000);
 
     // The audience at send time (S19): a child admitted after scheduling gets it, one who left not.
-    const later = await create({ body: 'Audience', recipients: 'PRIMARY_GUARDIANS', targets: [{ classLevelId: class2 }] });
+    const later = await create({
+      body: 'Audience',
+      recipients: 'PRIMARY_GUARDIANS',
+      targets: [{ classLevelId: class2 }],
+    });
     await api(admin)
-      .post(`/broadcasts/${later.id}/schedule`, { scheduledAt: '2026-11-22T11:00:00+06:00', expectedRecipients: 1 })
+      .post(`/broadcasts/${later.id}/schedule`, {
+        scheduledAt: '2026-11-22T11:00:00+06:00',
+        expectedRecipients: 1,
+      })
       .expect(200);
     const newcomer = randomPhone();
     await enrol(class2, null, [newcomer]);
@@ -342,17 +408,25 @@ describe('SMS broadcasts', () => {
       await tx.student.update({ where: { id: link.studentId }, data: { status: 'TRANSFERRED' } });
     });
     clock.set(dhaka('2026-11-22T11:01:00'));
-    await expect(processor().send({ tenantId, broadcastId: later.id })).resolves.toMatchObject({ kind: 'SENT', queued: 1 });
+    await expect(processor().send({ tenantId, broadcastId: later.id })).resolves.toMatchObject({
+      kind: 'SENT',
+      queued: 1,
+    });
     expect((await logsOf(later.id)).map((l) => l.phone)).toEqual([newcomer]);
 
     // The scheduling admin lost the role: cancelled, nothing sent, on the dashboard.
     const lost = await create({ body: 'Lost role', recipients: 'STAFF' });
     await api(admin)
-      .post(`/broadcasts/${lost.id}/schedule`, { scheduledAt: '2026-11-22T12:00:00+06:00', expectedRecipients: 2 })
+      .post(`/broadcasts/${lost.id}/schedule`, {
+        scheduledAt: '2026-11-22T12:00:00+06:00',
+        expectedRecipients: 2,
+      })
       .expect(200);
     await h.access.setMemberRoles(tenantId, adminUserId, ['TEACHER']);
     clock.set(dhaka('2026-11-22T12:01:00'));
-    await expect(processor().send({ tenantId, broadcastId: lost.id })).resolves.toEqual({ kind: 'CANCELLED_ACTOR' });
+    await expect(processor().send({ tenantId, broadcastId: lost.id })).resolves.toEqual({
+      kind: 'CANCELLED_ACTOR',
+    });
     expect(await logsOf(lost.id)).toEqual([]);
     const row = await withTenant(h.prisma, tenantId, (tx) =>
       tx.smsBroadcast.findUniqueOrThrow({ where: { id: lost.id } }),
@@ -389,7 +463,9 @@ describe('SMS broadcasts', () => {
       .get(TenantJobRunner)
       .run(tenantId, () => h.app.get(TenantSmsService).prepare(logId));
     expect(prepared).toBeNull();
-    const log = await withTenant(h.prisma, tenantId, (tx) => tx.smsLog.findUniqueOrThrow({ where: { id: logId } }));
+    const log = await withTenant(h.prisma, tenantId, (tx) =>
+      tx.smsLog.findUniqueOrThrow({ where: { id: logId } }),
+    );
     expect(log.status).toBe('CANCELLED');
   });
 });
