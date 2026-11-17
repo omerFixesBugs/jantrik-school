@@ -258,6 +258,10 @@ result on the status page behind their status code (S13). Routes under `/admissi
 - **Publish** (`POST …/publish {builtAt}`): refused unless the draft the admin saw is the latest
   and still matches every input (409 `MERIT_NOT_BUILT`, `MERIT_STALE`: a hash of the settings, the
   tie-break and each ranked applicant's score, absence, date of birth and submission time, P4-a3).
+  It locks every applicant with a roll (id order) before reading them, so a withdrawal or an
+  approval that commits while it waits is seen: the inputs differ (`MERIT_STALE`) or the
+  ADMITTED status is kept; its update also requires the status it read. A build is published
+  once (409 `ALREADY_PUBLISHED`; build again after a change).
   Version + 1; statuses become SELECTED, WAITLISTED or REJECTED with the reason `NOT_SELECTED`,
   `FAILED` or `ABSENT` (P4-E); the published snapshot is copied (`result_*`); an ADMITTED applicant
   keeps their status and, when the list no longer selects them, is flagged
@@ -269,9 +273,12 @@ result on the status page behind their status code (S13). Routes under `/admissi
 - **The result SMS** (`GET …/result-sms/preview`, `POST …/result-sms {expected}`,
   `GET /admission/result-sms/:runId`): the exams' pattern. Recipients: applicants of the published
   version whose status (SELECTED, WAITLISTED, or REJECTED by the test) differs from what their last
-  result SMS told them (the first time: everyone); the text has the outcome, the place or waitlist
+  result SMS told them (the first time: everyone). Told means an SMS that went out, or one of this
+  version still waiting: a cancelled (by a republish) or failed one is owed again, and each run
+  has its own dedupe key, so it really goes. The text has the outcome, the place or waitlist
   position, the application number and the status link, never the score (P4-H). The preview shows
-  the count, segments, cost, the cap left today and how many would be skipped; the send must match
+  the count, the segments and cost of what the cap lets through today, the cap left and how many
+  would be skipped; the send must match
   (409 `PREVIEW_CHANGED`); a job on its own queue (`admission-results`, 25 per transaction, acting
   as the admin, role checked again) queues them with `overCap: SKIP` (over the cap they are
   skipped, never held, and stay in the next preview). An SMS still waiting is cancelled when its

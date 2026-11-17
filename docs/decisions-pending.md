@@ -1132,3 +1132,18 @@ jantrik_admission; SET ROLE jantrik_admission; CREATE OR REPLACE …; RESET ROLE
   `full_marks_keep_test_scores`): P3b's safety test reserves that prefix for the definer functions.
 - **P4-a15. Not done here:** the bn screenshots at 390 px and the admit card's print check run in
   CI's Playwright only (this run starts no servers); per-subject marks stay for later (S12).
+- **P4-a16 (review M1). Publish locks before it reads:** every applicant of the class with a roll,
+  in id order (as move-up), then the inputs are checked under the locks; its UPDATE also requires
+  the status it read (409 `MERIT_STALE` otherwise, nothing published). A withdrawal that commits
+  while it waits makes the publish stale; an approval is kept (ADMITTED, flagged if needed).
+- **P4-a17 (review S1, N3). Told = SENT, or QUEUED of the published version.** A result SMS
+  cancelled by a republish or failed told nobody and is owed again; the dedupe key carries the run
+  (`…:<status>:<run id>`), so the resend is a new SMS; a run takes the SMS writers' lock and checks
+  who is still owed before queueing, so two runs never send one SMS twice.
+- **P4-a18 (review S2). A build is published once** (`results_built_at`, 409 `ALREADY_PUBLISHED`,
+  the button off): republishing needs a new build.
+- **P4-a19 (review N1, N2, N4, N5, N6).** Rolls go only to the rows locked and still eligible, and
+  the audit lists what was written; a renumbered waitlist position is audited; the preview's
+  segments and cost count only what the cap lets through; the merit view's counts and warnings
+  leave withdrawn applicants out at once; a safety test pins that `jantrik_admission` has no
+  `CREATE` on `public` after the migrations.
