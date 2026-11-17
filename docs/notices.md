@@ -34,7 +34,8 @@ use it; a notice the caller may not see is 404, as is another institute's.
 - **Expiry**: the day picked is the last day on the board (Asia/Dhaka); it must be after the
   publish time (422 `EXPIRY_INVALID`). Expired notices stay in the management list.
 - **Edit**: allowed until withdrawn. Editing a published notice marks it "edited" and keeps who
-  read it (P6-N). Targets are replaced whole.
+  read it (P6-N). Targets are replaced whole; targets the notice already had are kept as they are
+  (a section of last year, after the year changed, does not block a typo fix), new ones are checked.
 - **Withdraw** (`POST /notices/:id/withdraw {reason}`): off every board at once, kept for the
   record, never edited again (409 `NOT_EDITABLE`). Notices are never deleted (no DELETE grant).
 - Every create, edit, publish and withdrawal writes an audit entry (title, audience, targets, pin,
@@ -44,9 +45,10 @@ use it; a notice the caller may not see is 404, as is another institute's.
 
 - Opening a notice marks it read (`POST /notices/:id/read`, idempotent, only for oneself: the
   database refuses a read row for anyone else).
-- `GET /notices/unread-count` is cached in Redis per person for 2 minutes under the institute's
-  notice version (`tenant:<id>:notices:ver`), which every publish, edit and withdrawal bumps after
-  commit; marking a notice read drops the person's own entry (P6-I). A scheduled notice that
+- `GET /notices/unread-count` is cached in Redis per person for 2 minutes under two versions: the
+  institute's notice version (`tenant:<id>:notices:ver`), which every publish, edit and withdrawal
+  bumps after commit, and the person's own read version, which each read bumps after commit (P6-I).
+  A count computed just before a read is cached under the old pair, which nobody reads again. A scheduled notice that
   becomes live, or a child changing class, shows within those 2 minutes.
 - The web app asks for the count after first paint (the sidebar badge) and again on focus at most
   every 5 minutes, so it never delays a page. The dashboard shows a "Notices" card (pinned first,

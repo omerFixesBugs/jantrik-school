@@ -901,3 +901,12 @@ Built during the unattended day run of 2026-11-17 from the P6 plan (PR #15,
   `/notices/manage/` (one layout sends the management texts only to OWNER/ADMIN pages); the
   manage page lists notices as rows rather than a table (it works at 390 px without scrolling
   sideways).
+
+Changed after the review of #25 (round 1, nits only):
+
+- **P6-a9. The unread count's cache has a per-person read version** bumped after a read commits,
+  instead of deleting the entry (a count computed just before the read could otherwise be cached
+  again, stale, for 2 minutes).
+- **P6-a10. An edit keeps the targets the notice already had** without the current-year check; new
+  targets are still checked. An edit locks the notice before reading what the audit records.
+- **P6-a11. The board excerpt is cut at 200 characters (code points)**, never inside an emoji.
