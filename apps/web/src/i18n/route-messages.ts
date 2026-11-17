@@ -124,7 +124,7 @@ export const ROUTE_MESSAGES = {
   staff: ['setup', 'staff'],
 
   /** The notice board (every member) and its management (OWNER/ADMIN). */
-  notices: ['notices.board'],
+  notices: ['notices.board', 'setup'],
   noticesManage: ['notices.manage'],
 } as const satisfies Record<string, readonly string[]>;
 
