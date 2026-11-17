@@ -42,7 +42,10 @@ export interface QueueTenantSmsInput {
    * expire; SKIP stores nothing, so the same dedupe key can be sent on another day.
    */
   overCap?: 'HOLD' | 'SKIP';
-  /** BULK_SMS_PRIORITY for SMS sent in bulk (fee reminders, exam results): after single SMS. */
+  /**
+   * BULK_SMS_PRIORITY for SMS sent in bulk (fee reminders, exam and admission results): after
+   * single SMS.
+   */
   priority?: number;
 }
 

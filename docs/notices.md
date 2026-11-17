@@ -151,8 +151,9 @@ paisa), today's cap left, `fits`, whether it is quiet hours now and the next all
   login codes and other single SMS, which always go first. After a send, and whenever the job runs
   again, the jobs of the broadcast's QUEUED SMS are re-added before its due entry is dropped; so
   does opening the broadcasts list, for SMS still waiting 10 minutes later outside quiet hours. An
-  SMS still waiting at 21:00 waits (still QUEUED) until 08:00. Fee reminders and exam result SMS
-  use the same lower priority. A sent broadcast cannot be stopped (P6-L, a follow-up).
+  SMS still waiting at 21:00 waits (still QUEUED) until 08:00. Fee reminders, exam result SMS and
+  admission result SMS (P4) use the same lower priority. A sent broadcast cannot be stopped (P6-L,
+  a follow-up).
 - The send job retries 3 times with backoff; the sweep replaces a failed one. The due entry is
   dropped only if no new schedule changed it meanwhile.
 - **The sweep** (`notices-sweep`, every 5 minutes) re-adds the job of every due member of

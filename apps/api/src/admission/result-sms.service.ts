@@ -16,7 +16,7 @@ import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
 import type { Env } from '../config/env.js';
-import { TenantSmsService } from '../sms/tenant-sms.service.js';
+import { BULK_SMS_PRIORITY, TenantSmsService } from '../sms/tenant-sms.service.js';
 import { Db } from '../tenancy/db.service.js';
 
 /** Its own queue: one processor per queue (the approval queue's would drop these jobs). */
@@ -194,6 +194,7 @@ export class AdmissionResultSmsService implements OnModuleInit {
     const cap = await this.settings.smsDailyCap();
     for (const r of recipients) {
       await this.sms.queue({
+        priority: BULK_SMS_PRIORITY,
         purpose: 'ADMISSION_RESULT',
         phone: r.phone,
         body: r.text,
