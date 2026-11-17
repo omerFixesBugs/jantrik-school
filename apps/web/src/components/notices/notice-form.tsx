@@ -189,7 +189,11 @@ export function NoticeForm({ notice }: { notice?: NoticeManageItem }) {
               onClick={() =>
                 setTargets((all) => [
                   ...all,
-                  { key: Math.max(-1, ...all.map((x) => x.key)) + 1, classLevelId: '', sectionId: '' },
+                  {
+                    key: Math.max(-1, ...all.map((x) => x.key)) + 1,
+                    classLevelId: '',
+                    sectionId: '',
+                  },
                 ])
               }
             >

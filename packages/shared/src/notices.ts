@@ -69,7 +69,11 @@ export function noticeLive(
  * (P6-G); a guardian sees ALL and GUARDIANS notices with no targets, or with a target matching one
  * of their children's class (and section, when the target names one).
  */
-export function noticeVisibleTo(n: NoticeVisibilityFields, viewer: NoticeViewer, now: Date): boolean {
+export function noticeVisibleTo(
+  n: NoticeVisibilityFields,
+  viewer: NoticeViewer,
+  now: Date,
+): boolean {
   if (!noticeLive(n, now)) return false;
   if (viewer.staff && (n.audience === 'ALL' || n.audience === 'STAFF')) return true;
   if (!viewer.guardian || n.audience === 'STAFF') return false;

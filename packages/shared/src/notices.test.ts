@@ -67,8 +67,13 @@ describe('noticeVisibleTo (review focus 5)', () => {
     expect(noticeVisibleTo(for6b, noSection, NOW)).toBe(false);
     expect(noticeVisibleTo(forClass6, noSection, NOW)).toBe(true);
     // Children in both classes: a notice for either.
-    const both = guardianOf({ classLevelId: C6, sectionId: S6A }, { classLevelId: C7, sectionId: null });
-    expect(noticeVisibleTo(notice({ targets: [{ classLevelId: C7, sectionId: null }] }), both, NOW)).toBe(true);
+    const both = guardianOf(
+      { classLevelId: C6, sectionId: S6A },
+      { classLevelId: C7, sectionId: null },
+    );
+    expect(
+      noticeVisibleTo(notice({ targets: [{ classLevelId: C7, sectionId: null }] }), both, NOW),
+    ).toBe(true);
     // A guardian with no current child sees no targeted notice.
     expect(noticeVisibleTo(forClass6, guardianOf(), NOW)).toBe(false);
   });
@@ -106,11 +111,25 @@ describe('noticeState', () => {
 describe('notice schemas', () => {
   it('trims, normalises line endings, and keeps the CHECK limits', () => {
     const ok = noticeInputSchema.parse({ title: '  ছুটি  ', body: 'a\r\nb', audience: 'ALL' });
-    expect(ok).toMatchObject({ title: 'ছুটি', body: 'a\nb', targets: [], pinned: false, expiresAt: null });
-    expect(noticeInputSchema.safeParse({ title: 'x'.repeat(151), body: 'b', audience: 'ALL' }).success).toBe(false);
-    expect(noticeInputSchema.safeParse({ title: '   ', body: 'b', audience: 'ALL' }).success).toBe(false);
-    expect(noticeInputSchema.safeParse({ title: 't', body: 'x'.repeat(5001), audience: 'ALL' }).success).toBe(false);
-    expect(noticeInputSchema.safeParse({ title: 't', body: 'b', audience: 'PARENTS' }).success).toBe(false);
+    expect(ok).toMatchObject({
+      title: 'ছুটি',
+      body: 'a\nb',
+      targets: [],
+      pinned: false,
+      expiresAt: null,
+    });
+    expect(
+      noticeInputSchema.safeParse({ title: 'x'.repeat(151), body: 'b', audience: 'ALL' }).success,
+    ).toBe(false);
+    expect(noticeInputSchema.safeParse({ title: '   ', body: 'b', audience: 'ALL' }).success).toBe(
+      false,
+    );
+    expect(
+      noticeInputSchema.safeParse({ title: 't', body: 'x'.repeat(5001), audience: 'ALL' }).success,
+    ).toBe(false);
+    expect(
+      noticeInputSchema.safeParse({ title: 't', body: 'b', audience: 'PARENTS' }).success,
+    ).toBe(false);
     expect(
       noticeInputSchema.parse({
         title: 't',
@@ -119,7 +138,10 @@ describe('notice schemas', () => {
         targets: [{ classLevelId: C6 }],
         expiresAt: '2026-11-20T00:00:00+06:00',
       }),
-    ).toMatchObject({ targets: [{ classLevelId: C6, sectionId: null }], expiresAt: new Date('2026-11-19T18:00:00Z') });
+    ).toMatchObject({
+      targets: [{ classLevelId: C6, sectionId: null }],
+      expiresAt: new Date('2026-11-19T18:00:00Z'),
+    });
   });
 
   it('publish later needs an offset time; a withdrawal needs a reason of at most 300', () => {

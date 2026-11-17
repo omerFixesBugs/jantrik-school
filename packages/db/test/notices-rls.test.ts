@@ -121,21 +121,25 @@ describe('notices RLS', () => {
     }
     expect(await withTenant(app, a, (tx) => tx.noticeRead.count())).toBe(1);
     await expect(
-      withContext(app, { tenantId: a, userId: userA }, (tx) =>
-        tx.$executeRaw`UPDATE notice_reads SET read_at = now()`,
+      withContext(
+        app,
+        { tenantId: a, userId: userA },
+        (tx) => tx.$executeRaw`UPDATE notice_reads SET read_at = now()`,
       ),
     ).rejects.toThrow(/permission denied/);
     await expect(
-      withContext(app, { tenantId: a, userId: userA }, (tx) =>
-        tx.$executeRaw`DELETE FROM notice_reads`,
+      withContext(
+        app,
+        { tenantId: a, userId: userA },
+        (tx) => tx.$executeRaw`DELETE FROM notice_reads`,
       ),
     ).rejects.toThrow(/permission denied/);
   });
 
   it('notices are never deleted; created_by is not changed', async () => {
-    await expect(
-      withTenant(app, a, (tx) => tx.$executeRaw`DELETE FROM notices`),
-    ).rejects.toThrow(/permission denied/);
+    await expect(withTenant(app, a, (tx) => tx.$executeRaw`DELETE FROM notices`)).rejects.toThrow(
+      /permission denied/,
+    );
     await expect(
       withTenant(app, a, (tx) => tx.$executeRaw`UPDATE notices SET created_by_id = created_by_id`),
     ).rejects.toThrow(/permission denied/);

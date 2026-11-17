@@ -23,7 +23,9 @@ test('the owner publishes a staff notice; the teacher reads it and the badge goe
   await expect(owner).toHaveURL(/\/dashboard$/);
   await owner.goto('/notices/manage/new');
   await owner.getByLabel('শিরোনাম').fill(TITLE);
-  await owner.getByLabel('বিস্তারিত').fill('আগামীকাল বিকেল ৩টায় শিক্ষক সভা।\nসবাই উপস্থিত থাকবেন।');
+  await owner
+    .getByLabel('বিস্তারিত')
+    .fill('আগামীকাল বিকেল ৩টায় শিক্ষক সভা।\nসবাই উপস্থিত থাকবেন।');
   await owner.getByLabel('কারা দেখবে').selectOption('STAFF');
   // A staff notice takes no class targets: the picker is not offered.
   await expect(owner.getByText('নির্দিষ্ট শ্রেণি বা শাখা')).toHaveCount(0);
@@ -53,7 +55,10 @@ test('the owner publishes a staff notice; the teacher reads it and the badge goe
   await expect(teacher.getByTestId('notice-body')).toContainText('সবাই উপস্থিত থাকবেন।');
   await teacher.goto('/notices');
   await expect(
-    teacher.getByTestId('notice-card').filter({ hasText: TITLE }).getByRole('img', { name: 'নতুন' }),
+    teacher
+      .getByTestId('notice-card')
+      .filter({ hasText: TITLE })
+      .getByRole('img', { name: 'নতুন' }),
   ).toHaveCount(0);
   await teacher.close();
 });

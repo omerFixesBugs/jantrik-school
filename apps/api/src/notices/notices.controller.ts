@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Param,
-  ParseUUIDPipe,
-  Post,
-  Put,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
 import {
   noticeInputSchema,
   publishNoticeSchema,
@@ -24,7 +15,6 @@ import { NoticesService } from './notices.service.js';
 class NoticeInputDto extends zodDto(noticeInputSchema) {}
 class PublishNoticeDto extends zodDto(publishNoticeSchema) {}
 class WithdrawNoticeDto extends zodDto(withdrawNoticeSchema) {}
-
 
 /** Every member reads the board; OWNER/ADMIN write (S20). Module CORE (S3). */
 @Controller('notices')
@@ -77,7 +67,10 @@ export class NoticesController {
 
   @Put(':id')
   @Roles('OWNER', 'ADMIN')
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: NoticeInputDto): Promise<NoticeManageItem> {
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: NoticeInputDto,
+  ): Promise<NoticeManageItem> {
     return this.notices.update(id, body);
   }
 

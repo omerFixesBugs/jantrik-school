@@ -100,7 +100,13 @@ export function PublishDialog({
         </fieldset>
         {later && (
           <div className="grid grid-cols-2 gap-3">
-            <TextField id="notice-publish-day" type="date" label={t('date')} value={day} onChange={setDay} />
+            <TextField
+              id="notice-publish-day"
+              type="date"
+              label={t('date')}
+              value={day}
+              onChange={setDay}
+            />
             <Field id="notice-publish-time" label={t('time')}>
               <Input
                 id="notice-publish-time"
