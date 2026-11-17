@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { DEMO, passwordLogin } from './helpers';
+import { api, apiLogin, DEMO, passwordLogin } from './helpers';
 import { findLayoutProblems } from './layout-check';
 
 // Sprint 1 P3a: an owner makes an admission cycle with a class, opens it, enters a walk-in
@@ -62,10 +62,18 @@ test('admission: cycle → walk-in application → shortlist → approve into a 
   await expect(page.getByTestId('student-profile')).toContainText('আরিফ হোসেন');
   await expect(page.getByTestId('profile-guardians-list')).toContainText('01819-900777');
 
+  const studentId = /\/students\/([0-9a-f-]{36})/.exec(page.url())![1]!;
+
   // The list finds it by number and shows it admitted.
   await page.goto('/admission/applications');
   await page.locator('#filter-q').fill('আরিফ');
   await expect(page.getByTestId('application-list')).toContainText('ভর্তি হয়েছে');
+
+  // The suite shares one database: other specs count the demo school's students, so the new
+  // student is deactivated again (a soft delete, which lists and counts leave out).
+  await api(await apiLogin(DEMO.shaplaOwner), `/students/${studentId}/deactivate`, {
+    method: 'POST',
+  });
 });
 
 test('admission: a teacher has no admission menu', async ({ page }) => {
