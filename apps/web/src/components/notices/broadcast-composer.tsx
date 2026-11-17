@@ -137,11 +137,15 @@ export function BroadcastComposer({
       later
         ? client.api<BroadcastView>(`/broadcasts/${id}/schedule`, {
             method: 'POST',
-            json: { scheduledAt: dhakaInstant(day, time), expectedRecipients: preview!.recipients },
+            json: {
+              scheduledAt: dhakaInstant(day, time),
+              expectedRecipients: preview!.recipients,
+              previewToken: preview!.token,
+            },
           })
         : client.api<BroadcastView>(`/broadcasts/${id}/send`, {
             method: 'POST',
-            json: { expectedRecipients: preview!.recipients },
+            json: { expectedRecipients: preview!.recipients, previewToken: preview!.token },
           }),
     onSuccess: async (b) => {
       toast.success(later ? t('preview.scheduled') : t('preview.sent'));

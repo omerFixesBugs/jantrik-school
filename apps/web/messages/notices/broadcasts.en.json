@@ -9,7 +9,8 @@
       "SCHEDULED": "Scheduled",
       "SENT": "Sent",
       "CANCELLED": "Cancelled",
-      "FAILED_OVER_CAP": "Not sent: over the daily limit"
+      "FAILED_OVER_CAP": "Not sent: over the daily limit",
+      "EXPIRED": "Not sent: found too late"
     },
     "recipients": {
       "PRIMARY_GUARDIANS": "Primary guardians",
@@ -61,7 +62,8 @@
     "alert": {
       "FAILED_OVER_CAP": "A broadcast was not sent: it did not fit the daily limit.",
       "CANCELLED": "A broadcast was cancelled: the admin who scheduled it is no longer an admin.",
-      "OVERDUE": "A scheduled broadcast has not gone out yet. Opening the list tries again."
+      "OVERDUE": "A scheduled broadcast has not gone out yet. Opening the list tries again.",
+      "EXPIRED": "A scheduled broadcast was found too late and was not sent. Send it again if still needed."
     },
     "errors": {
       "SMS_TOO_LONG": "At most 3 SMS.",
@@ -71,14 +73,16 @@
       "SCHEDULE_OUT_OF_RANGE": "Choose a time between 5 minutes and 30 days ahead.",
       "PREVIEW_CHANGED": "The number of recipients changed. Preview again.",
       "NOT_EDITABLE": "This broadcast can no longer be changed.",
-      "ALREADY_SENDING": "The broadcast is being sent right now."
+      "ALREADY_SENDING": "The broadcast is being sent right now.",
+      "SMS_EMPTY": "The message is empty."
     },
     "dashboard": {
       "title": "SMS broadcast problems",
       "open": "Open",
       "FAILED_OVER_CAP": "A broadcast was not sent: it did not fit the daily limit.",
       "CANCELLED": "A broadcast was cancelled: the admin who scheduled it is no longer an admin.",
-      "OVERDUE": "A scheduled broadcast has not gone out yet. Opening the list tries again."
+      "OVERDUE": "A scheduled broadcast has not gone out yet. Opening the list tries again.",
+      "EXPIRED": "A scheduled broadcast was found too late and was not sent. Send it again if still needed."
     }
   }
 }

@@ -25,13 +25,17 @@ export const broadcastInputSchema = z.object({
 export type BroadcastInput = z.output<typeof broadcastInputSchema>;
 export type BroadcastInputBody = z.input<typeof broadcastInputSchema>;
 
-/** POST /broadcasts/:id/send: the recipient count the admin confirmed in the preview. */
+const previewToken = z.string().regex(/^[0-9a-f]{64}$/);
+
+/** POST /broadcasts/:id/send: the recipient count and the preview's token the admin confirmed. */
 export const sendBroadcastSchema = z.object({
   expectedRecipients: z.number().int().min(0),
+  previewToken,
 });
 
 /** POST /broadcasts/:id/schedule. */
 export const scheduleBroadcastSchema = z.object({
   scheduledAt: instant,
   expectedRecipients: z.number().int().min(0),
+  previewToken,
 });

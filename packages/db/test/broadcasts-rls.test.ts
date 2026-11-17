@@ -97,6 +97,7 @@ describe('broadcasts RLS', () => {
         scheduledAt: at,
         scheduledById: userA,
       },
+      { ...base, body: 'x', status: 'EXPIRED' as const, scheduledAt: at, scheduledById: userA }, // no failure
       { ...base, body: 'x', segments: 0 },
       { ...base, body: 'x', segments: 4 },
       { ...base, body: 'x', queuedCount: -1 },

@@ -5,7 +5,7 @@
 CREATE TYPE "broadcast_recipients" AS ENUM ('PRIMARY_GUARDIANS', 'ALL_GUARDIANS', 'STAFF');
 
 -- CreateEnum
-CREATE TYPE "broadcast_status" AS ENUM ('DRAFT', 'SCHEDULED', 'SENT', 'CANCELLED', 'FAILED_OVER_CAP');
+CREATE TYPE "broadcast_status" AS ENUM ('DRAFT', 'SCHEDULED', 'SENT', 'CANCELLED', 'FAILED_OVER_CAP', 'EXPIRED');
 
 -- CreateTable
 CREATE TABLE "sms_broadcasts" (
@@ -89,6 +89,9 @@ ALTER TABLE "sms_broadcast_targets" ADD CONSTRAINT "sms_broadcast_targets_tenant
 -- AddForeignKey
 ALTER TABLE "sms_broadcast_targets" ADD CONSTRAINT "sms_broadcast_targets_tenant_id_section_id_class_level_id_fkey" FOREIGN KEY ("tenant_id", "section_id", "class_level_id") REFERENCES "sections"("tenant_id", "id", "class_level_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
+-- A broadcast's SMS by state (the broadcasts list).
+CREATE INDEX "sms_logs_tenant_id_related_id_idx" ON "sms_logs"("tenant_id", "related_id");
+
 -- ───────────────────────────── RLS ─────────────────────────────
 ALTER TABLE sms_broadcasts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sms_broadcasts FORCE ROW LEVEL SECURITY;
@@ -115,7 +118,7 @@ GRANT SELECT, INSERT, DELETE ON sms_broadcast_targets TO jantrik_app;
 ALTER TABLE sms_broadcasts
   ADD CONSTRAINT sms_broadcasts_body_length CHECK (char_length(body) BETWEEN 1 AND 480),
   ADD CONSTRAINT sms_broadcasts_scheduled CHECK (
-    status NOT IN ('SCHEDULED', 'SENT', 'FAILED_OVER_CAP')
+    status NOT IN ('SCHEDULED', 'SENT', 'FAILED_OVER_CAP', 'EXPIRED')
     OR (scheduled_at IS NOT NULL AND scheduled_by_id IS NOT NULL)),
   ADD CONSTRAINT sms_broadcasts_sent CHECK (
     status <> 'SENT' OR (sent_at IS NOT NULL AND queued_count IS NOT NULL AND local_date IS NOT NULL)),
@@ -123,7 +126,8 @@ ALTER TABLE sms_broadcasts
     status <> 'CANCELLED' OR (cancelled_at IS NOT NULL AND cancel_reason IS NOT NULL)),
   ADD CONSTRAINT sms_broadcasts_cancel_reason CHECK (
     cancel_reason IS NULL OR cancel_reason IN ('BY_ADMIN', 'ACTOR_NOT_ADMIN')),
-  ADD CONSTRAINT sms_broadcasts_failed CHECK (status <> 'FAILED_OVER_CAP' OR failure IS NOT NULL),
+  ADD CONSTRAINT sms_broadcasts_failed CHECK (
+    status NOT IN ('FAILED_OVER_CAP', 'EXPIRED') OR failure IS NOT NULL),
   ADD CONSTRAINT sms_broadcasts_counts CHECK (
     (queued_count IS NULL OR queued_count >= 0)
     AND (preview_count IS NULL OR preview_count >= 0)

@@ -66,6 +66,29 @@ describe('the 3-segment SMS limit', () => {
   });
 });
 
+describe('segments never split a character (review of #26, N3)', () => {
+  it('GSM-7: an extension character at a part boundary starts the next part', () => {
+    // 152 + € (2) + 152 = 306 septets: 2 parts by length, 3 when € cannot be split.
+    expect(smsLength(`${'a'.repeat(152)}€${'a'.repeat(152)}`)).toEqual({
+      encoding: 'GSM7',
+      length: 306,
+      segments: 3,
+    });
+    // Without a straddle the count is unchanged.
+    expect(smsLength('a'.repeat(306)).segments).toBe(2);
+    expect(smsLength(`€${'a'.repeat(158)}`).segments).toBe(1);
+  });
+
+  it('UCS-2: an emoji at a part boundary starts the next part', () => {
+    const text = `${'ক'.repeat(66)}😀${'ক'.repeat(66)}`;
+    expect(smsLength(text)).toEqual({ encoding: 'UCS2', length: 134, segments: 3 });
+    expect(smsLength('ক'.repeat(134)).segments).toBe(2);
+    expect(broadcastProblems(`${'ক'.repeat(66)}😀${'ক'.repeat(66)}`)).toEqual([]);
+    // 133 + 😀 + 66 = 201 units: 3 parts by length, 4 when the emoji cannot be split.
+    expect(broadcastProblems(`${'ক'.repeat(133)}😀${'ক'.repeat(66)}`)).toEqual(['SMS_TOO_LONG']);
+  });
+});
+
 describe('broadcast schemas', () => {
   it('keeps the text as typed (line endings normalised), with the 480-character backstop', () => {
     expect(broadcastInputSchema.parse({ body: 'a\r\nb ', recipients: 'STAFF' })).toEqual({

@@ -1882,6 +1882,8 @@ model SmsLog {
   @@index([tenantId, createdAt(sort: Desc)])
   /// Platform usage: a month's sent SMS across institutes.
   @@index([localDate], map: "sms_logs_sent_local_date", where: raw("status = 'SENT'"))
+  /// A broadcast's SMS by state (the broadcasts list, sprint 1 P6b).
+  @@index([tenantId, relatedId])
   @@map("sms_logs")
 }
 
@@ -3367,6 +3369,8 @@ enum BroadcastStatus {
   SENT
   CANCELLED
   FAILED_OVER_CAP
+  /// Found more than 3 hours late (its job was lost): not sent; a new preview and send is needed.
+  EXPIRED
 
   @@map("broadcast_status")
 }

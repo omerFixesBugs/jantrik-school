@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Inject, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import type { Prisma } from '@jantrik/db';
 import {
   BROADCAST_LIMITS,
   broadcastProblems,
+  cutText,
   inQuietHours,
   nextAllowedAt,
   smsLength,
@@ -25,6 +27,7 @@ import { RequestContext } from '../common/request-context.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { TenantSmsService } from '../sms/tenant-sms.service.js';
 import { Db } from '../tenancy/db.service.js';
+import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
 import { AudienceService } from './audience.service.js';
 import { NoticesService } from './notices.service.js';
 
@@ -41,6 +44,13 @@ export interface BroadcastJobData {
 
 export const broadcastJobId = (broadcastId: string) => `broadcast-${broadcastId}`;
 const relatedEntity = (id: string) => `broadcast:${id}`;
+/** The send job: retried with backoff; a failed one is kept (the sweep replaces it, B2). */
+const JOB_OPTS = {
+  attempts: 3,
+  backoff: { type: 'exponential' as const, delay: 5_000 },
+  removeOnComplete: true,
+  removeOnFail: 50,
+};
 /** Overdue this long, a SCHEDULED broadcast is re-queued when an admin opens the list (P6-K). */
 const HEAL_AFTER_MS = 2 * 60_000;
 /** The dashboard warning looks back this far (P6-D). */
@@ -56,6 +66,8 @@ export type SendOutcome =
   | { kind: 'SENT'; queued: number }
   | { kind: 'FAILED_OVER_CAP' }
   | { kind: 'CANCELLED_ACTOR' }
+  | { kind: 'EXPIRED' }
+  | { kind: 'ALREADY_SENT' }
   | { kind: 'LATER'; at: Date };
 
 /**
@@ -76,6 +88,7 @@ export class BroadcastsService implements OnModuleInit {
     private readonly cap: AttendanceSettingsService,
     private readonly audience: AudienceService,
     private readonly notices: NoticesService,
+    private readonly jobs: TenantJobRunner,
     @Inject(REDIS) private readonly redis: Redis,
   ) {}
 
@@ -103,13 +116,25 @@ export class BroadcastsService implements OnModuleInit {
     targets: { include: { classLevel: true, section: true }, orderBy: { createdAt: 'asc' } },
   } as const;
 
-  private async view(b: Row): Promise<BroadcastView> {
-    const groups = await this.db.tx.smsLog.groupBy({
-      by: ['status'],
-      where: { relatedEntity: relatedEntity(b.id) },
-      _count: true,
-    });
-    const n = (s: string) => groups.find((g) => g.status === s)?._count ?? 0;
+  /** SMS by state for these broadcasts, in one grouped query (B6). */
+  private async smsCounts(ids: string[]) {
+    const groups = ids.length
+      ? await this.db.tx.smsLog.groupBy({
+          by: ['relatedId', 'status'],
+          where: { relatedId: { in: ids }, purpose: 'BROADCAST' },
+          _count: true,
+        })
+      : [];
+    return (id: string, status: string) =>
+      groups.find((g) => g.relatedId === id && g.status === status)?._count ?? 0;
+  }
+
+  private async view(
+    b: Row,
+    counts?: (id: string, status: string) => number,
+  ): Promise<BroadcastView> {
+    const c = counts ?? (await this.smsCounts([b.id]));
+    const n = (s: string) => c(b.id, s);
     return {
       id: b.id,
       body: b.body,
@@ -160,7 +185,8 @@ export class BroadcastsService implements OnModuleInit {
       take: 200,
       include: this.include,
     });
-    return Promise.all(rows.map((b) => this.view(b)));
+    const counts = await this.smsCounts(rows.map((b) => b.id));
+    return Promise.all(rows.map((b) => this.view(b, counts)));
   }
 
   private async healOverdue(): Promise<void> {
@@ -184,6 +210,7 @@ export class BroadcastsService implements OnModuleInit {
         OR: [
           { status: 'FAILED_OVER_CAP', updatedAt: { gte: since } },
           { status: 'CANCELLED', cancelReason: 'ACTOR_NOT_ADMIN', cancelledAt: { gte: since } },
+          { status: 'EXPIRED', updatedAt: { gte: since } },
           { status: 'SCHEDULED', scheduledAt: { lt: new Date(now.getTime() - 10 * 60_000) } },
         ],
       },
@@ -200,12 +227,15 @@ export class BroadcastsService implements OnModuleInit {
     });
     return rows.map((b) => ({
       id: b.id,
-      status: b.status === 'SCHEDULED' ? 'OVERDUE' : (b.status as 'FAILED_OVER_CAP' | 'CANCELLED'),
+      status:
+        b.status === 'SCHEDULED'
+          ? 'OVERDUE'
+          : (b.status as 'FAILED_OVER_CAP' | 'CANCELLED' | 'EXPIRED'),
       at: (b.status === 'SCHEDULED'
         ? b.scheduledAt!
         : (b.cancelledAt ?? b.updatedAt)
       ).toISOString(),
-      bodyStart: b.body.length > 60 ? `${b.body.slice(0, 60)}…` : b.body,
+      bodyStart: cutText(b.body, 60),
     }));
   }
 
@@ -214,7 +244,10 @@ export class BroadcastsService implements OnModuleInit {
   /** Text of 1–3 segments; targets only for guardians, this institute's classes and sections. */
   private async check(input: BroadcastInput): Promise<NoticeTargetRef[]> {
     const problems = broadcastProblems(input.body);
-    if (problems.includes('SMS_TOO_LONG') || problems.includes('EMPTY')) {
+    if (problems.includes('EMPTY')) {
+      throw apiError(422, 'SMS_EMPTY', 'The broadcast has no text');
+    }
+    if (problems.includes('SMS_TOO_LONG')) {
       const { segments } = smsLength(input.body);
       throw apiError(422, 'SMS_TOO_LONG', 'A broadcast is 1 to 3 SMS segments', {
         segments,
@@ -361,27 +394,45 @@ export class BroadcastsService implements OnModuleInit {
     });
     const capLeft = Math.max(0, (await this.cap.smsDailyCap()) - used);
     const recipients = audience.phones.length;
+    const costPaisa = recipients * segments * Number(rate?.rate ?? 0);
+    const token = createHash('sha256')
+      .update(
+        JSON.stringify({
+          body: b.body,
+          kind: b.recipients,
+          noticeId: b.noticeId,
+          targets: b.targets.map((t) => `${t.classLevelId}|${t.sectionId ?? ''}`).sort(),
+          recipients,
+          segments,
+          costPaisa,
+        }),
+      )
+      .digest('hex');
     return {
       recipients,
       withoutPhone: audience.withoutPhone,
       mergedPhones: audience.mergedPhones,
       segments,
       encoding,
-      costPaisa: recipients * segments * Number(rate?.rate ?? 0),
+      costPaisa,
       capLeftToday: capLeft,
       fits: recipients <= capLeft,
       quietNow: inQuietHours(now, timeZone),
       nextAllowedAt: nextAllowedAt(now, timeZone).toISOString(),
       sampleText: b.body,
+      token,
     };
   }
 
   /** Send now = schedule at now, after the same checks; the job sends it at once. */
-  async send(id: string, expectedRecipients: number): Promise<BroadcastView> {
+  async send(
+    id: string,
+    confirmed: { expectedRecipients: number; previewToken: string },
+  ): Promise<BroadcastView> {
     const b = await this.lockRow(id);
     this.assertDraft(b);
     const preview = await this.previewOf(b);
-    this.assertPreview(preview, expectedRecipients);
+    this.assertPreview(preview, confirmed);
     if (!preview.fits) {
       throw apiError(422, 'OVER_CAP', "The SMS do not fit today's limit", {
         needed: preview.recipients,
@@ -399,7 +450,7 @@ export class BroadcastsService implements OnModuleInit {
   async schedule(
     id: string,
     scheduledAt: Date,
-    expectedRecipients: number,
+    confirmed: { expectedRecipients: number; previewToken: string },
   ): Promise<BroadcastView> {
     const b = await this.lockRow(id);
     this.assertDraft(b);
@@ -415,7 +466,7 @@ export class BroadcastsService implements OnModuleInit {
       });
     }
     const preview = await this.previewOf(b);
-    this.assertPreview(preview, expectedRecipients);
+    this.assertPreview(preview, confirmed);
     return this.markScheduled(b, scheduledAt, preview);
   }
 
@@ -425,11 +476,25 @@ export class BroadcastsService implements OnModuleInit {
     }
   }
 
-  private assertPreview(preview: BroadcastPreview, expected: number) {
-    if (preview.recipients !== expected) {
-      throw apiError(409, 'PREVIEW_CHANGED', 'The number of recipients changed: preview again', {
-        recipients: preview.recipients,
-      });
+  /** The count and the token the admin saw must both still hold (B1: cost, text, audience). */
+  private assertPreview(
+    preview: BroadcastPreview,
+    confirmed: { expectedRecipients: number; previewToken: string },
+  ) {
+    if (
+      preview.recipients !== confirmed.expectedRecipients ||
+      preview.token !== confirmed.previewToken
+    ) {
+      throw apiError(
+        409,
+        'PREVIEW_CHANGED',
+        'The broadcast changed since the preview: preview again',
+        {
+          recipients: preview.recipients,
+          segments: preview.segments,
+          costPaisa: preview.costPaisa,
+        },
+      );
     }
   }
 
@@ -509,11 +574,31 @@ export class BroadcastsService implements OnModuleInit {
    * unless SCHEDULED; cancel when the admin lost the role (S19); wait out quiet hours (and an
    * early run); resolve the audience now; queue every SMS or none (S18).
    */
-  async sendDue(id: string, actorStillAdmin: boolean): Promise<SendOutcome> {
+  async sendDue(id: string, actor: { userId: string; stillAdmin: boolean }): Promise<SendOutcome> {
     const b = await this.lockRow(id);
+    if (b.status === 'SENT') return { kind: 'ALREADY_SENT' };
     if (b.status !== 'SCHEDULED') return { kind: 'STOP' };
     const { now, timeZone, today } = await this.tenantNow();
-    if (!actorStillAdmin) {
+    // Rescheduled by someone else since the role was checked: run again for them (N2).
+    if (b.scheduledById !== actor.userId) return { kind: 'LATER', at: now };
+    const lateMs = b.scheduledAt ? now.getTime() - b.scheduledAt.getTime() : 0;
+    if (lateMs > BROADCAST_LIMITS.staleAfterHours * 3_600_000) {
+      const lateMinutes = Math.floor(lateMs / 60_000);
+      await this.db.tx.smsBroadcast.update({
+        where: { id },
+        data: { status: 'EXPIRED', failure: { lateMinutes }, updatedAt: now },
+        select: { id: true },
+      });
+      await this.audit.record({
+        entity: 'sms_broadcast',
+        entityId: id,
+        action: 'UPDATE',
+        oldValues: { status: 'SCHEDULED' },
+        newValues: { status: 'EXPIRED', lateMinutes },
+      });
+      return { kind: 'EXPIRED' };
+    }
+    if (!actor.stillAdmin) {
       await this.db.tx.smsBroadcast.update({
         where: { id },
         data: { status: 'CANCELLED', cancelledAt: now, cancelReason: 'ACTOR_NOT_ADMIN' },
@@ -630,7 +715,7 @@ export class BroadcastsService implements OnModuleInit {
     await this.queue.add(
       BROADCAST_SEND_JOB,
       { tenantId, broadcastId: id },
-      { jobId: broadcastJobId(id), delay, removeOnComplete: true, removeOnFail: 50 },
+      { jobId: broadcastJobId(id), delay, ...JOB_OPTS },
     );
   }
 
@@ -638,9 +723,43 @@ export class BroadcastsService implements OnModuleInit {
     return this.context.afterCommit(() => this.forget(tenantId, id, true));
   }
 
+  /** Re-adds the jobs of this broadcast's QUEUED SMS (a no-op for jobs that exist; B4). */
+  async ensureSmsJobs(tenantId: string, id: string): Promise<number> {
+    const ids = (
+      await this.jobs.run(tenantId, () =>
+        this.db.tx.smsLog.findMany({
+          where: { relatedId: id, purpose: 'BROADCAST', status: 'QUEUED' },
+          select: { id: true },
+        }),
+      )
+    ).map((l) => l.id);
+    await this.sms.enqueueBulk(tenantId, ids);
+    return ids.length;
+  }
+
   /** The due-set entry at its (new) time, for the sweep. */
   async markDue(tenantId: string, id: string, at: Date): Promise<void> {
     await this.redis.zadd(NOTICES_DUE_KEY, at.getTime(), this.member(tenantId, id));
+  }
+
+  /** The due-set score seen now (compare it when dropping the entry later, B7). */
+  async dueScore(tenantId: string, id: string): Promise<string | null> {
+    return this.redis.zscore(NOTICES_DUE_KEY, this.member(tenantId, id));
+  }
+
+  /**
+   * Drops the due-set entry only if it still has the score seen at the start of the job: a new
+   * schedule made meanwhile (another score) keeps its entry for the sweep (B7).
+   */
+  async forgetIfUnchanged(tenantId: string, id: string, score: string | null): Promise<void> {
+    if (score === null) return;
+    await this.redis.eval(
+      "if redis.call('ZSCORE', KEYS[1], ARGV[1]) == ARGV[2] then return redis.call('ZREM', KEYS[1], ARGV[1]) end return 0",
+      1,
+      NOTICES_DUE_KEY,
+      this.member(tenantId, id),
+      score,
+    );
   }
 
   /** Drops the due-set entry (and the job, when asked: a failed removal is harmless). */
@@ -661,11 +780,16 @@ export class BroadcastsService implements OnModuleInit {
     for (const m of due) {
       const [tenantId, id] = m.split('|');
       if (!tenantId || !id) continue;
-      if (await this.queue.getJob(broadcastJobId(id))) continue;
+      const existing = await this.queue.getJob(broadcastJobId(id));
+      if (existing) {
+        // A job that failed (or finished) is replaced; one waiting, delayed or running is kept.
+        if (!(await existing.isFailed()) && !(await existing.isCompleted())) continue;
+        await existing.remove().catch(() => undefined);
+      }
       await this.queue.add(
         BROADCAST_SEND_JOB,
         { tenantId, broadcastId: id },
-        { jobId: broadcastJobId(id), removeOnComplete: true, removeOnFail: 50 },
+        { jobId: broadcastJobId(id), ...JOB_OPTS },
       );
       added++;
     }

@@ -62,7 +62,7 @@ export class BroadcastsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: SendBroadcastDto,
   ): Promise<BroadcastView> {
-    return this.broadcasts.send(id, body.expectedRecipients);
+    return this.broadcasts.send(id, body);
   }
 
   @Post(':id/schedule')
@@ -71,7 +71,7 @@ export class BroadcastsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: ScheduleBroadcastDto,
   ): Promise<BroadcastView> {
-    return this.broadcasts.schedule(id, body.scheduledAt, body.expectedRecipients);
+    return this.broadcasts.schedule(id, body.scheduledAt, body);
   }
 
   @Post(':id/cancel')

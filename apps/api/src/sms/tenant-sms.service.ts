@@ -1,9 +1,18 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import type { SmsPurpose } from '@jantrik/db';
-import { dateFromDb, dateToDb, smsLength, todayIn, type IsoDate } from '@jantrik/shared';
+import {
+  dateFromDb,
+  dateToDb,
+  inQuietHours,
+  nextAllowedAt,
+  smsLength,
+  todayIn,
+  type IsoDate,
+} from '@jantrik/shared';
 import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
+import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { Db } from '../tenancy/db.service.js';
@@ -36,6 +45,12 @@ export interface QueueTenantSmsInput {
 }
 
 export type QueueTenantSmsResult = 'QUEUED' | 'DUPLICATE' | 'HELD_OVER_LIMIT' | 'OVER_CAP';
+
+/**
+ * BullMQ priority of bulk SMS (broadcasts): jobs with no priority (login codes, receipts, absent
+ * SMS) are always taken first, so one institute's broadcast never delays anyone's login (B5).
+ */
+export const BULK_SMS_PRIORITY = 10;
 
 /** Decides, just before sending, whether an SMS is still wanted (e.g. the absence still stands). */
 export type SmsRelevanceCheck = (log: {
@@ -71,6 +86,7 @@ export class TenantSmsService implements OnModuleInit {
     private readonly db: Db,
     private readonly context: RequestContext,
     @Inject(REDIS) private readonly redis: Redis,
+    private readonly clock: Clock,
   ) {}
 
   /** One scheduler for all API instances (BullMQ upserts it by id). */
@@ -184,13 +200,28 @@ export class TenantSmsService implements OnModuleInit {
       })),
       select: { id: true },
     });
-    await this.context.afterCommit(async () => {
+    await this.context.afterCommit(() =>
+      this.enqueueBulk(
+        tenantId,
+        rows.map((r) => r.id),
+      ),
+    );
+    return { outcome: 'QUEUED', queued: rows.length, duplicates };
+  }
+
+  /**
+   * One job per SMS (job id = the sms_logs id, so adding one that exists is a no-op), behind every
+   * unprioritised job. Also used to re-add the jobs of QUEUED SMS whose jobs were lost (B4).
+   */
+  async enqueueBulk(tenantId: string, smsLogIds: string[]): Promise<void> {
+    for (let i = 0; i < smsLogIds.length; i += 1000) {
       await this.jobs.addBulk(
-        rows.map((r) => ({
+        smsLogIds.slice(i, i + 1000).map((id) => ({
           name: 'tenant',
-          data: { tenantId, smsLogId: r.id },
+          data: { tenantId, smsLogId: id },
           opts: {
-            jobId: r.id,
+            jobId: id,
+            priority: BULK_SMS_PRIORITY,
             attempts: 3,
             backoff: { type: 'exponential', delay: 2_000 },
             removeOnComplete: true,
@@ -198,8 +229,7 @@ export class TenantSmsService implements OnModuleInit {
           },
         })),
       );
-    });
-    return { outcome: 'QUEUED', queued: rows.length, duplicates };
+    }
   }
 
   /**
@@ -330,13 +360,18 @@ export class TenantSmsService implements OnModuleInit {
 
   // ── Worker side (inside TenantJobRunner) ──
 
-  /** The phone and text to send now, or null when the SMS is no longer wanted (marked CANCELLED). */
-  async prepare(smsLogId: string): Promise<{ phone: string; body: string } | null> {
+  /**
+   * The phone and text to send now; null when the SMS is no longer wanted (marked CANCELLED); or
+   * `{later}` for a broadcast SMS inside quiet hours, which waits (still QUEUED) until 08:00 (B8).
+   */
+  async prepare(
+    smsLogId: string,
+  ): Promise<{ phone: string; body: string } | { later: Date } | null> {
     const tx = this.db.tx;
     const log = await tx.smsLog.findUnique({ where: { id: smsLogId } });
     if (!log || log.status !== 'QUEUED') return null; // already handled
 
-    const tenant = await tx.tenant.findFirst({ select: { status: true } });
+    const tenant = await tx.tenant.findFirst({ select: { status: true, timezone: true } });
     const active = tenant && (tenant.status === 'ACTIVE' || tenant.status === 'TRIAL');
     const check = this.relevance.get(log.purpose);
     const stillWanted =
@@ -353,6 +388,9 @@ export class TenantSmsService implements OnModuleInit {
         data: { status: 'CANCELLED', error: active ? 'No longer relevant' : 'Tenant not active' },
       });
       return null;
+    }
+    if (log.purpose === 'BROADCAST' && tenant && inQuietHours(this.clock.now(), tenant.timezone)) {
+      return { later: nextAllowedAt(this.clock.now(), tenant.timezone) };
     }
     return { phone: log.phone, body: log.body };
   }

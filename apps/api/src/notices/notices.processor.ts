@@ -42,25 +42,38 @@ export class NoticesProcessor extends WorkerHost {
 
   /** Safe to run twice: the second run finds the broadcast no longer SCHEDULED and stops. */
   async send({ tenantId, broadcastId }: BroadcastJobData): Promise<SendOutcome> {
+    // The due entry as seen now: dropped at the end only if no new schedule changed it (B7).
+    const score = await this.broadcasts.dueScore(tenantId, broadcastId);
     const head = await this.jobs.run(tenantId, () => this.broadcasts.scheduledBy(broadcastId));
+    if (head?.status === 'SENT') {
+      // Sent before, but its SMS jobs may have been lost after the commit (B4).
+      await this.broadcasts.ensureSmsJobs(tenantId, broadcastId);
+      await this.broadcasts.forgetIfUnchanged(tenantId, broadcastId, score);
+      return { kind: 'ALREADY_SENT' };
+    }
     if (!head || head.status !== 'SCHEDULED' || !head.scheduledById) {
-      await this.broadcasts.forget(tenantId, broadcastId);
+      await this.broadcasts.forgetIfUnchanged(tenantId, broadcastId, score);
       return { kind: 'STOP' };
     }
-    const roles = await this.access.getRoles(tenantId, head.scheduledById);
+    const actorUserId = head.scheduledById;
+    const roles = await this.access.getRoles(tenantId, actorUserId);
     const stillAdmin = roles.includes('OWNER') || roles.includes('ADMIN');
     const outcome = await this.jobs.run(
       tenantId,
-      () => this.broadcasts.sendDue(broadcastId, stillAdmin),
-      { actorUserId: head.scheduledById },
+      () => this.broadcasts.sendDue(broadcastId, { userId: actorUserId, stillAdmin }),
+      { actorUserId },
     );
     if (outcome.kind === 'LATER') {
       // The due set moves to the new time; the job itself is delayed by process().
       await this.broadcasts.markDue(tenantId, broadcastId, outcome.at);
-    } else {
-      await this.broadcasts.forget(tenantId, broadcastId);
+      return outcome;
     }
-    if (outcome.kind !== 'SENT' && outcome.kind !== 'LATER') {
+    if (outcome.kind === 'SENT' || outcome.kind === 'ALREADY_SENT') {
+      // The SMS jobs were added after the commit; make sure they exist before letting go (B4).
+      await this.broadcasts.ensureSmsJobs(tenantId, broadcastId);
+    }
+    await this.broadcasts.forgetIfUnchanged(tenantId, broadcastId, score);
+    if (outcome.kind !== 'SENT') {
       this.logger.warn(`Broadcast ${broadcastId}: ${outcome.kind}`);
     }
     return outcome;

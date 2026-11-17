@@ -20,6 +20,12 @@ export const BROADCAST_LIMITS = {
   /** … and at most this many days. */
   maxDays: 30,
   targets: 100,
+  /**
+   * A broadcast found this late (Redis lost its job, the worker was down) is not sent: it expires
+   * and needs a new preview and send (review of #26, B3). Measured from its stored time, which a
+   * quiet-hours wait moves to 08:00.
+   */
+  staleAfterHours: 3,
 } as const;
 
 export const BROADCAST_RECIPIENTS = ['PRIMARY_GUARDIANS', 'ALL_GUARDIANS', 'STAFF'] as const;
@@ -31,6 +37,7 @@ export const BROADCAST_STATUSES = [
   'SENT',
   'CANCELLED',
   'FAILED_OVER_CAP',
+  'EXPIRED',
 ] as const;
 export type BroadcastStatus = (typeof BROADCAST_STATUSES)[number];
 
@@ -55,6 +62,12 @@ export function nextAllowedAt(at: Date, timeZone: string): Date {
 }
 
 export type BroadcastProblem = 'EMPTY' | 'SMS_TOO_LONG';
+
+/** A string cut to `max` characters (code points, never inside an emoji), with "…" when cut. */
+export function cutText(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max).join('')}…` : text;
+}
 
 /** What is wrong with a broadcast's text: empty, or more than 3 segments. */
 export function broadcastProblems(body: string): BroadcastProblem[] {
@@ -84,6 +97,12 @@ export interface BroadcastPreview {
   /** Now, or the next 08:00 when inside quiet hours. */
   nextAllowedAt: string;
   sampleText: string;
+  /**
+   * What the admin confirms: a hash of the text, the recipient kind, the targets, the notice, the
+   * recipient count, the segments and the cost. Send and schedule must present it; anything that
+   * changed since (another tab, another admin, a new rate) is 409 PREVIEW_CHANGED.
+   */
+  token: string;
 }
 
 /** SMS of a broadcast by state, read live from sms_logs (P6-C). */
@@ -109,7 +128,8 @@ export interface BroadcastView {
   sentAt: string | null;
   cancelledAt: string | null;
   cancelReason: 'BY_ADMIN' | 'ACTOR_NOT_ADMIN' | null;
-  failure: { needed: number; capLeft: number } | null;
+  /** FAILED_OVER_CAP: {needed, capLeft}; EXPIRED: {lateMinutes}. */
+  failure: { needed?: number; capLeft?: number; lateMinutes?: number } | null;
   createdAt: string;
   sms: BroadcastSmsCounts;
 }
@@ -117,7 +137,7 @@ export interface BroadcastView {
 /** The dashboard's warning (P6-D): broadcasts that failed over the cap or lost their admin. */
 export interface BroadcastAlert {
   id: string;
-  status: 'FAILED_OVER_CAP' | 'CANCELLED' | 'OVERDUE';
+  status: 'FAILED_OVER_CAP' | 'CANCELLED' | 'EXPIRED' | 'OVERDUE';
   at: string;
   bodyStart: string;
 }
