@@ -902,6 +902,15 @@ Built during the unattended day run of 2026-11-17 from the P6 plan (PR #15,
   manage page lists notices as rows rather than a table (it works at 390 px without scrolling
   sideways).
 
+Changed after the review of #25 (round 1, nits only):
+
+- **P6-a9. The unread count's cache has a per-person read version** bumped after a read commits,
+  instead of deleting the entry (a count computed just before the read could otherwise be cached
+  again, stale, for 2 minutes).
+- **P6-a10. An edit keeps the targets the notice already had** without the current-year check; new
+  targets are still checked. An edit locks the notice before reading what the audit records.
+- **P6-a11. The board excerpt is cut at 200 characters (code points)**, never inside an emoji.
+
 P6b (SMS broadcasts), taken alone:
 
 - **P6-b1. Editing a scheduled broadcast puts it back to DRAFT** (its job stops by itself): the
@@ -920,3 +929,39 @@ P6b (SMS broadcasts), taken alone:
 - **P6-b7. The Playwright spec composes and previews but does not send:** CI runs at any hour, and
   inside Dhaka's quiet hours a send is refused by design. Sending, the cap, quiet hours and the
   job are covered by the API tests with a fake clock.
+
+Changed after the review of #26 (round 1; each must/should fix with a test seen failing first):
+
+- **P6-b8. The preview's token is what the admin confirms (must-fix B1).** It hashes the text, the
+  recipient kind, the targets, the notice, the recipient count, the segments and the cost; send
+  and schedule must present it with the count, and anything changed since (another tab, another
+  admin, a new rate) is 409 `PREVIEW_CHANGED` with the new segments and cost. Before, only the
+  count was compared: a draft edited after its preview could go out at three times the cost.
+- **P6-b9. A broadcast found more than 3 hours late expires instead of sending (B3)**, measured from
+  its stored time (a quiet-hours wait moves that to 08:00): new status `EXPIRED` with
+  `{lateMinutes}`, on the OWNER/ADMIN dashboard for 3 days; a new preview and send is needed.
+  The sweep and heal-on-read still re-add such jobs; the job then expires them.
+- **P6-b10. Lost SMS jobs of a sent broadcast are re-added (B4):** after a send, and whenever its
+  job runs again, the jobs of its QUEUED SMS are re-added (job id = the SMS id, so existing jobs
+  are untouched) before its due entry is dropped; a failure keeps the entry and retries. Not
+  built: a general sweep for QUEUED SMS of other purposes whose job was lost (single SMS rely on
+  the after-commit add, as before P6); a follow-up if wanted.
+- **P6-b11. Broadcast SMS have a lower queue priority (B5):** BullMQ takes jobs without a priority
+  (login codes, receipts, absent SMS) before prioritised ones, so a large broadcast never delays a
+  login code.
+- **P6-b12. Quiet hours hold each broadcast SMS too (B8):** an SMS still waiting at 21:00 is delayed
+  (still QUEUED) until 08:00 by the SMS worker, never cancelled. Other purposes are unchanged.
+- **P6-b13. The send job retries with backoff; the sweep replaces a failed job (B2); the due entry is
+  dropped only if no new schedule changed it meanwhile (compare-and-delete on its score, B7).**
+  B7's race is narrow and has no deterministic test.
+- **P6-b14. One grouped query counts the SMS of a page of broadcasts, with an index on
+  `sms_logs (tenant_id, related_id)` (B6).**
+- **P6-b15. Segment counts never split a character (N3).** `smsLength` (shared by every SMS cost)
+  now counts parts the way gateways split them: a GSM-7 extension character or an emoji at a part's
+  end starts the next part. In that rare case the count (and the cost shown in fee reminders and
+  exam results too) is one higher than before; otherwise unchanged.
+- **Small ones:** a text of spaces only is 422 `SMS_EMPTY` (N1); the job re-reads who scheduled it
+  under the row lock and runs again for a new scheduler (N2); dashboard snippets are cut at whole
+  characters (N4).
+- **The migration `20261117410100_sms_broadcasts` was edited in place** (the `EXPIRED` value, its
+  CHECKs, the index). Only scratch and CI databases had applied it.
