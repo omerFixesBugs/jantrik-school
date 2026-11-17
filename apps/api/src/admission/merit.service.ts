@@ -270,7 +270,7 @@ export class AdmissionMeritService {
     await tx.$queryRaw`
       SELECT id FROM public.admission_applications
        WHERE cycle_class_id = ${id}::uuid AND test_roll IS NOT NULL
-       ORDER BY id FOR UPDATE`;
+       ORDER BY id FOR NO KEY UPDATE`;
     const rows = await this.rows(id);
     if (
       Date.parse(builtAt) !== cls.meritBuiltAt.getTime() ||
@@ -379,7 +379,7 @@ export class AdmissionMeritService {
     await tx.$queryRaw`
       SELECT id FROM public.admission_applications
        WHERE cycle_class_id = ${id}::uuid AND status IN ('WAITLISTED', 'SELECTED', 'ADMITTED')
-       ORDER BY id FOR UPDATE`;
+       ORDER BY id FOR NO KEY UPDATE`;
     const [waiting, seated] = await Promise.all([
       tx.admissionApplication.findMany({
         where: {

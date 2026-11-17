@@ -238,6 +238,8 @@ export class AdmissionResultSmsService implements OnModuleInit {
       runId,
       toSend: run.recipients.length,
       counts,
+      // Not queued at all: over the daily cap, or no longer owed when the run reached them
+      // (told meanwhile, or the status moved on); never a failure (review round 2, N4).
       skipped: run.recipients.length - logged,
     };
   }

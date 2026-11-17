@@ -387,6 +387,14 @@ export class AdmissionApplicationsService {
     if (old.status === 'ADMITTED') {
       throw apiError(409, 'APPLICATION_ADMITTED', 'An admitted application cannot be changed');
     }
+    // Sprint 1 P4 (review round 2, N1): once the test's result is published, the test decides;
+    // staff may withdraw or reject (or approve), but putting it back to submitted or shortlisted
+    // would let the next rebuild undo a move-up the applicant was already told about.
+    if (old.resultVersion !== null && (status === 'SUBMITTED' || status === 'SHORTLISTED')) {
+      throw apiError(409, 'TEST_RESULT_PUBLISHED', 'The admission test result is published', {
+        status: old.status,
+      });
+    }
     if (status === 'SELECTED') {
       const cycle = await this.db.tx.admissionCycle.findUniqueOrThrow({
         where: { id: old.cycleId },

@@ -298,7 +298,12 @@ result on the status page behind their status code (S13). Routes under `/admissi
   stay behind the status code; the code request still uses the lookup as a yes/no only, and every
   answer there is unchanged (no new oracle).
 - **Locks:** every test operation on a class takes the cycle's advisory lock shared (P3's key),
-  then the class row `FOR UPDATE`, so they run one at a time per class and a cycle edit waits.
+  then the class row `FOR NO KEY UPDATE` (and applicant rows the same way), so they run one at a
+  time per class and a cycle edit waits, while a new application's foreign key (KEY SHARE) never
+  waits on them (no lock cycle with P3's phone lock). A deadlock or a serialization failure
+  anywhere answers 409 `BUSY` with Retry-After, never a 500. Once a result is published, staff may
+  withdraw, reject or approve an applicant but not put them back to submitted or shortlisted (409
+  `TEST_RESULT_PUBLISHED`).
 - **Database** (migrations `20261117300000`–`300200`): `admission_cycles.merit_tie_break`
   (`admission_tie_break`); on classes the test's settings, `merit_built_at` + `merit_inputs_hash`,
   `scores_changed_at`, `results_version` / `results_published_at` / `results_full_marks`; on

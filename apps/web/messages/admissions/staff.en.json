@@ -278,7 +278,7 @@
       "smsSample": "Sample",
       "smsSend": "Send {count} SMS",
       "smsQueued": "{count} SMS queued",
-      "smsRun": "Sent {sent}, waiting {queued}, skipped {skipped}",
+      "smsRun": "Sent {sent}, waiting {queued}, not queued {skipped} (over the cap, or no longer owed)",
       "previewChanged": "The count changed: check again.",
       "waitlist": "Waitlist",
       "waitlistHint": "When a selected applicant withdraws, offer the seat to the first on the waitlist; then send the result SMS.",
@@ -299,7 +299,8 @@
       "byClass": "Admission test by class",
       "openTest": "Open the test",
       "hasTestRoll": "An applicant with a test roll stays in their class.",
-      "alreadyPublished": "This list is already published: build it again after a change."
+      "alreadyPublished": "This list is already published: build it again after a change.",
+      "resultPublishedStatus": "The test result is published: withdraw or reject instead."
     }
   }
 }

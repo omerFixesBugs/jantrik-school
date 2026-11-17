@@ -45,7 +45,11 @@ export class AdmissionTestService {
   /**
    * The class row, locked for this transaction, after the cycle's lock taken shared: every test
    * operation on one class runs one at a time, and a cycle edit (exclusive) waits for them (the
-   * same key and order as P3's applications).
+   * same key and order as P3's applications). FOR NO KEY UPDATE, never FOR UPDATE (review round
+   * 2): a new application's foreign key takes KEY SHARE on this row, which FOR UPDATE would block,
+   * closing a lock cycle with P3's phone lock (an applicant's edit holds its row and waits on the
+   * phone; a sibling's new application holds the phone and waits on the class; publish holds the
+   * class and waits on the row). New applications never wait for a test operation.
    */
   async lockClass(id: string) {
     const tx = this.db.tx;
@@ -56,7 +60,8 @@ export class AdmissionTestService {
     if (!ref) throw new NotFoundException('Admission class not found');
     const key = `admission-cycle:${ref.cycleId}`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${key}, 0))`;
-    await tx.$queryRaw`SELECT id FROM public.admission_cycle_classes WHERE id = ${id}::uuid FOR UPDATE`;
+    await tx.$queryRaw`
+      SELECT id FROM public.admission_cycle_classes WHERE id = ${id}::uuid FOR NO KEY UPDATE`;
     const row = await tx.admissionCycleClass.findUnique({
       where: { id },
       include: { cycle: { select: { id: true, requiresTest: true, meritTieBreak: true } } },
@@ -206,7 +211,7 @@ export class AdmissionTestService {
       SELECT id FROM public.admission_applications
        WHERE cycle_class_id = ${id}::uuid AND test_roll IS NULL
          AND status IN ('SUBMITTED', 'SHORTLISTED')
-       ORDER BY id FOR UPDATE`;
+       ORDER BY id FOR NO KEY UPDATE`;
     const [last, waiting] = await Promise.all([
       tx.admissionApplication.aggregate({ where: { cycleClassId: id }, _max: { testRoll: true } }),
       tx.admissionApplication.findMany({
@@ -221,13 +226,13 @@ export class AdmissionTestService {
     if (to > 999_999) throw apiError(422, 'ROLLS_EXHAUSTED', 'Test rolls go up to 999999');
     const ids = waiting.map((w) => w.id);
     const rolls = waiting.map((_, i) => from + i);
-    const written = await tx.$queryRaw<{ id: string }[]>`
+    const written = await tx.$queryRaw<{ id: string; roll: number }[]>`
       UPDATE public.admission_applications a
          SET test_roll = v.roll, updated_at = now()
         FROM unnest(${ids}::uuid[], ${rolls}::int[]) AS v(id, roll)
        WHERE a.id = v.id AND a.cycle_class_id = ${id}::uuid AND a.test_roll IS NULL
          AND a.status IN ('SUBMITTED', 'SHORTLISTED')
-      RETURNING a.id`;
+      RETURNING a.id, a.test_roll AS roll`;
     if (written.length !== ids.length) {
       // The rows were locked; if this ever happens, nothing is numbered (no gaps).
       throw apiError(409, 'ROLLS_CHANGED', 'The applications changed: issue the rolls again');
@@ -236,7 +241,14 @@ export class AdmissionTestService {
       entity: 'admission_test_rolls',
       entityId: id,
       action: 'UPDATE',
-      newValues: { from, to, applicationIds: written.map((w) => w.id) },
+      // In roll order (RETURNING has none of its own, review round 2 N3).
+      newValues: {
+        from,
+        to,
+        rolls: written
+          .sort((x, y) => x.roll - y.roll)
+          .map((w) => ({ applicationId: w.id, roll: w.roll })),
+      },
     });
     return { issued: written.length, from, to };
   }

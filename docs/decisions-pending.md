@@ -1147,3 +1147,21 @@ jantrik_admission; SET ROLE jantrik_admission; CREATE OR REPLACE …; RESET ROLE
   segments and cost count only what the cap lets through; the merit view's counts and warnings
   leave withdrawn applicants out at once; a safety test pins that `jantrik_admission` has no
   `CREATE` on `public` after the migrations.
+- **P4-a20 (review round 2). No lock blocks a foreign key:** the class row and the applicant rows
+  P4 locks are taken `FOR NO KEY UPDATE`, so a new application (its foreign key's KEY SHARE on the
+  class) never waits on a test operation; that removed a three-way lock cycle with P3's phone
+  lock (a 500 from a deadlock). A deadlock (`40P01`) or serialization failure (`40001`) anywhere in
+  the API now answers 409 `BUSY` with Retry-After (the lock timeout's answer).
+- **P4-a21 (review round 2 N1). A published result is not put back by hand** to SUBMITTED or
+  SHORTLISTED (409 `TEST_RESULT_PUBLISHED`): the next rebuild would undo a move-up the applicant
+  may already have been told about. Withdraw, reject and approve stay allowed.
+- **P4-a22 (review round 2 N2, recorded, not changed).** An SMS the worker has taken (passed its
+  relevance check, provider call in flight) is still QUEUED; if a republish keeps the status and a
+  new run starts in that window, the applicant can get the same result twice. Closing it needs a
+  SENDING state in the shared SMS pipeline (all purposes), which is beyond P4: a rare duplicate
+  of the same news.
+- **P4-a23 (review round 2 N3, N4).** The rolls' audit lists `{applicationId, roll}` in roll order;
+  a run's `skipped` means "not queued": over the cap, or no longer owed when the run reached them.
+- **P4-a24. The migration `20261117300100_admission_test` was edited in place** after the first
+  review (`results_built_at`). No database outside scratch and CI ever applied it; any that applied
+  the earlier version must be recreated (Prisma would refuse the changed checksum).

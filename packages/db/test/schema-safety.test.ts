@@ -669,13 +669,13 @@ describe('schema safety net', () => {
     });
   });
 
-  // A snapshot: widening what the public form's functions may touch fails here.
   it('jantrik_admission has no CREATE on schema public once the migrations ran (P3b N2, P4)', async () => {
     const [r] = await app.$queryRaw<{ create: boolean }[]>`
       SELECT has_schema_privilege('jantrik_admission', 'public', 'CREATE') AS create`;
     expect(r!.create).toBe(false);
   });
 
+  // A snapshot: widening what the public form's functions may touch fails here.
   it("jantrik_admission's table and column privileges are exactly the plan's", async () => {
     // From the catalogs: information_schema shows only the grants the current login may see.
     const rows = await app.$queryRaw<{ grant: string }[]>`
