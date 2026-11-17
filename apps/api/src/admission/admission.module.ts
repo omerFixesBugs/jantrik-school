@@ -48,6 +48,7 @@ import { FormTickets } from './public/form-ticket.js';
 import { PhoneTokens } from './public/phone-token.js';
 import { AdmissionPublicController } from './public/public.controller.js';
 import { AdmissionPublicService } from './public/public.service.js';
+import { AdmissionSubmitGuard } from './public/submit.guard.js';
 import { TurnstileVerifier } from './public/turnstile.js';
 import { AdmissionApprovalProcessor } from './approval.processor.js';
 import {
@@ -245,6 +246,7 @@ export class AdmissionApplicationsController {
     PhoneTokens,
     FormTickets,
     TurnstileVerifier,
+    AdmissionSubmitGuard,
     AdmissionSmsProcessor,
   ],
   exports: [AdmissionApplicationsService],

@@ -15,9 +15,20 @@ describe('admission/public: no institute access', () => {
 
   it.each(files)('%s imports none of Db, TenantJobRunner, TenantSmsService', (file) => {
     const src = readFileSync(path.join(dir, file), 'utf8');
-    for (const name of ['Db', 'TenantJobRunner', 'TenantSmsService']) {
+    for (const name of [
+      'Db',
+      'TenantJobRunner',
+      'TenantSmsService',
+      'withTenant',
+      'tenantClient',
+    ]) {
       expect(src).not.toMatch(new RegExp(`\\bimport\\b[^;]*\\b${name}\\b[^;]*from`));
     }
     expect(src).not.toMatch(/tenancy\/db\.service|tenant-job-runner|tenant-sms\.service/);
+    // The folder may open its own transactions (a lint exception, like the auth flows), but only
+    // with no institute and no person (review of P3b, S6).
+    expect(src.match(/withContext\(this\.prisma\.client, \{\}/g)?.length ?? 0).toBe(
+      src.match(/withContext\(/g)?.length ?? 0,
+    );
   });
 });

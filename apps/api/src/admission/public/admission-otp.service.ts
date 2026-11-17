@@ -51,21 +51,34 @@ export class AdmissionOtpService {
     @InjectQueue(ADMISSION_SMS_QUEUE) private readonly queue: Queue<AdmissionOtpJob>,
   ) {}
 
-  async request(input: {
+  /**
+   * The attempt's own limits, counted for every attempt (refused ones too): per address 20 an
+   * hour, and one code per phone per institute a minute. Call first.
+   */
+  async limitAttempt(input: { tenantId: string; phone: string; ip: string }): Promise<void> {
+    await this.limiter.consume(
+      { key: `adm-otp-ip:${input.ip}`, limit: 20, windowSec: 3600 },
+      {
+        key: `adm-otp-phone-1m:${input.tenantId}:${input.phone}`,
+        limit: 1,
+        windowSec: this.config.get('ADMISSION_OTP_PHONE_COOLDOWN_SEC', { infer: true }),
+      },
+    );
+  }
+
+  /**
+   * Sends a code. The shared budgets (the phone's five a day across institutes, the institute's
+   * ceiling) are spent only by a code that is really sent: both are checked first and counted
+   * together, or neither (review of P3b, M1: refused requests used to exhaust the ceiling).
+   */
+  async issue(input: {
     tenantId: string;
     phone: string;
-    ip: string;
     today: string;
     locale: 'bn' | 'en';
   }): Promise<void> {
     const { tenantId, phone } = input;
-    await this.limiter.consume(
-      { key: `adm-otp-ip:${input.ip}`, limit: 20, windowSec: 3600 },
-      {
-        key: `adm-otp-phone-1m:${tenantId}:${phone}`,
-        limit: 1,
-        windowSec: this.config.get('ADMISSION_OTP_PHONE_COOLDOWN_SEC', { infer: true }),
-      },
+    await this.limiter.consumeIfAllowed(
       { key: `adm-otp-phone-day:${phone}`, limit: 5, windowSec: 86_400 },
       {
         key: `adm-otp-tenant:${tenantId}:${input.today}`,

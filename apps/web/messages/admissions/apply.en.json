@@ -61,6 +61,7 @@
     "child": "Child",
     "class": "Class",
     "guardianPhone": "Guardian's phone",
-    "website": "Leave this empty"
+    "website": "Leave this empty",
+    "duplicateOther": "This child has already applied in this admission. Please contact the institute."
   }
 }

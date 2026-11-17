@@ -2,12 +2,14 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Headers,
   HttpCode,
   Param,
   Post,
   Req,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -20,6 +22,7 @@ import type { Request } from 'express';
 import { apiError } from '../../common/api-error.js';
 import { Public } from '../../common/decorators.js';
 import { AdmissionPublicService } from './public.service.js';
+import { AdmissionSubmitGuard } from './submit.guard.js';
 
 /** Institute slugs as the API makes them (lower case, digits, hyphens). */
 const slugParam = (slug: string): string => {
@@ -39,6 +42,7 @@ export class AdmissionPublicController {
   constructor(private readonly admission: AdmissionPublicService) {}
 
   @Get()
+  @Header('Cache-Control', 'no-store')
   form(
     @Param('slug') slug: string,
     @Req() req: Request,
@@ -47,6 +51,7 @@ export class AdmissionPublicController {
   }
 
   @Post('otp')
+  @Header('Cache-Control', 'no-store')
   @HttpCode(202)
   otp(
     @Param('slug') slug: string,
@@ -57,6 +62,7 @@ export class AdmissionPublicController {
   }
 
   @Post('otp/verify')
+  @Header('Cache-Control', 'no-store')
   @HttpCode(200)
   verify(
     @Param('slug') slug: string,
@@ -72,7 +78,9 @@ export class AdmissionPublicController {
    * while it streams; decoded two at a time per process).
    */
   @Post('applications')
+  @Header('Cache-Control', 'no-store')
   @HttpCode(201)
+  @UseGuards(AdmissionSubmitGuard)
   @UseInterceptors(
     FileInterceptor('photo', {
       limits: { fileSize: UPLOAD_MAX_BYTES, files: 1, fields: 8, fieldSize: 64 * 1024, parts: 10 },
@@ -95,6 +103,7 @@ export class AdmissionPublicController {
   }
 
   @Post('status')
+  @Header('Cache-Control', 'no-store')
   @HttpCode(200)
   status(
     @Param('slug') slug: string,

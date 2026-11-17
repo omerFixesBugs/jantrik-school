@@ -15,11 +15,12 @@ BEGIN
   END IF;
 END $$;
 
--- CREATE: a function's new owner needs it (ALTER FUNCTION … OWNER TO), as for jantrik_ingest.
+-- CREATE: a function's new owner needs it (ALTER FUNCTION … OWNER TO), as for jantrik_ingest;
+-- the next migration takes it back once the functions are handed over.
 GRANT USAGE, CREATE ON SCHEMA public TO jantrik_admission;
--- Its queries meet the tables' tenant_isolation policies too, which call the signed request
--- context (P1-J8). The public functions never set one, so it reads as "no institute" there.
-GRANT EXECUTE ON FUNCTION app_verified_context() TO jantrik_admission;
+-- Its queries also meet the tables' tenant_isolation policies; those call the context through
+-- app_current_tenant_id() (P1-J8), which needs no grant to this role. With no context set (the
+-- public functions never set one) they read as "no institute", so only the policies below apply.
 
 -- The institute behind a slug: whether it takes applications, its name and language.
 GRANT SELECT (id, slug, name, status, timezone, default_locale) ON tenants TO jantrik_admission;

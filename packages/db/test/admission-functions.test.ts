@@ -244,7 +244,7 @@ describe('admission public functions', () => {
       expect(photo.sha256).toMatch(/^[0-9a-f]{64}$/);
     });
 
-    it('the same birth registration number, or phone + name + birthday, is a DUPLICATE with the first number', async () => {
+    it('a DUPLICATE: the earlier number only for the same phone; another phone learns no number (review S1)', async () => {
       const ph = phone();
       const first = await submit(
         a.slug,
@@ -253,18 +253,50 @@ describe('admission public functions', () => {
         payload({ nameBn: 'দুইবার', birthRegistrationNo: '20191234567890777' }),
       );
       expect(first.outcome).toBe('CREATED');
+      // Another family's phone typing this birth registration number: no number.
       const byReg = await submit(
         a.slug,
         a.class6,
         phone(),
         payload({ nameBn: 'অন্য নাম', birthRegistrationNo: '20191234567890777' }),
       );
-      expect(byReg).toMatchObject({ outcome: 'DUPLICATE', application_no: first.application_no });
+      expect(byReg).toMatchObject({ outcome: 'DUPLICATE', application_no: null });
+      // The same family (the same phone): its own earlier number.
       const byName = await submit(a.slug, a.class6, ph, payload({ nameBn: '  দুইবার ' }));
       expect(byName).toMatchObject({ outcome: 'DUPLICATE', application_no: first.application_no });
+      const sameReg = await submit(
+        a.slug,
+        a.class6,
+        ph,
+        payload({ nameBn: 'দুইবার', birthRegistrationNo: '20191234567890777' }),
+      );
+      expect(sameReg).toMatchObject({ outcome: 'DUPLICATE', application_no: first.application_no });
     });
 
-    it('the same child from two phones at the same moment: one CREATED, one DUPLICATE (review S3)', async () => {
+    it('a phone at its cap learns nothing from the duplicate check (the cap comes first)', async () => {
+      const victim = await submit(
+        a.slug,
+        a.class6,
+        phone(),
+        payload({ nameBn: 'অন্য পরিবার', birthRegistrationNo: '20191234567890888' }),
+      );
+      expect(victim.outcome).toBe('CREATED');
+      const ph = phone();
+      for (const n of ['ক', 'খ', 'গ']) {
+        expect((await submit(a.slug, a.class6, ph, payload({ nameBn: n }))).outcome).toBe(
+          'CREATED',
+        );
+      }
+      const probe = await submit(
+        a.slug,
+        a.class6,
+        ph,
+        payload({ nameBn: 'ঘ', birthRegistrationNo: '20191234567890888' }),
+      );
+      expect(probe).toMatchObject({ outcome: 'PHONE_CAP', application_no: null });
+    });
+
+    it('the same child from two phones at the same moment: one CREATED, one DUPLICATE without a number (review S3)', async () => {
       const reg = `2019${String(Date.now()).slice(-13).padStart(13, '0')}`;
       const results = await Promise.all(
         [phone(), phone()].map((ph) =>
@@ -272,10 +304,7 @@ describe('admission public functions', () => {
         ),
       );
       expect(results.map((r) => r.outcome).sort()).toEqual(['CREATED', 'DUPLICATE']);
-      const created = results.find((r) => r.outcome === 'CREATED')!;
-      expect(results.find((r) => r.outcome === 'DUPLICATE')!.application_no).toBe(
-        created.application_no,
-      );
+      expect(results.find((r) => r.outcome === 'DUPLICATE')!.application_no).toBeNull();
     });
 
     it('the fourth live application of a phone in the cycle is PHONE_CAP', async () => {

@@ -129,8 +129,11 @@ shows the address to share.
     institute's id and timezone, which the API keeps to itself.)
   - `admission_submit(slug, cycle class, phone, payload, photo, width, height, now)`: one row,
     `CREATED` with the number, or `UNKNOWN`, `CLOSED` (also for another institute's class),
-    `INVALID`, `DUPLICATE` (with the earlier number) or `PHONE_CAP`. The same duplicate and
-    per-phone rules as the staff entry, under the same per-phone lock.
+    `INVALID`, `PHONE_CAP` (checked first) or `DUPLICATE`, with the earlier number **only when that
+    application has the same phone** (otherwise "already applied, contact the institute": a
+    stranger who types another family's birth registration number learns nothing). The same
+    duplicate and per-phone rules as the staff entry, under the same locks in the same order (the
+    cycle's, shared; the phone's; one per birth registration number).
   - `admission_lookup(slug, number, phone)`: the status, only for that phone.
     The role sees rows only through `TO jantrik_admission` policies and column grants
     (`schema-safety.test.ts` pins them exactly).
@@ -140,16 +143,24 @@ shows the address to share.
   `JWT_ACCESS_SECRET`, `typ: admission-phone`, audience the institute, 30 minutes, decision P3-N)
   for the `X-Admission-Token` header. It is never an access token, and an access token never works
   here.
-- **Limits (review focus 1):** a code needs a Turnstile pass first (a refused token uses no
-  counter); then per phone 1 a minute and 5 a day, per address 20 an hour, and per institute
-  `ADMISSION_OTP_PER_TENANT_PER_DAY` (300) a day whatever the phones and addresses. The form: 60 a
+- **Limits (review focus 1):** a code request first passes a per-address limit (60 an hour,
+  before the database or Cloudflare is reached), then Turnstile (a refused token uses no code
+  counter), then per address 20 an hour and per phone one a minute
+  (`ADMISSION_OTP_PHONE_COOLDOWN_SEC`, 60); the shared budgets, per phone 5 a day (across
+  institutes) and per institute `ADMISSION_OTP_PER_TENANT_PER_DAY` (300) a day whatever the phones
+  and addresses, are checked together and spent **only by a code that is sent** (one atomic
+  Redis script), so refused requests can never exhaust an institute's day.
+- **The status page** asks for a code with the application number (`purpose: 'status'`): it
+  works after the form closed, and the code is sent only when that phone made that application;
+  the answer is the same either way. The form: 60 a
   minute per address; submit 10 an hour per address and 10 a day per phone; status 30 an hour per
   address and 20 a day per phone.
 - **Bots (S6):** Turnstile on every code and every submit (each needs its own token); a hidden
   `website` field (the honeypot); and the form ticket from `GET`: a submit under 15 s or over 2 h
   after the form opened gets the same vague 422 `ADMISSION_REJECTED` as a filled honeypot
   (decision P3-L). Turnstile fails closed: Cloudflare unreachable in 5 s → 503.
-- **The photo:** multipart, at most 5 MB (refused while it streams), re-encoded by P2's pipeline
+- **The photo:** multipart, read only after a guard checked the per-address submit limit and the
+  phone token's signature and expiry; at most 5 MB (refused while it streams), re-encoded by P2's pipeline
   (JPEG ≤ 600×800, ≤ 200 KB, no EXIF), at most two decodes at a time per process. Only the
   re-encoded bytes reach the database.
 - **SMS** (decision P3-C, queue `admission-sms`, run by the worker in the institute's own
@@ -158,6 +169,10 @@ shows the address to share.
   received" (`ADMISSION_SUBMITTED`, S11) goes through the normal per-institute queue and is skipped
   over the cap (the slip is on screen). In development and tests the SMS go to the console, memory
   or outbox providers only.
+- **Turnstile checks** a real widget's answer for our action (`admission-otp` or
+  `admission-submit`) and the web app's host (from `WEB_PUBLIC_URL`); Cloudflare's test secrets
+  report neither and are accepted only outside production.
+- **Public answers** carry `Cache-Control: no-store`.
 - **Turnstile keys:** development uses Cloudflare's published always-pass **test keys**
   (`.env.example`); the API and Playwright tests use a fake verifier (`TURNSTILE_PROVIDER=fake`,
   test only) and never call Cloudflare; production needs a real widget's keys (the API refuses the

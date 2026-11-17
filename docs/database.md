@@ -653,6 +653,12 @@ wrapped and composite foreign keys `ON UPDATE/DELETE RESTRICT`:
 - `admission_application_photos` (S I D): a re-encoded JPEG ≤ 200 KB (204 800 bytes) until approval
   moves it into `stored_files`; primary key `(tenant_id, application_id)`.
 - `admission_counters` (S I U): the last number per institute and year.
+- **The public functions** (P3b, owned by the NOLOGIN `jantrik_admission`, run by `jantrik_app`):
+  an SQL injection running as `jantrik_app` can call `admission_submit` and `admission_lookup`
+  for any institute with any phone and any `p_now`, without the phone's code or Turnstile (those
+  live in the API). What it can reach is what the form can: submit an application (the duplicate
+  and per-phone rules still hold) or read the status of an application whose number and phone it
+  already knows. `p_now` stays a parameter so tests can move time (decision P3-b13).
 
 ### Files and the institute profile (sprint 1 P2)
 

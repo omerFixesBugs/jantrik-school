@@ -61,9 +61,9 @@ END $$;
 -- One row, always: outcome CREATED (with the new number), UNKNOWN (slug), CLOSED (the class is
 -- not this institute's, not open, or its cycle is not taking applications at p_now: one answer
 -- for all, so another institute's class id tells nothing), INVALID (a key outside the list, a
--- required field missing, a hidden field or photo given, a value the table refuses), DUPLICATE
--- (with the earlier number, decision P3-S) or PHONE_CAP (a fourth live application of the phone in
--- the cycle). The rules match the staff entry's (apps/api/src/admission/applications.service.ts).
+-- required field missing, a hidden field or photo given, a value the table refuses), PHONE_CAP (a
+-- fourth live application of the phone in the cycle) or DUPLICATE (with the earlier number only
+-- when it has this same phone: decision P3-S as changed after the review, S1). The rules match the staff entry's (apps/api/src/admission/applications.service.ts).
 CREATE FUNCTION admission_submit(
   p_slug text,
   p_cycle_class_id uuid,
@@ -93,6 +93,7 @@ DECLARE
   v_dob date;
   v_birth_reg text;
   v_dup text;
+  v_dup_phone text;
   v_live integer;
   v_year integer;
   v_no integer;
@@ -196,24 +197,28 @@ BEGIN
       'admission-breg:' || v_tenant::text || ':' || v_cycle.id::text || ':' || v_birth_reg, 0));
   END IF;
 
-  SELECT a.application_no INTO v_dup
-  FROM public.admission_applications a
-  WHERE a.tenant_id = v_tenant AND a.cycle_id = v_cycle.id AND a.status <> 'WITHDRAWN'
-    AND ((v_birth_reg IS NOT NULL AND a.birth_registration_no = v_birth_reg)
-         OR (a.phone = p_phone AND a.name_key = v_name_key AND a.date_of_birth = v_dob))
-  ORDER BY a.submitted_at, a.id
-  LIMIT 1;
-  IF v_dup IS NOT NULL THEN
-    RETURN QUERY SELECT 'DUPLICATE'::text, v_dup, v_tenant, c_null;
-    RETURN;
-  END IF;
-
+  -- The phone's cap first, so a phone at its cap learns nothing from the duplicate check.
   SELECT count(*) INTO v_live
   FROM public.admission_applications a
   WHERE a.tenant_id = v_tenant AND a.cycle_id = v_cycle.id AND a.phone = p_phone
     AND a.status NOT IN ('WITHDRAWN', 'REJECTED');
   IF v_live >= 3 THEN
     RETURN QUERY SELECT 'PHONE_CAP'::text, NULL::text, v_tenant, c_null;
+    RETURN;
+  END IF;
+
+  -- A duplicate: its number only when it has this same phone (review of P3b, S1): a stranger who
+  -- types another family's birth registration number learns no application number.
+  SELECT a.application_no, a.phone INTO v_dup, v_dup_phone
+  FROM public.admission_applications a
+  WHERE a.tenant_id = v_tenant AND a.cycle_id = v_cycle.id AND a.status <> 'WITHDRAWN'
+    AND ((v_birth_reg IS NOT NULL AND a.birth_registration_no = v_birth_reg)
+         OR (a.phone = p_phone AND a.name_key = v_name_key AND a.date_of_birth = v_dob))
+  ORDER BY (a.phone = p_phone) DESC, a.submitted_at, a.id
+  LIMIT 1;
+  IF v_dup IS NOT NULL THEN
+    RETURN QUERY SELECT 'DUPLICATE'::text,
+      CASE WHEN v_dup_phone = p_phone THEN v_dup END, v_tenant, c_null;
     RETURN;
   END IF;
 
@@ -254,13 +259,14 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN
     -- The index admission_applications_birth_reg_live (the locks above make this rare): the
     -- earlier application's number, as for any duplicate.
-    SELECT a.application_no INTO v_dup
+    SELECT a.application_no, a.phone INTO v_dup, v_dup_phone
     FROM public.admission_applications a
     WHERE a.tenant_id = v_tenant AND a.cycle_id = v_cycle.id AND a.status <> 'WITHDRAWN'
       AND a.birth_registration_no = v_birth_reg
     ORDER BY a.submitted_at, a.id
     LIMIT 1;
-    RETURN QUERY SELECT 'DUPLICATE'::text, v_dup, v_tenant, c_null;
+    RETURN QUERY SELECT 'DUPLICATE'::text,
+      CASE WHEN v_dup_phone = p_phone THEN v_dup END, v_tenant, c_null;
     RETURN;
   WHEN check_violation OR invalid_text_representation OR not_null_violation
                  OR string_data_right_truncation OR numeric_value_out_of_range THEN
@@ -323,3 +329,6 @@ BEGIN
     EXECUTE format('ALTER FUNCTION %s OWNER TO jantrik_admission', f);
   END LOOP;
 END $$;
+
+-- The new owner needed CREATE on the schema only to take the functions over (review N2).
+REVOKE CREATE ON SCHEMA public FROM jantrik_admission;

@@ -63,7 +63,13 @@ export default function StatusPage() {
       try {
         await publicApi(`/${slug}/otp`, {
           method: 'POST',
-          json: { phone: e164, turnstileToken: robot },
+          // A status code: sent only when this phone made this application (review S4).
+          json: {
+            phone: e164,
+            turnstileToken: robot,
+            purpose: 'status',
+            applicationNo: toAsciiDigits(no.trim()),
+          },
         });
         setStep('code');
       } finally {

@@ -1,8 +1,9 @@
 import { withTenant } from '@jantrik/db';
 import type { AdmissionPublicForm, AdmissionPublicStatus } from '@jantrik/shared';
+import zlib from 'node:zlib';
 import sharp from 'sharp';
 import { TURNSTILE_DUMMY_TOKEN } from '../src/admission/public/turnstile.js';
-import { admissionCycle, admissionSchool, type AdmissionSchool } from './support/admission.js';
+import { admissionCycle, admissionSchool, api, type AdmissionSchool } from './support/admission.js';
 import { FakeClock } from './support/clock.js';
 import {
   addMember,
@@ -19,6 +20,8 @@ import {
 // The per-institute ceiling of codes is set low here, before the app reads its settings.
 vi.hoisted(() => {
   process.env['ADMISSION_OTP_PER_TENANT_PER_DAY'] = '20';
+  // A phone's next code after 5 s (60 by default): the status test asks twice for one phone.
+  process.env['ADMISSION_OTP_PHONE_COOLDOWN_SEC'] = '5';
 });
 
 type Form = AdmissionPublicForm & { formTicket: string };
@@ -228,7 +231,7 @@ describe('admission (public): form, codes, submit, status', () => {
     expect(h.sms.sentTo(phone)).toEqual([]);
     // The refusals used no counter: the phone gets its code now.
     await askCode(a.slug, phone).expect(202);
-    // And a second one within a minute is refused.
+    // And a second one within the cooldown is refused.
     expect((await askCode(a.slug, phone)).status).toBe(429);
   });
 
@@ -341,6 +344,129 @@ describe('admission (public): form, codes, submit, status', () => {
     expect(again.body).toMatchObject({
       code: 'ADMISSION_DUPLICATE',
       applicationNo: first.body.applicationNo,
+    });
+  });
+
+  describe('after the review (M1, S1, S3, S4, N4)', () => {
+    /** A PNG header that claims 20 000 × 20 000 pixels (sharp's pixel limit refuses it unread). */
+    const bomb = () => {
+      const chunk = (type: string, data: Buffer) => {
+        const len = Buffer.alloc(4);
+        len.writeUInt32BE(data.length);
+        const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+        const crc = Buffer.alloc(4);
+        crc.writeUInt32BE(zlib.crc32(body));
+        return Buffer.concat([len, body, crc]);
+      };
+      const ihdr = Buffer.alloc(13);
+      ihdr.writeUInt32BE(20_000, 0);
+      ihdr.writeUInt32BE(20_000, 4);
+      ihdr[8] = 8; // bit depth
+      ihdr[9] = 2; // truecolour
+      return Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        chunk('IHDR', ihdr),
+        chunk('IDAT', zlib.deflateSync(Buffer.alloc(64))),
+        chunk('IEND', Buffer.alloc(0)),
+      ]);
+    };
+
+    it("M1: refused requests never spend the institute's ceiling: 25 from one address and phone, then a fresh phone still gets a code", async () => {
+      const t = await admissionSchool(h);
+      await admissionCycle(h, t);
+      const ip = randomIp();
+      const phone = randomPhone();
+      const statuses = [];
+      for (let i = 0; i < 25; i++) statuses.push((await askCode(t.slug, phone, ip)).status);
+      expect(statuses.filter((x) => x === 202)).toHaveLength(1);
+      expect(statuses.filter((x) => x === 429)).toHaveLength(24);
+      await askCode(t.slug, randomPhone(), randomIp()).expect(202);
+    });
+
+    it('S1: the same child from another phone is a duplicate without the earlier number', async () => {
+      const form = await getForm(a.slug);
+      const first = await prove(a.slug);
+      const other = await prove(a.slug);
+      clock.advance(20_000);
+      const body = fields({ nameBn: 'গোপন শিশু', birthRegistrationNo: '20191234500000001' });
+      await submit(a.slug, first.token, {
+        cycleClassId: classA,
+        ticket: form.formTicket,
+        payload: body,
+      }).expect(201);
+      const res = await submit(a.slug, other.token, {
+        cycleClassId: classA,
+        ticket: form.formTicket,
+        payload: { ...body, nameBn: 'অন্য নাম' },
+      });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('ADMISSION_DUPLICATE');
+      expect(res.body.applicationNo).toBeUndefined();
+    });
+
+    it('S3: an upload without a valid phone token is refused before its body is read', async () => {
+      const res = await http(h)
+        .post(pub(a.slug, '/applications'))
+        .set('X-Forwarded-For', randomIp())
+        .attach('photo', Buffer.alloc(4 * 1024 * 1024, 1), 'photo.png');
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('ADMISSION_TOKEN_INVALID');
+    });
+
+    it('S4: the status code works after the form closed, and only reaches a phone that applied', async () => {
+      const t = await admissionSchool(h);
+      const c = await admissionCycle(h, t);
+      const cc = c.classes.find((x) => x.classLevel.id === t.class6)!.id;
+      const form = await getForm(t.slug);
+      const { phone, token } = await prove(t.slug);
+      clock.advance(20_000);
+      const no = (
+        await submit(t.slug, token, { cycleClassId: cc, ticket: form.formTicket }).expect(201)
+      ).body.applicationNo as string;
+      await api(h, t.tokens.admin)
+        .post(`/admission/cycles/${c.id}/status`, { status: 'CLOSED' })
+        .expect(200);
+      await new Promise((r) => setTimeout(r, 5_500)); // the phone's cooldown (Redis, real time)
+      const before = h.sms.sentTo(phone).length;
+      const ask = (ph: string) =>
+        http(h)
+          .post(pub(t.slug, '/otp'))
+          .set('X-Forwarded-For', randomIp())
+          .send({
+            phone: ph,
+            turnstileToken: TURNSTILE_DUMMY_TOKEN,
+            purpose: 'status',
+            applicationNo: no,
+          });
+      await ask(phone).expect(202);
+      await vi.waitFor(() => expect(h.sms.sentTo(phone).length).toBe(before + 1), {
+        timeout: 15_000,
+      });
+      // Another phone: the same answer, no SMS (it tells a stranger nothing).
+      const stranger = randomPhone();
+      await ask(stranger).expect(202);
+      await new Promise((r) => setTimeout(r, 1_000));
+      expect(h.sms.sentTo(stranger)).toEqual([]);
+      // The application form itself stays closed.
+      expect((await askCode(t.slug, randomPhone())).status).toBe(404);
+    });
+
+    it('N4: a decompression bomb is refused (422) without decoding it', async () => {
+      const form = await getForm(a.slug);
+      const { token } = await prove(a.slug);
+      clock.advance(20_000);
+      const res = await submit(a.slug, token, {
+        cycleClassId: classA,
+        ticket: form.formTicket,
+        payload: fields({ nameBn: 'বোমা' }),
+        photo: bomb(),
+      });
+      expect(res.status).toBe(422);
+    });
+
+    it('N6: public answers are never cached', async () => {
+      const res = await http(h).get(pub(a.slug)).set('X-Forwarded-For', randomIp()).expect(200);
+      expect(res.headers['cache-control']).toBe('no-store');
     });
   });
 });

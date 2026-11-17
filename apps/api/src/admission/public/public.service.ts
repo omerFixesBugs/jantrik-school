@@ -34,7 +34,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
  * The public admission form (sprint 1 P3b, decision S4). No request ever opens an institute's
  * transaction here (P3-C): the database is reached only through the three admission_* functions,
- * each in a transaction with no institute and no person (withContext({})). Nothing in this
+ * each in a transaction with no institute and no person (an empty context). Nothing in this
  * folder imports Db, TenantJobRunner or TenantSmsService (no-tenant-access.spec.ts).
  */
 @Injectable()
@@ -93,17 +93,44 @@ export class AdmissionPublicService {
     return { ...form, formTicket: this.tickets.issue(slug) };
   }
 
-  /** POST /public/admission/:slug/otp: a code to the phone, after Turnstile. */
-  async requestOtp(slug: string, body: { phone?: unknown; turnstileToken?: unknown }, ip: string) {
+  /**
+   * POST /public/admission/:slug/otp: a code to the phone, after Turnstile. `purpose: 'status'`
+   * (the status page, review S4) works while the institute is active even with no cycle open, and
+   * sends the code only when that phone has that application here; the answer is the same either
+   * way, so it tells a stranger nothing.
+   */
+  async requestOtp(
+    slug: string,
+    body: { phone?: unknown; turnstileToken?: unknown; purpose?: unknown; applicationNo?: unknown },
+    ip: string,
+  ) {
+    // Before anything that costs (the database, Cloudflare), and never the code counters (N3).
+    await this.limiter.consume({ key: `adm-otp-pre-ip:${ip}`, limit: 60, windowSec: 3600 });
     const phone = typeof body.phone === 'string' ? normalizeBdPhone(body.phone) : null;
     if (!phone) throw apiError(400, 'PHONE_INVALID', 'Invalid Bangladeshi mobile number');
+    const forStatus = body.purpose === 'status';
+    const applicationNo =
+      typeof body.applicationNo === 'string' ? toAsciiDigits(body.applicationNo.trim()) : '';
+    if (forStatus && !applicationNo) {
+      throw apiError(400, 'APPLICATION_NO_REQUIRED', 'The application number is required');
+    }
     const f = await this.open(slug);
-    if (f.cycles.length === 0) throw apiError(404, 'ADMISSION_CLOSED', 'Not taking applications');
+    if (!forStatus && f.cycles.length === 0) {
+      throw apiError(404, 'ADMISSION_CLOSED', 'Not taking applications');
+    }
     await this.passTurnstile(body.turnstileToken, ip, 'admission-otp');
-    await this.otp.request({
+    await this.otp.limitAttempt({ tenantId: f.tenantId, phone, ip });
+    if (forStatus) {
+      const [row] = await this.call(
+        (tx) =>
+          tx.$queryRaw<{ v: unknown }[]>`
+          SELECT public.admission_lookup(${slug}, ${applicationNo}, ${phone}) AS v`,
+      );
+      if (!row?.v) return { expiresIn: 300 };
+    }
+    await this.otp.issue({
       tenantId: f.tenantId,
       phone,
-      ip,
       today: todayIn(f.timezone, this.clock.now()),
       locale: f.institute.locale === 'en' ? 'en' : 'bn',
     });
@@ -114,6 +141,8 @@ export class AdmissionPublicService {
   async verifyOtp(slug: string, body: { phone?: unknown; code?: unknown }, ip: string) {
     const phone = typeof body.phone === 'string' ? normalizeBdPhone(body.phone) : null;
     const code = typeof body.code === 'string' ? toAsciiDigits(body.code.trim()) : '';
+    // Before the database is reached (N3); the per-code attempts are counted in verify().
+    await this.limiter.consume({ key: `adm-verify-pre-ip:${ip}`, limit: 60, windowSec: 900 });
     if (!phone || !/^\d{6}$/.test(code)) {
       throw apiError(422, 'ADMISSION_CODE_INVALID', 'The code is not right');
     }
@@ -132,7 +161,8 @@ export class AdmissionPublicService {
     photo: Buffer | undefined,
     ip: string,
   ): Promise<{ applicationNo: string }> {
-    await this.limiter.consume({ key: `adm-submit-ip:${ip}`, limit: 10, windowSec: 3600 });
+    // The per-address limit and the token's signature ran in AdmissionSubmitGuard, before the
+    // upload was read (review S3); here the token must also be this institute's.
     const f = await this.open(slug);
     const phone = this.phoneFrom(token, f.tenantId);
     await this.limiter.consume({ key: `adm-submit-phone:${phone}`, limit: 10, windowSec: 86_400 });
@@ -191,8 +221,10 @@ export class AdmissionPublicService {
         );
         return { applicationNo: r.application_no! };
       case 'DUPLICATE':
+        // The earlier number only when that application has this same phone (review S1): a
+        // stranger never learns another family's application number.
         throw apiError(409, 'ADMISSION_DUPLICATE', 'This child has already applied', {
-          applicationNo: r.application_no,
+          ...(r.application_no ? { applicationNo: r.application_no } : {}),
         });
       case 'PHONE_CAP':
         throw apiError(422, 'ADMISSION_PHONE_CAP', 'This phone has applied for three children');

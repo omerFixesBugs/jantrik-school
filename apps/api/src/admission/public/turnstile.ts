@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Env } from '../../config/env.js';
+import { TURNSTILE_TEST_SECRETS, type Env } from '../../config/env.js';
 
 /** What the verifier says about a token: it passed, it did not, or Cloudflare could not answer. */
 export type TurnstileVerdict = 'PASS' | 'FAIL' | 'UNAVAILABLE';
@@ -44,10 +44,16 @@ export class TurnstileVerifier {
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       if (!res.ok) return 'UNAVAILABLE';
-      const out = (await res.json()) as { success?: boolean; action?: string };
+      const out = (await res.json()) as { success?: boolean; action?: string; hostname?: string };
       if (out.success !== true) return 'FAIL';
-      // Cloudflare's test keys report no action; a real widget must report ours.
-      if (out.action && out.action !== action) return 'FAIL';
+      // A real widget must report our action and the web app's host (review S2): a token solved
+      // on another site or for the other step is refused. Cloudflare's test secrets (development
+      // only; production refuses them) report neither.
+      if (!TURNSTILE_TEST_SECRETS.includes(secret)) {
+        if (out.action !== action) return 'FAIL';
+        const web = this.config.get('WEB_PUBLIC_URL', { infer: true });
+        if (web && out.hostname !== new URL(web).hostname) return 'FAIL';
+      }
       return 'PASS';
     } catch {
       return 'UNAVAILABLE';

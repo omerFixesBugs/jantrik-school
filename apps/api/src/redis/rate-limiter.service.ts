@@ -11,6 +11,22 @@ export interface RateLimitRule {
   windowSec: number;
 }
 
+/** KEYS: the counters; ARGV: limit, window per key. 0 when counted, else seconds to wait. */
+const CONSUME_IF_ALLOWED = `
+for i, key in ipairs(KEYS) do
+  local n = tonumber(redis.call('GET', key) or '0')
+  if n >= tonumber(ARGV[(i - 1) * 2 + 1]) then
+    local ttl = redis.call('TTL', key)
+    if ttl < 1 then ttl = tonumber(ARGV[(i - 1) * 2 + 2]) end
+    return ttl
+  end
+end
+for i, key in ipairs(KEYS) do
+  redis.call('SET', key, 0, 'EX', ARGV[(i - 1) * 2 + 2], 'NX')
+  redis.call('INCR', key)
+end
+return 0`;
+
 /**
  * Fixed-window rate limiter in Redis. Counters are shared by every API instance. The device
  * receiver (src/ingest) has no request context (CLS) and uses `hit` and `peek` only.
@@ -47,6 +63,24 @@ export class RateLimiter {
   /** Forget a counter (e.g. failed password attempts after a successful login). */
   async reset(key: string): Promise<void> {
     await this.redis.del(`rl:${key}`);
+  }
+
+  /**
+   * Counts one hit on every rule only when all of them still have room, atomically (one Lua
+   * script); otherwise counts nothing and throws 429. For shared budgets a refused request must
+   * not spend (an institute's daily admission codes, review of P3b, M1).
+   */
+  async consumeIfAllowed(...rules: RateLimitRule[]): Promise<void> {
+    const keys = rules.map((r) => `rl:${r.key}`);
+    const args = rules.flatMap((r) => [String(r.limit), String(r.windowSec)]);
+    const retryAfter = Number(
+      await this.redis.eval(CONSUME_IF_ALLOWED, keys.length, ...keys, ...args),
+    );
+    if (retryAfter > 0) {
+      const res = this.cls?.isActive() ? this.cls.get<Response | undefined>(CLS_RES) : undefined;
+      res?.setHeader('Retry-After', String(retryAfter));
+      throw new HttpException('Too many requests', HttpStatus.TOO_MANY_REQUESTS);
+    }
   }
 
   /** Count one hit on every rule; throw 429 (with Retry-After) if any is exceeded. */

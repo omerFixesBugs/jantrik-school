@@ -683,37 +683,38 @@ describe('schema safety net', () => {
       FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
       WHERE c.relnamespace = 'public'::regnamespace AND a.grantee = 'jantrik_admission'::regrole
       ORDER BY 1`;
-    const tables = [...new Set(rows.map((r) => r.grant.split(':').slice(0, 2).join(':')))];
-    expect(tables).toEqual([
-      'academic_years:SELECT',
-      'admission_application_photos:INSERT',
-      'admission_applications:INSERT',
-      'admission_applications:SELECT',
-      'admission_counters:INSERT',
-      'admission_counters:SELECT',
-      'admission_counters:UPDATE',
-      'admission_cycle_classes:SELECT',
-      'admission_cycles:SELECT',
-      'class_levels:SELECT',
-      'institute_profiles:SELECT',
-      'study_groups:SELECT',
-      'tenants:SELECT',
-    ]);
-    const cols = (t: string, p: string) =>
-      rows
-        .filter((r) => r.grant.startsWith(`${t}:${p}:`))
-        .map((r) => r.grant.split(':')[2])
-        .sort();
-    expect(cols('tenants', 'SELECT')).toEqual([
-      'default_locale',
-      'id',
-      'name',
-      'slug',
-      'status',
-      'timezone',
-    ]);
-    expect(cols('admission_applications', 'SELECT')).toEqual(
-      [
+    // Every table:privilege with its columns ('*' = the whole table), exactly: any widening, a
+    // column or a whole-table grant, fails here (review of P3b, S5).
+    const got: Record<string, string[]> = {};
+    for (const { grant } of rows) {
+      const [table, privilege, column] = grant.split(':') as [string, string, string];
+      (got[`${table}:${privilege}`] ??= []).push(column);
+    }
+    for (const k of Object.keys(got)) got[k]!.sort();
+    const cols = (...c: string[]) => [...c].sort();
+    expect(got).toEqual({
+      'tenants:SELECT': cols('default_locale', 'id', 'name', 'slug', 'status', 'timezone'),
+      'institute_profiles:SELECT': cols('name_bn', 'name_en', 'tenant_id'),
+      'academic_years:SELECT': cols('id', 'start_date', 'tenant_id'),
+      'class_levels:SELECT': cols(
+        'id',
+        'is_active',
+        'name_bn',
+        'name_en',
+        'sort_order',
+        'tenant_id',
+      ),
+      'study_groups:SELECT': cols(
+        'id',
+        'is_active',
+        'name_bn',
+        'name_en',
+        'sort_order',
+        'tenant_id',
+      ),
+      'admission_cycles:SELECT': ['*'],
+      'admission_cycle_classes:SELECT': ['*'],
+      'admission_applications:SELECT': cols(
         'application_no',
         'birth_registration_no',
         'cycle_class_id',
@@ -727,13 +728,43 @@ describe('schema safety net', () => {
         'status',
         'submitted_at',
         'tenant_id',
-      ].sort(),
-    );
-    // Never the staff columns or the student link.
-    for (const c of ['student_id', 'status', 'status_by', 'staff_note', 'approval_problem']) {
-      expect(cols('admission_applications', 'INSERT')).not.toContain(c);
-    }
-    expect(cols('admission_counters', 'UPDATE')).toEqual(['last_no', 'updated_at']);
+      ),
+      'admission_applications:INSERT': cols(
+        'id',
+        'tenant_id',
+        'cycle_id',
+        'cycle_class_id',
+        'application_no',
+        'source',
+        'name_bn',
+        'name_en',
+        'name_key',
+        'date_of_birth',
+        'gender',
+        'religion',
+        'blood_group',
+        'birth_registration_no',
+        'previous_institute',
+        'present_address',
+        'permanent_address',
+        'father_name_bn',
+        'father_name_en',
+        'mother_name_bn',
+        'mother_name_en',
+        'guardian_name_bn',
+        'guardian_name_en',
+        'guardian_relation',
+        'guardian_occupation',
+        'phone',
+        'submitted_at',
+        'created_at',
+        'updated_at',
+      ),
+      'admission_application_photos:INSERT': ['*'],
+      'admission_counters:SELECT': ['*'],
+      'admission_counters:INSERT': ['*'],
+      'admission_counters:UPDATE': cols('last_no', 'updated_at'),
+    });
   });
 
   // The receiver parses internet input without a login: whatever it does goes through the

@@ -58,6 +58,19 @@ export class PhoneTokens {
 
   /** The proved phone for this institute, or null (bad, expired, another institute's, not ours). */
   verify(token: string | undefined, tenantId: string): string | null {
+    const claims = this.claims(token);
+    return claims && claims.aud === tenantId ? claims.sub : null;
+  }
+
+  /**
+   * A token of ours, not expired, for any institute (the upload guard's check before the body is
+   * read; the route then checks the institute).
+   */
+  valid(token: string | undefined): boolean {
+    return this.claims(token) !== null;
+  }
+
+  private claims(token: string | undefined): PhoneClaims | null {
     if (!token || token.length > 1024) return null;
     const parts = token.split('.');
     if (parts.length !== 3) return null;
@@ -73,12 +86,13 @@ export class PhoneTokens {
     } catch {
       return null;
     }
-    if (claims.typ !== TYP || claims.aud !== tenantId || typeof claims.sub !== 'string')
+    if (claims.typ !== TYP || typeof claims.aud !== 'string' || typeof claims.sub !== 'string') {
       return null;
+    }
     if (typeof claims.exp !== 'number' || claims.exp * 1000 <= this.clock.now().getTime()) {
       return null;
     }
-    return claims.sub;
+    return claims as PhoneClaims;
   }
 
   private mac(input: string): string {

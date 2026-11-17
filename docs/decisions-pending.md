@@ -996,3 +996,36 @@ The public form, P3b (its own PR, stacked on P3a):
 - **P3-b10. Not measured here:** the 3-second budget on a throttled phone for `/apply/[slug]`
   needs a running web app and API, and this run starts no servers (ports and memory). The page
   loads no Turnstile script until the phone step; the build's size budget applies.
+
+After the security review of P3b (round 1):
+
+- **P3-b11 (review M1). Refused code requests never spend the shared budgets:** the per-address
+  and per-phone-cooldown limits are counted first; the phone's 5 a day and the institute's daily
+  ceiling are checked and counted together, atomically, only for a code that is sent
+  (`RateLimiter.consumeIfAllowed`, a Lua script). Before, one phone could shut an institute's form
+  for the day.
+- **P3-b12 (review S1; a change to P3-S for the owner). A duplicate tells its number only to the
+  same phone:** an application found by another family's birth registration number answers
+  "already applied, contact the institute" with no number; a phone at its cap is told so before any
+  duplicate check (no oracle).
+- **P3-b13 (review N5).** An injection as `jantrik_app` can call the public functions with any
+  phone and `p_now` (documented in database.md); `p_now` stays a parameter (the tests move time).
+- **P3-b14 (review S2). Turnstile:** with a real secret, the answer must name our action and the
+  web app's host; Cloudflare's test secrets report neither and are refused in production anyway.
+- **P3-b15 (review S3). The submit's upload is read only after a guard** checked the per-address
+  limit and the phone token (signature, expiry); the route then checks its institute.
+- **P3-b16 (review S4; for the owner). The status page's code works after the form closed**, but
+  is sent only when the phone made that application (same answer otherwise); `purpose: 'status'`
+  with the application number.
+- **P3-b17 (review S5, S6, N1, N2, N6).** The role's privileges are compared to an exact list; the
+  public folder's code scan also refuses `withTenant`/`tenantClient` and any `withContext` that
+  is not empty; the no-op `GRANT EXECUTE … app_verified_context() TO jantrik_admission` is gone
+  (nothing needed it); the role loses `CREATE` on the schema after taking its functions over;
+  public answers are `no-store`. `ADMISSION_OTP_PHONE_COOLDOWN_SEC` (60) is new (the Playwright
+  suite sets 1).
+- **P3-b18 (review N3, N4, N7, recorded).** A per-address limit runs before Turnstile and the
+  database on `/otp` (60 an hour) and `/otp/verify` (60 a quarter hour). The decompression-bomb
+  test is in; ten parallel uploads (at most two decoding) are covered by P2's `image.service.spec`;
+  codes and tokens are never logged (only error names are). Per-address limits are generous on
+  purpose: many guardians share one address behind mobile carriers' NAT (CGNAT); the per-phone and
+  per-institute limits are the real bounds.

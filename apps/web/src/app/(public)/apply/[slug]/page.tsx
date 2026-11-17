@@ -95,8 +95,9 @@ export default function ApplyPage() {
       setPhoneToken('');
       setStep('phone');
     } else if (code === 'ADMISSION_DUPLICATE') {
-      const no = (e as ApiError).body as { applicationNo?: string } | null;
-      setMessage(t('duplicate', { no: formatIdentifier(no?.applicationNo ?? '') }));
+      const no = ((e as ApiError).body as { applicationNo?: string } | null)?.applicationNo;
+      // The earlier number only when it was this phone's (review S1).
+      setMessage(no ? t('duplicate', { no: formatIdentifier(no) }) : t('duplicateOther'));
     } else if (code === 'ADMISSION_PHONE_CAP') setMessage(t('phoneCap'));
     else if (code === 'ADMISSION_REJECTED') setMessage(t('rejected'));
     else if (code === 'ADMISSION_CLOSED') setMessage(t('classClosed'));
