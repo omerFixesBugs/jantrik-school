@@ -25,6 +25,8 @@ export const STAFF_ROLES: readonly Role[] = ['OWNER', 'ADMIN', 'TEACHER', 'ACCOU
 
 /** The unread count is cached this long per person (P6-I). */
 const UNREAD_TTL_SEC = 120;
+/** The per-person read version lives longer than any count cached under it. */
+const READ_VERSION_TTL_SEC = 3600;
 /** The institute's notice version, bumped after every publish, edit and withdrawal. */
 export const noticesVersionKey = (tenantId: string) => `tenant:${tenantId}:notices:ver`;
 /**
@@ -36,10 +38,14 @@ export const noticesReadVersionKey = (tenantId: string, userId: string) =>
 const unreadKey = (tenantId: string, userId: string, version: string, readVersion: string) =>
   `tenant:${tenantId}:user:${userId}:notices:unread:v${version}:r${readVersion}`;
 
-/** The first 200 characters (code points, so an emoji is never cut in half). */
+/** The first 200 characters (grapheme clusters, so no character is ever cut in half). */
 export function excerptOf(body: string): string {
-  const chars = Array.from(body);
-  return chars.length > 200 ? `${chars.slice(0, 200).join('')}…` : body;
+  // Whole characters as people see them (a Bangla conjunct, a flag emoji): grapheme clusters.
+  const graphemes = Array.from(
+    new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(body),
+    (g) => g.segment,
+  );
+  return graphemes.length > 200 ? `${graphemes.slice(0, 200).join('')}…` : body;
 }
 
 const NO_ID = '00000000-0000-0000-0000-000000000000';
@@ -228,7 +234,9 @@ export class NoticesService {
     });
     if (count > 0) {
       await this.context.afterCommit(async () => {
-        await this.redis.incr(noticesReadVersionKey(tenantId, userId));
+        // The counter outlives the cached counts it guards (2 minutes) and then expires.
+        const key = noticesReadVersionKey(tenantId, userId);
+        await this.redis.multi().incr(key).expire(key, READ_VERSION_TTL_SEC).exec();
       });
     }
   }
