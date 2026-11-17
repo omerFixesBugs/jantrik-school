@@ -5,7 +5,7 @@
 CREATE TYPE "broadcast_recipients" AS ENUM ('PRIMARY_GUARDIANS', 'ALL_GUARDIANS', 'STAFF');
 
 -- CreateEnum
-CREATE TYPE "broadcast_status" AS ENUM ('DRAFT', 'SCHEDULED', 'SENT', 'CANCELLED', 'FAILED_OVER_CAP', 'EXPIRED');
+CREATE TYPE "broadcast_status" AS ENUM ('DRAFT', 'SCHEDULED', 'SENT', 'CANCELLED', 'FAILED_OVER_CAP', 'EXPIRED', 'COST_CHANGED');
 
 -- CreateTable
 CREATE TABLE "sms_broadcasts" (
@@ -20,6 +20,7 @@ CREATE TABLE "sms_broadcasts" (
     "segments" SMALLINT,
     "estimated_cost_paisa" INTEGER,
     "queued_count" INTEGER,
+    "sent_cost_paisa" INTEGER,
     "local_date" DATE,
     "created_by_id" UUID NOT NULL,
     "scheduled_by_id" UUID,
@@ -110,7 +111,7 @@ CREATE POLICY tenant_isolation ON sms_broadcast_targets
 -- who created it and when. Targets are replaced whole (delete + insert), so no UPDATE.
 GRANT SELECT, INSERT ON sms_broadcasts TO jantrik_app;
 GRANT UPDATE (body, notice_id, recipients, status, scheduled_at, preview_count, segments,
-  estimated_cost_paisa, queued_count, local_date, scheduled_by_id, sent_at, cancelled_by_id,
+  estimated_cost_paisa, queued_count, sent_cost_paisa, local_date, scheduled_by_id, sent_at, cancelled_by_id,
   cancelled_at, cancel_reason, failure, updated_at) ON sms_broadcasts TO jantrik_app;
 GRANT SELECT, INSERT, DELETE ON sms_broadcast_targets TO jantrik_app;
 
@@ -118,7 +119,7 @@ GRANT SELECT, INSERT, DELETE ON sms_broadcast_targets TO jantrik_app;
 ALTER TABLE sms_broadcasts
   ADD CONSTRAINT sms_broadcasts_body_length CHECK (char_length(body) BETWEEN 1 AND 480),
   ADD CONSTRAINT sms_broadcasts_scheduled CHECK (
-    status NOT IN ('SCHEDULED', 'SENT', 'FAILED_OVER_CAP', 'EXPIRED')
+    status NOT IN ('SCHEDULED', 'SENT', 'FAILED_OVER_CAP', 'EXPIRED', 'COST_CHANGED')
     OR (scheduled_at IS NOT NULL AND scheduled_by_id IS NOT NULL)),
   ADD CONSTRAINT sms_broadcasts_sent CHECK (
     status <> 'SENT' OR (sent_at IS NOT NULL AND queued_count IS NOT NULL AND local_date IS NOT NULL)),
@@ -127,9 +128,10 @@ ALTER TABLE sms_broadcasts
   ADD CONSTRAINT sms_broadcasts_cancel_reason CHECK (
     cancel_reason IS NULL OR cancel_reason IN ('BY_ADMIN', 'ACTOR_NOT_ADMIN')),
   ADD CONSTRAINT sms_broadcasts_failed CHECK (
-    status NOT IN ('FAILED_OVER_CAP', 'EXPIRED') OR failure IS NOT NULL),
+    status NOT IN ('FAILED_OVER_CAP', 'EXPIRED', 'COST_CHANGED') OR failure IS NOT NULL),
   ADD CONSTRAINT sms_broadcasts_counts CHECK (
     (queued_count IS NULL OR queued_count >= 0)
     AND (preview_count IS NULL OR preview_count >= 0)
-    AND (estimated_cost_paisa IS NULL OR estimated_cost_paisa >= 0)),
+    AND (estimated_cost_paisa IS NULL OR estimated_cost_paisa >= 0)
+    AND (sent_cost_paisa IS NULL OR sent_cost_paisa >= 0)),
   ADD CONSTRAINT sms_broadcasts_segments CHECK (segments IS NULL OR segments BETWEEN 1 AND 3);

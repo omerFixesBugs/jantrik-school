@@ -42,6 +42,8 @@ export interface QueueTenantSmsInput {
    * expire; SKIP stores nothing, so the same dedupe key can be sent on another day.
    */
   overCap?: 'HOLD' | 'SKIP';
+  /** BULK_SMS_PRIORITY for SMS sent in bulk (fee reminders, exam results): after single SMS. */
+  priority?: number;
 }
 
 export type QueueTenantSmsResult = 'QUEUED' | 'DUPLICATE' | 'HELD_OVER_LIMIT' | 'OVER_CAP';
@@ -146,7 +148,7 @@ export class TenantSmsService implements OnModuleInit {
       );
       return 'HELD_OVER_LIMIT';
     }
-    await this.enqueue(tenantId, log.id, input.delayMs);
+    await this.enqueue(tenantId, log.id, input.delayMs, input.priority);
     return 'QUEUED';
   }
 
@@ -325,7 +327,12 @@ export class TenantSmsService implements OnModuleInit {
     await this.redis.srem(key, tenantId);
   }
 
-  private enqueue(tenantId: string, smsLogId: string, delayMs: number): Promise<void> {
+  private enqueue(
+    tenantId: string,
+    smsLogId: string,
+    delayMs: number,
+    priority?: number,
+  ): Promise<void> {
     return this.context.afterCommit(async () => {
       await this.jobs.add(
         'tenant',
@@ -333,6 +340,7 @@ export class TenantSmsService implements OnModuleInit {
         {
           jobId: smsLogId, // a second guard against duplicates, at the queue level
           delay: delayMs,
+          ...(priority ? { priority } : {}),
           attempts: 3,
           backoff: { type: 'exponential', delay: 2_000 },
           removeOnComplete: true,

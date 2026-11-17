@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Inject, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
-import type { Prisma } from '@jantrik/db';
+import { Prisma } from '@jantrik/db';
 import {
   BROADCAST_LIMITS,
   broadcastProblems,
@@ -44,6 +44,8 @@ export interface BroadcastJobData {
 
 export const broadcastJobId = (broadcastId: string) => `broadcast-${broadcastId}`;
 const relatedEntity = (id: string) => `broadcast:${id}`;
+/** Statuses an edit may start from (a broadcast that was never sent goes back to DRAFT, N-a). */
+const EDITABLE = new Set(['DRAFT', 'SCHEDULED', 'FAILED_OVER_CAP', 'EXPIRED', 'COST_CHANGED']);
 /** The send job: retried with backoff; a failed one is kept (the sweep replaces it, B2). */
 const JOB_OPTS = {
   attempts: 3,
@@ -67,6 +69,7 @@ export type SendOutcome =
   | { kind: 'FAILED_OVER_CAP' }
   | { kind: 'CANCELLED_ACTOR' }
   | { kind: 'EXPIRED' }
+  | { kind: 'COST_CHANGED' }
   | { kind: 'ALREADY_SENT' }
   | { kind: 'LATER'; at: Date };
 
@@ -153,6 +156,7 @@ export class BroadcastsService implements OnModuleInit {
       segments: b.segments,
       estimatedCostPaisa: b.estimatedCostPaisa,
       queuedCount: b.queuedCount,
+      sentCostPaisa: b.sentCostPaisa,
       sentAt: b.sentAt?.toISOString() ?? null,
       cancelledAt: b.cancelledAt?.toISOString() ?? null,
       cancelReason: (b.cancelReason as BroadcastView['cancelReason']) ?? null,
@@ -185,8 +189,38 @@ export class BroadcastsService implements OnModuleInit {
       take: 200,
       include: this.include,
     });
+    await this.healWaitingSms(rows.filter((b) => b.status === 'SENT').map((b) => b.id));
     const counts = await this.smsCounts(rows.map((b) => b.id));
     return Promise.all(rows.map((b) => this.view(b, counts)));
+  }
+
+  /**
+   * SMS of sent broadcasts still QUEUED 10 minutes after they were stored, outside quiet hours:
+   * their jobs may be lost (or waited out the night); re-added after commit (a no-op for jobs
+   * that exist, N-c). Stopping a sent broadcast is not offered (P6-L).
+   */
+  private async healWaitingSms(ids: string[]): Promise<void> {
+    if (!ids.length) return;
+    const { now, timeZone } = await this.tenantNow();
+    if (inQuietHours(now, timeZone)) return;
+    const waiting = await this.db.tx.smsLog.findMany({
+      where: {
+        relatedId: { in: ids },
+        purpose: 'BROADCAST',
+        status: 'QUEUED',
+        createdAt: { lt: new Date(Date.now() - 10 * 60_000) },
+      },
+      select: { id: true },
+      take: 5000,
+    });
+    if (!waiting.length) return;
+    const tenantId = this.context.requireTenantId();
+    await this.context.afterCommit(() =>
+      this.sms.enqueueBulk(
+        tenantId,
+        waiting.map((w) => w.id),
+      ),
+    );
   }
 
   private async healOverdue(): Promise<void> {
@@ -211,6 +245,7 @@ export class BroadcastsService implements OnModuleInit {
           { status: 'FAILED_OVER_CAP', updatedAt: { gte: since } },
           { status: 'CANCELLED', cancelReason: 'ACTOR_NOT_ADMIN', cancelledAt: { gte: since } },
           { status: 'EXPIRED', updatedAt: { gte: since } },
+          { status: 'COST_CHANGED', updatedAt: { gte: since } },
           { status: 'SCHEDULED', scheduledAt: { lt: new Date(now.getTime() - 10 * 60_000) } },
         ],
       },
@@ -230,7 +265,7 @@ export class BroadcastsService implements OnModuleInit {
       status:
         b.status === 'SCHEDULED'
           ? 'OVERDUE'
-          : (b.status as 'FAILED_OVER_CAP' | 'CANCELLED' | 'EXPIRED'),
+          : (b.status as 'FAILED_OVER_CAP' | 'CANCELLED' | 'EXPIRED' | 'COST_CHANGED'),
       at: (b.status === 'SCHEDULED'
         ? b.scheduledAt!
         : (b.cancelledAt ?? b.updatedAt)
@@ -296,7 +331,7 @@ export class BroadcastsService implements OnModuleInit {
   async update(id: string, input: BroadcastInput): Promise<BroadcastView> {
     const tenantId = this.context.requireTenantId();
     const before = await this.lockRow(id);
-    if (before.status !== 'DRAFT' && before.status !== 'SCHEDULED') {
+    if (!EDITABLE.has(before.status)) {
       throw apiError(409, 'NOT_EDITABLE', 'A sent or cancelled broadcast cannot be edited');
     }
     const targets = await this.check(input);
@@ -312,6 +347,7 @@ export class BroadcastsService implements OnModuleInit {
         previewCount: null,
         segments: null,
         estimatedCostPaisa: null,
+        failure: Prisma.DbNull,
       },
       select: { id: true },
     });
@@ -329,6 +365,7 @@ export class BroadcastsService implements OnModuleInit {
         status: before.status,
         bodyLength: before.body.length,
         recipients: before.recipients,
+        failure: before.failure ?? null,
       },
       newValues: { status: 'DRAFT', ...(this.auditValues(input, targets) as object) },
     });
@@ -583,20 +620,7 @@ export class BroadcastsService implements OnModuleInit {
     if (b.scheduledById !== actor.userId) return { kind: 'LATER', at: now };
     const lateMs = b.scheduledAt ? now.getTime() - b.scheduledAt.getTime() : 0;
     if (lateMs > BROADCAST_LIMITS.staleAfterHours * 3_600_000) {
-      const lateMinutes = Math.floor(lateMs / 60_000);
-      await this.db.tx.smsBroadcast.update({
-        where: { id },
-        data: { status: 'EXPIRED', failure: { lateMinutes }, updatedAt: now },
-        select: { id: true },
-      });
-      await this.audit.record({
-        entity: 'sms_broadcast',
-        entityId: id,
-        action: 'UPDATE',
-        oldValues: { status: 'SCHEDULED' },
-        newValues: { status: 'EXPIRED', lateMinutes },
-      });
-      return { kind: 'EXPIRED' };
+      return this.expire(id, now, Math.floor(lateMs / 60_000));
     }
     if (!actor.stillAdmin) {
       await this.db.tx.smsBroadcast.update({
@@ -615,25 +639,44 @@ export class BroadcastsService implements OnModuleInit {
     }
     if (b.scheduledAt && b.scheduledAt > now) return { kind: 'LATER', at: b.scheduledAt };
     if (inQuietHours(now, timeZone)) {
+      // Waiting for 08:00 keeps the chosen time (the lateness counts from it, SF2): a wait that
+      // would make it more than 3 hours late expires it now instead.
       const at = nextAllowedAt(now, timeZone);
-      await this.db.tx.smsBroadcast.update({
-        where: { id },
-        data: { scheduledAt: at },
-        select: { id: true },
-      });
-      await this.audit.record({
-        entity: 'sms_broadcast',
-        entityId: id,
-        action: 'UPDATE',
-        oldValues: { scheduledAt: b.scheduledAt?.toISOString() ?? null },
-        newValues: { scheduledAt: at.toISOString(), reason: 'QUIET_HOURS' },
-      });
+      const lateAt = b.scheduledAt ? at.getTime() - b.scheduledAt.getTime() : 0;
+      if (lateAt > BROADCAST_LIMITS.staleAfterHours * 3_600_000) {
+        return this.expire(id, now, Math.floor(lateAt / 60_000));
+      }
       return { kind: 'LATER', at };
     }
     const audience = await this.audience.resolve(
       b.recipients,
       b.targets.map((t) => ({ classLevelId: t.classLevelId, sectionId: t.sectionId })),
     );
+    const segments = smsLength(b.body).segments;
+    const [rateRow] = await this.db.tx.$queryRaw<{ rate: number }[]>`
+      SELECT sms_cost_per_segment_paisa AS rate FROM public.platform_settings`;
+    const rate = Number(rateRow?.rate ?? 0);
+    const costPaisa = audience.phones.length * segments * rate;
+    const confirmedCostPaisa = b.estimatedCostPaisa ?? 0;
+    if (
+      costPaisa * 100 > confirmedCostPaisa * (100 + BROADCAST_LIMITS.costTolerancePercent) &&
+      costPaisa - confirmedCostPaisa > segments * rate
+    ) {
+      const failure = { confirmedCostPaisa, costPaisa, recipients: audience.phones.length };
+      await this.db.tx.smsBroadcast.update({
+        where: { id },
+        data: { status: 'COST_CHANGED', failure, updatedAt: now },
+        select: { id: true },
+      });
+      await this.audit.record({
+        entity: 'sms_broadcast',
+        entityId: id,
+        action: 'UPDATE',
+        oldValues: { status: 'SCHEDULED' },
+        newValues: { status: 'COST_CHANGED', ...failure },
+      });
+      return { kind: 'COST_CHANGED' };
+    }
     const result = await this.sms.queueAll(
       audience.phones.map((phone) => ({
         purpose: 'BROADCAST' as const,
@@ -665,15 +708,14 @@ export class BroadcastsService implements OnModuleInit {
       });
       return { kind: 'FAILED_OVER_CAP' };
     }
-    const segments = smsLength(b.body).segments;
-    const [rate] = await this.db.tx.$queryRaw<{ rate: number }[]>`
-      SELECT sms_cost_per_segment_paisa AS rate FROM public.platform_settings`;
+    const sentCostPaisa = result.queued * segments * rate;
     await this.db.tx.smsBroadcast.update({
       where: { id },
       data: {
         status: 'SENT',
         sentAt: now,
         queuedCount: result.queued,
+        sentCostPaisa,
         localDate: dateToDb(today),
         segments,
       },
@@ -689,10 +731,28 @@ export class BroadcastsService implements OnModuleInit {
         queued: result.queued,
         duplicates: result.duplicates,
         withoutPhone: audience.withoutPhone,
-        costPaisa: result.queued * segments * Number(rate?.rate ?? 0),
+        costPaisa: sentCostPaisa,
+        confirmedCostPaisa,
       },
     });
     return { kind: 'SENT', queued: result.queued };
+  }
+
+  /** Not sent: found (or would go out) more than 3 hours after its time (B3, SF2). */
+  private async expire(id: string, now: Date, lateMinutes: number): Promise<SendOutcome> {
+    await this.db.tx.smsBroadcast.update({
+      where: { id },
+      data: { status: 'EXPIRED', failure: { lateMinutes }, updatedAt: now },
+      select: { id: true },
+    });
+    await this.audit.record({
+      entity: 'sms_broadcast',
+      entityId: id,
+      action: 'UPDATE',
+      oldValues: { status: 'SCHEDULED' },
+      newValues: { status: 'EXPIRED', lateMinutes },
+    });
+    return { kind: 'EXPIRED' };
   }
 
   // ── Queue and the due set (after commit) ────────────────────────────────────────────────

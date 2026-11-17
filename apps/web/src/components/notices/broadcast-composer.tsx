@@ -49,7 +49,8 @@ function useBroadcastError() {
 /**
  * Compose an SMS broadcast, preview it (recipients after merging, without phone, segments, cost,
  * today's limit left), then send now or schedule (S18–S20). Any change needs a new preview, and
- * the server refuses a send whose recipient count changed meanwhile (409 PREVIEW_CHANGED).
+ * the server refuses a send when anything the preview showed changed meanwhile: recipients, text
+ * or cost (409 PREVIEW_CHANGED; the preview's token).
  */
 export function BroadcastComposer({
   broadcast,

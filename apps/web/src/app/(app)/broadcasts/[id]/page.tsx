@@ -52,6 +52,21 @@ export default function BroadcastPage() {
     },
   });
 
+  // A broadcast that was never sent (over the cap, too late, too dear) goes back to a draft (N-a).
+  const editAgain = useMutation({
+    mutationFn: (b: BroadcastView) =>
+      client.api<BroadcastView>(`/broadcasts/${id}`, {
+        method: 'PUT',
+        json: {
+          body: b.body,
+          recipients: b.recipients,
+          noticeId: b.noticeId,
+          targets: b.targets.map((x) => ({ classLevelId: x.classLevelId, sectionId: x.sectionId })),
+        },
+      }),
+    onSuccess: (b) => queryClient.setQueryData(key, b),
+  });
+
   if (!broadcast.data) {
     return (
       <PageGate page="broadcasts">
@@ -98,13 +113,34 @@ export default function BroadcastPage() {
               queued: formatCount(b.sms.queued, locale),
               failed: formatCount(b.sms.failed, locale),
             })}
-            {b.estimatedCostPaisa !== null && ` · ${formatTaka(b.estimatedCostPaisa, locale)}`}
           </p>
         )}
-        {b.status === 'FAILED_OVER_CAP' && b.failure && (
-          <Alert variant="destructive">
-            <AlertDescription>{t('alert.FAILED_OVER_CAP')}</AlertDescription>
-          </Alert>
+        {b.status === 'SENT' && b.queuedCount !== null && (
+          <p className="text-sm" data-testid="broadcast-sent-summary">
+            {t('sentSummary', {
+              previewed: formatCount(b.previewCount ?? 0, locale),
+              sent: formatCount(b.queuedCount, locale),
+              cost: formatTaka(b.sentCostPaisa ?? b.estimatedCostPaisa ?? 0, locale),
+            })}
+          </p>
+        )}
+        {(b.status === 'FAILED_OVER_CAP' ||
+          b.status === 'EXPIRED' ||
+          b.status === 'COST_CHANGED') && (
+          <>
+            <Alert variant="destructive">
+              <AlertDescription>{t(`alert.${b.status}`)}</AlertDescription>
+            </Alert>
+            <Button
+              variant="outline"
+              className="self-start"
+              onClick={() => editAgain.mutate(b)}
+              disabled={editAgain.isPending}
+              data-testid="broadcast-edit-again"
+            >
+              {t('editAgain')}
+            </Button>
+          </>
         )}
         {cancel.error && (
           <Alert variant="destructive">

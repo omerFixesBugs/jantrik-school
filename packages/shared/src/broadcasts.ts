@@ -26,6 +26,12 @@ export const BROADCAST_LIMITS = {
    * quiet-hours wait moves to 08:00.
    */
   staleAfterHours: 3,
+  /**
+   * At send time the audience is resolved again (S19). If that makes it dearer than confirmed by
+   * more than this share AND by more than one SMS, nothing is sent (COST_CHANGED): the admin
+   * previews and confirms again (review of #26, round 2).
+   */
+  costTolerancePercent: 10,
 } as const;
 
 export const BROADCAST_RECIPIENTS = ['PRIMARY_GUARDIANS', 'ALL_GUARDIANS', 'STAFF'] as const;
@@ -38,6 +44,7 @@ export const BROADCAST_STATUSES = [
   'CANCELLED',
   'FAILED_OVER_CAP',
   'EXPIRED',
+  'COST_CHANGED',
 ] as const;
 export type BroadcastStatus = (typeof BROADCAST_STATUSES)[number];
 
@@ -63,9 +70,18 @@ export function nextAllowedAt(at: Date, timeZone: string): Date {
 
 export type BroadcastProblem = 'EMPTY' | 'SMS_TOO_LONG';
 
-/** A string cut to `max` characters (code points, never inside an emoji), with "…" when cut. */
+/**
+ * A string cut to `max` characters as people see them (grapheme clusters: a Bangla conjunct, a
+ * multi-code-point emoji), with "…" when cut. Code points where Intl.Segmenter is missing.
+ */
 export function cutText(text: string, max: number): string {
-  const chars = Array.from(text);
+  const chars =
+    typeof Intl.Segmenter === 'function'
+      ? Array.from(
+          new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text),
+          (g) => g.segment,
+        )
+      : Array.from(text);
   return chars.length > max ? `${chars.slice(0, max).join('')}…` : text;
 }
 
@@ -128,8 +144,20 @@ export interface BroadcastView {
   sentAt: string | null;
   cancelledAt: string | null;
   cancelReason: 'BY_ADMIN' | 'ACTOR_NOT_ADMIN' | null;
-  /** FAILED_OVER_CAP: {needed, capLeft}; EXPIRED: {lateMinutes}. */
-  failure: { needed?: number; capLeft?: number; lateMinutes?: number } | null;
+  /** The real cost of what was queued (SENT); the preview's is `estimatedCostPaisa`. */
+  sentCostPaisa: number | null;
+  /**
+   * FAILED_OVER_CAP: {needed, capLeft}; EXPIRED: {lateMinutes}; COST_CHANGED: {confirmedCostPaisa,
+   * costPaisa, recipients}.
+   */
+  failure: {
+    needed?: number;
+    capLeft?: number;
+    lateMinutes?: number;
+    confirmedCostPaisa?: number;
+    costPaisa?: number;
+    recipients?: number;
+  } | null;
   createdAt: string;
   sms: BroadcastSmsCounts;
 }
@@ -137,7 +165,7 @@ export interface BroadcastView {
 /** The dashboard's warning (P6-D): broadcasts that failed over the cap or lost their admin. */
 export interface BroadcastAlert {
   id: string;
-  status: 'FAILED_OVER_CAP' | 'CANCELLED' | 'EXPIRED' | 'OVERDUE';
+  status: 'FAILED_OVER_CAP' | 'CANCELLED' | 'EXPIRED' | 'COST_CHANGED' | 'OVERDUE';
   at: string;
   bodyStart: string;
 }

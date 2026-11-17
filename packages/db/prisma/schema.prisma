@@ -3371,6 +3371,8 @@ enum BroadcastStatus {
   FAILED_OVER_CAP
   /// Found more than 3 hours late (its job was lost): not sent; a new preview and send is needed.
   EXPIRED
+  /// At send time it would cost much more than confirmed (the audience grew): not sent.
+  COST_CHANGED
 
   @@map("broadcast_status")
 }
@@ -3390,6 +3392,8 @@ model SmsBroadcast {
   segments           Int?                @db.SmallInt
   estimatedCostPaisa Int?                @map("estimated_cost_paisa")
   queuedCount        Int?                @map("queued_count")
+  /// The real cost of what was queued (SENT), integer paisa.
+  sentCostPaisa      Int?                @map("sent_cost_paisa")
   /// The institute's day it was sent (cap and billing).
   localDate          DateTime?           @map("local_date") @db.Date
   createdById        String              @map("created_by_id") @db.Uuid

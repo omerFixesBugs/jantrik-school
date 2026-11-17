@@ -10,7 +10,8 @@
       "SENT": "Sent",
       "CANCELLED": "Cancelled",
       "FAILED_OVER_CAP": "Not sent: over the daily limit",
-      "EXPIRED": "Not sent: found too late"
+      "EXPIRED": "Not sent: found too late",
+      "COST_CHANGED": "Not sent: would cost much more than confirmed"
     },
     "recipients": {
       "PRIMARY_GUARDIANS": "Primary guardians",
@@ -63,7 +64,8 @@
       "FAILED_OVER_CAP": "A broadcast was not sent: it did not fit the daily limit.",
       "CANCELLED": "A broadcast was cancelled: the admin who scheduled it is no longer an admin.",
       "OVERDUE": "A scheduled broadcast has not gone out yet. Opening the list tries again.",
-      "EXPIRED": "A scheduled broadcast was found too late and was not sent. Send it again if still needed."
+      "EXPIRED": "A scheduled broadcast was found too late and was not sent. Send it again if still needed.",
+      "COST_CHANGED": "A broadcast was not sent: more recipients at send time would have cost much more than confirmed. Preview and send it again."
     },
     "errors": {
       "SMS_TOO_LONG": "At most 3 SMS.",
@@ -71,7 +73,7 @@
       "OVER_CAP": "Does not fit today's limit: nothing was sent.",
       "QUIET_HOURS": "No SMS from 9 pm to 8 am.",
       "SCHEDULE_OUT_OF_RANGE": "Choose a time between 5 minutes and 30 days ahead.",
-      "PREVIEW_CHANGED": "The number of recipients changed. Preview again.",
+      "PREVIEW_CHANGED": "The broadcast changed since the preview (recipients, text or cost). Preview again.",
       "NOT_EDITABLE": "This broadcast can no longer be changed.",
       "ALREADY_SENDING": "The broadcast is being sent right now.",
       "SMS_EMPTY": "The message is empty."
@@ -82,7 +84,10 @@
       "FAILED_OVER_CAP": "A broadcast was not sent: it did not fit the daily limit.",
       "CANCELLED": "A broadcast was cancelled: the admin who scheduled it is no longer an admin.",
       "OVERDUE": "A scheduled broadcast has not gone out yet. Opening the list tries again.",
-      "EXPIRED": "A scheduled broadcast was found too late and was not sent. Send it again if still needed."
-    }
+      "EXPIRED": "A scheduled broadcast was found too late and was not sent. Send it again if still needed.",
+      "COST_CHANGED": "A broadcast was not sent: more recipients at send time would have cost much more than confirmed. Preview and send it again."
+    },
+    "sentSummary": "Previewed {previewed}, sent to {sent} · cost {cost}",
+    "editAgain": "Edit and send again"
   }
 }

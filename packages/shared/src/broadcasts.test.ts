@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   broadcastInputSchema,
   broadcastProblems,
+  cutText,
   inQuietHours,
   nextAllowedAt,
   scheduleBroadcastSchema,
@@ -86,6 +87,14 @@ describe('segments never split a character (review of #26, N3)', () => {
     expect(broadcastProblems(`${'ক'.repeat(66)}😀${'ক'.repeat(66)}`)).toEqual([]);
     // 133 + 😀 + 66 = 201 units: 3 parts by length, 4 when the emoji cannot be split.
     expect(broadcastProblems(`${'ক'.repeat(133)}😀${'ক'.repeat(66)}`)).toEqual(['SMS_TOO_LONG']);
+  });
+});
+
+describe('cutText', () => {
+  it('never cuts inside a Bangla conjunct or a multi-code-point emoji', () => {
+    expect(cutText('abcক্ষdef', 4)).toBe('abcক্ষ…');
+    expect(cutText('ab👨‍👩‍👧cd', 3)).toBe('ab👨‍👩‍👧…');
+    expect(cutText('short', 10)).toBe('short');
   });
 });
 

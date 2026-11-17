@@ -55,4 +55,5 @@ export const BROADCAST_STATUS_VARIANT: Record<
   CANCELLED: 'outline',
   FAILED_OVER_CAP: 'destructive',
   EXPIRED: 'destructive',
+  COST_CHANGED: 'destructive',
 };
