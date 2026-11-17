@@ -106,16 +106,27 @@ describe('broadcast schemas', () => {
     );
   });
 
-  it('a schedule needs an instant with an offset and the confirmed count', () => {
+  it('a schedule needs an instant with an offset, the confirmed count and the preview token', () => {
+    const previewToken = 'a'.repeat(64);
     expect(
-      scheduleBroadcastSchema.safeParse({ scheduledAt: '2026-11-18 10:00', expectedRecipients: 3 })
-        .success,
+      scheduleBroadcastSchema.safeParse({
+        scheduledAt: '2026-11-18 10:00',
+        expectedRecipients: 3,
+        previewToken,
+      }).success,
     ).toBe(false);
     expect(
       scheduleBroadcastSchema.parse({
         scheduledAt: '2026-11-18T10:00:00+06:00',
         expectedRecipients: 3,
+        previewToken,
       }).scheduledAt,
     ).toEqual(new Date('2026-11-18T04:00:00Z'));
+    expect(
+      scheduleBroadcastSchema.safeParse({
+        scheduledAt: '2026-11-18T10:00:00+06:00',
+        expectedRecipients: 3,
+      }).success,
+    ).toBe(false);
   });
 });

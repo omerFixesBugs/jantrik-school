@@ -335,9 +335,9 @@ describe('SMS broadcasts', () => {
     expect(logs.every((l) => l.dedupeKey === `broadcast:${b.id}:${l.phone}`)).toBe(true);
     expect(logs.every((l) => l.segments === smsLength('বার্ষিক ক্রীড়া').segments)).toBe(true);
     await expect.poll(() => due(b.id)).toBeNull();
-    // Run again (a retried job): nothing more.
+    // Run again (a retried job): nothing more is sent (it only checks the SMS jobs exist, B4).
     await expect(processor().send({ tenantId, broadcastId: b.id })).resolves.toEqual({
-      kind: 'STOP',
+      kind: 'ALREADY_SENT',
     });
     expect(await logsOf(b.id)).toHaveLength(4);
   });
