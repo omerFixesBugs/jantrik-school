@@ -2,7 +2,7 @@ import { findOrCreateUser, withTenant } from '@jantrik/db';
 import type { NoticeBoardItem, NoticeManageItem } from '@jantrik/shared';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { noticesVersionKey } from '../src/notices/notices.service.js';
+import { noticesReadVersionKey, noticesVersionKey } from '../src/notices/notices.service.js';
 import { FakeClock } from './support/clock.js';
 import {
   addMember,
@@ -260,8 +260,11 @@ describe('notices', () => {
     const before = await unread(g1);
     // Served from Redis on the second call (the key exists under the current version).
     const version = (await h.redis.get(noticesVersionKey(tenantId))) ?? '0';
+    const readVersion = (await h.redis.get(noticesReadVersionKey(tenantId, g1UserId))) ?? '0';
     expect(
-      await h.redis.get(`tenant:${tenantId}:user:${g1UserId}:notices:unread:v${version}`),
+      await h.redis.get(
+        `tenant:${tenantId}:user:${g1UserId}:notices:unread:v${version}:r${readVersion}`,
+      ),
     ).toBe(String(before));
     const n = await published({ title: 'Fee date', body: 'b', audience: 'ALL' });
     // The publish bumped the version: the new notice counts at once.
@@ -307,5 +310,58 @@ describe('notices', () => {
     );
     expect(audits.map((a) => a.action)).toEqual(['CREATE', 'UPDATE', 'UPDATE']);
     expect(audits[2]!.newValues).toMatchObject({ title: 'Sports day (new date)', pinned: true });
+  });
+
+  it('the board excerpt never cuts a character in half (review round 1)', async () => {
+    const body = `${'a'.repeat(199)}😀${'b'.repeat(10)}`;
+    const n = await published({ title: 'Emoji at the cut', body, audience: 'ALL' });
+    const card = ((await api(g1).get('/notices').expect(200)).body as NoticeBoardItem[]).find(
+      (c) => c.id === n.id,
+    );
+    expect(card?.excerpt).toBe(`${'a'.repeat(199)}😀…`);
+  });
+
+  it('a notice keeps its targets of last year when edited after the year changed (review round 1)', async () => {
+    const n = await published({
+      title: 'Section ক trip',
+      body: 'b',
+      audience: 'GUARDIANS',
+      targets: [{ classLevelId: class1, sectionId: sec1a }],
+    });
+    // The next year becomes current: section ক is now last year's.
+    await withTenant(h.prisma, tenantId, async (tx) => {
+      await tx.academicYear.updateMany({ where: { isCurrent: true }, data: { isCurrent: false } });
+      await tx.academicYear.create({
+        data: {
+          tenantId,
+          name: '2027',
+          startDate: new Date('2027-01-01'),
+          endDate: new Date('2027-12-31'),
+          isCurrent: true,
+        },
+      });
+    });
+    // A typo fix with the same targets: allowed.
+    await api(admin)
+      .put(`/notices/${n.id}`, {
+        title: 'Section ক trip (fixed)',
+        body: 'b',
+        audience: 'GUARDIANS',
+        targets: [{ classLevelId: class1, sectionId: sec1a }],
+      })
+      .expect(200);
+    // A new target in last year's section: refused.
+    const res = await api(admin)
+      .put(`/notices/${n.id}`, {
+        title: 'Section ক trip (fixed)',
+        body: 'b',
+        audience: 'GUARDIANS',
+        targets: [
+          { classLevelId: class1, sectionId: sec1a },
+          { classLevelId: class1, sectionId: sec1b },
+        ],
+      })
+      .expect(422);
+    expect(res.body.code).toBe('TARGET_INVALID');
   });
 });

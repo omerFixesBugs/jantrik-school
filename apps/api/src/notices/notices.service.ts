@@ -27,8 +27,20 @@ export const STAFF_ROLES: readonly Role[] = ['OWNER', 'ADMIN', 'TEACHER', 'ACCOU
 const UNREAD_TTL_SEC = 120;
 /** The institute's notice version, bumped after every publish, edit and withdrawal. */
 export const noticesVersionKey = (tenantId: string) => `tenant:${tenantId}:notices:ver`;
-const unreadKey = (tenantId: string, userId: string, version: string) =>
-  `tenant:${tenantId}:user:${userId}:notices:unread:v${version}`;
+/**
+ * The person's own read version, bumped after each read commits: a count computed before the read
+ * was cached under the old pair of versions, which nobody reads any more (P6-I).
+ */
+export const noticesReadVersionKey = (tenantId: string, userId: string) =>
+  `tenant:${tenantId}:user:${userId}:notices:readver`;
+const unreadKey = (tenantId: string, userId: string, version: string, readVersion: string) =>
+  `tenant:${tenantId}:user:${userId}:notices:unread:v${version}:r${readVersion}`;
+
+/** The first 200 characters (code points, so an emoji is never cut in half). */
+export function excerptOf(body: string): string {
+  const chars = Array.from(body);
+  return chars.length > 200 ? `${chars.slice(0, 200).join('')}…` : body;
+}
 
 const NO_ID = '00000000-0000-0000-0000-000000000000';
 const BOARD_LIMIT = 200;
@@ -157,7 +169,7 @@ export class NoticesService {
     });
     return rows.map(({ body, reads, ...n }) => ({
       ...this.cardOf(n),
-      excerpt: body.length > 200 ? `${body.slice(0, 200)}…` : body,
+      excerpt: excerptOf(body),
       read: reads.length > 0,
     }));
   }
@@ -216,8 +228,7 @@ export class NoticesService {
     });
     if (count > 0) {
       await this.context.afterCommit(async () => {
-        const version = (await this.redis.get(noticesVersionKey(tenantId))) ?? '0';
-        await this.redis.del(unreadKey(tenantId, userId, version));
+        await this.redis.incr(noticesReadVersionKey(tenantId, userId));
       });
     }
   }
@@ -226,8 +237,11 @@ export class NoticesService {
   async unreadCount(): Promise<{ count: number }> {
     const { tenantId, userId } = this.me();
     // Version first: a count that raced a publish is cached under the old version, never read.
-    const version = (await this.redis.get(noticesVersionKey(tenantId))) ?? '0';
-    const key = unreadKey(tenantId, userId, version);
+    const [version, readVersion] = await this.redis.mget(
+      noticesVersionKey(tenantId),
+      noticesReadVersionKey(tenantId, userId),
+    );
+    const key = unreadKey(tenantId, userId, version ?? '0', readVersion ?? '0');
     const hit = await this.redis.get(key);
     if (hit !== null) return { count: Number(hit) };
     const count = await this.db.tx.notice.count({
@@ -289,7 +303,12 @@ export class NoticesService {
    * Targets narrow only the guardians part (P6-G): a STAFF notice takes none. Each must be one of
    * the institute's classes, or a current-year section of that class (422 TARGET_INVALID).
    */
-  private async checkTargets(audience: NoticeInput['audience'], targets: NoticeTargetRef[]) {
+  async checkTargets(
+    audience: NoticeInput['audience'],
+    targets: NoticeTargetRef[],
+    /** Targets the notice already has (`class|section`): kept as they are, even an old year's. */
+    kept: Set<string> = new Set(),
+  ) {
     if (!targets.length) return [];
     if (audience === 'STAFF') {
       throw apiError(422, 'TARGET_INVALID', 'A notice for staff takes no class targets');
@@ -297,8 +316,9 @@ export class NoticesService {
     const unique = [
       ...new Map(targets.map((t) => [`${t.classLevelId}|${t.sectionId ?? ''}`, t])).values(),
     ];
-    const classIds = [...new Set(unique.map((t) => t.classLevelId))];
-    const sectionIds = [...new Set(unique.flatMap((t) => (t.sectionId ? [t.sectionId] : [])))];
+    const toCheck = unique.filter((t) => !kept.has(`${t.classLevelId}|${t.sectionId ?? ''}`));
+    const classIds = [...new Set(toCheck.map((t) => t.classLevelId))];
+    const sectionIds = [...new Set(toCheck.flatMap((t) => (t.sectionId ? [t.sectionId] : [])))];
     const [classes, sections] = await Promise.all([
       this.db.tx.classLevel.findMany({ where: { id: { in: classIds } }, select: { id: true } }),
       sectionIds.length
@@ -310,7 +330,7 @@ export class NoticesService {
     ]);
     const classOk = new Set(classes.map((c) => c.id));
     const sectionClass = new Map(sections.map((s) => [s.id, s.classLevelId]));
-    for (const t of unique) {
+    for (const t of toCheck) {
       const ok =
         classOk.has(t.classLevelId) &&
         (t.sectionId === null || sectionClass.get(t.sectionId) === t.classLevelId);
@@ -379,12 +399,13 @@ export class NoticesService {
 
   async update(id: string, input: NoticeInput): Promise<NoticeManageItem> {
     const { tenantId } = this.me();
-    const before = await this.manageOne(id);
     const row = await this.lock(id);
+    const before = await this.manageOne(id);
     if (row.status === 'WITHDRAWN') {
       throw apiError(409, 'NOT_EDITABLE', 'A withdrawn notice cannot be edited');
     }
-    const targets = await this.checkTargets(input.audience, input.targets);
+    const kept = new Set(before.targets.map((t) => `${t.classLevelId}|${t.sectionId ?? ''}`));
+    const targets = await this.checkTargets(input.audience, input.targets, kept);
     const expiryChanged =
       (input.expiresAt?.getTime() ?? null) !== (row.expires_at?.getTime() ?? null);
     this.checkExpiry(input.expiresAt, row.publish_at, expiryChanged);
