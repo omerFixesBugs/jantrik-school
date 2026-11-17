@@ -405,12 +405,23 @@ describe('admission (public): form, codes, submit, status', () => {
     });
 
     it('S3: an upload without a valid phone token is refused before its body is read', async () => {
-      const res = await http(h)
+      const small = await http(h)
         .post(pub(a.slug, '/applications'))
         .set('X-Forwarded-For', randomIp())
-        .attach('photo', Buffer.alloc(4 * 1024 * 1024, 1), 'photo.png');
-      expect(res.status).toBe(401);
-      expect(res.body.code).toBe('ADMISSION_TOKEN_INVALID');
+        .attach('photo', Buffer.alloc(16 * 1024, 1), 'photo.png');
+      expect(small.status).toBe(401);
+      expect(small.body.code).toBe('ADMISSION_TOKEN_INVALID');
+      // A big body: the API answers 401 at once and closes the connection while the client is
+      // still sending (a reset on the client's side): either way nothing was buffered.
+      const big = await http(h)
+        .post(pub(a.slug, '/applications'))
+        .set('X-Forwarded-For', randomIp())
+        .attach('photo', Buffer.alloc(4 * 1024 * 1024, 1), 'photo.png')
+        .then(
+          (r) => r.status,
+          (e: Error) => (/ECONNRESET|EPIPE|socket hang up/.test(e.message) ? 'reset' : e.message),
+        );
+      expect([401, 'reset']).toContain(big);
     });
 
     it('S4: the status code works after the form closed, and only reaches a phone that applied', async () => {
@@ -429,15 +440,12 @@ describe('admission (public): form, codes, submit, status', () => {
       await new Promise((r) => setTimeout(r, 5_500)); // the phone's cooldown (Redis, real time)
       const before = h.sms.sentTo(phone).length;
       const ask = (ph: string) =>
-        http(h)
-          .post(pub(t.slug, '/otp'))
-          .set('X-Forwarded-For', randomIp())
-          .send({
-            phone: ph,
-            turnstileToken: TURNSTILE_DUMMY_TOKEN,
-            purpose: 'status',
-            applicationNo: no,
-          });
+        http(h).post(pub(t.slug, '/otp')).set('X-Forwarded-For', randomIp()).send({
+          phone: ph,
+          turnstileToken: TURNSTILE_DUMMY_TOKEN,
+          purpose: 'status',
+          applicationNo: no,
+        });
       await ask(phone).expect(202);
       await vi.waitFor(() => expect(h.sms.sentTo(phone).length).toBe(before + 1), {
         timeout: 15_000,
