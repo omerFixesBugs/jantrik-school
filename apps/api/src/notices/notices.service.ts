@@ -40,6 +40,23 @@ const targetSelect = {
   section: { select: { name: true } },
 } satisfies Prisma.NoticeTargetSelect;
 
+const manageSelect = {
+  id: true,
+  title: true,
+  body: true,
+  audience: true,
+  status: true,
+  pinned: true,
+  publishAt: true,
+  expiresAt: true,
+  editedAt: true,
+  withdrawnAt: true,
+  withdrawnReason: true,
+  createdAt: true,
+  targets: { select: targetSelect, orderBy: { createdAt: 'asc' } },
+  _count: { select: { reads: true } },
+} satisfies Prisma.NoticeSelect;
+
 /**
  * Notices (sprint 1 P6a, docs/notices.md). OWNER/ADMIN write them (S20); every member reads the
  * board. Visibility is computed when read from status, publish_at and expires_at (P6-A), with the
@@ -219,25 +236,9 @@ export class NoticesService {
 
   // ── Management (OWNER/ADMIN) ──────────────────────────────────────────────────────────────
 
-  private readonly manageSelect = {
-    id: true,
-    title: true,
-    body: true,
-    audience: true,
-    status: true,
-    pinned: true,
-    publishAt: true,
-    expiresAt: true,
-    editedAt: true,
-    withdrawnAt: true,
-    withdrawnReason: true,
-    createdAt: true,
-    targets: { select: targetSelect, orderBy: { createdAt: 'asc' } },
-    _count: { select: { reads: true } },
-  } satisfies Prisma.NoticeSelect;
 
   private manageItem(
-    n: Prisma.NoticeGetPayload<{ select: NoticesService['manageSelect'] }>,
+    n: Prisma.NoticeGetPayload<{ select: typeof manageSelect }>,
   ): NoticeManageItem {
     return {
       id: n.id,
@@ -268,13 +269,13 @@ export class NoticesService {
     const rows = await this.db.tx.notice.findMany({
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 500,
-      select: this.manageSelect,
+      select: manageSelect,
     });
     return rows.map((n) => this.manageItem(n));
   }
 
   async manageOne(id: string): Promise<NoticeManageItem> {
-    const n = await this.db.tx.notice.findFirst({ where: { id }, select: this.manageSelect });
+    const n = await this.db.tx.notice.findFirst({ where: { id }, select: manageSelect });
     if (!n) throw new NotFoundException('Notice not found');
     return this.manageItem(n);
   }
