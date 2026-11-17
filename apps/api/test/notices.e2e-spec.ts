@@ -319,6 +319,21 @@ describe('notices', () => {
       (c) => c.id === n.id,
     );
     expect(card?.excerpt).toBe(`${'a'.repeat(199)}😀…`);
+    // A Bangla conjunct and a family emoji (several code points each) are never split either.
+    const conjunct = await published({
+      title: 'Conjunct at the cut',
+      body: `${'a'.repeat(199)}ক্ষ${'b'.repeat(5)}`,
+      audience: 'ALL',
+    });
+    const family = await published({
+      title: 'Family at the cut',
+      body: `${'a'.repeat(199)}👨‍👩‍👧${'b'.repeat(5)}`,
+      audience: 'ALL',
+    });
+    const board = (await api(g1).get('/notices').expect(200)).body as NoticeBoardItem[];
+    expect(board.find((c) => c.id === conjunct.id)?.excerpt).toBe(`${'a'.repeat(199)}ক্ষ…`);
+    expect(board.find((c) => c.id === family.id)?.excerpt).toBe(`${'a'.repeat(199)}👨‍👩‍👧…`);
+    expect(await h.redis.ttl(noticesReadVersionKey(tenantId, g1UserId))).toBeGreaterThan(120);
   });
 
   it('a notice keeps its targets of last year when edited after the year changed (review round 1)', async () => {
