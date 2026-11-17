@@ -13,6 +13,7 @@ import {
 import {
   ArrowLeftRightIcon,
   CalendarCheckIcon,
+  CameraIcon,
   KeyRoundIcon,
   LockIcon,
   PencilIcon,
@@ -28,7 +29,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { SectionCard, SelectField, TextField } from '@/components/form-kit';
 import { PageGate } from '@/components/page-gate';
-import { PersonAvatar } from '@/components/person-avatar';
+import { StudentAvatar } from '@/components/student-photo';
+import { PhotoDialog } from '@/components/students/photo-dialog';
 import { ConfirmDialog, FormDialog } from '@/components/setup/setup-kit';
 import {
   BoardFields,
@@ -54,7 +56,13 @@ import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { displayName } from '@/lib/names';
 
 type Dialog =
-  'edit' | 'transfer' | 'guardian' | 'deactivate' | { removeLink: string; name: string } | null;
+  | 'edit'
+  | 'transfer'
+  | 'guardian'
+  | 'deactivate'
+  | 'photo'
+  | { removeLink: string; name: string }
+  | null;
 
 export default function StudentProfilePage() {
   return (
@@ -169,7 +177,7 @@ function Profile() {
       )}
       <section className="bg-card flex flex-col gap-4 rounded-xl border p-4 shadow-xs sm:flex-row sm:items-center sm:p-5">
         <div className="flex min-w-0 flex-1 items-center gap-4">
-          <PersonAvatar name={name} photoUrl={p.photoUrl} size="xl" />
+          <StudentAvatar studentId={p.id} photoId={p.photoId} name={name} size="xl" />
           <div className="flex min-w-0 flex-col gap-1">
             <h2 className="text-xl font-semibold break-words sm:text-2xl">{name}</h2>
             {other && <span className="text-muted-foreground break-words">{other}</span>}
@@ -196,6 +204,14 @@ function Profile() {
           )}
           {writable && (
             <>
+              <Button
+                variant="outline"
+                onClick={() => setDialog('photo')}
+                data-testid="student-photo-button"
+              >
+                <CameraIcon aria-hidden />
+                {p.photoId ? t('changePhoto') : t('addPhoto')}
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => setDialog('edit')}
@@ -376,6 +392,7 @@ function Profile() {
       )}
 
       {dialog === 'edit' && <EditDialog profile={p} onClose={close} />}
+      {dialog === 'photo' && <PhotoDialog profile={p} name={name} onClose={close} />}
       {dialog === 'transfer' && current && <TransferDialog profile={p} onClose={close} />}
       {dialog === 'guardian' && <AddGuardianDialog profile={p} onClose={close} />}
       <ConfirmDialog

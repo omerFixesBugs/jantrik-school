@@ -30,8 +30,9 @@ Code lives in [`apps/api/src/auth`](../apps/api/src/auth) and
   the user lookup. An SMS is sent only if the phone belongs to a user.
 - Every failure of `otp/verify` and `login` (unknown user, wrong code or password, expired or
   burned code, OTP-only account) returns the same `401 Invalid credentials`.
-- Password checks always run argon2, against a dummy hash if needed, so timing doesn't leak
-  either.
+- Password checks always run one argon2 verification, against a dummy hash if needed (no
+  account, no password, or a stored hash that is unreadable or above the cost ceiling), so timing
+  doesn't leak either.
 
 **OTP storage.** Codes are never stored in plain text. Redis holds
 `HMAC-SHA256(OTP_PEPPER, phone:code)` with a 5-minute TTL, plus an attempt counter. The 5th wrong
@@ -200,7 +201,16 @@ audited in that institute. Someone who is staff elsewhere switches to that insti
    - `HAS_PHONE`: the person's 10-digit national number, in any form (`01…`, `+880…`, Bangla
      digits, split by spaces, punctuation or symbols);
    - `HAS_INSTITUTE_NAME`: the whole name of any institute they are an active member of (as a
-     guardian too), ignoring case and spaces; names under 4 characters (code points) are skipped;
+     guardian too), or one of its distinctive words (P1-I). Both sides are compared in NFKC, lower
+     case, with ASCII digits, khanda ta's old encoding read as ৎ, and without spaces, punctuation,
+     symbols or invisible characters (soft hyphen, zero-width space and joiners…), so `ko.dom2026`
+     contains `kodom`. Distinctive: the name split at spaces, punctuation, symbols and zero-width
+     spaces; generic words (`GENERIC_NAME_WORDS` in `packages/shared/src/password.ts`: school,
+     college, madrasa, academy, coaching, high, model, বিদ্যালয়, উচ্চ, স্কুল, মাদ্রাসা, কলেজ, কোচিং…
+     and their spellings) and words of digits only dropped; generic words of 6 or more code points
+     glued to a word's end also cut off (`শাপলাউচ্চবিদ্যালয়` → `শাপলা`). Names and words under 4
+     characters (code points) are skipped. So for "শাপলা উচ্চ বিদ্যালয়", `শাপলা২০২৬১২৩৪` is refused
+     and `বিদ্যালয়২০২৬১২` is not;
    - `TOO_COMMON`: on the list in `apps/api/src/auth/common-passwords.txt` (SecLists' 10,000 most
      common, MIT; plus jantrik, bangladesh and password with digits and years). Server only;
 3. the code, else `422 PASSWORD_CODE_INVALID` (wrong, expired or used). Checking the rules first
@@ -221,6 +231,47 @@ budget. The common-password list is read at start-up: without it the API does no
 Password login accepts up to 512 code points, as many as a settable password can have when typed
 decomposed. `PasswordSettingsService` is the only code that writes `users.password_hash`
 (`password-writes.spec.ts` checks it).
+
+### The API never reads a hash in a request (P1-J)
+
+Ordinary requests run as `jantrik_app`, which may write `users.password_hash` (setting a password)
+but cannot read it: not with a query (the column is not granted), and not through a function
+(`auth_find_user_for_login` returns who the person is, never password data). The password login
+alone has its own database login:
+
+- `POST /auth/login` with a password looks the person up through `LoginPrismaService`
+  (`DATABASE_LOGIN_URL`, role `jantrik_login_app`) and the function
+  `auth_find_user_for_password_login(phone, email)`, which returns the stored hash; the API
+  verifies with argon2 as before.
+- `jantrik_login_app` may run that one function and nothing else (no table, no other function),
+  and `jantrik_app` may not run it. Only `AuthService` holds that client
+  (`login-isolation.spec.ts`). Its pool is small (4 connections). The queue worker builds the
+  same modules, so it gets `DATABASE_LOGIN_URL` and runs the start-up checks too, but never
+  looks a hash up; the receiver never gets it.
+- At start-up the API refuses a `DATABASE_LOGIN_URL` that is a superuser, has BYPASSRLS or can
+  become such a role (fail closed, like the other logins), one mixed up with `DATABASE_URL`, and
+  one that reaches another database or server than `DATABASE_URL` (database, port and the
+  server's start time compared).
+- A stored hash above 64 MiB, 10 passes or 4 lanes, or one argon2 cannot read, counts as no
+  password (the dummy check runs): a hash someone wrote into their own row cannot make each login
+  attempt arbitrarily expensive.
+
+**What an SQL injection in an ordinary request can and cannot do now:**
+
+- It **cannot** read any password hash or salt: its own, a co-member's or a stranger's.
+- It **cannot** run the password lookup, or anything as `jantrik_login_app`: that login's
+  password is only in the API's (and the worker's) environment, never in the database.
+- It **can** learn whether a given person has a password at all, yes or no:
+  `auth_my_password_is_set()` (for `GET /me/password`) answers for `app.user_id`, which any SQL can
+  set with `set_config`. It reveals nothing about the password itself.
+- It **can still take over an account**, as before P1-J: the request's identity is
+  `app.user_id`, which any SQL can change with `set_config`. Set to someone else's id, the RLS
+  policies let it write that person's `password_hash` (then sign in with a password it chose) or
+  create a session for them. P1-J protects the password itself (people reuse passwords
+  elsewhere), not the account against an injection. Recorded for the owner: P1-J8 in
+  decisions-pending.
+
+The platform admins' login is separate and unchanged ([platform.md](platform.md)).
 
 ## Tenants
 
@@ -260,7 +311,8 @@ JwtAuthGuard              @Public() skips; verify JWT + session not revoked → 
 RateLimitGuard            per user (authenticated) or per IP
 RolesGuard                @Roles(...)        → current roles from Redis (tenant:{tid}:user:{uid}:roles:v{n})
 ModuleGuard               @RequireModule(…)  → enabled modules from Redis (tenant:{tid}:modules)
-TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the handler:
+TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the handler
+                          (RequestTransaction.run; @OwnTransaction routes call it themselves):
                             - re-checks tenant ACTIVE/TRIAL + active membership (immediate suspension)
                             - handler runs inside the transaction (services use Db.tx)
                             - error → rollback;  success → commit → afterCommit callbacks
@@ -284,6 +336,27 @@ TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the
 - **`@UserScoped()`** runs a route with the user context only. Used by `/auth/*`, so account
   routes such as logout work even when the selected tenant is suspended.
 - **`@Public()`** routes get no request transaction.
+- **`@OwnTransaction()`** routes (sprint 1 P2: the image uploads `PUT /students/:id/photo` and
+  `PUT /institute/profile/:slot`) get no transaction from `TenantContextInterceptor`, which runs
+  before a route's own interceptors. Otherwise the transaction, and one of the pool's 10
+  connections, would be held while multer reads a slow upload and sharp decodes it: on slow 4G a
+  5 MB photo outlives the 15 s transaction (a 500 every time), and ten of them would hold every
+  connection and fail all other institutes' requests after the 5 s `maxWait`.
+  - The guards above still run first (token, rate limits, roles, module).
+  - The handler reads the body, applies the upload limit and decodes the image without the
+    database, then calls `RequestTransaction.run(fn)`: the same transaction the interceptor opens
+    (`withContext` with the same tenant and user, the tenant and membership re-check, `Db.tx`,
+    rollback on error, afterCommit after commit), just later and short.
+  - Everything that touches the database goes inside `run`. Nothing outside it may use `Db.tx`
+    (it throws: no request transaction), and `run` refuses to start inside one.
+  - The guards' checks can be a minute old by then (a slow body, the image queue), so the upload
+    routes pass `roles` to `run`: it re-checks the session (not revoked; in Redis, before the
+    transaction opens, with the 2 s deadline) and, in the transaction, that the person still holds
+    one of the route's roles, besides the institute's status and the membership. A short `run` before decoding refuses a lost role or a wrong target early.
+  - `UploadGuard` bounds the bodies in memory: 16 uploads in flight per process, 2 per person
+    (503 `IMAGE_BUSY`), a body not received within 60 s dropped.
+  - The CSV imports (student import, device people) still read their uploads inside the request
+    transaction; they are small (≤ 1–5 MB) and in the backlog to move the same way.
 
 ### Writing a service
 
@@ -455,6 +528,12 @@ Code: [`apps/web/src/lib/auth/auth-client.ts`](../apps/web/src/lib/auth/auth-cli
 | `INGEST_*`           | the device receiver: port, public host and port for the setup guide, `INGEST_TRUST_PROXY`, limits ([devices.md](devices.md))                                  |
 | `SMS_PROVIDER`       | `console` in development, `memory` in API tests, `outbox` (Redis list `sms:outbox:<phone>`) for Playwright; all refused in production                         |
 | rate-limit variables | see `.env.example`                                                                                                                                            |
+
+`CORS_ORIGINS` and `PLATFORM_ORIGINS` are normalised as browsers send `Origin` (lower-case host,
+no trailing slash or default port), so an entry written `https://App.example.com/` still matches.
+An entry with a login, a path, a query or a fragment is no origin (`https://app.example@evil.example`
+is not `https://evil.example`): production refuses it in either list, `PLATFORM_ORIGINS` everywhere,
+and in development a `CORS_ORIGINS` entry like that matches nothing.
 
 In production `SMS_PROVIDER=none` stands in until a gateway is built: every SMS fails and is
 recorded as failed. What else production refuses: [deploy.md](deploy.md) → Environment checks.

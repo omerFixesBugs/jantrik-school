@@ -2,10 +2,10 @@ import { v7 as uuidv7 } from 'uuid';
 import {
   ModuleKey,
   type Locale,
-  type PrismaClient,
   type Tenant,
   type TenantStatus,
 } from '../generated/prisma/client.js';
+import type { PrismaClient } from '../client.js';
 import { withTenant, type TenantTx } from './context.js';
 
 export interface ProvisionTenantInput {

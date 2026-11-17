@@ -29,6 +29,8 @@ const SAFE: LoginPrivileges = {
   login: 'jantrik_ingest_app',
   superuser: false,
   bypassRls: false,
+  replication: false,
+  createRole: false,
   canBecome: [],
 };
 
@@ -60,6 +62,8 @@ function serviceWith(privileges: LoginPrivileges, ...answers: (Check | Error | t
         login: privileges.login,
         superuser: privileges.superuser,
         bypass_rls: privileges.bypassRls,
+        replication: privileges.replication,
+        create_role: privileges.createRole,
         can_become: privileges.canBecome,
       },
     ]),

@@ -300,7 +300,7 @@ export class StudentAdminService {
       motherNameEn: null,
       presentAddress: null,
       permanentAddress: null,
-      photoUrl: null,
+      photoId: null,
       guardians: [],
       // The basics: the current class/section/roll, not the history.
       enrolments: current ? [current] : [],
@@ -361,7 +361,7 @@ export class StudentAdminService {
       motherNameEn: s.motherNameEn,
       presentAddress: s.presentAddress,
       permanentAddress: s.permanentAddress,
-      photoUrl: s.photoUrl,
+      photoId: s.photoFileId,
       status: s.status,
       deletedAt: s.deletedAt?.toISOString() ?? null,
       createdAt: s.createdAt.toISOString(),

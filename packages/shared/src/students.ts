@@ -255,7 +255,8 @@ export interface StudentProfile {
   motherNameEn: string | null;
   presentAddress: string | null;
   permanentAddress: string | null;
-  photoUrl: string | null;
+  /** The stored photo's id (GET …/photo serves it), or null; a replaced photo has a new id. */
+  photoId: string | null;
   status: StudentStatus;
   /** Set when deactivated (soft delete). */
   deletedAt: string | null;
