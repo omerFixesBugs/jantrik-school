@@ -135,6 +135,74 @@ export class TenantSmsService implements OnModuleInit {
   }
 
   /**
+   * A batch queued whole or not at all (S18, SMS broadcasts): under the same per-institute lock
+   * as `queue()`, rows whose dedupe key exists are skipped (DUPLICATE), and the rest are all
+   * stored QUEUED (one job each after commit) only when they fit today's cap left; otherwise
+   * nothing is stored. Call inside a request or job transaction.
+   */
+  async queueAll(
+    inputs: Omit<QueueTenantSmsInput, 'dailyCap' | 'overCap' | 'localDate' | 'delayMs'>[],
+    opts: { dailyCap: number; localDate: IsoDate },
+  ): Promise<
+    | { outcome: 'QUEUED'; queued: number; duplicates: number }
+    | { outcome: 'OVER_CAP'; needed: number; capLeft: number }
+  > {
+    const tx = this.db.tx;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('sms:' || public.app_current_tenant_id()::text, 0))`;
+    const unique = [...new Map(inputs.map((i) => [i.dedupeKey, i])).values()];
+    const existing = new Set<string>();
+    for (let i = 0; i < unique.length; i += 1000) {
+      const rows = await tx.smsLog.findMany({
+        where: { dedupeKey: { in: unique.slice(i, i + 1000).map((u) => u.dedupeKey) } },
+        select: { dedupeKey: true },
+      });
+      for (const r of rows) if (r.dedupeKey) existing.add(r.dedupeKey);
+    }
+    const fresh = unique.filter((u) => !existing.has(u.dedupeKey));
+    const duplicates = inputs.length - fresh.length;
+    await this.expireHeld(opts.localDate);
+    const localDate = dateToDb(opts.localDate);
+    const used = await tx.smsLog.count({ where: { localDate, status: { in: COUNTED } } });
+    const capLeft = Math.max(0, opts.dailyCap - used);
+    if (fresh.length > capLeft) return { outcome: 'OVER_CAP', needed: fresh.length, capLeft };
+    if (fresh.length === 0) return { outcome: 'QUEUED', queued: 0, duplicates };
+    const tenantId = this.context.requireTenantId();
+    const now = new Date();
+    const rows = await tx.smsLog.createManyAndReturn({
+      data: fresh.map((u) => ({
+        tenantId,
+        phone: u.phone,
+        purpose: u.purpose,
+        status: 'QUEUED' as const,
+        segments: smsLength(u.body).segments,
+        body: u.body,
+        localDate,
+        dedupeKey: u.dedupeKey,
+        relatedEntity: u.relatedEntity ?? null,
+        relatedId: u.relatedId ?? null,
+        sendAfter: now,
+      })),
+      select: { id: true },
+    });
+    await this.context.afterCommit(async () => {
+      await this.jobs.addBulk(
+        rows.map((r) => ({
+          name: 'tenant',
+          data: { tenantId, smsLogId: r.id },
+          opts: {
+            jobId: r.id,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 2_000 },
+            removeOnComplete: true,
+            removeOnFail: true,
+          },
+        })),
+      );
+    });
+    return { outcome: 'QUEUED', queued: rows.length, duplicates };
+  }
+
+  /**
    * An admin sends today's held SMS anyway (over the institute's own cap). Each one is re-checked
    * first: when the reason went away (the student is no longer absent) it is CANCELLED instead.
    * `ceiling` is Jantrik's limit for the day (the plan): never passed, so only what still fits

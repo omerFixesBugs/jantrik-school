@@ -51,3 +51,5 @@ export * from './files.js';
 export * from './files-schema.js';
 export * from './notices.js';
 export * from './notices-schema.js';
+export * from './broadcasts.js';
+export * from './broadcasts-schema.js';

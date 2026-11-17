@@ -283,7 +283,7 @@ export class NoticesService {
    * Targets narrow only the guardians part (P6-G): a STAFF notice takes none. Each must be one of
    * the institute's classes, or a current-year section of that class (422 TARGET_INVALID).
    */
-  private async checkTargets(audience: NoticeInput['audience'], targets: NoticeTargetRef[]) {
+  async checkTargets(audience: NoticeInput['audience'], targets: NoticeTargetRef[]) {
     if (!targets.length) return [];
     if (audience === 'STAFF') {
       throw apiError(422, 'TARGET_INVALID', 'A notice for staff takes no class targets');

@@ -315,6 +315,8 @@ enum SmsPurpose {
   ATTENDANCE_ENTRY
   /// A student's exit punch, to the primary guardian (devices; at most one a day).
   ATTENDANCE_EXIT
+  /// An admin's SMS broadcast to guardians or staff (notices, sprint 1 P6b).
+  BROADCAST
 
   @@map("sms_purpose")
 }
@@ -599,6 +601,10 @@ model User {
   noticesWithdrawn Notice[]     @relation("NoticeWithdrawnBy")
   noticeReads      NoticeRead[]
 
+  smsBroadcastsCreated   SmsBroadcast[] @relation("SmsBroadcastCreatedBy")
+  smsBroadcastsScheduled SmsBroadcast[] @relation("SmsBroadcastScheduledBy")
+  smsBroadcastsCancelled SmsBroadcast[] @relation("SmsBroadcastCancelledBy")
+
   @@map("users")
 }
 
@@ -701,6 +707,9 @@ model Tenant {
   notices       Notice[]
   noticeTargets NoticeTarget[]
   noticeReads   NoticeRead[]
+
+  smsBroadcasts       SmsBroadcast[]
+  smsBroadcastTargets SmsBroadcastTarget[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -881,6 +890,7 @@ model ClassLevel {
   feeAmounts     FeeAmount[]
   examClasses    ExamClass[]
   noticeTargets  NoticeTarget[]
+  broadcastTargets SmsBroadcastTarget[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -981,6 +991,7 @@ model Section {
   examMarkSheets     ExamMarkSheet[]
   examResults        ExamResult[]
   noticeTargets      NoticeTarget[]
+  broadcastTargets   SmsBroadcastTarget[]
 
   @@unique([tenantId, id])
   /// So rows can carry the class level and be checked against a subject's class.
@@ -3292,6 +3303,7 @@ model Notice {
   withdrawnBy User?          @relation("NoticeWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   targets     NoticeTarget[]
   reads       NoticeRead[]
+  broadcasts  SmsBroadcast[]
 
   @@unique([tenantId, id])
   @@index([tenantId, status, publishAt(sort: Desc)])
@@ -3337,4 +3349,87 @@ model NoticeRead {
   @@unique([tenantId, noticeId, userId])
   @@index([tenantId, userId])
   @@map("notice_reads")
+}
+
+enum BroadcastRecipients {
+  PRIMARY_GUARDIANS
+  ALL_GUARDIANS
+  STAFF
+
+  @@map("broadcast_recipients")
+}
+
+/// SENT means every SMS was handed to the SMS queue (in one transaction); delivery is read live
+/// from sms_logs (P6-C). FAILED_OVER_CAP: nothing was sent (all or nothing, S18).
+enum BroadcastStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+  CANCELLED
+  FAILED_OVER_CAP
+
+  @@map("broadcast_status")
+}
+
+/// An SMS to guardians or staff, sent now or at a set time, whole or not at all (S18–S20). Never
+/// deleted (money history).
+model SmsBroadcast {
+  id                 String              @id @default(uuid(7)) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  body               String
+  noticeId           String?             @map("notice_id") @db.Uuid
+  recipients         BroadcastRecipients
+  status             BroadcastStatus     @default(DRAFT)
+  scheduledAt        DateTime?           @map("scheduled_at") @db.Timestamptz(3)
+  /// The recipient count the admin confirmed (an estimate: the audience is resolved at send, S19).
+  previewCount       Int?                @map("preview_count")
+  segments           Int?                @db.SmallInt
+  estimatedCostPaisa Int?                @map("estimated_cost_paisa")
+  queuedCount        Int?                @map("queued_count")
+  /// The institute's day it was sent (cap and billing).
+  localDate          DateTime?           @map("local_date") @db.Date
+  createdById        String              @map("created_by_id") @db.Uuid
+  /// The admin the send job acts for.
+  scheduledById      String?             @map("scheduled_by_id") @db.Uuid
+  sentAt             DateTime?           @map("sent_at") @db.Timestamptz(3)
+  cancelledById      String?             @map("cancelled_by_id") @db.Uuid
+  cancelledAt        DateTime?           @map("cancelled_at") @db.Timestamptz(3)
+  /// BY_ADMIN or ACTOR_NOT_ADMIN.
+  cancelReason       String?             @map("cancel_reason")
+  /// {needed, capLeft} for FAILED_OVER_CAP.
+  failure            Json?
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  notice      Notice?              @relation(fields: [tenantId, noticeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User                 @relation("SmsBroadcastCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  scheduledBy User?                @relation("SmsBroadcastScheduledBy", fields: [scheduledById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cancelledBy User?                @relation("SmsBroadcastCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targets     SmsBroadcastTarget[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status, scheduledAt])
+  @@index([tenantId, noticeId])
+  @@map("sms_broadcasts")
+}
+
+/// A broadcast's guardian targets (as notice_targets): a class, or a section of that class.
+model SmsBroadcastTarget {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  broadcastId  String   @map("broadcast_id") @db.Uuid
+  classLevelId String   @map("class_level_id") @db.Uuid
+  sectionId    String?  @map("section_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  broadcast  SmsBroadcast @relation(fields: [tenantId, broadcastId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel ClassLevel   @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  section    Section?     @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, broadcastId])
+  @@map("sms_broadcast_targets")
 }
