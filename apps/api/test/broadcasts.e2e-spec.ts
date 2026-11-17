@@ -342,28 +342,35 @@ describe('SMS broadcasts', () => {
     expect(await logsOf(b.id)).toHaveLength(4);
   });
 
-  it('review focus 3: due at 23:30 it waits until 08:00, then sends', async () => {
+  it('review focus 3 and SF2: a wait for quiet hours never makes a broadcast more than 3 hours late', async () => {
     clock.set(dhaka('2026-11-20T20:00:00'));
     const b = await create({ body: 'Night', recipients: 'STAFF' });
     await api(admin)
       .post(`/broadcasts/${b.id}/schedule`, {
-        scheduledAt: '2026-11-20T20:55:00+06:00',
+        scheduledAt: '2026-11-20T20:30:00+06:00',
         ...(await confirm(b.id)),
       })
       .expect(200);
-    clock.set(dhaka('2026-11-20T23:30:00'));
-    const later = await processor().send({ tenantId, broadcastId: b.id });
-    expect(later).toEqual({ kind: 'LATER', at: dhaka('2026-11-21T08:00:00') });
-    expect(Number(await due(b.id))).toBe(dhaka('2026-11-21T08:00:00').getTime());
-    expect(
-      ((await api(admin).get(`/broadcasts/${b.id}`).expect(200)).body as BroadcastView).scheduledAt,
-    ).toBe(dhaka('2026-11-21T08:00:00').toISOString());
-    expect(await logsOf(b.id)).toEqual([]);
-    clock.set(dhaka('2026-11-21T08:00:00'));
-    await expect(processor().send({ tenantId, broadcastId: b.id })).resolves.toMatchObject({
-      kind: 'SENT',
-      queued: 2,
+    // Its job was lost; found at 23:20, under 3 hours late, but sending would wait until 08:00
+    // (11.5 hours after its time): it expires instead of going out the next morning.
+    clock.set(dhaka('2026-11-20T23:20:00'));
+    await expect(processor().send({ tenantId, broadcastId: b.id })).resolves.toEqual({
+      kind: 'EXPIRED',
     });
+    expect(await logsOf(b.id)).toEqual([]);
+    const view = (await api(admin).get(`/broadcasts/${b.id}`).expect(200)).body as BroadcastView;
+    // The time shown is still the one the admin chose.
+    expect(view).toMatchObject({
+      status: 'EXPIRED',
+      scheduledAt: dhaka('2026-11-20T20:30:00').toISOString(),
+    });
+    // N-a: an expired broadcast can be edited back into a draft and sent again.
+    const again = (
+      await api(admin)
+        .put(`/broadcasts/${b.id}`, { body: 'Night', recipients: 'STAFF' })
+        .expect(200)
+    ).body as BroadcastView;
+    expect(again).toMatchObject({ status: 'DRAFT', failure: null, scheduledAt: null });
   });
 
   it('review focus 1 and 4 at send time: the cap used up meanwhile; the audience then; the admin role', async () => {
@@ -671,5 +678,65 @@ describe('SMS broadcasts', () => {
       .post('/broadcasts', { body: '   ', recipients: 'STAFF' })
       .expect(422);
     expect(res.body.code).toBe('SMS_EMPTY');
+  });
+
+  it('SF1: a scheduled broadcast whose audience grew goes out at its real cost, or not at all when much dearer', async () => {
+    clock.set(dhaka('2026-11-21T10:00:00'));
+    const [c3, c4] = await withTenant(h.prisma, tenantId, (tx) =>
+      tx.classLevel.findMany({ orderBy: { sortOrder: 'asc' }, skip: 2, take: 2 }),
+    );
+    // One more SMS than confirmed (1 → 2): within one SMS of the confirmed cost, so it is sent;
+    // the real cost is stored and shown beside the confirmed one.
+    await enrol(c3!.id, null, [randomPhone()]);
+    const small = await create({
+      body: 'Small growth',
+      recipients: 'PRIMARY_GUARDIANS',
+      targets: [{ classLevelId: c3!.id }],
+    });
+    await api(admin)
+      .post(`/broadcasts/${small.id}/schedule`, {
+        scheduledAt: '2026-11-21T10:30:00+06:00',
+        ...(await confirm(small.id)),
+      })
+      .expect(200);
+    await enrol(c3!.id, null, [randomPhone()]);
+    clock.set(dhaka('2026-11-21T10:31:00'));
+    await expect(processor().send({ tenantId, broadcastId: small.id })).resolves.toMatchObject({
+      kind: 'SENT',
+      queued: 2,
+    });
+    expect((await api(admin).get(`/broadcasts/${small.id}`).expect(200)).body).toMatchObject({
+      previewCount: 1,
+      estimatedCostPaisa: rate,
+      queuedCount: 2,
+      sentCostPaisa: 2 * rate,
+    });
+
+    // Four more than confirmed (1 → 5): far dearer, so nothing is sent; it needs a new preview.
+    await enrol(c4!.id, null, [randomPhone()]);
+    const big = await create({
+      body: 'Big growth',
+      recipients: 'PRIMARY_GUARDIANS',
+      targets: [{ classLevelId: c4!.id }],
+    });
+    await api(admin)
+      .post(`/broadcasts/${big.id}/schedule`, {
+        scheduledAt: '2026-11-21T11:00:00+06:00',
+        ...(await confirm(big.id)),
+      })
+      .expect(200);
+    for (let i = 0; i < 4; i++) await enrol(c4!.id, null, [randomPhone()]);
+    clock.set(dhaka('2026-11-21T11:01:00'));
+    await expect(processor().send({ tenantId, broadcastId: big.id })).resolves.toEqual({
+      kind: 'COST_CHANGED',
+    });
+    expect(await logsOf(big.id)).toEqual([]);
+    expect((await api(admin).get(`/broadcasts/${big.id}`).expect(200)).body).toMatchObject({
+      status: 'COST_CHANGED',
+      failure: { confirmedCostPaisa: rate, costPaisa: 5 * rate },
+    });
+    const alerts = (await api(admin).get('/broadcasts/alerts').expect(200))
+      .body as BroadcastAlert[];
+    expect(alerts.find((x) => x.id === big.id)?.status).toBe('COST_CHANGED');
   });
 });
