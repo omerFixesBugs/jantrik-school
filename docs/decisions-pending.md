@@ -909,8 +909,10 @@ Changed after the review of #25 (round 1, nits only):
   again, stale, for 2 minutes).
 - **P6-a10. An edit keeps the targets the notice already had** without the current-year check; new
   targets are still checked. An edit locks the notice before reading what the audit records.
-  <<<<<<< HEAD
-- **P6-a11. The board excerpt is cut at 200 characters (code points)**, never inside an emoji.
+- **P6-a11. The board excerpt is cut at 200 characters as people see them** (grapheme clusters:
+  a Bangla conjunct or a multi-code-point emoji is never split; round 2).
+- **P6-a12. The per-person read version expires after an hour** (set with the increment), longer
+  than any count cached under it (round 2).
 
 P6b (SMS broadcasts), taken alone:
 
@@ -966,13 +968,6 @@ Changed after the review of #26 (round 1; each must/should fix with a test seen 
   characters (N4).
 - **The migration `20261117410100_sms_broadcasts` was edited in place** (the `EXPIRED` value, its
   CHECKs, the index). Only scratch and CI databases had applied it.
-  \=======
-- **P6-a11. The board excerpt is cut at 200 characters as people see them** (grapheme clusters:
-  a Bangla conjunct or a multi-code-point emoji is never split; round 2).
-- **P6-a12. The per-person read version expires after an hour** (set with the increment), longer
-  than any count cached under it (round 2).
-
-> > > > > > > feature/sprint-1-p6-notices
 
 Changed after the review of #26, round 2 (each should-fix with a test seen failing first):
 
