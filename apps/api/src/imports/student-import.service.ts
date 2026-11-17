@@ -89,6 +89,16 @@ export class StudentImportService implements OnModuleInit {
     return { tenantId: p.tenantId!, userId: p.userId };
   }
 
+  /**
+   * The worker runs an import as its uploader and audits it in their name, so only the uploader
+   * may decide what it does: start it, or include a possible duplicate (P1-J8 review round 2).
+   */
+  private assertMine(imp: Row): void {
+    if (imp.createdById !== this.me.userId) {
+      throw apiError(403, 'NOT_YOUR_IMPORT', 'Only the person who uploaded this file can do this');
+    }
+  }
+
   // ─────────────────────────── Upload ───────────────────────────
 
   async upload(
@@ -221,8 +231,9 @@ export class StudentImportService implements OnModuleInit {
     include: boolean,
   ): Promise<StudentImportSummary> {
     const tx = this.db.tx;
-    await tx.$queryRaw`SELECT id FROM student_imports WHERE id = ${id}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM public.student_imports WHERE id = ${id}::uuid FOR UPDATE`;
     const imp = await this.load(id);
+    this.assertMine(imp);
     if (imp.status !== 'VALIDATED') {
       throw apiError(409, 'IMPORT_STARTED', 'This import has already started');
     }
@@ -497,6 +508,7 @@ export class StudentImportService implements OnModuleInit {
   async start(id: string): Promise<StudentImportSummary> {
     const tx = this.db.tx;
     const imp = await this.load(id);
+    this.assertMine(imp);
     const results = (imp.results as ImportRowResult[] | null) ?? [];
     const overrides = new Set(imp.duplicateOverrides);
     if (
@@ -564,7 +576,7 @@ export class StudentImportService implements OnModuleInit {
    */
   async runChunk(id: string, size: number): Promise<boolean> {
     const tx = this.db.tx;
-    await tx.$queryRaw`SELECT id FROM student_imports WHERE id = ${id}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM public.student_imports WHERE id = ${id}::uuid FOR UPDATE`;
     const imp = await this.load(id);
     if (imp.status !== 'RUNNING') return true;
     const allowed = await tx.membership.findFirst({

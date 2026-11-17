@@ -746,9 +746,45 @@ P1-J6. **Not changed: the platform admins' login** (`platform_find_admin_for_log
 
 P1-J7. **Built after the review; you may drop these commits:** the first version kept the hash in the database and compared a digest there (`auth_my_password_matches`). The review showed that an injection could read any user's salt, set `app.user_id` to them and check 200,000 offline-computed guesses in one 6.4-second statement: close to reading the hash. Now a dedicated login, `jantrik_login_app`, is the only one that may run the hash lookup (`auth_find_user_for_password_login`); `jantrik_app` has neither the lookup nor any comparison function, and the API verifies with argon2 as before. It follows the platform and receiver logins: its own env URL (required, refused in production as the owner or superuser, never given to the receiver), its own small pool, the fail-closed privilege check and a mixed-up-URLs check at start-up, and the role in `01-roles.sh`, `create-roles.sh`, the production compose, CI, the restore check and the docs. **Upgrade:** the migration first checks that `jantrik_login_app` exists and refuses to run otherwise (Prisma does not run a migration in one transaction, so a failure half-way would leave the first statements applied); every statement can run again after `prisma migrate resolve --rolled-back`. On a server the role is created after the checkout and before `migrate` (docs/deploy.md → Upgrades). Between `migrate` and the restart, the old API fails whole-row reads of `users` (the refresh, `/auth/me`) and both logins; a failed refresh is retried and nobody is signed out.
 
-P1-J8. **Follow-up for the owner (not built, and not new): an SQL injection can still take over an account.** The request's identity is `app.user_id` (and `app.tenant_id`), set with `set_config`, which any SQL in the same transaction can change. Set to a victim's id, RLS lets it update the victim's `password_hash` (then sign in with a password it chose) or insert a session for them. P1-J stops reading hashes (it protects the password, which people reuse elsewhere), not this. Options, each a larger change: a verified context (e.g. the API signs the context and a definer function checks the signature before anything trusts it), or writes to `users.password_hash` and `sessions` only through definer functions that check a server-side secret or the session itself. Main has the same today.
+P1-J8. **Built (day run 2026-11-17), for the owner's review with its PR: an SQL injection can no longer pose as another person or enter another institute.** Plan: [plans/sprint-1-p1j8-verified-context.md](plans/sprint-1-p1j8-verified-context.md), written and built while the owner was away, as asked ("the option that closes it most completely without weakening anything"). Before, the request's identity was `app.user_id` and `app.tenant_id`, which any SQL in the transaction could change with `set_config`: an injection could write a victim's `password_hash` or insert a session for them, read or write any institute's rows, and make itself OWNER of any institute (`packages/db/test/account-takeover.test.ts`: six of its seven attacks succeeded on integration/sprint-1). Now the API signs one setting, `app.context` (institute, person, the connection's backend pid and the transaction's start), with a key the database generates and only `jantrik_login_app` (and the owner) may read; `app_current_tenant_id()` / `app_current_user_id()` believe nothing else and raise 42501 on a value that does not verify for this very transaction. **No setup step for the owner beyond #16's:** no new role, no new `.env` line; `pnpm db:migrate`, then restart `pnpm dev`. P1-J2's one-bit leak is closed by the same change. Decisions taken alone, each the safest option found (P1-J8a to P1-J8g):
+
+P1-J8a. **The verified context, not narrower write rules.** Moving only password and session writes behind definer functions (the other option recorded) would have left an injection free to enter any institute and make itself OWNER there through `memberships`. The signed context closes every path that goes through `set_config`, and with it an injection can only do what its own person could already do through RLS.
+
+P1-J8b. **The key lives in the database, made by the migration** (`pg_strong_random`, 48 bytes; the HMAC pads stored next to it so the check needs only the built-in `sha256()`; pgcrypto stays out). The API and the worker read it through the password-login login (`auth_context_key()`, executable by `jantrik_login_app` only) at start-up and refuse to start without it; the seed and the tests read the table as the owner. No env var, so nothing to set up, copy or leak in `.env`; a restore keeps the key (it is in the dump, like every row). Rotation has no command yet (database.md → The request context); see P1-J8h.
+
+P1-J8c. **A bad context raises 42501 instead of meaning "no context".** Unset or empty still means no context (nothing visible). A forged, tampered, copied or malformed value fails the statement loudly, so an attempt shows in the logs.
+
+P1-J8d. **Bound to the backend pid and the transaction start**, so a value that leaks (a log, an error) is useless in any other transaction or connection. It costs one more round trip for a context with only a tenant or only a person (jobs, login steps); the request's tenant-and-person context needs no more than before.
+
+P1-J8e. **Every policy rewritten to call the functions wrapped, `(SELECT app_current_tenant_id())`**, in the same migration (76 of 124 policies), so the check runs once per statement, not per row; the four definer functions that call them are recreated wrapped, and `schema-safety.test.ts` fails on a bare call. `tenant_modules.provisioning_only` read its own table in a subquery, which PostgreSQL now refuses as policy recursion; the same check moved into a STABLE plpgsql function (`app_tenant_has_modules`, the caller's RLS as before). Measured on the scratch database: about 38 µs per check; ten statements in one transaction 26.7–27.9 ms against 25.9–26.1 before.
+
+P1-J8f. **`tenantClient` kept, but each model call now runs in its own `withTenant`** (a batch transaction cannot read the backend and start first). Only tests and the docs use it.
+
+P1-J8g. **`app_verified_context()` is runnable by the roles whose queries meet a policy** (the app, the owner, and the owners of the definer functions), not by PUBLIC, like every definer function; it returns only the caller's own verified context.
+
+P1-J8h. **Production refuses to start without the key; development and tests only log it, and a changed key is reloaded.** CI's Playwright starts the API before its global setup migrates and resets `jantrik_e2e`, so a start-up that required the key failed there, and the reset would have made a new key under the running API. Now: in production (migrations run before the apps) no key → no start, as before; elsewhere an error in the log and the key is loaded on the first institute transaction. Every signed transaction also reads a one-way fingerprint of the database's key (`app_context_key_id()`, runnable by `jantrik_app`; it reveals nothing that helps forge a signature) in the round trip it already makes, and reloads the key once when it changed (a reset, a restore from another server, a rotation); if it still differs, the transaction fails before its work runs. Without a key nothing can be signed, so every institute transaction fails: closed and loud either way.
+
+P1-J8i. **From the review: no temporary objects for the runtime logins.** The signed context assumes an injection cannot leave anything behind on a pooled connection; the review planted a temporary view `tenants` and the victim's next request on that connection ran it in the victim's context (password hash changed, attacker OWNER of the victim's institute). Production revoked TEMPORARY already; development, the test databases, CI and Playwright did not. Now the P1-J8 migration revokes TEMPORARY on its database from PUBLIC (so does `docker/postgres/init`), the API refuses a `DATABASE_URL` login with TEMP in production and warns elsewhere, and the request path's SQL is schema-qualified. **For your existing local databases** the migration does it when you migrate each one; to do it at once, as the Postgres superuser: `REVOKE TEMPORARY ON DATABASE jantrik FROM PUBLIC; REVOKE TEMPORARY ON DATABASE jantrik_test FROM PUBLIC; REVOKE TEMPORARY ON DATABASE jantrik_e2e FROM PUBLIC;` (the merge runbook has the exact command). The definer functions already list `pg_temp` last (schema-safety checks it).
+
+P1-J8j. **From the review: the upgrade stops the API and the worker before `migrate`, and the caches have a new generation.** Between `migrate` and the restart an old API reads no institute data; it would have cached empty roles and modules for 5 minutes under keys the new API reads (403s, skipped device jobs, an import left queued). The roles and modules cache keys and the fees "dues ensured today" marker carry a new generation, and docs/deploy.md stops api and worker first.
+
+P1-J8k. **From the review: identities a job signs come from rows the app cannot forge.** `student_imports.created_by_id` (the import job signs as that person) is no longer updatable by `jantrik_app`, and a request can only create an import as its signed person (a trigger). Accepting an invitation checks it in the person's own context before signing the URL's institute. The other jobs take their person from job data in Redis, not from a row.
+
+P1-J8l. **From the review: the HMAC pads are derived from the key by a trigger**, so they cannot drift and a rotation is one UPDATE (docs/database.md → The request context).
+
+P1-J8m. **Recorded, not changed (from the review):** `jantrik_auth` (the owner of the auth functions) can read the key table. A dedicated NOLOGIN owner for the key would follow least privilege more closely but needs a new role, i.e. a setup step on every machine; not worth it now (`jantrik_auth` is NOLOGIN and runs only reviewed definer functions). What an injection can still leave on a pooled connection is listed in docs/database.md → The request context: session settings, session advisory locks, signals to other app backends, and stored role settings, all denial of service or wrong output, none another person's data; stored role settings are refused at start-up in production (P1-J8p). **Not preventable in PostgreSQL:** a login may change its own password (`ALTER ROLE jantrik_app PASSWORD …`); the services then fail to connect until the password is set back. Denial of service only.
+
+P1-J8n. **Open for the owner (from the review): planner estimates on large institutes.** The policies compare `tenant_id` with a parameter the planner cannot see, so it estimates an average institute. Measured on a skewed scratch dataset (plan → Performance): one real plan change, the student list page of a 3,030-student institute, 0.8–1.2 ms before, 5.0–6.2 ms after (a full sort instead of reading the first 50 in order); the attendance, exam and search reads are the same or faster. Options: (a) accept it (default for now; the cost grows with the institute: perhaps 15 ms at 10,000 students); (b) **recommended:** pass the institute explicitly (`tenantId` in `where`) in the paged lists (students first, then enrolments and dues lists): shown to bring the old plan back (0.9–1.4 ms), RLS still applies, a small change per query, in its own PR; (c) not an option: reading the unsigned setting for estimates (any SQL could change it mid-statement).
+
+P1-J8o. **From the review, round 2 (must-fix): a transaction left open on a pooled connection.** SQL the app sends outside a transaction may carry several statements, so an injection there could end with `BEGIN; DECLARE c CURSOR WITH HOLD FOR SELECT … FROM students` and leave the transaction open. The next request on that connection (another institute's) signed that transaction, and the cursor was filled with that institute's rows at its COMMIT; the attacker read them later with FETCH (reproduced). Fixed twice: the pool of every client `createPrismaClient` makes closes a connection released with a transaction open (`pg` is now a direct dependency of the db package, the same version Prisma's adapter already used), and `withContext` refuses to sign a transaction that is not fresh (a transaction id assigned, or a cursor declared in it before signing), which rolls it back. The three app queries that ran outside a transaction (the refresh-token lookup, the SMS rate, the health check) run in one. Not adopted: also refusing when the transaction started more than a margin before the signing statement (a busy event loop would refuse honest requests; the two checks are exact). The reviewer's probe is `packages/db/test/leftover-transaction.test.ts`.
+
+P1-J8p. **From the review, round 2: stored role settings.** `jantrik_app` may run `ALTER ROLE jantrik_app [IN DATABASE …] SET statement_timeout = '1ms'` for itself (reproduced): every new connection of the API and the worker takes it, even after restarts. Every runtime login's start-up check now reads the settings stored for it (for every database or this one): production refuses settings the login should not have (the receiver's `statement_timeout=5s` is expected), development and tests warn. The same check now reads TEMP through roles the login can only SET ROLE to, and the platform, receiver and password-login logins run both checks too.
+
+P1-J8q. **From the review, round 2: only the uploader may start an import or include a possible duplicate.** The worker runs the import as its uploader and audits it in their name, so another admin of the institute starting it (or changing which duplicates it imports) would act in the uploader's name. Recorded, not changed: an SQL injection in an admin's request can still change another admin's queued import content in the table (rows, mapping, results); that is P1-J10 (RLS does not separate people inside an institute).
 
 P1-J9. **Follow-up for the owner (not built): email login lookups are case-insensitive but not indexed.** Both login lookups compare `lower(u.email) = lower(p_email)`; `users_email_key` is case-sensitive, so that comparison scans the table (an unknown email takes longer as the table grows) and two emails differing only in case can coexist. The fix: check for such duplicates first, then a unique index on `lower(email)` (and drop the old one). Not in this PR, because existing data could hold duplicates.
+
+P1-J10. **Follow-up for the owner (not built, not set_config): RLS does not separate roles inside an institute.** With P1-J8 an injection is the person whose request it rides in, in their institute. But the policies isolate institutes, not roles: an injection in a teacher's or a guardian's request can still write any row of its own institute that `jantrik_app` may write, e.g. insert an OWNER membership for itself in `memberships`, change marks or fee rows. The API checks roles; the database does not. Options, each larger: (a) role-aware policies on the most sensitive tables first (`memberships`, marks, payments), reading the role from the signed context (the API would sign the person's roles too); (b) writes to `memberships` only through definer functions that check the caller's role; (c) leave it to the API and code review (today). Recommended: (a) for `memberships` first, since it is the path to taking an institute over.
 
 P1-K. **Fixed from the review** (each with a test that failed first): a code is single use even when two requests race with it (login codes too); the phone rule ignores every punctuation mark and symbol between the digits; the other sessions are revoked in one statement; the common-password list is read at start-up; password login accepts up to 512 code points (a 128-character password typed decomposed); the wrong-code message asks to check the code before sending a new one. Kept as they are: the staff check after a correct password costs one extra query (it only confirms a password the caller already has); the login page's hint sits under the password tab, which guardians do not use.
 
@@ -870,3 +906,168 @@ Also decided while building:
 - The migrations were written by hand (no development database is used in this run) and checked with `prisma migrate diff` against a scratch database: empty.
 - `sharp` 0.35.5 was already in the lockfile through Next.js; the API now depends on it directly (S8).
 - Encoding effort is moderate (PNG palette effort 4, WebP effort 4): the worst case (pure noise) stays well under the request's 15 s; a test pins it under 8 s per image on this PC.
+
+## Sprint 1, P3: online admission (2026-11-17)
+
+Built during the unattended day run of 2026-11-17 from the P3 plan (`docs/plans/sprint-1-p3-admission.md`,
+PR #15) with its recommended defaults P3-A to P3-V, on top of P1-J8 (#20). Staff side and the
+December dues rule: P3a (this PR). Decisions taken alone, each the safest option found:
+
+- **P3-a1. Field lengths follow the student's fields**, not the plan's numbers: names 120
+  characters (plan 100), addresses 300 (plan 500), date of birth from 1920 (plan 1990), so an
+  approved application always fits a student (`admit()` would refuse a longer value).
+- **P3-a2. Blood group is hidden by default** (P3-Q did not list it): less personal data unless
+  the institute asks for it.
+- **P3-a3. "Live" for the three-per-phone cap** is "not withdrawn and not rejected"; the duplicate
+  check counts every application not withdrawn (as the plan).
+- **P3-a4. Staff entry is JSON; the photo is a separate upload** (`PUT /admission/applications/:id/photo`,
+  P2's upload pipeline and `@OwnTransaction`), instead of one multipart request. The cycle's
+  required fields apply to staff except the photo; staff may fill fields the cycle hides.
+- **P3-a5. Staff may enter applications in any cycle status** (draft, open or closed): paper forms
+  arrive after the deadline.
+- **P3-a6. Three extra read routes for the pages:** `GET /admission/options` (years, classes,
+  groups), `GET /admission/cycles/:id`, `GET /admission/cycle-classes/:id/sections` (where to
+  approve into).
+- **P3-a7. Bulk approval:** STUDENT_LIMIT, SECTION_FULL and INACTIVE stop the run and mark the
+  rest; GUARDIAN_CHOICE_REQUIRED and DUPLICATE skip one; an unexpected error is recorded as a new
+  problem `INVALID` (logged by its error name only, never the message: it can hold personal data).
+  The job id is `admission-approve-<class id>` (BullMQ refuses `:`), removed when done so a re-run
+  can start; "running" is the job's state.
+- **P3-a8. Status changes** go between any statuses except out of `ADMITTED` (final), each with
+  who, when and the reason, audited; no further state machine (P4 adds SELECTED/WAITLISTED).
+- **P3-a9. The message namespace is `admissions.staff`**: `admission` is the student admission
+  form's (its field labels are reused).
+- **P3-a10 (money). The December rule is recorded, never derived** (changed after the review,
+  M1): the first version treated any student created before the year's start with no earlier
+  enrolment as a December admission, which back-dated an admission fee, with fines, for imported
+  students and for students of an institute's first year. Now `admit()` records
+  `students.admission_date_for_dues` only for a child admitted into a year that has not started
+  and is not current yet; every other student keeps the creation day exactly as before, and the
+  column starts empty for all existing students (no data check needed before deploying).
+- **P3-a11. No trigram index on application names:** 2 000 applications list in well under
+  300 ms with `ILIKE` (the API test measures it).
+- **P3-a12 (review S2). Bulk approval approves SELECTED applications only** (the approved sprint
+  plan's "bulk approve for SELECTED rows"); staff may mark an application SELECTED by hand in a
+  cycle without an admission test (with one, the merit list selects). Approving one at a time keeps
+  P3-H (submitted, shortlisted or selected).
+- **P3-a13 (review S1). Bringing back a withdrawn or rejected application** runs the duplicate and
+  per-phone checks under the row lock; a status change clears a bulk approval problem.
+- **P3-a14 (review S3). One application per birth registration number per cycle, not withdrawn:**
+  an advisory lock per number (after the phone's, the same order in the public function) and a
+  partial unique index as the backstop.
+- **P3-a15 (review N2, N7, N4).** Updates of cycles and their classes by column; a cycle edit takes
+  the cycle's lock exclusively and new applications take it shared, so turning the admission test
+  on cannot race the first application; a bulk problem is audited, and problems of applications
+  later rejected or withdrawn are not listed.
+- **P3-a16 (review N5, N3, recorded only).** A photo left on an application after a STORAGE_FULL
+  approval stays there (the student's own photo can be uploaded on the student page); the tests do
+  not force a bulk/single overlap or a second start while one runs (timing-dependent); one-row
+  locking is what guarantees both.
+- **P3-a17 (review N6).** The admission Playwright spec uses its own phone and birth registration
+  number per run and deactivates the student it made in a `finally` (the suite shares one database
+  and other specs count the demo school's students).
+- **P3-a18 (money, review round 2 NIT 6). An institute that marks next year current in December:**
+  an approved application still records the year's start (an application is always a new child, so
+  its admission fee is charged from the year's start instead of never). The staff "new student" form
+  and imports keep `!isCurrent`: they cannot tell a new child from an existing student typed in by
+  an institute in its first year (current from the day it was made), which P3-a10 protects from a
+  back-dated admission fee. **Owner:** a December admission typed on the staff form after an early
+  switch owes no "from the year's start" admission fee, as before P3; staff can approve it through
+  an application instead, or a later "new admission" switch on the form can decide it.
+- **P3-a19 (money, review round 2 NIT 6). The recorded date counts only for a year that starts on
+  or after it:** for an earlier year (the child also enrolled there, e.g. moved back by staff), or a
+  year whose start was moved earlier, the dues count from the later of the creation day and that
+  year's start, never from a date after the child joined (which would skip months: an under-charge).
+- **P3-a20 (review round 2 NIT 5, NIT 2, NIT 7).** Any move out of `WITHDRAWN` runs the duplicate
+  check (`REJECTED` counts as a duplicate and in the unique index); moving from `WITHDRAWN` or
+  `REJECTED` to a live status also runs the per-phone cap. A staff entry takes the cycle's shared
+  lock before reading the cycle. A bulk run approves an application only if it is still `SELECTED`
+  under the row lock.
+
+The public form, P3b (its own PR, stacked on P3a):
+
+- **P3-b1. Turnstile keys (the owner's instruction):** development uses Cloudflare's official
+  always-pass **test keys** (`.env.example`); the API and Playwright tests use a fake verifier
+  (`TURNSTILE_PROVIDER=fake`, refused outside `NODE_ENV=test`) and never call Cloudflare;
+  production refuses a missing or published test secret. A web build without a site key shows a
+  plain "I am not a robot" box whose token only the fake verifier accepts, so such a build fails
+  closed in production. The production compose requires `TURNSTILE_SITE_KEY` (a build argument).
+- **P3-b2. `admission_public_form` also returns the institute's id and timezone**, which the API
+  keeps (never sent to the browser): the code request then needs no fourth function.
+- **P3-b3. `admission_submit` hashes the photo itself** (no `p_photo_sha256` parameter) and
+  takes the name key from the API (`p_name_key`, made by the same `nameKey` as staff entries; review
+  N8: PostgreSQL's `lower` and `\s` could differ from JavaScript's and miss a duplicate).
+- **P3-b4. The two SMS jobs have their own queue, `admission-sms`** (the plan said `sms`): the
+  API's SMS processor is unchanged and the admission module owns its jobs. A code's log row is
+  kept across a send retry (no second row).
+- **P3-b5. A value the tables refuse answers `INVALID`** inside `admission_submit` (an exception
+  block around the inserts), never an error: the counter increment rolls back with it (no gap).
+- **P3-b6. The public calls run in a transaction with no institute and no person**
+  (`withContext({})`), following P1-J8's rule that no query runs outside a transaction.
+- **P3-b7. `/apply` restores no session** (the auth provider is inactive there, as on `/platform`):
+  the page never calls `/auth/refresh`.
+- **P3-b8. The "received" SMS** is in the institute's default language and carries the status
+  link only when `WEB_PUBLIC_URL` is set (required in production).
+- **P3-b9. The per-phone daily code limit counts across institutes** (5 a day per phone in all),
+  stricter than per institute: SMS pumping through many institutes' forms gets nothing extra.
+  **Owner, by design (review round 2):** anyone who knows a family's phone can spend its five
+  codes with five requests (each passes Turnstile and is one minute apart) and so shut that family
+  out of every institute's form for up to 24 hours (not the status page: its codes have their own
+  budget, P3-b16); the family still gets the five SMS, which shows something is wrong. The
+  alternative (per institute) multiplies what SMS pumping can send by the number of institutes.
+  Walk-in entry by staff (P3-J) is the fallback.
+- **P3-b10. Not measured here:** the 3-second budget on a throttled phone for `/apply/[slug]`
+  needs a running web app and API, and this run starts no servers (ports and memory). The page
+  loads no Turnstile script until the phone step; the build's size budget applies.
+
+After the security review of P3b (round 1):
+
+- **P3-b11 (review M1). Refused code requests never spend the shared budgets:** the per-address
+  and per-phone-cooldown limits are counted first; the phone's 5 a day and the institute's daily
+  ceiling are checked and counted together, atomically, only for a code that is sent
+  (`RateLimiter.consumeIfAllowed`, a Lua script). Before, one phone could shut an institute's form
+  for the day.
+- **P3-b12 (review S1; a change to P3-S for the owner). A duplicate tells its number only to the
+  same phone:** an application found by another family's birth registration number answers
+  "already applied, contact the institute" with no number; a phone at its cap is told so before any
+  duplicate check (no oracle).
+- **P3-b13 (review N5).** An injection as `jantrik_app` can call the public functions with any
+  phone and `p_now` (documented in database.md); `p_now` stays a parameter (the tests move time).
+- **P3-b14 (review S2). Turnstile:** with a real secret, the answer must name our action and the
+  web app's host; Cloudflare's test secrets report neither and are refused in production anyway.
+- **P3-b15 (review S3). The submit's upload is read only after a guard** checked the per-address
+  limit and the phone token (signature, expiry); the route then checks its institute.
+- **P3-b16 (review S4; for the owner). The status page's code works after the form closed**, but
+  is sent only when the phone made that application (same answer otherwise); `purpose: 'status'`
+  with the application number. The answer is the same in every budget state too, and a probe
+  leaves no trace (review round 2 and its follow-up): status codes spend **budgets of their own**
+  (per phone 5 a day across institutes; per institute a fixed fifth of the ceiling), never the
+  form's five a day or its share, which a later ordinary request would read; the code is sent
+  after the answer (not awaited), so the response time does not depend on a match either. A spent
+  status budget sends nothing and still answers 202 with no `Retry-After`. **A status code proves
+  the phone for the status only** (second follow-up): its own Redis slot, verified with
+  `purpose: 'status'` into a status token (`typ: admission-status`) that only `POST …/status`
+  accepts; that route refuses the form's token, and the submit and its upload guard refuse a
+  status token. **`ADMISSION_OTP_PER_TENANT_PER_DAY` caps all codes together**: the status page a
+  fixed fifth (60 of 300), the form the rest (240); fixed shares, because a shared counter would
+  let an ordinary request see whether a status code was sent. **Owner:** the form now has 240
+  codes a day per institute by default instead of 300 (raise the setting to 375 to keep 300 for
+  the form); with a setting under 5 the status page sends no codes. The status page never says
+  "try later" (the form's code request still answers 429 with `Retry-After`: it reveals nothing
+  about an application).
+- **P3-b17 (review S5, S6, N1, N2, N6).** The role's privileges are compared to an exact list; the
+  public folder's code scan also refuses `withTenant`/`tenantClient` and any `withContext` that
+  is not empty; the no-op `GRANT EXECUTE … app_verified_context() TO jantrik_admission` is gone
+  (nothing needed it); the role loses `CREATE` on the schema after taking its functions over;
+  public answers are `no-store`. `ADMISSION_OTP_PHONE_COOLDOWN_SEC` (60) is new (the Playwright
+  suite sets 1).
+- **P3-b19 (review round 2 NIT 2; for P4).** `admission_submit` takes the cycle's shared lock
+  before it reads the cycle. Replacing an `admission_*` function later needs `CREATE` on `public`
+  granted back to `jantrik_admission` around a `SET ROLE` (admission.md, "Changing these
+  functions later").
+- **P3-b18 (review N3, N4, N7, recorded).** A per-address limit runs before Turnstile and the
+  database on `/otp` (60 an hour) and `/otp/verify` (60 a quarter hour). The decompression-bomb
+  test is in; ten parallel uploads (at most two decoding) are covered by P2's `image.service.spec`;
+  codes and tokens are never logged (only error names are). Per-address limits are generous on
+  purpose: many guardians share one address behind mobile carriers' NAT (CGNAT); the per-phone and
+  per-institute limits are the real bounds.

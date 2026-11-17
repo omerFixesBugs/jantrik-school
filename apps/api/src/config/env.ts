@@ -8,6 +8,16 @@ import {
   normaliseOrigin,
 } from './production-env.js';
 
+/**
+ * Cloudflare's published Turnstile test secrets (always pass, always fail, already spent). Fine
+ * for development; refused in production.
+ */
+export const TURNSTILE_TEST_SECRETS = [
+  '1x0000000000000000000000000000000AA',
+  '2x0000000000000000000000000000000AA',
+  '3x0000000000000000000000000000000AA',
+];
+
 /** The receiver runs inside the API unless told otherwise; production runs it as its own process. */
 const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_ENV: string }) =>
   env.INGEST_IN_PROCESS ?? env.NODE_ENV !== 'production';
@@ -131,6 +141,25 @@ export const envSchema = z
      */
     JANTRIK_TEST_TODAY: isoDateSchema.optional(),
 
+    // Online admission (sprint 1 P3b, docs/admission.md → The public form).
+    /**
+     * Who checks the public form's Turnstile tokens: `cloudflare` (siteverify; development uses
+     * Cloudflare's published always-pass test keys) or `fake` (API and Playwright tests only; it
+     * never calls Cloudflare). Refused outside NODE_ENV=test.
+     */
+    TURNSTILE_PROVIDER: z.enum(['cloudflare', 'fake']).default('cloudflare'),
+    /** The Turnstile secret key. Required in production, and never a published test secret. */
+    TURNSTILE_SECRET_KEY: z.string().min(1).optional(),
+    /**
+     * Admission codes per institute per day, whatever the phones and addresses (review focus 1):
+     * both kinds together, the status page a fifth and the form the rest.
+     */
+    ADMISSION_OTP_PER_TENANT_PER_DAY: z.coerce.number().int().min(1).max(100_000).default(300),
+    /** Seconds before a phone may get another admission code (the Playwright suite sets 1). */
+    ADMISSION_OTP_PHONE_COOLDOWN_SEC: z.coerce.number().int().min(1).max(3600).default(60),
+    /** The web app's public address (the status page link in the "received" SMS). */
+    WEB_PUBLIC_URL: z.url().optional(),
+
     // Device receiver (ZKTeco attendance machines).
     /** Run the receiver inside the API process. Default: yes, except in production (own process). */
     INGEST_IN_PROCESS: z.stringbool().optional(),
@@ -173,6 +202,30 @@ export const envSchema = z
         path: ['JANTRIK_TEST_TODAY'],
         message: 'JANTRIK_TEST_TODAY is for NODE_ENV=test only',
       });
+    }
+    if (env.TURNSTILE_PROVIDER === 'fake' && env.NODE_ENV !== 'test') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['TURNSTILE_PROVIDER'],
+        message: 'TURNSTILE_PROVIDER=fake is for NODE_ENV=test only',
+      });
+    }
+    if (env.NODE_ENV === 'production') {
+      if (!env.TURNSTILE_SECRET_KEY || TURNSTILE_TEST_SECRETS.includes(env.TURNSTILE_SECRET_KEY)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['TURNSTILE_SECRET_KEY'],
+          message:
+            "TURNSTILE_SECRET_KEY is required in production and must not be one of Cloudflare's test secrets",
+        });
+      }
+      if (!env.WEB_PUBLIC_URL) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['WEB_PUBLIC_URL'],
+          message: 'WEB_PUBLIC_URL is required in production (https://<the web app>)',
+        });
+      }
     }
     if (!env.PLATFORM_TOTP_KEY && env.NODE_ENV === 'production') {
       ctx.addIssue({

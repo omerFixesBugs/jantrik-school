@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import {
   createPrismaClient,
-  loginPrivilegeProblems,
+  loginStartupVerdict,
   readLoginPrivileges,
   type PoolOptions,
   type PrismaClient,
@@ -69,7 +69,11 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
    */
   checkTimeoutMs = STARTUP_CHECK_TIMEOUT_MS;
 
+  /** Production refuses TEMP and unexpected role settings on this login; elsewhere a warning. */
+  private readonly production: boolean;
+
   constructor(config: ConfigService<IngestEnv, true>) {
+    this.production = config.get('NODE_ENV', { infer: true }) === 'production';
     const url = config.get('DATABASE_INGEST_URL', { infer: true });
     if (!url) {
       throw new Error(
@@ -115,7 +119,12 @@ export class IngestPrismaService implements OnModuleInit, OnModuleDestroy {
             `${STATEMENT_TIMEOUT_SETTING}), got ${String(row.statement_timeout)} (decision #79).`
           );
         }
-        const problems = loginPrivilegeProblems(privileges);
+        // Its 5 s statement timeout is a role setting on purpose (decision #79).
+        const { problems, warnings } = loginStartupVerdict(privileges, {
+          production: this.production,
+          expectedSettings: [`statement_timeout=${STATEMENT_TIMEOUT_SETTING}`],
+        });
+        for (const w of warnings) this.logger.warn(w);
         return problems.length === 0
           ? true
           : `DATABASE_INGEST_URL must use the device receiver login (jantrik_ingest_app): ` +
