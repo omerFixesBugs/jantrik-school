@@ -15,7 +15,9 @@ import {
 type BatchInput = Omit<QueueTenantSmsInput, 'dailyCap' | 'overCap' | 'localDate' | 'delayMs'>;
 
 // TenantSmsService.queueAll (sprint 1 P6b, S18): a batch queued whole or not at all under the
-// institute's SMS lock; duplicates skipped; nothing stored over the cap or on a rollback.
+// institute's SMS lock; duplicates skipped; nothing stored over the cap or on a rollback. The SMS
+// use ATTENDANCE_ENTRY, whose relevance check always passes: the test worker sends them (still
+// counted), where another purpose's check could cancel them and free room under the cap.
 describe('queueAll: all or nothing over the daily cap', () => {
   let h: Harness;
   let tenantId: string;
@@ -23,7 +25,7 @@ describe('queueAll: all or nothing over the daily cap', () => {
   const today = todayIn('Asia/Dhaka');
   const batch = (n: number, tag = randomUUID()): BatchInput[] =>
     Array.from({ length: n }, (_, i) => ({
-      purpose: 'BROADCAST' as const,
+      purpose: 'ATTENDANCE_ENTRY' as const,
       phone: randomPhone(),
       body: 'test',
       dedupeKey: `qa:${tag}:${i}`,
@@ -101,7 +103,7 @@ describe('queueAll: all or nothing over the daily cap', () => {
         other,
         () =>
           sms.queue({
-            purpose: 'ATTENDANCE_ABSENT',
+            purpose: 'ATTENDANCE_ENTRY',
             phone: randomPhone(),
             body: 'absent',
             localDate: today,
