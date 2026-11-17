@@ -59,9 +59,7 @@ export const ROUTE_MESSAGES = {
     'fees.guardian.summary',
     'guardian',
     'notices.board',
-    'notices.broadcasts.alert',
-    'notices.broadcasts.alertOpen',
-    'notices.broadcasts.alertsTitle',
+    'notices.broadcasts.dashboard',
     'reports',
     'students',
   ],
@@ -129,7 +127,7 @@ export const ROUTE_MESSAGES = {
   /** The notice board (every member) and its management (OWNER/ADMIN). */
   notices: ['notices.board', 'setup'],
   noticesManage: ['notices.manage'],
-  broadcasts: ['notices.broadcasts'],
+  broadcasts: ['notices.broadcasts', 'setup'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type RouteArea = keyof typeof ROUTE_MESSAGES;

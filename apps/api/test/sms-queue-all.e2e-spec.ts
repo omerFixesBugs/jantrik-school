@@ -23,7 +23,7 @@ describe('queueAll: all or nothing over the daily cap', () => {
   let tenantId: string;
   let actorUserId: string;
   const today = todayIn('Asia/Dhaka');
-  const batch = (n: number, tag = randomUUID()): BatchInput[] =>
+  const batch = (n: number, tag: string = randomUUID()): BatchInput[] =>
     Array.from({ length: n }, (_, i) => ({
       purpose: 'ATTENDANCE_ENTRY' as const,
       phone: randomPhone(),

@@ -13,7 +13,7 @@ import { useAuth } from '@/lib/auth/auth-provider';
  * or was cancelled because its admin lost the role in the last 3 days, or one overdue.
  */
 export function BroadcastAlerts() {
-  const t = useTranslations('notices.broadcasts');
+  const t = useTranslations('notices.broadcasts.dashboard');
   const locale = useLocale() as Locale;
   const { client, session } = useAuth();
   const alerts = useQuery({
@@ -29,12 +29,12 @@ export function BroadcastAlerts() {
     >
       <h2 className="flex items-center gap-2 font-semibold">
         <TriangleAlertIcon aria-hidden className="text-warning size-4.5" />
-        {t('alertsTitle')}
+        {t('title')}
       </h2>
       <ul className="flex flex-col gap-1 text-sm">
         {alerts.data.map((a) => (
           <li key={a.id} className="flex flex-wrap items-center gap-x-2">
-            <span>{t(`alert.${a.status}`)}</span>
+            <span>{t(a.status)}</span>
             <span className="text-muted-foreground">
               “{a.bodyStart}” · {formatDate(a.at, locale)}
             </span>
@@ -42,7 +42,7 @@ export function BroadcastAlerts() {
               href={`/broadcasts/${a.id}`}
               className="text-link underline-offset-4 hover:underline"
             >
-              {t('alertOpen')}
+              {t('open')}
             </Link>
           </li>
         ))}
