@@ -42,7 +42,8 @@ Plan: `docs/plans/sprint-1-p3-admission.md` (PR #15). Decisions taken while buil
   fields apply except the photo, which is added afterwards (`PUT …/photo`, the P2 upload pipeline:
   re-encoded JPEG ≤ 600×800 and ≤ 200 KB, no EXIF). Staff may fill fields the cycle hides.
 - **Duplicates and the phone cap** (shared with the public form): under a per-institute, per-phone
-  advisory lock, an application in the same cycle (not withdrawn) with the same birth registration
+  advisory lock, then one per birth registration number in the cycle (two phones, one child, at
+  the same moment; backed by the unique index `admission_applications_birth_reg_live`), an application in the same cycle (not withdrawn) with the same birth registration
   number, or the same phone + name key + date of birth, is a duplicate: 409 `ADMISSION_DUPLICATE`
   with its number (P3-S). A phone may have three live applications (not withdrawn, not rejected)
   per cycle: the fourth is 422 `ADMISSION_PHONE_CAP`. The name key is the Bangla name (else the
@@ -51,9 +52,12 @@ Plan: `docs/plans/sprint-1-p3-admission.md` (PR #15). Decisions taken while buil
   submission time never change (column grants). Edits are audited with old and new values; a class
   may move only within the cycle (the composite foreign key). An admitted application cannot be
   changed (409 `APPLICATION_ADMITTED`).
-- **Status:** staff set `SUBMITTED`, `SHORTLISTED`, `REJECTED` (reason required) or `WITHDRAWN`
-  (reason required); P4 adds `SELECTED` and `WAITLISTED` through the merit list. `ADMITTED` is set
-  by approval only. Each change keeps who, when and why, and is audited.
+- **Status:** staff set `SUBMITTED`, `SHORTLISTED`, `SELECTED` (only in a cycle without an
+  admission test: with one, the merit list selects, P4; 409 `SELECTED_BY_TEST`), `REJECTED`
+  (reason required) or `WITHDRAWN` (reason required). `ADMITTED` is set by approval only. Each
+  change keeps who, when and why, and is audited. Bringing a withdrawn or rejected application back
+  runs the duplicate and per-phone checks again (review S1). An edit cannot empty a field the cycle
+  requires (422 `ADMISSION_FIELDS_REQUIRED`).
 - **List and CSV:** filters (cycle, class, status, source) and a search on the names, the phone
   (Bangla digits accepted) and the number. The CSV has a BOM and ASCII digits, at most 10 000
   rows.
@@ -74,7 +78,8 @@ createNew?}` runs in the staff member's request transaction: the application row
   it and the photo stays on the application (P3-V, `photo: 'STORAGE_FULL'`).
 - **One application, one student:** two approvals at once, or an approval during a bulk run, make
   one student; the other gets 409 (`ALREADY_ADMITTED`), or the bulk job skips it (review focus 5).
-- **Bulk approval** (decision P3-T): `POST /admission/cycle-classes/:id/bulk-approve {sectionId}`
+- **Bulk approval** (decision P3-T) approves the class's **SELECTED** applications only (the
+  approved sprint plan; review S2): `POST /admission/cycle-classes/:id/bulk-approve {sectionId}`
   queues one job per class (`admission` queue, job id `admission-approve-<class id>`; 409
   `BULK_RUNNING` while one runs). The job acts as the admin who started it (their OWNER/ADMIN role
   is checked again for each application) and approves each approvable application in its own
@@ -85,13 +90,12 @@ createNew?}` runs in the staff member's request transaction: the application row
 
 ## Dues for a December admission (review focus 5)
 
-A student admitted before their first academic year starts (in December, for January) owes from
-the year's start, not from the admission day: `admissionDateForYear` (packages/shared/src/fees.ts,
-decision P3-K) is the later of the creation day and the year's start, for a student with no
-enrolment in an earlier year. So the admission fee is due `year start + offset` (not already late)
-and the first month is not extended as for a late joiner. A student enrolled in an earlier year
-keeps the real date, which is before any later one-time fee: a promoted student is never charged a
-one-time fee again. See [fees.md](fees.md).
+A child admitted (by staff or from an application) into a year that has not started and is not
+current yet (in December, for January) owes from that year's start: `admit()` records it in
+`students.admission_date_for_dues` (decision P3-K, as fixed after the review: M1). So the admission
+fee is due `year start + offset` (not already late) and the first month is not extended as for a
+late joiner. Nothing is derived for anyone else: imports, existing students and admissions into the
+current year keep the creation day, exactly as before. See [fees.md](fees.md).
 
 ## Database
 

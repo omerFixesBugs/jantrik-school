@@ -64,13 +64,15 @@ exists when the period has started (or is paid ahead at the counter), starts on 
 has an amount for an active head. A student admitted inside a period gets at least 7 days to pay.
 
 **The admission date** the dues count from (sprint 1 P3, decision P3-K, review focus 5) is the day
-the student was created, except for a student admitted **before their first year starts** (in
-December, for January, with no enrolment in an earlier year): for them it is the year's start. So
-their admission fee is due `year start + offset` (not already late, not skipped because the fee
-"charges from" 1 January), and their first month is due on its usual day (no late-joiner days). A
-student enrolled in an earlier year keeps the real day, so a promoted student is never charged a
-one-time fee again. `admissionDateForYear` in `packages/shared/src/fees.ts`; sibling ranks still
-order by the creation time. See [admission.md](admission.md).
+the student was created, except for a child **admitted into a year that has not started and is not
+current yet** (in December, for January), by staff or from an application: `admit()` then records
+that year's start in `students.admission_date_for_dues`, and the dues count from it. So their
+admission fee is due `year start + offset` (not already late, not skipped because the fee "charges
+from" 1 January) and their first month is due on its usual day (no late-joiner days). Nothing is
+derived: imports, existing students and admissions into the current year keep the creation day
+exactly as before (`duesAdmissionDate` in `packages/shared/src/fees.ts`; sibling ranks still order
+by the creation time). **Before deploying:** no data check is needed: the column is added empty
+for every existing student, so no existing student's dues change. See [admission.md](admission.md).
 
 - **Generated idempotently:** insert … ON CONFLICT DO NOTHING on student + head + year + period
   (a one-time fee once ever), so a due is never created twice.

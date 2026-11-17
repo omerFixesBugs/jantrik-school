@@ -105,8 +105,8 @@
       "csvFailed": "The CSV could not be downloaded. Try again.",
       "problem": "Needs attention",
       "bulk": "Approve a class",
-      "bulkTitle": "Approve every approvable application of a class",
-      "bulkHint": "Each one becomes a student in the chosen section. Applications whose guardian phone is already known here are skipped for you to choose by hand.",
+      "bulkTitle": "Approve the selected applications of a class",
+      "bulkHint": "Each application marked Selected becomes a student in the chosen section. Applications whose guardian phone is already known here are skipped for you to choose by hand.",
       "bulkClass": "Class",
       "bulkSection": "Section",
       "bulkStart": "Start",
@@ -169,7 +169,8 @@
       "duplicate": "Already applied in this cycle: application {no}.",
       "phoneCap": "This phone has applied for three children in this cycle.",
       "fieldsRequired": "Fill in the required fields.",
-      "checkForm": "Check the highlighted fields."
+      "checkForm": "Check the highlighted fields.",
+      "select": "Select"
     },
     "form": {
       "newTitle": "Enter an application",

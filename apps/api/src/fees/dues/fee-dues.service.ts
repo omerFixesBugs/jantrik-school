@@ -3,9 +3,9 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Inject, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import type { Prisma } from '@jantrik/db';
 import {
-  admissionDateForYear,
   dateFromDb,
   dateToDb,
+  duesAdmissionDate,
   planStudentDues,
   siblingRanks,
   todayIn,
@@ -212,14 +212,8 @@ export class FeeDuesService implements OnModuleInit {
             where: { academicYearId: year.id },
             select: { classLevelId: true, studyGroupId: true },
           },
-          // Enrolled in a year before this one (admissionDateForYear, review focus 5).
-          _count: {
-            select: {
-              enrolments: {
-                where: { academicYear: { startDate: { lt: dateToDb(year.startDate) } } },
-              },
-            },
-          },
+          // The admission date recorded for a December admission (duesAdmissionDate, P3-K).
+          admissionDateForDues: true,
         },
       }),
       tx.feeConcession.findMany({
@@ -240,10 +234,11 @@ export class FeeDuesService implements OnModuleInit {
         amounts: ctx.amounts,
         student: {
           id: s.id,
-          admittedOn: admissionDateForYear({
+          admittedOn: duesAdmissionDate({
             createdOn: todayIn(ctx.timezone, s.createdAt),
-            yearStart: year.startDate,
-            enrolledBefore: s._count.enrolments > 0,
+            admissionDateForDues: s.admissionDateForDues
+              ? dateFromDb(s.admissionDateForDues)
+              : null,
           }),
           classLevelId: s.enrolments[0]!.classLevelId,
           studyGroupId: s.enrolments[0]!.studyGroupId,

@@ -139,7 +139,7 @@ describe('admission: input schemas', () => {
       admissionStatusSchema.safeParse({ status: 'REJECTED', reason: 'Too young' }).success,
     ).toBe(true);
     expect(admissionStatusSchema.safeParse({ status: 'SHORTLISTED' }).success).toBe(true);
-    // ADMITTED and SELECTED are never set by hand here.
+    // ADMITTED is never set by hand (approval sets it).
     expect(admissionStatusSchema.safeParse({ status: 'ADMITTED' }).success).toBe(false);
   });
 

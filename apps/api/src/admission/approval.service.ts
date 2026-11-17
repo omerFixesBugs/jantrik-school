@@ -244,7 +244,12 @@ export class AdmissionApprovalService {
     const [admitted, problems] = await Promise.all([
       tx.admissionApplication.count({ where: { cycleClassId, status: 'ADMITTED' } }),
       tx.admissionApplication.findMany({
-        where: { cycleClassId, approvalProblem: { not: null }, studentId: null },
+        where: {
+          cycleClassId,
+          approvalProblem: { not: null },
+          studentId: null,
+          status: { notIn: ['REJECTED', 'WITHDRAWN'] },
+        },
         orderBy: { applicationNo: 'asc' },
         select: { id: true, applicationNo: true, approvalProblem: true },
       }),
@@ -275,15 +280,13 @@ export class AdmissionApprovalService {
     if (!(await this.actorAllowed(actorUserId))) return [];
     const cc = await tx.admissionCycleClass.findUnique({
       where: { id: cycleClassId },
-      select: { cycle: { select: { requiresTest: true } } },
+      select: { id: true },
     });
     if (!cc) return [];
+    // Only applications staff (or the merit list) SELECTED: the approved sprint plan's "bulk
+    // approve for SELECTED rows" (review S2). One at a time keeps P3-H.
     const rows = await tx.admissionApplication.findMany({
-      where: {
-        cycleClassId,
-        studentId: null,
-        status: { in: [...approvableStatuses(cc.cycle.requiresTest)] },
-      },
+      where: { cycleClassId, studentId: null, status: 'SELECTED' },
       orderBy: [{ submittedAt: 'asc' }, { id: 'asc' }],
       select: { id: true },
     });
@@ -299,11 +302,9 @@ export class AdmissionApprovalService {
     if (!(await this.actorAllowed(actorUserId))) return false;
     const app = await this.db.tx.admissionApplication.findUnique({
       where: { id },
-      select: { studentId: true, status: true, cycle: { select: { requiresTest: true } } },
+      select: { studentId: true, status: true },
     });
-    if (!app || app.studentId || !approvableStatuses(app.cycle.requiresTest).includes(app.status)) {
-      return true;
-    }
+    if (!app || app.studentId || app.status !== 'SELECTED') return true;
     try {
       await this.approve(id, {
         sectionId,
@@ -330,6 +331,14 @@ export class AdmissionApprovalService {
       where: { id: { in: ids }, studentId: null },
       data: { approvalProblem: code, approvalProblemAt: this.clock.now() },
     });
+    for (const id of ids) {
+      await this.audit.record({
+        entity: 'admission_application',
+        entityId: id,
+        action: 'UPDATE',
+        newValues: { approvalProblem: code },
+      });
+    }
   }
 
   private async actorAllowed(userId: string): Promise<boolean> {

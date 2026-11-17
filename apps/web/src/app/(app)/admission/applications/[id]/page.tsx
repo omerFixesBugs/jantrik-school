@@ -85,6 +85,8 @@ function Application() {
       const body = (e as ApiError).body as { applicationNo?: string } | null;
       toast.error(td('duplicate', { no: formatIdentifier(body?.applicationNo ?? '') }));
     } else if (code === 'ADMISSION_PHONE_CAP') toast.error(td('phoneCap'));
+    else if (code === 'ADMISSION_FIELDS_REQUIRED') toast.error(td('fieldsRequired'));
+    else if (code === 'SELECTED_BY_TEST') toast.error(td('notApprovable'));
     else if (e instanceof ApiError && (e.status === 400 || e.status === 422))
       toast.error(td('checkForm'));
     else toast.error(describe(e));
@@ -191,6 +193,15 @@ function Application() {
               data-testid="shortlist"
             >
               {td('shortlist')}
+            </Button>
+          )}
+          {!a.requiresTest && a.status !== 'SELECTED' && (
+            <Button
+              variant="outline"
+              onClick={() => setStatus.mutate({ status: 'SELECTED' })}
+              data-testid="select"
+            >
+              {td('select')}
             </Button>
           )}
           {a.status !== 'SUBMITTED' && (

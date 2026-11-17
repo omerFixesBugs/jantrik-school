@@ -210,6 +210,49 @@ describe('admission (staff): approval', () => {
   });
 
   describe('bulk approval (a job acting as the admin, P3-T)', () => {
+    /** An application staff marked SELECTED (bulk approves only those, review S2). */
+    const selected = async (t: AdmissionSchool, cycleClassId: string, over: object) => {
+      const a = await staffApplication(h, t, cycleClassId, over as Record<string, unknown>);
+      await api(h, t.tokens.admin)
+        .post(`/admission/applications/${a.id}/status`, { status: 'SELECTED' })
+        .expect(200);
+      return a;
+    };
+
+    it('approves only SELECTED applications: submitted and shortlisted ones stay (review S2)', async () => {
+      const t = await admissionSchool(h);
+      const c = await admissionCycle(h, t);
+      const cc = c.classes.find((x) => x.classLevel.id === t.class6)!.id;
+      const chosen = await selected(t, cc, { nameEn: 'Chosen One', nameBn: 'বাছাই এক' });
+      const waiting = await staffApplication(h, t, cc, {
+        nameEn: 'Not Chosen',
+        nameBn: 'বাছাই নয়',
+      });
+      await api(h, t.tokens.admin)
+        .post(`/admission/cycle-classes/${cc}/bulk-approve`, { sectionId: t.sectionB })
+        .expect(202);
+      await vi.waitFor(
+        async () => {
+          const r = (
+            await api(h, t.tokens.admin)
+              .get(`/admission/cycle-classes/${cc}/bulk-approve`)
+              .expect(200)
+          ).body as AdmissionBulkApproveStatus;
+          if (r.running) throw new Error('running');
+          expect(r.admitted).toBe(1);
+        },
+        { timeout: 60_000, interval: 250 },
+      );
+      const statuses = await withTenant(h.prisma, t.tenantId, (tx) =>
+        tx.admissionApplication.findMany({
+          where: { id: { in: [chosen.id, waiting.id] } },
+          select: { id: true, status: true },
+        }),
+      );
+      expect(statuses.find((x) => x.id === chosen.id)!.status).toBe('ADMITTED');
+      expect(statuses.find((x) => x.id === waiting.id)!.status).toBe('SUBMITTED');
+    });
+
     it('30 applications, 2 of them on phones the institute knows: 28 students, 2 problems; a re-run picks up the rest', async () => {
       const bulk = await admissionCycle(h, s);
       const cc = bulk.classes.find((c) => c.classLevel.id === s.class6)!.id;
@@ -218,7 +261,7 @@ describe('admission (staff): approval', () => {
       const ids: string[] = [];
       for (let i = 0; i < 30; i++) {
         const phone = i < 2 ? known.phone : randomPhone();
-        const a = await staffApplication(h, s, cc, {
+        const a = await selected(s, cc, {
           nameEn: `Bulk ${i}`,
           nameBn: `বাল্ক ${i}`,
           phone,
@@ -249,7 +292,7 @@ describe('admission (staff): approval', () => {
       const c = await admissionCycle(h, t);
       const cc = c.classes.find((x) => x.classLevel.id === t.class6)!.id;
       for (let i = 0; i < 4; i++) {
-        await staffApplication(h, t, cc, { nameEn: `Limit ${i}`, nameBn: `সীমা ${i}` });
+        await selected(t, cc, { nameEn: `Limit ${i}`, nameBn: `সীমা ${i}` });
       }
       await platform(h, await platformAdminCookie(h))
         .put(`/platform/institutes/${t.tenantId}/limits`)
@@ -282,7 +325,7 @@ describe('admission (staff): approval', () => {
         tx.section.update({ where: { id: t.sectionA }, data: { capacity: 1 } }),
       );
       for (let i = 0; i < 3; i++) {
-        await staffApplication(h, t, cc, { nameEn: `Full ${i}`, nameBn: `পূর্ণ ${i}` });
+        await selected(t, cc, { nameEn: `Full ${i}`, nameBn: `পূর্ণ ${i}` });
       }
       const wrong = await api(h, t.tokens.admin).post(
         `/admission/cycle-classes/${cc}/bulk-approve`,
@@ -317,7 +360,7 @@ describe('admission (staff): approval', () => {
       const cc = c.classes.find((x) => x.classLevel.id === t.class6)!.id;
       const apps = [];
       for (let i = 0; i < 8; i++) {
-        apps.push(await staffApplication(h, t, cc, { nameEn: `Both ${i}`, nameBn: `দুটি ${i}` }));
+        apps.push(await selected(t, cc, { nameEn: `Both ${i}`, nameBn: `দুটি ${i}` }));
       }
       const [, ...singles] = await Promise.all([
         api(h, t.tokens.admin)
