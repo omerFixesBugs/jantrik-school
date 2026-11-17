@@ -2,6 +2,7 @@
 // their defaults, application numbers and the API's shapes. No zod here (the public form imports
 // this file); the input schemas are in admission-schema.ts.
 
+import type { AdmissionPublicResult, AdmissionPublicTest } from './admission-test.js';
 import type { IsoDate } from './dates.js';
 import type { BloodGroup, Gender, GuardianRelation, Religion } from './students-values.js';
 
@@ -345,4 +346,8 @@ export interface AdmissionPublicStatus {
   cycleNameBn: string;
   cycleNameEn: string | null;
   submittedAt: string;
+  /** Sprint 1 P4: the test's details once a roll is issued (P4-M). */
+  test?: AdmissionPublicTest;
+  /** Sprint 1 P4: the published result of this application's class (S13). */
+  result?: AdmissionPublicResult;
 }
