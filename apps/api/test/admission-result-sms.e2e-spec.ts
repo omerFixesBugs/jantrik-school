@@ -10,7 +10,13 @@ import type { Job } from 'bullmq';
 import { SmsProcessor } from '../src/sms/sms.service.js';
 import { TenantSmsService } from '../src/sms/tenant-sms.service.js';
 import { TenantJobRunner } from '../src/tenancy/tenant-job-runner.service.js';
-import { admissionSchool, api, testClass, type AdmissionSchool } from './support/admission.js';
+import {
+  admissionSchool,
+  api,
+  staffApplicationBody,
+  testClass,
+  type AdmissionSchool,
+} from './support/admission.js';
 import { createHarness, type Harness } from './support/harness.js';
 
 /** Sprint 1 P4, task 5: publish, the result SMS (review focus 2 and 4) and the waitlist. */
@@ -361,6 +367,79 @@ describe('admission test (P4): publish, result SMS and the waitlist', () => {
       expect((await admin().get(cc(t.cc, 'test')).expect(200)).body).toMatchObject({
         resultsVersion: 1,
       });
+    });
+
+    it("round 2 (PROBE A): a publish, an edit of one of its applicants and a sibling's new application at once all succeed (no lock cycle)", async () => {
+      const t = await published(['90', '80'], { selectCount: 1, waitlistCount: 1 });
+      // X: the applicant publish reaches last (highest id), so it holds every other row by then.
+      const x = [...t.ids].sort().at(-1)!;
+      await setScores(t.cc, t.ids, ['91', '81']);
+      const builtAt = await build(t.cc);
+      const { phone } = await withTenant(h.prisma, s.tenantId, (tx) =>
+        tx.admissionApplication.findUniqueOrThrow({ where: { id: x }, select: { phone: true } }),
+      );
+      const key = `admission:${s.tenantId}:${phone}`;
+      const waiting = (kind: 'advisory' | 'transactionid', n: number) =>
+        vi.waitFor(
+          async () => {
+            const [w] = await h.prisma.$queryRaw<{ n: number }[]>`
+              SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted AND locktype = ${kind}`;
+            if (w!.n < n) throw new Error(`${w!.n} ${kind} waiting, not ${n}`);
+          },
+          { timeout: 15_000, interval: 25 },
+        );
+      type Reply = { status: number; body: { code?: string } };
+      let create: Promise<Reply> | undefined;
+      let update: Promise<Reply> | undefined;
+      let publishing: Promise<Reply> | undefined;
+      await withTenant(
+        h.prisma,
+        s.tenantId,
+        async (tx) => {
+          // A third request holds the guardian phone's lock for a moment.
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+          // 1. A sibling's application to the same class with the same phone: waits on it.
+          create = admin()
+            .post(
+              '/admission/applications',
+              staffApplicationBody(t.cc, {
+                phone,
+                nameEn: 'Sibling Two',
+                nameBn: 'ভাই দুই',
+                dateOfBirth: '2018-02-02',
+              }),
+            )
+            .then((r) => r);
+          await waiting('advisory', 1);
+          // 2. A name fix on X: holds X's row, then waits on the phone's lock.
+          update = admin()
+            .patch(`/admission/applications/${x}`, { nameBn: 'নতুন নাম' })
+            .then((r) => r);
+          await waiting('advisory', 2);
+          // 3. Publish: the class, then the rows in id order: waits on X.
+          publishing = admin()
+            .post(publishPath(t.cc), { builtAt })
+            .then((r) => r);
+          await waiting('transactionid', 1);
+        },
+        { timeout: 30_000 },
+      );
+      const [c, u, p] = await Promise.all([create!, update!, publishing!]);
+      expect([c.status, u.status, p.status]).toEqual([201, 200, 200]);
+    });
+
+    it('round 2 (N1): once a result is published, staff may withdraw or reject, but not put it back to submitted or shortlisted', async () => {
+      const t = await published(['90', '80'], { selectCount: 1, waitlistCount: 1 });
+      const [a, b] = t.ids as [string, string];
+      const back = await admin().post(`/admission/applications/${a}/status`, {
+        status: 'SHORTLISTED',
+      });
+      expect(back.status).toBe(409);
+      expect(back.body.code).toBe('TEST_RESULT_PUBLISHED');
+      expect(
+        (await admin().post(`/admission/applications/${b}/status`, { status: 'SUBMITTED' })).status,
+      ).toBe(409);
+      await withdraw(a);
     });
 
     it('S1: an SMS cancelled by a republish is still owed when the status did not change; it then goes out', async () => {
