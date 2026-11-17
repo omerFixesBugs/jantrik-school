@@ -137,13 +137,22 @@ paisa), today's cap left, `fits`, whether it is quiet hours now and the next all
   `TenantSmsService.queueAll`, which holds the institute's SMS lock, skips known dedupe keys and
   stores either every new SMS or none. Then `SENT` with the count and the institute's day, or
   `FAILED_OVER_CAP` with `{needed, capLeft}`. Running it twice sends nothing more.
-- **Late:** a broadcast whose job runs more than 3 hours after its (stored) time is not sent: it
-  becomes `EXPIRED` with `{lateMinutes}` and shows on the dashboard; a new preview and send is
-  needed.
+- **Late:** a broadcast whose job runs more than 3 hours after the time the admin chose, or would
+  only go out more than 3 hours after it (waiting for 08:00), is not sent: it becomes `EXPIRED` with
+  `{lateMinutes}` and shows on the dashboard. The chosen time is never overwritten.
+- **Dearer than confirmed:** the audience is resolved again at send time (S19). When that would
+  cost more than the confirmed cost by over 10% **and** by more than one SMS, nothing is sent: it
+  becomes `COST_CHANGED` with `{confirmedCostPaisa, costPaisa, recipients}` and shows on the
+  dashboard. Otherwise it is sent and its real cost is stored (`sent_cost_paisa`); the broadcast's
+  page shows "previewed N, sent to M" with that cost.
+- **Never sent** (`FAILED_OVER_CAP`, `EXPIRED`, `COST_CHANGED`): "Edit and send again" turns it back
+  into a draft (audited with the old status and reason), to preview and confirm again.
 - **Its SMS:** the SMS jobs (one per SMS, job id = the SMS id) have a lower BullMQ priority than
   login codes and other single SMS, which always go first. After a send, and whenever the job runs
-  again, the jobs of the broadcast's QUEUED SMS are re-added before its due entry is dropped. An
-  SMS still waiting at 21:00 waits (still QUEUED) until 08:00.
+  again, the jobs of the broadcast's QUEUED SMS are re-added before its due entry is dropped; so
+  does opening the broadcasts list, for SMS still waiting 10 minutes later outside quiet hours. An
+  SMS still waiting at 21:00 waits (still QUEUED) until 08:00. Fee reminders and exam result SMS
+  use the same lower priority. A sent broadcast cannot be stopped (P6-L, a follow-up).
 - The send job retries 3 times with backoff; the sweep replaces a failed one. The due entry is
   dropped only if no new schedule changed it meanwhile.
 - **The sweep** (`notices-sweep`, every 5 minutes) re-adds the job of every due member of

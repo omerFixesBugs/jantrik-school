@@ -909,6 +909,7 @@ Changed after the review of #25 (round 1, nits only):
   again, stale, for 2 minutes).
 - **P6-a10. An edit keeps the targets the notice already had** without the current-year check; new
   targets are still checked. An edit locks the notice before reading what the audit records.
+  <<<<<<< HEAD
 - **P6-a11. The board excerpt is cut at 200 characters (code points)**, never inside an emoji.
 
 P6b (SMS broadcasts), taken alone:
@@ -965,3 +966,33 @@ Changed after the review of #26 (round 1; each must/should fix with a test seen 
   characters (N4).
 - **The migration `20261117410100_sms_broadcasts` was edited in place** (the `EXPIRED` value, its
   CHECKs, the index). Only scratch and CI databases had applied it.
+  \=======
+- **P6-a11. The board excerpt is cut at 200 characters as people see them** (grapheme clusters:
+  a Bangla conjunct or a multi-code-point emoji is never split; round 2).
+- **P6-a12. The per-person read version expires after an hour** (set with the increment), longer
+  than any count cached under it (round 2).
+
+> > > > > > > feature/sprint-1-p6-notices
+
+Changed after the review of #26, round 2 (each should-fix with a test seen failing first):
+
+- **P6-b16. A scheduled broadcast is not sent when it became much dearer (SF1, money; for you to
+  confirm).** The audience is resolved again at send time (S19), so the confirmed token cannot
+  cover it: when the real cost exceeds the confirmed one by more than 10% and by more than one SMS,
+  nothing is sent (`COST_CHANGED`, on the dashboard; a new preview and confirmation is needed).
+  Within that margin it is sent and its real cost is stored and shown next to the previewed one.
+  Alternative: always send (as before) and only show the difference.
+- **P6-b17. The lateness limit counts from the time the admin chose (SF2).** A wait for quiet hours
+  no longer overwrites it; a broadcast that would go out more than 3 hours late expires instead.
+  With 3 hours and quiet hours of 11, every quiet-hours wait now expires (a job found at 23:20 for
+  20:30 is not sent the next morning); the early-run wait is unchanged.
+- **P6-b18. A broadcast that was never sent can be edited back into a draft (N-a)**, rather than a
+  "copy to a new draft" action: simpler, and nothing was sent, so no money history is lost (the
+  audit keeps the old status and reason).
+- **P6-b19. Opening the broadcasts list re-adds the jobs of sent broadcasts' SMS still QUEUED 10
+  minutes later, outside quiet hours (N-c).** Stopping a sent broadcast is a follow-up (P6-L).
+- **P6-b20. Fee reminders and exam result SMS get the bulk priority too (N-d):** they still queue
+  one by one with the same rules; only their place behind single SMS changes.
+- **Recorded only (N-e, N-f):** the edited migration `20261117410100_sms_broadcasts` needs fresh
+  databases wherever its earlier version was applied (only scratch and CI here); its new index on
+  `sms_logs` is created without `CONCURRENTLY`, fine before launch.
