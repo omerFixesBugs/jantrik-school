@@ -147,8 +147,19 @@ else
   done
   tenant=$(sql -d "$scratch" -c 'SELECT tenant_id FROM students GROUP BY tenant_id ORDER BY count(*) DESC LIMIT 1')
   expected=$(sql -d "$scratch" -c "SELECT count(*) FROM students WHERE tenant_id = '$tenant'")
-  seen=$(sql -d "$scratch" -c "SELECT set_config('app.tenant_id', '$tenant', false)" \
-    -c 'SET ROLE jantrik_app' -c 'SELECT count(*) FROM students' | tail -1)
+  # The institute context is signed for its transaction (P1-J8, docs/database.md → The request
+  # context): as the superuser, sign one with the restored database's own key, then count as
+  # jantrik_app in the same transaction. (The old app.tenant_id setting means nothing any more.)
+  seen=$(sql -d "$scratch" -c 'BEGIN' \
+    -c "SELECT set_config('app.context',
+          x.m || ':' || encode(sha256(k.outer_pad || sha256(k.inner_pad || convert_to(x.m, 'UTF8'))), 'hex'),
+          true)
+        FROM app_context_key k,
+             (SELECT 'v1:$tenant::' || pg_backend_pid() || ':'
+                     || (extract(epoch FROM now()) * 1000000)::bigint AS m) x
+        WHERE k.id = 1" \
+    -c 'SET LOCAL ROLE jantrik_app' -c 'SELECT count(*) FROM students' -c 'COMMIT' \
+    | grep -E '^[0-9]+$' | tail -1)
   [ "$seen" = "$expected" ] \
     || die "jantrik_app sees $seen students of one institute, expected $expected"
   echo "restore-check: row-level security holds: no students without a tenant context, $seen of $students with one"

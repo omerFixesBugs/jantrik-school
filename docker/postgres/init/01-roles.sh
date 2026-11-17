@@ -6,7 +6,8 @@ set -eu
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
   -v owner_pw="$DB_OWNER_PASSWORD" -v app_pw="$DB_APP_PASSWORD" \
-  -v platform_pw="$DB_PLATFORM_PASSWORD" -v ingest_pw="$DB_INGEST_PASSWORD" <<'SQL'
+  -v platform_pw="$DB_PLATFORM_PASSWORD" -v ingest_pw="$DB_INGEST_PASSWORD" \
+  -v login_pw="$DB_LOGIN_PASSWORD" <<'SQL'
 -- Owns the schema and runs migrations. Not a superuser, so FORCE ROW LEVEL SECURITY applies to it.
 -- CREATEDB is needed for Prisma's shadow database during `prisma migrate dev`.
 CREATE ROLE jantrik_owner LOGIN CREATEDB NOSUPERUSER NOBYPASSRLS PASSWORD :'owner_pw';
@@ -51,6 +52,12 @@ CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATE
 -- Its statements stop after 5 s (decision #79); the receiver's pool sends the same limit.
 ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s';
 
+-- Runtime role of the password login only (DATABASE_LOGIN_URL, P1-J). It may run one function,
+-- auth_find_user_for_password_login, and nothing else: no table grants and NOT a member of
+-- jantrik_app. jantrik_app may not run that function, so an SQL injection in an institute
+-- request never reaches a password hash. Schema USAGE comes from a migration.
+CREATE ROLE jantrik_login_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD :'login_pw';
+
 CREATE DATABASE jantrik OWNER jantrik_owner;
 CREATE DATABASE jantrik_test OWNER jantrik_owner;
 -- Playwright end-to-end tests (seeded demo data).
@@ -62,5 +69,8 @@ for db in jantrik jantrik_test jantrik_e2e; do
 ALTER SCHEMA public OWNER TO jantrik_owner;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO jantrik_app;
+-- No temporary objects for the runtime logins, as in production (P1-J8 review, docs/database.md →
+-- The request context). The owner keeps the right.
+SELECT format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()) \gexec
 SQL
 done

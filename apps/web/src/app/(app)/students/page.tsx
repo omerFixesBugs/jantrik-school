@@ -44,6 +44,7 @@ import { ColumnChooser, DataTable, type DataColumn, type SortState } from '@/com
 import { Pill, type PillTone } from '@/components/kit/pill';
 import { PageGate } from '@/components/page-gate';
 import { PersonAvatar } from '@/components/person-avatar';
+import { StudentAvatar } from '@/components/student-photo';
 import { SavedViews } from '@/components/saved-views';
 import { SidePeek } from '@/components/side-peek';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -258,7 +259,8 @@ function Students() {
         const name = displayName(s.nameBn, s.nameEn, locale);
         return (
           <span className="flex items-center gap-2.5">
-            <PersonAvatar name={name} photoUrl={s.photoUrl} size="sm" />
+            {/* Lists keep initials: photos load on the student's own views (decision F2). */}
+            <PersonAvatar name={name} size="sm" />
             <Link
               href={`/students/${s.id}`}
               className="text-foreground min-w-0 truncate font-medium underline-offset-2 hover:underline"
@@ -770,7 +772,7 @@ function StudentPeek({
     <SidePeek title={name} href={`/students/${s.id}`} onClose={onClose} testId="student-peek">
       <div className="flex flex-col gap-5">
         <div className="flex items-center gap-3">
-          <PersonAvatar name={name} photoUrl={s.photoUrl} size="xl" />
+          <StudentAvatar studentId={s.id} photoId={s.photoId} name={name} size="xl" />
           <div className="flex min-w-0 flex-col gap-1">
             <span className="truncate text-lg font-semibold">{name}</span>
             <StatusMark status={s.status} />
@@ -906,7 +908,7 @@ function StudentCards({
               aria-label={name}
               className="focus-visible:ring-ring absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset"
             />
-            <PersonAvatar name={name} photoUrl={s.photoUrl} />
+            <PersonAvatar name={name} />
             {/* Names, class text and the guardian's name give way first; the ID and the phone
                 never truncate, and Bangla gets room for its marks above and below the line. */}
             <div className="flex min-w-0 flex-1 flex-col">

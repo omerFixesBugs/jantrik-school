@@ -121,6 +121,8 @@ export const ROUTE_MESSAGES = {
   setup: ['appearance', 'setup'],
   setupWelcome: ['attendanceSettings', 'dashboard', 'onboarding', 'staff'],
   staff: ['setup', 'staff'],
+  /** Admission for staff (sprint 1 P3a): cycles, applications, approval. */
+  admission: ['admission', 'admissions.staff', 'setup'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type RouteArea = keyof typeof ROUTE_MESSAGES;
