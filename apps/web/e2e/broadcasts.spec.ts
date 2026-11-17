@@ -22,7 +22,7 @@ for (const width of [1366, 390]) {
     await passwordLogin(page, DEMO.shaplaOwner);
     await expect(page).toHaveURL(/\/dashboard$/);
     await page.goto('/broadcasts/new');
-    const body = page.getByLabel('বার্তা', { exact: false }).first();
+    const body = page.locator('textarea#broadcast-body');
     // The composer starts with the institute's name.
     await expect(body).toHaveValue(new RegExp(`^${DEMO.shaplaName}: `));
     await body.fill(
