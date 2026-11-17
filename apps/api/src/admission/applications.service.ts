@@ -307,6 +307,11 @@ export class AdmissionApplicationsService {
         field: 'guardianNameBn',
       });
     }
+    if (next['cycleClassId'] !== undefined && old.testRoll !== null) {
+      throw apiError(409, 'HAS_TEST_ROLL', 'An applicant with a test roll stays in its class', {
+        field: 'cycleClassId',
+      });
+    }
     if (next['cycleClassId'] !== undefined) {
       const cc = await tx.admissionCycleClass.findUnique({
         where: { id: next['cycleClassId'] as string },
