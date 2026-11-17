@@ -70,22 +70,30 @@ export class AdmissionOtpService {
    * Sends a code. The shared budgets (the phone's five a day across institutes, the institute's
    * ceiling) are spent only by a code that is really sent: both are checked first and counted
    * together, or neither (review of P3b, M1: refused requests used to exhaust the ceiling).
+   * A spent budget is 429 with Retry-After; with `quiet` (the status page) it sends nothing and
+   * answers false instead, so the caller can answer as for any other pair (review round 2).
    */
   async issue(input: {
     tenantId: string;
     phone: string;
     today: string;
     locale: 'bn' | 'en';
-  }): Promise<void> {
+    quiet?: boolean;
+  }): Promise<boolean> {
     const { tenantId, phone } = input;
-    await this.limiter.consumeIfAllowed(
+    const budgets = [
       { key: `adm-otp-phone-day:${phone}`, limit: 5, windowSec: 86_400 },
       {
         key: `adm-otp-tenant:${tenantId}:${input.today}`,
         limit: this.config.get('ADMISSION_OTP_PER_TENANT_PER_DAY', { infer: true }),
         windowSec: 86_400,
       },
-    );
+    ];
+    if (input.quiet) {
+      if (!(await this.limiter.tryConsume(...budgets))) return false;
+    } else {
+      await this.limiter.consumeIfAllowed(...budgets);
+    }
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     await this.redis
       .multi()
@@ -102,6 +110,7 @@ export class AdmissionOtpService {
         removeOnFail: true,
       },
     );
+    return true;
   }
 
   /** True once for a correct code; every failure looks the same. */

@@ -71,16 +71,28 @@ export class RateLimiter {
    * not spend (an institute's daily admission codes, review of P3b, M1).
    */
   async consumeIfAllowed(...rules: RateLimitRule[]): Promise<void> {
-    const keys = rules.map((r) => `rl:${r.key}`);
-    const args = rules.flatMap((r) => [String(r.limit), String(r.windowSec)]);
-    const retryAfter = Number(
-      await this.redis.eval(CONSUME_IF_ALLOWED, keys.length, ...keys, ...args),
-    );
+    const retryAfter = await this.consumeAll(rules);
     if (retryAfter > 0) {
       const res = this.cls?.isActive() ? this.cls.get<Response | undefined>(CLS_RES) : undefined;
       res?.setHeader('Retry-After', String(retryAfter));
       throw new HttpException('Too many requests', HttpStatus.TOO_MANY_REQUESTS);
     }
+  }
+
+  /**
+   * consumeIfAllowed that answers instead of throwing: true when every rule had room (one hit
+   * counted on each), false when any was full (nothing counted, no Retry-After set). For a caller
+   * whose answer must not show that a budget is spent (the admission status page, review round 2).
+   */
+  async tryConsume(...rules: RateLimitRule[]): Promise<boolean> {
+    return (await this.consumeAll(rules)) === 0;
+  }
+
+  /** The all-or-nothing script: 0 when counted, else the seconds until the fullest rule resets. */
+  private async consumeAll(rules: RateLimitRule[]): Promise<number> {
+    const keys = rules.map((r) => `rl:${r.key}`);
+    const args = rules.flatMap((r) => [String(r.limit), String(r.windowSec)]);
+    return Number(await this.redis.eval(CONSUME_IF_ALLOWED, keys.length, ...keys, ...args));
   }
 
   /** Count one hit on every rule; throw 429 (with Retry-After) if any is exceeded. */

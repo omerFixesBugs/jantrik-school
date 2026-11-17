@@ -97,7 +97,9 @@ export class AdmissionPublicService {
    * POST /public/admission/:slug/otp: a code to the phone, after Turnstile. `purpose: 'status'`
    * (the status page, review S4) works while the institute is active even with no cycle open, and
    * sends the code only when that phone has that application here; the answer is the same either
-   * way, so it tells a stranger nothing.
+   * way, so it tells a stranger nothing. That holds in every budget state too (review round 2):
+   * a spent shared budget (the phone's day, the institute's ceiling) sends nothing and still
+   * answers 202 with no Retry-After, as for a pair that does not match.
    */
   async requestOtp(
     slug: string,
@@ -133,6 +135,7 @@ export class AdmissionPublicService {
       phone,
       today: todayIn(f.timezone, this.clock.now()),
       locale: f.institute.locale === 'en' ? 'en' : 'bn',
+      quiet: forStatus,
     });
     return { expiresIn: 300 };
   }
