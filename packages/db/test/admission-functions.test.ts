@@ -322,24 +322,41 @@ describe('admission public functions', () => {
     it('a submit that waited for a cycle edit sees the edit: a cycle closed meanwhile is CLOSED (review round 2, NIT 2)', async () => {
       const c = await school(app);
       let racing: ReturnType<typeof submit> | undefined;
-      await withTenant(app, c.tenantId, async (tx) => {
-        // As AdmissionCyclesService.lock() and a status change: the cycle's lock, exclusively.
-        const key = `admission-cycle:${c.cycleId}`;
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
-        await tx.admissionCycle.update({ where: { id: c.cycleId }, data: { status: 'CLOSED' } });
-        racing = submit(c.slug, c.class6, phone(), payload());
-        // Commit only once the submit waits for the cycle's lock.
-        await vi.waitFor(
-          async () => {
-            const [w] = await tx.$queryRaw<{ n: number }[]>`
-              SELECT count(*)::int AS n FROM pg_stat_activity
-              WHERE datname = current_database() AND wait_event_type = 'Lock'
-                AND wait_event = 'advisory' AND query LIKE '%admission_submit%'`;
-            if (w!.n === 0) throw new Error('the submit is not waiting yet');
-          },
-          { timeout: 5_000, interval: 25 },
-        );
-      });
+      await withTenant(
+        app,
+        c.tenantId,
+        async (tx) => {
+          // As AdmissionCyclesService.lock() and a status change: the cycle's lock, exclusively.
+          const key = `admission-cycle:${c.cycleId}`;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+          await tx.admissionCycle.update({ where: { id: c.cycleId }, data: { status: 'CLOSED' } });
+          racing = submit(c.slug, c.class6, phone(), payload());
+          // Commit only once the submit waits for this cycle's lock: an ungranted advisory lock on
+          // this key in pg_locks (a bigint key shows as classid = high half, objid = low half).
+          try {
+            await vi.waitFor(
+              async () => {
+                const [w] = await tx.$queryRaw<{ n: number }[]>`
+                  SELECT count(*)::int AS n
+                  FROM pg_locks l CROSS JOIN (SELECT hashtextextended(${key}, 0) AS v) k
+                  WHERE l.locktype = 'advisory' AND NOT l.granted AND l.objsubid = 1
+                    AND l.classid::bigint = ((k.v >> 32) & 4294967295)
+                    AND l.objid::bigint = (k.v & 4294967295)`;
+                if (w!.n === 0) throw new Error('the submit is not waiting yet');
+              },
+              { timeout: 15_000, interval: 25 },
+            );
+          } catch (error) {
+            // What the other sessions were doing, for the report.
+            const others = await tx.$queryRaw<unknown[]>`
+              SELECT state, wait_event_type, wait_event, left(query, 80) AS query
+              FROM pg_stat_activity
+              WHERE datname = current_database() AND pid <> pg_backend_pid()`;
+            throw new Error(`${(error as Error).message}: ${JSON.stringify(others)}`);
+          }
+        },
+        { timeout: 30_000 },
+      );
       expect((await racing!).outcome).toBe('CLOSED');
     });
   });
