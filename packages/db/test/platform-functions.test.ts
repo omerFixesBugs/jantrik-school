@@ -188,26 +188,42 @@ describe('platform tables and functions', () => {
     }
   });
 
+  it('the platform login may not create temporary tables at all (TEMP revoked, P1-J8 review)', async () => {
+    await expect(
+      platform.$executeRawUnsafe('CREATE TEMP TABLE platform_sessions (x int) ON COMMIT DROP'),
+    ).rejects.toThrow(/permission denied to create temporary tables/);
+  });
+
   it('a temp table named like a platform table cannot fake a session (pg_temp is searched last)', async () => {
     const fake = '00000000-0000-4000-8000-000000000001';
-    await expect(
-      platform.$transaction(async (tx) => {
-        await tx.$executeRawUnsafe(`CREATE TEMP TABLE platform_sessions (admin_id uuid, token_hash text,
+    // A database where the login still had TEMP (older ones before the migration revoked it):
+    // granted for this test only, so the definer functions' search path is what is tested.
+    const db = (await owner.$queryRaw<{ db: string }[]>`SELECT current_database() AS db`)[0]!.db;
+    await owner.$executeRawUnsafe(`GRANT TEMPORARY ON DATABASE "${db}" TO jantrik_platform_app`);
+    try {
+      await expect(
+        platform.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`CREATE TEMP TABLE platform_sessions (admin_id uuid, token_hash text,
           revoked_at timestamptz, expires_at timestamptz, idle_expires_at timestamptz) ON COMMIT DROP`);
-        await tx.$executeRawUnsafe(
-          `CREATE TEMP TABLE platform_admins (id uuid, is_active boolean) ON COMMIT DROP`,
-        );
-        await tx.$executeRawUnsafe(
-          `GRANT ALL ON platform_sessions, platform_admins TO jantrik_platform`,
-        );
-        await tx.$executeRawUnsafe(
-          `INSERT INTO platform_sessions VALUES ('${fake}', 'x', NULL, now() + interval '1 hour', now() + interval '1 hour')`,
-        );
-        await tx.$executeRawUnsafe(`INSERT INTO platform_admins VALUES ('${fake}', true)`);
-        await tx.$executeRaw`SELECT set_config('app.platform_session', 'x', true)`;
-        return tx.$queryRaw`SELECT app_current_platform_admin_id()::text AS id`;
-      }),
-    ).rejects.toThrow(/platform session required/);
+          await tx.$executeRawUnsafe(
+            `CREATE TEMP TABLE platform_admins (id uuid, is_active boolean) ON COMMIT DROP`,
+          );
+          await tx.$executeRawUnsafe(
+            `GRANT ALL ON platform_sessions, platform_admins TO jantrik_platform`,
+          );
+          await tx.$executeRawUnsafe(
+            `INSERT INTO platform_sessions VALUES ('${fake}', 'x', NULL, now() + interval '1 hour', now() + interval '1 hour')`,
+          );
+          await tx.$executeRawUnsafe(`INSERT INTO platform_admins VALUES ('${fake}', true)`);
+          await tx.$executeRaw`SELECT set_config('app.platform_session', 'x', true)`;
+          return tx.$queryRaw`SELECT app_current_platform_admin_id()::text AS id`;
+        }),
+      ).rejects.toThrow(/platform session required/);
+    } finally {
+      await owner.$executeRawUnsafe(
+        `REVOKE TEMPORARY ON DATABASE "${db}" FROM jantrik_platform_app`,
+      );
+    }
   });
 
   it('without a session (or with a wrong one) the session functions refuse', async () => {

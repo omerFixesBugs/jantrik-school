@@ -28,6 +28,19 @@ const lockTimeout = () =>
     },
   );
 
+/** A Postgres error raised the same way (Prisma 7, the pg adapter), with its own code. */
+const pgError = (code: string, message: string) =>
+  known(
+    `Invalid \`prisma.$executeRaw()\` invocation:\n\nRaw query failed. Code: \`${code}\`. Message: \`${message}\``,
+    'P2010',
+    {
+      driverAdapterError: {
+        name: 'DriverAdapterError',
+        cause: { originalCode: code, originalMessage: message, kind: 'postgres', code, message },
+      },
+    },
+  );
+
 /** Prisma's expired interactive transaction. */
 const expired = () =>
   known(
@@ -69,6 +82,25 @@ describe('PrismaErrorFilter', () => {
       },
       retryAfter: String(BUSY_RETRY_AFTER_SEC),
     });
+  });
+
+  it('a deadlock (40P01) or a serialization failure (40001) is 409 BUSY with Retry-After (sprint 1 P4)', () => {
+    for (const error of [
+      pgError('40P01', 'deadlock detected'),
+      pgError('40001', 'could not serialize access due to concurrent update'),
+    ]) {
+      expect(answer(error)).toEqual({
+        reply: {
+          status: 409,
+          body: {
+            statusCode: 409,
+            code: 'BUSY',
+            message: 'Busy right now; try again in a moment',
+          },
+        },
+        retryAfter: String(BUSY_RETRY_AFTER_SEC),
+      });
+    }
   });
 
   it('an expired transaction (P2028) is not BUSY: it stays a 500 and is logged', () => {

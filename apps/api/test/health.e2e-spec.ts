@@ -13,7 +13,13 @@ describe('GET /health (e2e)', () => {
   beforeEach(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
-      .useValue({ client: { $queryRaw: queryRaw } })
+      .useValue({
+        // The check runs its SELECT 1 in a transaction (P1-J8 review round 2).
+        client: {
+          $queryRaw: queryRaw,
+          $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn({ $queryRaw: queryRaw }),
+        },
+      })
       .compile();
 
     app = moduleRef.createNestApplication();

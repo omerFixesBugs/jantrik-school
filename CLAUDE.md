@@ -98,6 +98,8 @@ Run from the repo root (see README.md for first-time setup).
 - Attendance rules, drafts/offline sync, absent SMS: docs/attendance.md
 - Devices, the receiver, staff attendance, `pnpm device:sim`: docs/devices.md
 - Fees: setup, dues, fines, receipts, voids, bKash/Nagad, reminders: docs/fees.md
+- Admission (cycles, applications, approval, the December dues rule, the admission test and merit
+  list): docs/admission.md
 - Exams rules (grading as data, marks entry, publish, report cards, result SMS): docs/exams.md
 - Production (images, compose, DB roles, env checks, backups, upgrades): docs/deploy.md
 - Single package: `pnpm --filter @jantrik/api <script>`

@@ -23,6 +23,15 @@ const platformUrl = (): string => {
   return url.toString();
 };
 
+/** The password login's login (DATABASE_LOGIN_URL) on the test database, derived like the platform one. */
+const loginUrl = (): string => {
+  const url = new URL(required('DATABASE_URL_TEST'));
+  const login = new URL(required('DATABASE_LOGIN_URL'));
+  url.username = login.username;
+  url.password = login.password;
+  return url.toString();
+};
+
 /** The device receiver's login (DATABASE_INGEST_URL) on the test database, derived like the platform one. */
 const ingestUrl = (): string => {
   const url = new URL(required('DATABASE_URL_TEST'));
@@ -46,6 +55,7 @@ export default defineConfig({
       NODE_ENV: 'test',
       DATABASE_URL: required('DATABASE_URL_TEST'),
       DATABASE_PLATFORM_URL: platformUrl(),
+      DATABASE_LOGIN_URL: loginUrl(),
       DATABASE_INGEST_URL: ingestUrl(),
       DATABASE_MIGRATION_URL_TEST: required('DATABASE_MIGRATION_URL_TEST'),
       REDIS_URL: process.env['REDIS_URL_TEST'] ?? 'redis://localhost:6379/1',
@@ -53,6 +63,8 @@ export default defineConfig({
       JWT_ACCESS_SECRET: 'test-only-access-secret-0123456789abcdefghij',
       OTP_PEPPER: 'test-only-otp-pepper-0123456789abcdefghijklm',
       SMS_PROVIDER: 'memory',
+      // The public admission form's Turnstile check, without Cloudflare (docs/admission.md).
+      TURNSTILE_PROVIDER: 'fake',
       COOKIE_SECURE: 'true',
       // A developer's .env may enable phone testing; tests never run with it.
       DEV_LAN: 'false',

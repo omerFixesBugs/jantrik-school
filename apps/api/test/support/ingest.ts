@@ -1,3 +1,4 @@
+import './context-key.js';
 import type { AddressInfo } from 'node:net';
 import { getQueueToken } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';

@@ -5,17 +5,34 @@ export interface LoginUser {
   id: string;
   name: string;
   locale: 'bn' | 'en';
-  password_hash: string | null;
 }
 
-/** Login lookup through the SECURITY DEFINER function (users RLS hides everyone otherwise). */
+/**
+ * Login lookup through the SECURITY DEFINER function (users RLS hides everyone otherwise), on the
+ * app login. It returns who the person is, never password data (P1-J).
+ */
 export async function findUserForLogin(
   prisma: PrismaClient,
   by: { phone?: string | null; email?: string | null },
 ): Promise<LoginUser | undefined> {
   const rows = await prisma.$queryRaw<LoginUser[]>`
-    SELECT id::text, name, locale::text AS locale, password_hash
+    SELECT id::text, name, locale::text AS locale
     FROM auth_find_user_for_login(${by.phone ?? null}, ${by.email ?? null})`;
+  return rows[0];
+}
+
+/**
+ * The password login's lookup, with the stored hash (null: no password). `login` must be the
+ * password login's own database login (LoginPrismaService, jantrik_login_app): it is the only
+ * one that may run this function, so no ordinary request can reach a hash (P1-J).
+ */
+export async function findUserForPasswordLogin(
+  login: PrismaClient,
+  by: { phone?: string | null; email?: string | null },
+): Promise<(LoginUser & { password_hash: string | null }) | undefined> {
+  const rows = await login.$queryRaw<(LoginUser & { password_hash: string | null })[]>`
+    SELECT id::text, name, locale::text AS locale, password_hash
+    FROM auth_find_user_for_password_login(${by.phone ?? null}, ${by.email ?? null})`;
   return rows[0];
 }
 
@@ -35,7 +52,7 @@ export const inviteExpiry = (invitedAt: Date): Date =>
 
 const SELECTABLE_TENANT = new Set(['ACTIVE', 'TRIAL']);
 
-/** Memberships of the current user, grouped per tenant. Run with app.user_id set. */
+/** Memberships of the current user, grouped per tenant. Run in the person's signed context (withContext({ userId })). */
 export async function listMemberships(
   query: Pick<PrismaClient, '$queryRaw'>,
 ): Promise<MembershipSummary[]> {

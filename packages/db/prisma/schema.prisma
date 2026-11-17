@@ -315,6 +315,11 @@ enum SmsPurpose {
   ATTENDANCE_ENTRY
   /// A student's exit punch, to the primary guardian (devices; at most one a day).
   ATTENDANCE_EXIT
+  /// The code that proves an applicant's phone (online admission, sprint 1 P3). Body masked.
+  ADMISSION_OTP
+  /// "Application received" to the applicant's phone (online admission, S11).
+  ADMISSION_SUBMITTED
+  ADMISSION_RESULT
 
   @@map("sms_purpose")
 }
@@ -592,6 +597,8 @@ model User {
   deviceSourceIpsTrusted   DeviceSourceIp[]     @relation("DeviceSourceIpTrustedBy")
   staffDaysUpdated         StaffAttendanceDay[] @relation("StaffAttendanceDayUpdatedBy")
 
+  storedFilesCreated StoredFile[] @relation("StoredFileCreatedBy")
+
   @@map("users")
 }
 
@@ -687,6 +694,16 @@ model Tenant {
   deviceSourceIps     DeviceSourceIp[]
   staffAttendanceDays StaffAttendanceDay[]
 
+  storedFiles StoredFile[]
+
+  admissionCycles            AdmissionCycle[]
+  admissionCycleClasses      AdmissionCycleClass[]
+  admissionApplications      AdmissionApplication[]
+  admissionApplicationPhotos AdmissionApplicationPhoto[]
+  admissionCounters          AdmissionCounter[]
+  storedFileUsage            StoredFileUsage?
+  instituteProfile           InstituteProfile?
+
   @@index([instituteTypeId])
   @@map("tenants")
 }
@@ -761,6 +778,8 @@ model AcademicYear {
   feeConcessions FeeConcession[]
   feeDues        FeeDue[]
   exams          Exam[]
+
+  admissionCycles AdmissionCycle[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, name])
@@ -866,6 +885,8 @@ model ClassLevel {
   feeAmounts     FeeAmount[]
   examClasses    ExamClass[]
 
+  admissionCycleClasses AdmissionCycleClass[]
+
   @@unique([tenantId, id])
   @@unique([tenantId, code])
   @@map("class_levels")
@@ -891,6 +912,8 @@ model StudyGroup {
   feeAmounts     FeeAmount[]
   examSubjects   ExamSubject[]
   examCandidates ExamCandidate[]
+
+  admissionCycleClasses AdmissionCycleClass[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -996,34 +1019,42 @@ model Membership {
 }
 
 model Student {
-  id                  String        @id @default(uuid(7)) @db.Uuid
-  tenantId            String        @map("tenant_id") @db.Uuid
-  studentCode         String        @map("student_code")
-  userId              String?       @map("user_id") @db.Uuid
-  nameBn              String?       @map("name_bn")
-  nameEn              String?       @map("name_en")
-  dateOfBirth         DateTime?     @map("date_of_birth") @db.Date
-  gender              Gender?
-  photoUrl            String?       @map("photo_url")
-  status              StudentStatus @default(ACTIVE)
+  id                   String         @id @default(uuid(7)) @db.Uuid
+  tenantId             String         @map("tenant_id") @db.Uuid
+  studentCode          String         @map("student_code")
+  userId               String?        @map("user_id") @db.Uuid
+  nameBn               String?        @map("name_bn")
+  nameEn               String?        @map("name_en")
+  dateOfBirth          DateTime?      @map("date_of_birth") @db.Date
+  gender               Gender?
+  /// The student's photo (stored_files, kind STUDENT_PHOTO); replaced files are deleted.
+  photoFileId          String?        @map("photo_file_id") @db.Uuid
+  /// Always STUDENT_PHOTO (CHECK): part of the foreign key, so the photo can only be a photo.
+  photoFileKind        StoredFileKind @default(STUDENT_PHOTO) @map("photo_file_kind")
+  status               StudentStatus  @default(ACTIVE)
   // Fields required for Bangladesh education board registration.
-  fatherNameBn        String?       @map("father_name_bn")
-  fatherNameEn        String?       @map("father_name_en")
-  motherNameBn        String?       @map("mother_name_bn")
-  motherNameEn        String?       @map("mother_name_en")
-  religion            Religion?
+  fatherNameBn         String?        @map("father_name_bn")
+  fatherNameEn         String?        @map("father_name_en")
+  motherNameBn         String?        @map("mother_name_bn")
+  motherNameEn         String?        @map("mother_name_en")
+  religion             Religion?
   /// 17-digit birth registration number; unique per tenant when present.
-  birthRegistrationNo String?       @map("birth_registration_no")
-  bloodGroup          BloodGroup?   @map("blood_group")
-  presentAddress      String?       @map("present_address")
-  permanentAddress    String?       @map("permanent_address")
+  birthRegistrationNo  String?        @map("birth_registration_no")
+  bloodGroup           BloodGroup?    @map("blood_group")
+  presentAddress       String?        @map("present_address")
+  permanentAddress     String?        @map("permanent_address")
+  /// The admission date dues count from when it is not the creation day: set only when a child
+  /// is admitted into a year that has not started and is not current yet (that year's start,
+  /// decision P3-K). NULL for everyone else.
+  admissionDateForDues DateTime?      @map("admission_date_for_dues") @db.Date
   /// Soft delete. Queries must filter `deletedAt: null` themselves.
-  deletedAt           DateTime?     @map("deleted_at") @db.Timestamptz(3)
-  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt            DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  photoFile  StoredFile?       @relation("StudentPhoto", fields: [tenantId, photoFileId, photoFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
   guardians  StudentGuardian[]
   enrolments Enrolment[]
 
@@ -1038,10 +1069,13 @@ model Student {
   feeMobileSubmissionDues FeeMobileSubmissionDue[]
   examCandidates          ExamCandidate[]
   devicePeople            DevicePerson[]
+  admissionApplication    AdmissionApplication?
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
   @@unique([tenantId, birthRegistrationNo])
+  // A file belongs to one student (also the foreign key's index).
+  @@unique([tenantId, photoFileId, photoFileKind])
   @@index([tenantId, status], where: raw("deleted_at IS NULL"))
   @@index([tenantId, nameEn])
   // Trigram indexes for ILIKE '%…%' search (GET /students).
@@ -1867,6 +1901,23 @@ model PlatformSmsLog {
 
   @@index([createdAt(sort: Desc)])
   @@map("platform_sms_logs")
+}
+
+// ───────────────────────────── The request context key (P1-J8) ─────────────────────────────
+
+/// The key the API signs every transaction's context with (docs/database.md → The request
+/// context). One row, generated by its migration; no runtime login may read it except through
+/// auth_context_key(), which only jantrik_login_app (and the owner) may run.
+model AppContextKey {
+  id        Int      @id @db.SmallInt
+  /// 48 random bytes.
+  key       Bytes
+  /// The key XOR the HMAC inner and outer pads (64 bytes each).
+  innerPad  Bytes    @map("inner_pad")
+  outerPad  Bytes    @map("outer_pad")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("app_context_key")
 }
 
 // ───────────────────────────── Auth sessions ─────────────────────────────
@@ -3111,4 +3162,364 @@ model StaffAttendanceDay {
   @@unique([tenantId, userId, date])
   @@index([tenantId, date])
   @@map("staff_attendance_days")
+}
+
+// ───────────────────────────── Files and the institute profile (sprint 1 P2) ─────────────────────────────
+// docs/files.md. Only apps/api/src/files/postgres-file-store.ts reads or writes stored_files and
+// stored_file_usage (a code scan checks it); callers use the FileStore interface.
+
+enum StoredFileKind {
+  STUDENT_PHOTO
+  APPLICANT_PHOTO
+  LOGO
+  SIGNATURE
+  SEAL
+  DOCUMENT_ASSET
+
+  @@map("stored_file_kind")
+}
+
+/// An image stored in the database, already re-encoded by the API (never the uploaded bytes).
+/// Rows never change (no UPDATE grant): a replaced image is a new row, and the old one is deleted.
+model StoredFile {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  tenantId    String         @map("tenant_id") @db.Uuid
+  kind        StoredFileKind
+  /// image/jpeg, image/png or image/webp; the CHECK pairs each kind with its formats.
+  mime        String
+  bytes       Bytes
+  /// = octet_length(bytes); at most the kind's cap (CHECK).
+  sizeBytes   Int            @map("size_bytes")
+  /// Hex SHA-256 of bytes: the ETag.
+  sha256      String         @db.Char(64)
+  width       Int
+  height      Int
+  createdById String?        @map("created_by_id") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User?  @relation("StoredFileCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Restrict)
+
+  student          Student?          @relation("StudentPhoto")
+  profileLogo      InstituteProfile? @relation("InstituteProfileLogo")
+  profileSignature InstituteProfile? @relation("InstituteProfileSignature")
+  profileSeal      InstituteProfile? @relation("InstituteProfileSeal")
+
+  @@unique([tenantId, id])
+  // What the kind-bound foreign keys point at.
+  @@unique([tenantId, id, kind])
+  @@index([tenantId, kind])
+  @@map("stored_files")
+}
+
+/// One row per institute once it stores a file: the running total for the per-institute cap
+/// (FILE_STORAGE_PER_TENANT_MB), changed with every put and delete under the institute's lock.
+model StoredFileUsage {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @unique @map("tenant_id") @db.Uuid
+  bytesUsed BigInt   @default(0) @map("bytes_used")
+  fileCount Int      @default(0) @map("file_count")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("stored_file_usage")
+}
+
+/// The institute's own profile (at most one per institute, created on the first save or image).
+/// tenants.name stays the name the platform registered; these are the institute's own words.
+model InstituteProfile {
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  tenantId            String         @unique @map("tenant_id") @db.Uuid
+  nameBn              String?        @map("name_bn")
+  nameEn              String?        @map("name_en")
+  shortName           String?        @map("short_name")
+  /// BANBEIS EIIN: 6 ASCII digits.
+  eiin                String?
+  addressBn           String?        @map("address_bn")
+  addressEn           String?        @map("address_en")
+  /// 5-15 ASCII digits with an optional leading + (a Bangladeshi mobile is stored as E.164).
+  phone               String?
+  email               String?
+  website             String?
+  headTitleBn         String?        @map("head_title_bn")
+  headTitleEn         String?        @map("head_title_en")
+  headNameBn          String?        @map("head_name_bn")
+  headNameEn          String?        @map("head_name_en")
+  establishedYear     Int?           @map("established_year") @db.SmallInt
+  logoFileId          String?        @map("logo_file_id") @db.Uuid
+  headSignatureFileId String?        @map("head_signature_file_id") @db.Uuid
+  sealFileId          String?        @map("seal_file_id") @db.Uuid
+  /// Fixed kinds (CHECK institute_profiles_file_kinds), part of each image's foreign key, so a
+  /// logo is a LOGO file, the signature a SIGNATURE and the seal a SEAL.
+  logoFileKind        StoredFileKind @default(LOGO) @map("logo_file_kind")
+  signatureFileKind   StoredFileKind @default(SIGNATURE) @map("head_signature_file_kind")
+  sealFileKind        StoredFileKind @default(SEAL) @map("seal_file_kind")
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  logoFile      StoredFile? @relation("InstituteProfileLogo", fields: [tenantId, logoFileId, logoFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+  signatureFile StoredFile? @relation("InstituteProfileSignature", fields: [tenantId, headSignatureFileId, signatureFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+  sealFile      StoredFile? @relation("InstituteProfileSeal", fields: [tenantId, sealFileId, sealFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  // One file is used in one place (also each foreign key's index).
+  @@unique([tenantId, logoFileId, logoFileKind])
+  @@unique([tenantId, headSignatureFileId, signatureFileKind])
+  @@unique([tenantId, sealFileId, sealFileKind])
+  @@map("institute_profiles")
+}
+
+// ───────────────────── Online admission (sprint 1 P3, docs/admission.md) ─────────────────────
+
+enum AdmissionCycleStatus {
+  DRAFT
+  OPEN
+  CLOSED
+
+  @@map("admission_cycle_status")
+}
+
+enum AdmissionApplicationStatus {
+  SUBMITTED
+  SHORTLISTED
+  SELECTED
+  WAITLISTED
+  REJECTED
+  ADMITTED
+  WITHDRAWN
+
+  @@map("admission_application_status")
+}
+
+/// Where an application came from: the public form, or staff typing a walk-in (decision P3-J).
+enum AdmissionSource {
+  ONLINE
+  STAFF
+
+  @@map("admission_source")
+}
+
+/// How applicants with the same test score are ordered (decision P4-A).
+enum AdmissionTieBreak {
+  OLDER_FIRST
+  YOUNGER_FIRST
+  NONE
+
+  @@map("admission_tie_break")
+}
+
+/// The draft outcome of the last merit list build (P4); statuses change only at publish.
+enum AdmissionTestResult {
+  SELECTED
+  WAITLISTED
+  NOT_SELECTED
+  FAILED
+  ABSENT
+
+  @@map("admission_test_result")
+}
+
+/// An admission window for one academic year (usually the next one).
+model AdmissionCycle {
+  id             String               @id @default(uuid(7)) @db.Uuid
+  tenantId       String               @map("tenant_id") @db.Uuid
+  academicYearId String               @map("academic_year_id") @db.Uuid
+  nameBn         String               @map("name_bn")
+  nameEn         String?              @map("name_en")
+  status         AdmissionCycleStatus @default(DRAFT)
+  /// The public form takes applications while opens_at <= now < closes_at (and status OPEN).
+  opensAt        DateTime             @map("opens_at") @db.Timestamptz(3)
+  closesAt       DateTime             @map("closes_at") @db.Timestamptz(3)
+  publicNoteBn   String?              @map("public_note_bn")
+  publicNoteEn   String?              @map("public_note_en")
+  /// An admission test decides who is SELECTED (P4).
+  requiresTest   Boolean              @default(false) @map("requires_test")
+  /// The form asks for the applicant's photo (S9).
+  collectPhoto   Boolean              @default(false) @map("collect_photo")
+  /// { <field>: "HIDDEN" | "OPTIONAL" | "REQUIRED" } for the optional form fields (CHECK).
+  fields         Json                 @default("{}") @db.JsonB
+  /// How equal test scores are ordered in the merit list (P4).
+  meritTieBreak  AdmissionTieBreak    @default(OLDER_FIRST) @map("merit_tie_break")
+  /// The admin who made it (no FK: users are global, as audit_logs.user_id).
+  createdBy      String?              @map("created_by") @db.Uuid
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  academicYear AcademicYear           @relation(fields: [tenantId, academicYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classes      AdmissionCycleClass[]
+  applications AdmissionApplication[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, academicYearId, status])
+  @@map("admission_cycles")
+}
+
+/// A class (and group) a cycle takes applications for.
+model AdmissionCycleClass {
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
+  cycleId            String    @map("cycle_id") @db.Uuid
+  classLevelId       String    @map("class_level_id") @db.Uuid
+  studyGroupId       String?   @map("study_group_id") @db.Uuid
+  /// Shown to staff only; NULL: no limit.
+  seats              Int?
+  isOpen             Boolean   @default(true) @map("is_open")
+  // ── The admission test (P4); the time is the institute's local time.
+  testDate           DateTime? @map("test_date") @db.Date
+  testTime           DateTime? @map("test_time") @db.Time(0)
+  testVenueBn        String?   @map("test_venue_bn")
+  testVenueEn        String?   @map("test_venue_en")
+  fullMarks          Int?      @map("full_marks")
+  passMarks          Int?      @map("pass_marks")
+  selectCount        Int?      @map("select_count")
+  waitlistCount      Int?      @map("waitlist_count")
+  /// The draft merit list: when it was built and a hash of what it was built from.
+  meritBuiltAt       DateTime? @map("merit_built_at") @db.Timestamptz(3)
+  meritInputsHash    String?   @map("merit_inputs_hash")
+  /// The latest score change (the list shows "changed since publish").
+  scoresChangedAt    DateTime? @map("scores_changed_at") @db.Timestamptz(3)
+  /// The published version (0: never published), when, and its full marks.
+  resultsVersion     Int       @default(0) @map("results_version")
+  resultsPublishedAt DateTime? @map("results_published_at") @db.Timestamptz(3)
+  resultsFullMarks   Int?      @map("results_full_marks")
+  /// The build the published version came from (never published twice).
+  resultsBuiltAt     DateTime? @map("results_built_at") @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cycle        AdmissionCycle         @relation(fields: [tenantId, cycleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel   ClassLevel             @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  studyGroup   StudyGroup?            @relation(fields: [tenantId, studyGroupId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  applications AdmissionApplication[]
+
+  @@unique([tenantId, id])
+  /// What the applications' composite FK points at: an application's class belongs to its cycle.
+  @@unique([tenantId, id, cycleId])
+  @@unique([tenantId, cycleId, classLevelId, studyGroupId])
+  /// The same class without a group once per cycle (NULL groups never clash in the unique above).
+  @@unique([tenantId, cycleId, classLevelId], map: "admission_cycle_classes_one_without_group", where: raw("study_group_id IS NULL"))
+  @@index([tenantId, cycleId])
+  @@map("admission_cycle_classes")
+}
+
+/// One child's application. History: never deleted; a status change keeps who, when and why.
+model AdmissionApplication {
+  id                     String                     @id @default(uuid(7)) @db.Uuid
+  tenantId               String                     @map("tenant_id") @db.Uuid
+  cycleId                String                     @map("cycle_id") @db.Uuid
+  cycleClassId           String                     @map("cycle_class_id") @db.Uuid
+  /// <year>-<NNNN>, unique per institute (decision P3-G).
+  applicationNo          String                     @map("application_no")
+  source                 AdmissionSource
+  nameBn                 String?                    @map("name_bn")
+  nameEn                 String?                    @map("name_en")
+  /// Lower-cased NFC name without spaces, for duplicate checks.
+  nameKey                String                     @map("name_key")
+  dateOfBirth            DateTime                   @map("date_of_birth") @db.Date
+  gender                 Gender
+  religion               Religion?
+  bloodGroup             BloodGroup?                @map("blood_group")
+  birthRegistrationNo    String?                    @map("birth_registration_no")
+  /// Kept on the application only (decision P3-I).
+  previousInstitute      String?                    @map("previous_institute")
+  presentAddress         String?                    @map("present_address")
+  permanentAddress       String?                    @map("permanent_address")
+  fatherNameBn           String?                    @map("father_name_bn")
+  fatherNameEn           String?                    @map("father_name_en")
+  motherNameBn           String?                    @map("mother_name_bn")
+  motherNameEn           String?                    @map("mother_name_en")
+  guardianNameBn         String?                    @map("guardian_name_bn")
+  guardianNameEn         String?                    @map("guardian_name_en")
+  guardianRelation       GuardianRelation           @map("guardian_relation")
+  /// Kept on the application; becomes the guardian's occupation at approval.
+  guardianOccupation     String?                    @map("guardian_occupation")
+  /// The applicant's (guardian's) phone, E.164.
+  phone                  String
+  status                 AdmissionApplicationStatus @default(SUBMITTED)
+  statusReason           String?                    @map("status_reason")
+  statusBy               String?                    @map("status_by") @db.Uuid
+  statusAt               DateTime?                  @map("status_at") @db.Timestamptz(3)
+  staffNote              String?                    @map("staff_note")
+  /// The student made from it (status ADMITTED, and only then).
+  studentId              String?                    @map("student_id") @db.Uuid
+  /// Why bulk approval skipped it (decision P3-T).
+  approvalProblem        String?                    @map("approval_problem")
+  approvalProblemAt      DateTime?                  @map("approval_problem_at") @db.Timestamptz(3)
+  // ── The admission test (P4). A score in hundredths, within the class's full marks (trigger).
+  testRoll               Int?                       @map("test_roll")
+  testScoreH             Int?                       @map("test_score_h")
+  testAbsent             Boolean                    @default(false) @map("test_absent")
+  /// The draft of the last build: never shown to the applicant.
+  testResult             AdmissionTestResult?       @map("test_result")
+  meritPosition          Int?                       @map("merit_position")
+  waitlistPosition       Int?                       @map("waitlist_position")
+  /// The published snapshot (the only result columns the public lookup reads).
+  resultVersion          Int?                       @map("result_version")
+  resultMeritPosition    Int?                       @map("result_merit_position")
+  resultWaitlistPosition Int?                       @map("result_waitlist_position")
+  resultScoreH           Int?                       @map("result_score_h")
+  resultAbsent           Boolean?                   @map("result_absent")
+  /// ADMITTED_NOT_SELECTED: admitted, but a corrected list would not select them (P4-F).
+  resultFlag             String?                    @map("result_flag")
+  submittedAt            DateTime                   @map("submitted_at") @db.Timestamptz(3)
+  createdAt              DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cycle      AdmissionCycle             @relation(fields: [tenantId, cycleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  cycleClass AdmissionCycleClass        @relation(fields: [tenantId, cycleClassId, cycleId], references: [tenantId, id, cycleId], onDelete: Restrict, onUpdate: Restrict)
+  student    Student?                   @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  photo      AdmissionApplicationPhoto?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, applicationNo])
+  @@unique([tenantId, studentId])
+  /// One live application per birth registration number per cycle (the duplicate rule).
+  @@unique([tenantId, cycleId, birthRegistrationNo], map: "admission_applications_birth_reg_live", where: raw("birth_registration_no IS NOT NULL AND status <> 'WITHDRAWN'"))
+  /// One test roll per class (P4-C).
+  @@unique([tenantId, cycleClassId, testRoll], map: "admission_applications_test_roll_key", where: raw("test_roll IS NOT NULL"))
+  @@index([tenantId, cycleId, status])
+  @@index([tenantId, phone])
+  @@index([tenantId, cycleClassId])
+  @@index([tenantId, cycleClassId, meritPosition], map: "admission_applications_merit_idx")
+  @@map("admission_applications")
+}
+
+/// An applicant's photo until approval moves it into stored_files (decision P3-B). A re-encoded
+/// JPEG only, never the uploaded bytes.
+model AdmissionApplicationPhoto {
+  tenantId      String   @map("tenant_id") @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  mime          String
+  bytes         Bytes
+  sha256        String
+  width         Int      @db.SmallInt
+  height        Int      @db.SmallInt
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  application AdmissionApplication @relation(fields: [tenantId, applicationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([tenantId, applicationId])
+  @@map("admission_application_photos")
+}
+
+/// The last application number per institute and year (numbers are <year>-<NNNN>).
+model AdmissionCounter {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  year      Int      @db.SmallInt
+  lastNo    Int      @default(0) @map("last_no")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([tenantId, year])
+  @@map("admission_counters")
 }

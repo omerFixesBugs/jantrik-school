@@ -1,0 +1,113 @@
+import { createHmac, hkdfSync, timingSafeEqual } from 'node:crypto';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Env } from '../../config/env.js';
+import { Clock } from '../../common/clock.js';
+
+/** How long a proved phone may submit and look up applications (minutes). */
+export const PHONE_TOKEN_TTL_SEC = 30 * 60;
+/**
+ * What the code proved the phone for: the form (submit) or the status page (read the status).
+ * A token of one kind is refused where the other is needed (review round 2, second follow-up).
+ */
+const TYP = { form: 'admission-phone', status: 'admission-status' } as const;
+export type PhoneTokenKind = keyof typeof TYP;
+
+interface PhoneClaims {
+  typ: (typeof TYP)[PhoneTokenKind];
+  /** The institute the code was sent for. */
+  aud: string;
+  /** The proved phone (E.164). */
+  sub: string;
+  exp: number;
+}
+
+const b64 = (b: Buffer | string) => Buffer.from(b).toString('base64url');
+
+/**
+ * The applicant's proved phone, carried for 30 minutes (decision P3-N): an HS256 token whose key
+ * is HKDF-SHA256(JWT_ACCESS_SECRET, "jantrik/admission-phone/v1"), so it can never verify as an
+ * access token (another key and `typ`) and an access token never verifies here. Its audience is
+ * the institute: A's token is refused at B.
+ */
+@Injectable()
+export class PhoneTokens {
+  private readonly key: Buffer;
+
+  constructor(
+    config: ConfigService<Env, true>,
+    private readonly clock: Clock,
+  ) {
+    this.key = Buffer.from(
+      hkdfSync(
+        'sha256',
+        config.get('JWT_ACCESS_SECRET', { infer: true }),
+        Buffer.alloc(0),
+        'jantrik/admission-phone/v1',
+        32,
+      ),
+    );
+  }
+
+  sign(tenantId: string, phone: string, kind: PhoneTokenKind): string {
+    const header = b64(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+    const claims: PhoneClaims = {
+      typ: TYP[kind],
+      aud: tenantId,
+      sub: phone,
+      exp: Math.floor(this.clock.now().getTime() / 1000) + PHONE_TOKEN_TTL_SEC,
+    };
+    const payload = b64(JSON.stringify(claims));
+    return `${header}.${payload}.${this.mac(`${header}.${payload}`)}`;
+  }
+
+  /**
+   * The proved phone for this institute and this kind, or null (bad, expired, another
+   * institute's, the other kind, not ours).
+   */
+  verify(token: string | undefined, tenantId: string, kind: PhoneTokenKind): string | null {
+    const claims = this.claims(token);
+    return claims && claims.typ === TYP[kind] && claims.aud === tenantId ? claims.sub : null;
+  }
+
+  /**
+   * A token of ours of this kind, not expired, for any institute (the upload guard's check before
+   * the body is read; the route then checks the institute).
+   */
+  valid(token: string | undefined, kind: PhoneTokenKind): boolean {
+    return this.claims(token)?.typ === TYP[kind];
+  }
+
+  private claims(token: string | undefined): PhoneClaims | null {
+    if (!token || token.length > 1024) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [header, payload, sig] = parts as [string, string, string];
+    const expected = Buffer.from(this.mac(`${header}.${payload}`));
+    const given = Buffer.from(sig);
+    if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+    let claims: Partial<PhoneClaims>;
+    try {
+      const h = JSON.parse(Buffer.from(header, 'base64url').toString()) as { alg?: string };
+      if (h.alg !== 'HS256') return null;
+      claims = JSON.parse(Buffer.from(payload, 'base64url').toString()) as Partial<PhoneClaims>;
+    } catch {
+      return null;
+    }
+    if (
+      (claims.typ !== TYP.form && claims.typ !== TYP.status) ||
+      typeof claims.aud !== 'string' ||
+      typeof claims.sub !== 'string'
+    ) {
+      return null;
+    }
+    if (typeof claims.exp !== 'number' || claims.exp * 1000 <= this.clock.now().getTime()) {
+      return null;
+    }
+    return claims as PhoneClaims;
+  }
+
+  private mac(input: string): string {
+    return createHmac('sha256', this.key).update(input).digest('base64url');
+  }
+}

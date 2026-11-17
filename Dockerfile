@@ -52,9 +52,12 @@ RUN rm -rf /out/db/prisma /out/db/prisma.config.ts \
 # The web app as a standalone server. NEXT_PUBLIC_* values are inlined into the browser code here.
 FROM source AS build-web
 ARG NEXT_PUBLIC_API_URL
+# The public admission form's Turnstile site key (empty: a stand-in only the tests' fake verifier accepts).
+ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY=
 RUN test -n "$NEXT_PUBLIC_API_URL" \
  || (echo 'Set the build argument NEXT_PUBLIC_API_URL (e.g. https://api.example.com)' >&2 && exit 1)
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY \
     NEXT_OUTPUT=standalone
 RUN pnpm --filter "@jantrik/web..." run build
 

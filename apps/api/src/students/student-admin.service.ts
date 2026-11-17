@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { GuardianRelation, Prisma } from '@jantrik/db';
-import { dateFromDb, dateToDb, type IsoDate, type StudentProfile } from '@jantrik/shared';
+import { dateFromDb, dateToDb, todayAt, type IsoDate, type StudentProfile } from '@jantrik/shared';
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
+import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
@@ -93,6 +94,7 @@ export class StudentAdminService {
     private readonly codes: StudentCodesService,
     private readonly guardians: GuardianLinker,
     private readonly access: StudentAccess,
+    private readonly clock: Clock,
   ) {}
 
   private get tenantId(): string {
@@ -101,13 +103,31 @@ export class StudentAdminService {
 
   // ─────────────────────────── Admission ───────────────────────────
 
-  async admit(input: AdmissionData): Promise<StudentProfile> {
+  /**
+   * `fromApplication`: an approved admission application (sprint 1 P3a), always a new child, so the
+   * December rule below holds even when the institute already marked that year current (P3-a18).
+   */
+  async admit(
+    input: AdmissionData,
+    opts: { fromApplication?: boolean } = {},
+  ): Promise<StudentProfile> {
     const tx = this.db.tx;
     await this.assertStudentLimit();
     const { year } = await this.checkEnrolment(input.enrolment, null);
     await this.checkUnique(input.birthRegistrationNo ?? null, input.studentCode ?? null, null);
     const studentCode =
       input.studentCode ?? (await this.codes.next(year.startDate.getUTCFullYear()));
+    // A child admitted into a year that has not started and is not current yet (in December, for
+    // January) owes from that year's start (decision P3-K): recorded now, never derived later.
+    // A current year that has not started is an institute's first year (existing students typed
+    // in, P3-a10) or an early switch: only an approved application is known to be a new child.
+    const tenant = await tx.tenant.findFirstOrThrow({ select: { timezone: true } });
+    const yearStart = dateFromDb(year.startDate);
+    const admissionDateForDues =
+      (opts.fromApplication || !year.isCurrent) &&
+      yearStart > todayAt(tenant.timezone, this.clock.now())
+        ? year.startDate
+        : null;
 
     const student = await tx.student.create({
       data: {
@@ -115,6 +135,7 @@ export class StudentAdminService {
         ...pickStudent(input),
         studentCode,
         dateOfBirth: input.dateOfBirth ? dateToDb(input.dateOfBirth) : null,
+        admissionDateForDues,
       },
       select: { id: true },
     });
@@ -143,6 +164,7 @@ export class StudentAdminService {
         ...pickStudent(input),
         studentCode,
         dateOfBirth: input.dateOfBirth ?? null,
+        admissionDateForDues: admissionDateForDues ? yearStart : null,
         enrolmentId: enrolment.id,
         enrolment: { ...input.enrolment },
         guardians: linked,
@@ -178,7 +200,7 @@ export class StudentAdminService {
     const tx = this.db.tx;
     const year = await tx.academicYear.findUnique({
       where: { id: e.academicYearId },
-      select: { id: true, startDate: true },
+      select: { id: true, startDate: true, isCurrent: true },
     });
     if (!year) throw new NotFoundException('Academic year not found');
     const classLevel = await tx.classLevel.findUnique({
@@ -300,7 +322,7 @@ export class StudentAdminService {
       motherNameEn: null,
       presentAddress: null,
       permanentAddress: null,
-      photoUrl: null,
+      photoId: null,
       guardians: [],
       // The basics: the current class/section/roll, not the history.
       enrolments: current ? [current] : [],
@@ -361,7 +383,7 @@ export class StudentAdminService {
       motherNameEn: s.motherNameEn,
       presentAddress: s.presentAddress,
       permanentAddress: s.permanentAddress,
-      photoUrl: s.photoUrl,
+      photoId: s.photoFileId,
       status: s.status,
       deletedAt: s.deletedAt?.toISOString() ?? null,
       createdAt: s.createdAt.toISOString(),

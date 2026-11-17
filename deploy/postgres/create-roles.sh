@@ -62,6 +62,7 @@ jantrik_create_roles() (
   check_password DB_APP_PASSWORD "${DB_APP_PASSWORD:-}"
   check_password DB_PLATFORM_PASSWORD "${DB_PLATFORM_PASSWORD:-}"
   check_password DB_INGEST_PASSWORD "${DB_INGEST_PASSWORD:-}"
+  check_password DB_LOGIN_PASSWORD "${DB_LOGIN_PASSWORD:-}"
   # The superuser's own password when this script is given it (the compose Postgres's first
   # start): as strong as the others, and none of them. In the compose Postgres the image has set
   # it already, so deploy/compose.sh checks it before the first start; this is the second check.
@@ -72,7 +73,7 @@ jantrik_create_roles() (
   dupes=$(
     {
       printf '%s\n' "$DB_OWNER_PASSWORD" "$DB_APP_PASSWORD" "$DB_PLATFORM_PASSWORD" \
-        "$DB_INGEST_PASSWORD"
+        "$DB_INGEST_PASSWORD" "$DB_LOGIN_PASSWORD"
       if [ -n "${POSTGRES_PASSWORD:-}" ]; then printf '%s\n' "$POSTGRES_PASSWORD"; fi
     } | sort | uniq -d
   )
@@ -84,6 +85,7 @@ SET client_min_messages TO warning;
 \getenv app_pw DB_APP_PASSWORD
 \getenv platform_pw DB_PLATFORM_PASSWORD
 \getenv ingest_pw DB_INGEST_PASSWORD
+\getenv login_pw DB_LOGIN_PASSWORD
 
 -- Each role as in docker/postgres/init/01-roles.sh (docs/database.md → Database roles).
 -- Owns the schema and runs migrations. Not a superuser, so FORCE ROW LEVEL SECURITY applies to it.
@@ -101,17 +103,23 @@ SELECT format('CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCR
 -- Its statements stop after 5 s (decision #79). The receiver's pool sends the same limit and the
 -- receiver refuses to start without it; set on every run, so an existing role gets it too.
 ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s';
+-- The password login (DATABASE_LOGIN_URL): auth_find_user_for_password_login only (P1-J).
+SELECT format('CREATE ROLE jantrik_login_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD %L', :'login_pw')
+ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_login_app') \gexec
 
 -- Owners of the SECURITY DEFINER functions: no login, no RLS bypass. jantrik_owner may SET ROLE
 -- to them (migrations hand them their functions) but never inherits them: their policies would
 -- otherwise show the owner every row.
 SELECT format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS', r)
-  FROM unnest(ARRAY['jantrik_auth', 'jantrik_search', 'jantrik_platform', 'jantrik_ingest']) AS r
+  FROM unnest(ARRAY['jantrik_auth', 'jantrik_search', 'jantrik_platform', 'jantrik_ingest',
+                     'jantrik_admission']) AS r
  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r) \gexec
 GRANT jantrik_auth TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 GRANT jantrik_search TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 GRANT jantrik_platform TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
+-- The public admission form's three functions (sprint 1 P3b, docs/admission.md).
+GRANT jantrik_admission TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 
 -- An admin that is not a superuser (a managed Postgres) must be able to act as the owner to
 -- create its database and set it up. SET only: it never inherits the owner's rights.
@@ -127,7 +135,7 @@ BEGIN
   SELECT string_agg(r, ', ') INTO missing
     FROM unnest(ARRAY['jantrik_owner', 'jantrik_app', 'jantrik_auth', 'jantrik_search',
                       'jantrik_platform', 'jantrik_platform_app', 'jantrik_ingest',
-                      'jantrik_ingest_app']) AS r
+                      'jantrik_ingest_app', 'jantrik_login_app']) AS r
    WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r);
   IF missing IS NOT NULL THEN
     RAISE EXCEPTION 'roles missing: %', missing;
@@ -142,16 +150,19 @@ BEGIN
   SELECT string_agg(rolname, ', ') INTO bad FROM pg_roles
    WHERE (rolname IN ('jantrik_auth', 'jantrik_search', 'jantrik_platform', 'jantrik_ingest')
           AND rolcanlogin)
-      OR (rolname IN ('jantrik_owner', 'jantrik_app', 'jantrik_platform_app', 'jantrik_ingest_app')
+      OR (rolname IN ('jantrik_owner', 'jantrik_app', 'jantrik_platform_app', 'jantrik_ingest_app',
+                      'jantrik_login_app')
           AND NOT rolcanlogin)
-      OR (rolname IN ('jantrik_app', 'jantrik_platform_app', 'jantrik_ingest_app') AND rolcreatedb);
+      OR (rolname IN ('jantrik_app', 'jantrik_platform_app', 'jantrik_ingest_app',
+                      'jantrik_login_app') AND rolcreatedb);
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'roles with the wrong LOGIN or CREATEDB attribute: %', bad;
   END IF;
 
   -- The runtime logins are members of no role (jantrik_app's rights are its own grants).
   SELECT string_agg(DISTINCT pg_get_userbyid(member)::text, ', ') INTO bad FROM pg_auth_members
-   WHERE pg_get_userbyid(member) IN ('jantrik_app', 'jantrik_platform_app', 'jantrik_ingest_app');
+   WHERE pg_get_userbyid(member) IN ('jantrik_app', 'jantrik_platform_app', 'jantrik_ingest_app',
+                                     'jantrik_login_app');
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'runtime logins must be members of no role: %', bad;
   END IF;

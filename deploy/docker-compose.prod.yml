@@ -25,6 +25,8 @@ x-api-env: &api-env
   API_PORT: '4000'
   DATABASE_URL: postgresql://jantrik_app:${DB_APP_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
   DATABASE_PLATFORM_URL: postgresql://jantrik_platform_app:${DB_PLATFORM_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
+  # The password login's own login (P1-J): the only one that may look up a password hash.
+  DATABASE_LOGIN_URL: postgresql://jantrik_login_app:${DB_LOGIN_PASSWORD:?}@postgres:5432/${POSTGRES_DB_NAME:-jantrik}
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379
   QUEUE_PREFIX: ${QUEUE_PREFIX:-jantrik}
   CORS_ORIGINS: https://${APP_DOMAIN:?},https://${PLATFORM_DOMAIN:?}
@@ -36,7 +38,13 @@ x-api-env: &api-env
   JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?}
   OTP_PEPPER: ${OTP_PEPPER:?}
   PLATFORM_TOTP_KEY: ${PLATFORM_TOTP_KEY:?}
+  # The public admission form (docs/admission.md): Cloudflare Turnstile's secret and the web
+  # app's address (the status page link in the "application received" SMS).
+  TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:?}
+  WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:?}
   SMS_PROVIDER: ${SMS_PROVIDER:-none}
+  # Stored images per institute, in MB (docs/files.md).
+  FILE_STORAGE_PER_TENANT_MB: ${FILE_STORAGE_PER_TENANT_MB:-1024}
   # The receiver is its own service below; the API only shows its address in the setup guide.
   INGEST_IN_PROCESS: 'false'
   INGEST_PUBLIC_HOST: ${DEVICE_HOST:?}
@@ -58,6 +66,7 @@ services:
       DB_APP_PASSWORD: ${DB_APP_PASSWORD:?}
       DB_PLATFORM_PASSWORD: ${DB_PLATFORM_PASSWORD:?}
       DB_INGEST_PASSWORD: ${DB_INGEST_PASSWORD:?}
+      DB_LOGIN_PASSWORD: ${DB_LOGIN_PASSWORD:?}
       JANTRIK_DB_NAME: ${POSTGRES_DB_NAME:-jantrik}
       TZ: UTC
     volumes:
@@ -74,7 +83,7 @@ services:
         - CMD-SHELL
         - >-
           psql -h 127.0.0.1 -U postgres -d "$$JANTRIK_DB_NAME" -XAtc
-          "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_ingest_app')
+          "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jantrik_login_app')
           AND has_schema_privilege('jantrik_app', 'public', 'USAGE')
           AND NOT has_schema_privilege('public', 'public', 'USAGE')
           AND NOT has_database_privilege('public', current_database(), 'TEMPORARY')
@@ -88,7 +97,7 @@ services:
     logging: *logging
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
     # Deployment requirement 2: never evict a key, and keep every write (AOF, fsync each second).
     # At REDIS_MAXMEMORY, writes fail loudly (noeviction) instead of Redis growing until the
@@ -206,6 +215,8 @@ services:
       args:
         # Inlined into the browser code: rebuild the image after changing the API's domain.
         NEXT_PUBLIC_API_URL: https://${API_DOMAIN:?}
+        # The Turnstile widget's site key for the public admission form (docs/admission.md).
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:?}
     image: jantrik-web:${IMAGE_TAG:-local}
     restart: unless-stopped
     environment:

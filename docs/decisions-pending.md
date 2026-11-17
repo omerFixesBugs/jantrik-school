@@ -593,11 +593,88 @@ P0-9. **The login check reads `session_user`** (the login), never `current_user`
 
 Left by the final review for later (not built, each small):
 
-- **Redis runs as root and its image floats.** `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
-- **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
+- **Redis runs as root ~~and its image floats~~** (the image is pinned since the follow-ups of 2026-11-16, F-4 below; running as root is still open). `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
+- **Done 2026-11-16 (F-3 below).** **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
 - **The receiver's key scope `~<prefix>:devices:*` includes the worker's job schedulers** (the devices tick, expire-punches): code run in the receiver could delete them until the worker restarts and recreates them. Accepted for now (the scope the plan set); narrower read/write key selectors are possible at some cost across BullMQ upgrades.
-- **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
+- **Done 2026-11-16 (F-5 below).** **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
 - **Local Playwright configs** that are not in git (`playwright.alt*.config.ts`, `dbg`, `shots`) set `CORS_ORIGINS` but not `PLATFORM_ORIGINS`: their platform specs now get 403 until they set it.
+
+## Small follow-ups (day run 2026-11-16)
+
+Branch `chore/small-followups`, one PR. Decided by the agent alone (the owner was away); each can
+be changed in review.
+
+F-1. **P1-I is built as the owner answered:** a password is also refused when it contains a
+distinctive word of an institute's name. The name is split at spaces, punctuation, symbols and
+zero-width spaces; generic words and words of digits only (`2026` in "Udvash 2026 Batch") are
+dropped; every remaining word of 4 or more code points (the whole-name rule's counting) is
+refused. The whole-name rule stays (digits included). Both sides are compared like the phone rule:
+NFKC (full-width letters and digits), lower case, ASCII digits, khanda ta in its old encoding
+(ত + ্ + ZWJ) read as ৎ, and without spaces, punctuation, symbols or invisible characters (soft
+hyphen, zero-width space and joiners, word joiner…), so `ko.dom2026` or `k-o-d-o-m` count as
+`kodom`. **Glued endings:** generic words glued to the end of a word are cut off only when they
+are 6 or more code points together (`শাপলাউচ্চবিদ্যালয়` → `শাপলা`, `Kodomtolaschool` →
+`kodomtola`), so a short generic ending leaves no fragment (`Australia` keeps its `alia`; `austr`
+is not a word of the name). The error code stays `HAS_INSTITUTE_NAME` (its message now says "the
+name or a word from it"), so the web and the API did not change shape.
+
+F-2. **The generic words** (`GENERIC_NAME_WORDS` in `packages/shared/src/password.ts`), chosen
+from the owner's examples "and similar": the kind of institute (school, college, madrasa, academy,
+coaching, centre, institute, kindergarten, polytechnic, pathshala…), its level (high, secondary,
+primary, junior, dakhil, alim, fazil, kamil…), who it is for (girls, boys, mohila…), its medium and
+standing (english, bangla, version, international, model, ideal, public, government/govt, cadet,
+residential, pilot, memorial, smriti, shaheed…), madrasa name words (darul, uloom, jamia, hafizia,
+nurani, qawmi, islamia, quran, ebtedayee…), nursery and shishu, `and` written in Bangla, each in
+Bangla and in English letters with common spellings (madrasah, madrassa, bidyalay, uchcha,
+balika, madhyamik, prathomik, adarsha, sarkari, মাদরাসা, সরকারী, একাডেমী…). Not generic: place
+names and people's names (`Dhaka`, `Motijheel`, `Cantonment`, `Salim`): they point at the
+institute, so they are refused. Choices beyond the owner's words:
+
+- **Generic words glued to the end of a word** are cut off too (6 or more code points together,
+  F-1), and the whole glued word is still refused as well, so the rule never refuses less than
+  splitting at spaces alone. Only endings: a generic word at the start of an ordinary word is not
+  cut (`Highland` stays `highland`, so `highschool2026` is allowed).
+- **Invisible characters and other ways of writing** are ignored on both sides, for whole names
+  too (F-1). Unicode forms (য় as one code point or two) were already unified.
+- **The slug is not checked** (the decision mentioned it as a "perhaps"; the owner's answer did not
+  ask for it).
+
+F-3. **`CORS_ORIGINS` is normalised in `env.ts`** like `PLATFORM_ORIGINS` (lower-case host, no
+trailing slash or default port). An entry that is not exactly an origin (`*`, a bare host, or a
+URL with a login, a path, a query or a fragment) is kept as written instead of stopping the start:
+it matches no browser's Origin, production refuses it, and a developer's existing `.env` keeps
+working. **Also fixed for `PLATFORM_ORIGINS`** (they share the helper, which used `URL.origin`):
+`https://app.jantrik.com.bd@evil.example` used to become `https://evil.example` and pass the
+production check (in both lists, since before this PR for `PLATFORM_ORIGINS`). Such an entry is
+now no origin: production refuses it in either list, and `PLATFORM_ORIGINS` refuses it everywhere,
+as it already refused entries that are not URLs.
+
+F-4. **Redis is pinned to `redis:7.4.11-alpine`**, the version of the image this PC had (built
+2026-09-17; the tag exists on Docker Hub), in the production compose, the development compose and
+both CI jobs; a test checks the four agree and are exact. The exact tag, not a digest: Docker's
+patched rebuilds of the same version can still be taken (`compose.sh pull redis`, deploy.md §
+11). Your local Redis container keeps running `redis:7-alpine` until the next
+`docker compose up -d`, which pulls 7.4.11 and restarts it on the same volume. Postgres
+(`postgres:16-alpine`) and Caddy (`caddy:2-alpine`) still float: not asked, same fix if wanted.
+
+F-5. **The login check refuses REPLICATION and CREATEROLE** for the runtime logins, and a login
+that can become a role with either. CREATEROLE is refused too (the decision said "possibly"): no
+runtime login has or needs it, the local init script creates none with it, and `create-roles.sh`
+already refuses both for every role it makes, so no correct setup stops starting.
+
+F-6. **Test users' phones are unique per database, across runs too** (the appearance flake,
+P0-8). A per-run counter is not enough: the test database keeps every run's users, and Vitest
+gives each test file its own module (no shared memory). So one counter per database lives in a
+file in the OS temp folder (`jantrik-test-phones/`), taken 200 numbers at a time under a lock, and
+never behind a clock that moves 1 number a second (a deleted file restarts ahead of older runs,
+given about an hour and a half per 5 000 phones they used). New phones use operators no test used
+before (API +88013, db package +88014, 50 000 000 to 98 999 999; the seeds' fixed numbers are lower
+and the old random phones were 017/018), so they cannot meet old test users either. **The numbers
+never wrap:** when the 49 million are used up (the clock alone gets there in about May 2028),
+drawing stops with a message to recreate the test database and move the start date, instead of
+repeating numbers older runs gave out. The lock is taken over only when stale (10 s), by moving it
+aside first and checking its owner, and Windows' "being removed" answers (EPERM, EACCES) mean
+"busy". `randomPhone` kept its name (about 40 files call it).
 
 ## The refresh race fix (2026-11-15)
 
@@ -649,10 +726,442 @@ P1-G. **The rules are checked before the code** (a change to the plan's order, w
 
 P1-H. **`GET /me/password` also returns the person's own phone** (an addition to the plan), so the form can check the phone rule as they type. It is their own number, returned only to them.
 
-P1-I. **Open, for the owner: catch part of an institute's name too?** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widens the rule you set, so it is not built.
+P1-I. **Built in the follow-ups PR (`chore/small-followups`, the owner's answer of 2026-11-16; see F-1): a distinctive word of an institute's name is refused too.** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widened the rule you set, so it waited for your answer.
 
 - To change: `passwordProblems` in `packages/shared/src/password.ts` (the server and the form share it).
 
-P1-J. **Follow-up, for the owner: hide `users.password_hash` from the app login.** Real staff hashes now exist, and `jantrik_app` may still SELECT every column of the users it can see (itself, and the members of the current institute, through `users_visible`). An injection in a request could read co-members' hashes (argon2id, so slow to attack, but still). The fix: revoke SELECT on that column from `jantrik_app` and read `hasPassword` through a definer function, as the login already does; every full-row read of `users` in the app and the tests must then name its columns. A database and security change, so it needs a plan and your approval first.
+P1-J. **Built (day run 2026-11-16), for the owner's review with its PR: no ordinary request can read a password hash.** Plan: [plans/sprint-1-p1j-password-hash.md](plans/sprint-1-p1j-password-hash.md), written and built while the owner was away, as asked, then changed after the database-security review (P1-J7). `jantrik_app` lost SELECT on `users.password_hash` (granted column by column; UPDATE kept), its login lookup returns no password data, and the password login looks the hash up on its own database login (`jantrik_login_app`, `DATABASE_LOGIN_URL`) through one function only that login may run. Every Prisma client omits the hash. **Setup on your machine, in this order:** create the role once (docs/database.md → Database roles, the `CREATE ROLE jantrik_login_app …` line), add `DATABASE_LOGIN_URL` to `.env` (from `.env.example`), then `pnpm db:migrate`. Decisions taken alone, each the safest option (P1-J1 to P1-J7):
+
+P1-J1. **The app's login lookup returned any user's hash, so it changed too.** `auth_find_user_for_login`, which `jantrik_app` may run, returned `password_hash` for any phone or email, whatever the institute: hiding the column alone would have closed nothing. It now returns id, name and locale only (the OTP login never needed more).
+
+P1-J2. **`hasPassword` comes from `auth_my_password_is_set()`**, a definer function for `app.user_id` with no parameter. **It leaks one bit:** any SQL in a request can set `app.user_id` with `set_config`, so an injection can learn whether a given person has a password (yes or no; nothing about the password). Moving it to the login's own login would close that too; not done, to keep that login used by the password login only.
+
+P1-J3. **Every Prisma client omits `passwordHash`** (a global `omit` in `createPrismaClient`), instead of a `select` at each call site. The package's `PrismaClient` type is that client's, so a read without `select` has no `passwordHash` and `new PrismaClient` from the package does not type-check (the test helper's one-connection client now comes from the factory, with a new `max` pool option). Not stopped by TypeScript, only by the database: an explicit `select: { passwordHash: true }`, and the generated class, which the package's `export *` still exports at runtime.
+
+P1-J4. **A cost ceiling for stored hashes at login:** at most 64 MiB, 10 passes, 4 lanes (today's hashes: 19 MiB, 2, 1). Above it, or unreadable, the stored hash counts as no password (the dummy check runs, so the time is the same). Before, argon2 verified whatever parameters a stored hash named, so someone who wrote a huge-cost hash into their own row could make each of their login attempts arbitrarily expensive.
+
+P1-J5. **(Dropped after the review.)** The first version accepted only argon2id v19 with a 32-byte digest, because the API recomputed the hash. With argon2's own verify back (P1-J7) any argon2 hash within the ceiling works again.
+
+P1-J6. **Not changed: the platform admins' login** (`platform_find_admin_for_login` returns `platform_admins` hashes and TOTP secrets to `jantrik_platform_app`). It is a separate login with no tenant traffic; the same change can follow if you want it.
+
+P1-J7. **Built after the review; you may drop these commits:** the first version kept the hash in the database and compared a digest there (`auth_my_password_matches`). The review showed that an injection could read any user's salt, set `app.user_id` to them and check 200,000 offline-computed guesses in one 6.4-second statement: close to reading the hash. Now a dedicated login, `jantrik_login_app`, is the only one that may run the hash lookup (`auth_find_user_for_password_login`); `jantrik_app` has neither the lookup nor any comparison function, and the API verifies with argon2 as before. It follows the platform and receiver logins: its own env URL (required, refused in production as the owner or superuser, never given to the receiver), its own small pool, the fail-closed privilege check and a mixed-up-URLs check at start-up, and the role in `01-roles.sh`, `create-roles.sh`, the production compose, CI, the restore check and the docs. **Upgrade:** the migration first checks that `jantrik_login_app` exists and refuses to run otherwise (Prisma does not run a migration in one transaction, so a failure half-way would leave the first statements applied); every statement can run again after `prisma migrate resolve --rolled-back`. On a server the role is created after the checkout and before `migrate` (docs/deploy.md → Upgrades). Between `migrate` and the restart, the old API fails whole-row reads of `users` (the refresh, `/auth/me`) and both logins; a failed refresh is retried and nobody is signed out.
+
+P1-J8. **Built (day run 2026-11-17), for the owner's review with its PR: an SQL injection can no longer pose as another person or enter another institute.** Plan: [plans/sprint-1-p1j8-verified-context.md](plans/sprint-1-p1j8-verified-context.md), written and built while the owner was away, as asked ("the option that closes it most completely without weakening anything"). Before, the request's identity was `app.user_id` and `app.tenant_id`, which any SQL in the transaction could change with `set_config`: an injection could write a victim's `password_hash` or insert a session for them, read or write any institute's rows, and make itself OWNER of any institute (`packages/db/test/account-takeover.test.ts`: six of its seven attacks succeeded on integration/sprint-1). Now the API signs one setting, `app.context` (institute, person, the connection's backend pid and the transaction's start), with a key the database generates and only `jantrik_login_app` (and the owner) may read; `app_current_tenant_id()` / `app_current_user_id()` believe nothing else and raise 42501 on a value that does not verify for this very transaction. **No setup step for the owner beyond #16's:** no new role, no new `.env` line; `pnpm db:migrate`, then restart `pnpm dev`. P1-J2's one-bit leak is closed by the same change. Decisions taken alone, each the safest option found (P1-J8a to P1-J8g):
+
+P1-J8a. **The verified context, not narrower write rules.** Moving only password and session writes behind definer functions (the other option recorded) would have left an injection free to enter any institute and make itself OWNER there through `memberships`. The signed context closes every path that goes through `set_config`, and with it an injection can only do what its own person could already do through RLS.
+
+P1-J8b. **The key lives in the database, made by the migration** (`pg_strong_random`, 48 bytes; the HMAC pads stored next to it so the check needs only the built-in `sha256()`; pgcrypto stays out). The API and the worker read it through the password-login login (`auth_context_key()`, executable by `jantrik_login_app` only) at start-up and refuse to start without it; the seed and the tests read the table as the owner. No env var, so nothing to set up, copy or leak in `.env`; a restore keeps the key (it is in the dump, like every row). Rotation has no command yet (database.md → The request context); see P1-J8h.
+
+P1-J8c. **A bad context raises 42501 instead of meaning "no context".** Unset or empty still means no context (nothing visible). A forged, tampered, copied or malformed value fails the statement loudly, so an attempt shows in the logs.
+
+P1-J8d. **Bound to the backend pid and the transaction start**, so a value that leaks (a log, an error) is useless in any other transaction or connection. It costs one more round trip for a context with only a tenant or only a person (jobs, login steps); the request's tenant-and-person context needs no more than before.
+
+P1-J8e. **Every policy rewritten to call the functions wrapped, `(SELECT app_current_tenant_id())`**, in the same migration (76 of 124 policies), so the check runs once per statement, not per row; the four definer functions that call them are recreated wrapped, and `schema-safety.test.ts` fails on a bare call. `tenant_modules.provisioning_only` read its own table in a subquery, which PostgreSQL now refuses as policy recursion; the same check moved into a STABLE plpgsql function (`app_tenant_has_modules`, the caller's RLS as before). Measured on the scratch database: about 38 µs per check; ten statements in one transaction 26.7–27.9 ms against 25.9–26.1 before.
+
+P1-J8f. **`tenantClient` kept, but each model call now runs in its own `withTenant`** (a batch transaction cannot read the backend and start first). Only tests and the docs use it.
+
+P1-J8g. **`app_verified_context()` is runnable by the roles whose queries meet a policy** (the app, the owner, and the owners of the definer functions), not by PUBLIC, like every definer function; it returns only the caller's own verified context.
+
+P1-J8h. **Production refuses to start without the key; development and tests only log it, and a changed key is reloaded.** CI's Playwright starts the API before its global setup migrates and resets `jantrik_e2e`, so a start-up that required the key failed there, and the reset would have made a new key under the running API. Now: in production (migrations run before the apps) no key → no start, as before; elsewhere an error in the log and the key is loaded on the first institute transaction. Every signed transaction also reads a one-way fingerprint of the database's key (`app_context_key_id()`, runnable by `jantrik_app`; it reveals nothing that helps forge a signature) in the round trip it already makes, and reloads the key once when it changed (a reset, a restore from another server, a rotation); if it still differs, the transaction fails before its work runs. Without a key nothing can be signed, so every institute transaction fails: closed and loud either way.
+
+P1-J8i. **From the review: no temporary objects for the runtime logins.** The signed context assumes an injection cannot leave anything behind on a pooled connection; the review planted a temporary view `tenants` and the victim's next request on that connection ran it in the victim's context (password hash changed, attacker OWNER of the victim's institute). Production revoked TEMPORARY already; development, the test databases, CI and Playwright did not. Now the P1-J8 migration revokes TEMPORARY on its database from PUBLIC (so does `docker/postgres/init`), the API refuses a `DATABASE_URL` login with TEMP in production and warns elsewhere, and the request path's SQL is schema-qualified. **For your existing local databases** the migration does it when you migrate each one; to do it at once, as the Postgres superuser: `REVOKE TEMPORARY ON DATABASE jantrik FROM PUBLIC; REVOKE TEMPORARY ON DATABASE jantrik_test FROM PUBLIC; REVOKE TEMPORARY ON DATABASE jantrik_e2e FROM PUBLIC;` (the merge runbook has the exact command). The definer functions already list `pg_temp` last (schema-safety checks it).
+
+P1-J8j. **From the review: the upgrade stops the API and the worker before `migrate`, and the caches have a new generation.** Between `migrate` and the restart an old API reads no institute data; it would have cached empty roles and modules for 5 minutes under keys the new API reads (403s, skipped device jobs, an import left queued). The roles and modules cache keys and the fees "dues ensured today" marker carry a new generation, and docs/deploy.md stops api and worker first.
+
+P1-J8k. **From the review: identities a job signs come from rows the app cannot forge.** `student_imports.created_by_id` (the import job signs as that person) is no longer updatable by `jantrik_app`, and a request can only create an import as its signed person (a trigger). Accepting an invitation checks it in the person's own context before signing the URL's institute. The other jobs take their person from job data in Redis, not from a row.
+
+P1-J8l. **From the review: the HMAC pads are derived from the key by a trigger**, so they cannot drift and a rotation is one UPDATE (docs/database.md → The request context).
+
+P1-J8m. **Recorded, not changed (from the review):** `jantrik_auth` (the owner of the auth functions) can read the key table. A dedicated NOLOGIN owner for the key would follow least privilege more closely but needs a new role, i.e. a setup step on every machine; not worth it now (`jantrik_auth` is NOLOGIN and runs only reviewed definer functions). What an injection can still leave on a pooled connection is listed in docs/database.md → The request context: session settings, session advisory locks, signals to other app backends, and stored role settings, all denial of service or wrong output, none another person's data; stored role settings are refused at start-up in production (P1-J8p). **Not preventable in PostgreSQL:** a login may change its own password (`ALTER ROLE jantrik_app PASSWORD …`); the services then fail to connect until the password is set back. Denial of service only.
+
+P1-J8n. **Open for the owner (from the review): planner estimates on large institutes.** The policies compare `tenant_id` with a parameter the planner cannot see, so it estimates an average institute. Measured on a skewed scratch dataset (plan → Performance): one real plan change, the student list page of a 3,030-student institute, 0.8–1.2 ms before, 5.0–6.2 ms after (a full sort instead of reading the first 50 in order); the attendance, exam and search reads are the same or faster. Options: (a) accept it (default for now; the cost grows with the institute: perhaps 15 ms at 10,000 students); (b) **recommended:** pass the institute explicitly (`tenantId` in `where`) in the paged lists (students first, then enrolments and dues lists): shown to bring the old plan back (0.9–1.4 ms), RLS still applies, a small change per query, in its own PR; (c) not an option: reading the unsigned setting for estimates (any SQL could change it mid-statement).
+
+P1-J8o. **From the review, round 2 (must-fix): a transaction left open on a pooled connection.** SQL the app sends outside a transaction may carry several statements, so an injection there could end with `BEGIN; DECLARE c CURSOR WITH HOLD FOR SELECT … FROM students` and leave the transaction open. The next request on that connection (another institute's) signed that transaction, and the cursor was filled with that institute's rows at its COMMIT; the attacker read them later with FETCH (reproduced). Fixed twice: the pool of every client `createPrismaClient` makes closes a connection released with a transaction open (`pg` is now a direct dependency of the db package, the same version Prisma's adapter already used), and `withContext` refuses to sign a transaction that is not fresh (a transaction id assigned, or a cursor declared in it before signing), which rolls it back. The three app queries that ran outside a transaction (the refresh-token lookup, the SMS rate, the health check) run in one. Not adopted: also refusing when the transaction started more than a margin before the signing statement (a busy event loop would refuse honest requests; the two checks are exact). The reviewer's probe is `packages/db/test/leftover-transaction.test.ts`.
+
+P1-J8p. **From the review, round 2: stored role settings.** `jantrik_app` may run `ALTER ROLE jantrik_app [IN DATABASE …] SET statement_timeout = '1ms'` for itself (reproduced): every new connection of the API and the worker takes it, even after restarts. Every runtime login's start-up check now reads the settings stored for it (for every database or this one): production refuses settings the login should not have (the receiver's `statement_timeout=5s` is expected), development and tests warn. The same check now reads TEMP through roles the login can only SET ROLE to, and the platform, receiver and password-login logins run both checks too.
+
+P1-J8q. **From the review, round 2: only the uploader may start an import or include a possible duplicate.** The worker runs the import as its uploader and audits it in their name, so another admin of the institute starting it (or changing which duplicates it imports) would act in the uploader's name. Recorded, not changed: an SQL injection in an admin's request can still change another admin's queued import content in the table (rows, mapping, results); that is P1-J10 (RLS does not separate people inside an institute).
+
+P1-J9. **Follow-up for the owner (not built): email login lookups are case-insensitive but not indexed.** Both login lookups compare `lower(u.email) = lower(p_email)`; `users_email_key` is case-sensitive, so that comparison scans the table (an unknown email takes longer as the table grows) and two emails differing only in case can coexist. The fix: check for such duplicates first, then a unique index on `lower(email)` (and drop the old one). Not in this PR, because existing data could hold duplicates.
+
+P1-J10. **Follow-up for the owner (not built, not set_config): RLS does not separate roles inside an institute.** With P1-J8 an injection is the person whose request it rides in, in their institute. But the policies isolate institutes, not roles: an injection in a teacher's or a guardian's request can still write any row of its own institute that `jantrik_app` may write, e.g. insert an OWNER membership for itself in `memberships`, change marks or fee rows. The API checks roles; the database does not. Options, each larger: (a) role-aware policies on the most sensitive tables first (`memberships`, marks, payments), reading the role from the signed context (the API would sign the person's roles too); (b) writes to `memberships` only through definer functions that check the caller's role; (c) leave it to the API and code review (today). Recommended: (a) for `memberships` first, since it is the path to taking an institute over.
 
 P1-K. **Fixed from the review** (each with a test that failed first): a code is single use even when two requests race with it (login codes too); the phone rule ignores every punctuation mark and symbol between the digits; the other sessions are revoked in one statement; the common-password list is read at start-up; password login accepts up to 512 code points (a 128-character password typed decomposed); the wrong-code message asks to check the code before sending a new one. Kept as they are: the staff check after a correct password costs one extra query (it only confirms a password the caller already has); the login page's hint sits under the password tab, which guardians do not use.
+
+## Sprint 1, P2: institute profile, files, photos (2026-11-16)
+
+Plan: [plans/sprint-1-p2-files.md](plans/sprint-1-p2-files.md), written and built during the unattended day run of 2026-11-16 (the owner asked for it while away). The PR is the approval step. Each decision below is the safe default; all are reversible.
+
+F1. **Who sees what.** A student's photo is part of the full record, as on the student's page today (the basic view for a teacher of another section already left it out): OWNER and ADMIN for every student, a TEACHER for the students of their current sections, a guardian for their own children only (`GET /me/children/:id/photo`). Anyone else gets 404, as for a student that does not exist. The logo: every member, guardians too. The head's signature and the seal: OWNER and ADMIN only (they could be misused on forged papers; P8/P9 widen this for printing). The profile fields: OWNER and ADMIN.
+
+F2. **Lists keep initials.** The student list, the cards view and other lists do not load photos: fifty photos of up to 200 KB would not fit the 3 s budget on slow 4G. Photos show on the student's page and side peek, the guardian's child card and the report card. A small thumbnail kind for lists is a follow-up.
+
+F3. **`photoId` replaces `photoUrl`** in every API type (student list, profile, guardian children, report cards, admit cards): the stored file's id or null. The web fetches the image with the bearer token from the entity route and caches it by that id.
+
+F4. **EIIN is exactly 6 digits** (BANBEIS), optional. One CHECK to widen if an institute has another form.
+
+F5. **The institute's phone** may be a mobile (stored as E.164) or a landline (5–15 digits, optional `+`).
+
+F6. **An image uploaded before the first save** creates the profile with the registered name (`tenants.name`) in its script (Bangla or English), so the "one name" rule holds.
+
+F7. **Formats.** JPEG, PNG and WebP only, by content. HEIC is refused (iPhones send JPEG to the browser's file picker; sharp's prebuilt build cannot decode HEVC). A transparent photo is flattened on white. Truncated files are refused; other decoder warnings are tolerated (some phone JPEGs have harmless ones).
+
+F8. **60 uploads per person per 10 minutes** (`file-upload:<userId>`), on top of the general limits: each upload costs CPU.
+
+F9. **A deactivated student's photo** can be viewed by OWNER/ADMIN but not changed (409 `DEACTIVATED`, like other student writes).
+
+F10. **Replacing an image deletes the old file** in the same transaction; there is no image history. The audit row keeps the old and the new file id.
+
+F11. **The per-institute total is counted, not recomputed**, under the institute's advisory lock; tests check it equals the sum of the files after puts, replaces, deletes and two uploads at once.
+
+F12. **No institute header or logo on the report card yet.** The profile and images exist for P3 (the admission slip), P8 and P9 (documents); the report card gains only the student photo, as the sprint plan says.
+
+Changed after the review (each code fix with a test that failed first; R3 is checked by Playwright
+in CI; R9 and R10 are docs and tests only; details in the plan → "Changed after the review"):
+
+- **R1. Uploads no longer run inside the request transaction** (must-fix). `TenantContextInterceptor`
+  (a global interceptor) opened the 15 s transaction and took a pool connection before multer read
+  the body: a 2–5 MB photo on slow 4G took longer than 15 s (a 500 every time), and ten slow
+  uploads could hold all 10 connections (every other institute failing). The two upload routes
+  are now `@OwnTransaction()`: the body is read, the upload limit applied and the image decoded
+  with no connection; then `RequestTransaction.run` (the interceptor's own logic, moved into a
+  service) opens the same tenant transaction for the short store. The image queue is bounded (8
+  waiting; more get 503 `IMAGE_BUSY`), and the browser shrinks a chosen image to 1600 px on the
+  long side (JPEG 0.85 for photos, PNG for the others) before sending, so a phone sends about
+  300 KB. Test: while a slow body arrives, no session of the app login is idle in a transaction.
+- **R2. The code scan also catches Prisma relation fields** (`photoFile`, `logoFile`,
+  `signatureFile`, `sealFile`, `storedFiles`, `storedFileUsage`, `storedFilesCreated`, the
+  `profile*` back-relations).
+- **R3. The guardian's report card shows the photo** through `/me/children/:id/photo`
+  (`ReportCardsPrint as="guardian"`); Playwright checks it in the exams spec.
+- **R4. The web address's scheme is stored in lower case** (`HTTPS://x` → `https://x`), as the
+  database CHECK is case-sensitive; it was a 500.
+- **R5. The image queue hands a freed slot straight to the next waiter**, so it can never run
+  three at once.
+- **R6. A file reference is tied to its kind in the database.** `stored_files` has
+  `UNIQUE (tenant_id, id, kind)`; `students.photo_file_kind` (always `STUDENT_PHOTO`) and
+  `institute_profiles.logo_file_kind`, `head_signature_file_kind`, `seal_file_kind` (always
+  `LOGO`, `SIGNATURE`, `SEAL`, by CHECK) are part of each foreign key, so a photo column can only
+  hold a photo, a logo column a logo, and so on.
+- **R7. Replacing an image near the cap is allowed** when the total would not grow: `put` takes the
+  id it replaces (read under the file lock) and counts it.
+- **R8. The first image and the first save cannot collide:** the row an image creates is inserted
+  with `ON CONFLICT DO NOTHING`.
+- **R9.** F1 above now says what the code does (a teacher sees photos of their own sections only).
+- **R10.** The database tests name the rule that refuses each write; a PNG `eXIf` GPS case was
+  added to the image tests.
+
+- **For the owner (backlog): the CSV imports read their uploads inside the request transaction
+  too** (student import up to 5 MB, device people up to 1 MB). Smaller and rarer than photos, so
+  not changed here; they can move to `@OwnTransaction()` the same way.
+
+Changed after the review, round 2 (each code fix with a test that failed first):
+
+- **R11. Uploads in flight are bounded.** With R1 nothing limited how many upload bodies could be
+  in memory. `UploadGuard` (before multer) allows 16 per process and 2 per person, refuses more at
+  once with 503 `IMAGE_BUSY`, gives the slot back when the response closes (sent, failed or
+  dropped by the client), and drops a body not received within 60 s.
+- **R12. `RequestTransaction.run` refuses to nest** inside a request transaction (it would replace
+  the outer one in the request context). The interceptor itself uses an unchecked entry (`around`): it is the outermost transaction, and a request made from inside a running job (as some tests do) inherits that job\'s request context.
+- **R13. The upload's transaction re-checks the session and the route's roles** (OWNER/ADMIN),
+  read in the transaction, besides the institute's status and the membership: an admin
+  downgraded, or a session revoked, while the body arrives stores nothing (403 / 401).
+- **R14. The target is checked before decoding:** a student photo for an unknown or deactivated
+  student, or any upload in a suspended institute or by someone who lost the role, is refused
+  before the image is decoded or the upload quota is used.
+- **R15. sharp's own 10 s timeout** on the decode and each encode → 422 `IMAGE_TIMEOUT`.
+- **R16. A replacement no bigger than the old file is never refused**, even when the total is over
+  a lowered cap; `FileStore.put`'s contract says the caller deletes the replaced file in the same
+  transaction.
+- **R17. A profile save takes the file lock before reading the row**, so a first save racing a
+  first image is audited as an UPDATE (one CREATE per institute).
+- **R18. The browser asks for the EXIF orientation explicitly** (`imageOrientation:
+'from-image'`); an engine without it sends the original, which the server turns upright.
+- **Tests:** a deterministic database test of the ON CONFLICT path (an insert held uncommitted);
+  the slow-body check sampled every 100 ms, for the logo route too; suspended institute and
+  disabled member → 403 with nothing stored; the signature column's wrong kind; the exams spec
+  removes the demo child's photo in an `afterEach`.
+- **Migrations edited in place:** both migrations of this PR changed after it was first pushed
+  (R6). Nothing outside this run's scratch databases applied them; any database that did needs
+  a fresh one (or a reset) before applying the final versions.
+
+Changed after the review, round 3 (each code fix with a test that failed first):
+
+- **R19. No upload slot leaks when the client leaves early** (must-fix). If the socket closed while
+  the global guards awaited Redis, the response's one 'close' event was already past when
+  `UploadGuard` listened for it, so the slot was never given back. A client already gone (the
+  test on-finished uses: the request or response destroyed, the answer sent, or the socket no
+  longer writable) now gets no slot, and every slot is given back after 5 minutes at the latest
+  (a backstop).
+- **R20. The revoked-session check runs before the transaction**, with Redis's 2 s deadline (503
+  `SERVICE_UNAVAILABLE`), so a slow Redis never holds a pooled connection; the roles are still
+  read in the transaction.
+- **R21. A browser that predates `imageOrientation`** (a TypeError) decodes without it when the
+  photo needs no turning (no EXIF orientation, or 1; a small JPEG reader checks), and sends the
+  original otherwise (the server turns it upright).
+- **R22.** The timeout test uses sharp 0.35.5's real message (`timeout: N% complete`).
+
+Also decided while building:
+
+- The migrations were written by hand (no development database is used in this run) and checked with `prisma migrate diff` against a scratch database: empty.
+- `sharp` 0.35.5 was already in the lockfile through Next.js; the API now depends on it directly (S8).
+- Encoding effort is moderate (PNG palette effort 4, WebP effort 4): the worst case (pure noise) stays well under the request's 15 s; a test pins it under 8 s per image on this PC.
+
+## Sprint 1, P3: online admission (2026-11-17)
+
+Built during the unattended day run of 2026-11-17 from the P3 plan (`docs/plans/sprint-1-p3-admission.md`,
+PR #15) with its recommended defaults P3-A to P3-V, on top of P1-J8 (#20). Staff side and the
+December dues rule: P3a (this PR). Decisions taken alone, each the safest option found:
+
+- **P3-a1. Field lengths follow the student's fields**, not the plan's numbers: names 120
+  characters (plan 100), addresses 300 (plan 500), date of birth from 1920 (plan 1990), so an
+  approved application always fits a student (`admit()` would refuse a longer value).
+- **P3-a2. Blood group is hidden by default** (P3-Q did not list it): less personal data unless
+  the institute asks for it.
+- **P3-a3. "Live" for the three-per-phone cap** is "not withdrawn and not rejected"; the duplicate
+  check counts every application not withdrawn (as the plan).
+- **P3-a4. Staff entry is JSON; the photo is a separate upload** (`PUT /admission/applications/:id/photo`,
+  P2's upload pipeline and `@OwnTransaction`), instead of one multipart request. The cycle's
+  required fields apply to staff except the photo; staff may fill fields the cycle hides.
+- **P3-a5. Staff may enter applications in any cycle status** (draft, open or closed): paper forms
+  arrive after the deadline.
+- **P3-a6. Three extra read routes for the pages:** `GET /admission/options` (years, classes,
+  groups), `GET /admission/cycles/:id`, `GET /admission/cycle-classes/:id/sections` (where to
+  approve into).
+- **P3-a7. Bulk approval:** STUDENT_LIMIT, SECTION_FULL and INACTIVE stop the run and mark the
+  rest; GUARDIAN_CHOICE_REQUIRED and DUPLICATE skip one; an unexpected error is recorded as a new
+  problem `INVALID` (logged by its error name only, never the message: it can hold personal data).
+  The job id is `admission-approve-<class id>` (BullMQ refuses `:`), removed when done so a re-run
+  can start; "running" is the job's state.
+- **P3-a8. Status changes** go between any statuses except out of `ADMITTED` (final), each with
+  who, when and the reason, audited; no further state machine (P4 adds SELECTED/WAITLISTED).
+- **P3-a9. The message namespace is `admissions.staff`**: `admission` is the student admission
+  form's (its field labels are reused).
+- **P3-a10 (money). The December rule is recorded, never derived** (changed after the review,
+  M1): the first version treated any student created before the year's start with no earlier
+  enrolment as a December admission, which back-dated an admission fee, with fines, for imported
+  students and for students of an institute's first year. Now `admit()` records
+  `students.admission_date_for_dues` only for a child admitted into a year that has not started
+  and is not current yet; every other student keeps the creation day exactly as before, and the
+  column starts empty for all existing students (no data check needed before deploying).
+- **P3-a11. No trigram index on application names:** 2 000 applications list in well under
+  300 ms with `ILIKE` (the API test measures it).
+- **P3-a12 (review S2). Bulk approval approves SELECTED applications only** (the approved sprint
+  plan's "bulk approve for SELECTED rows"); staff may mark an application SELECTED by hand in a
+  cycle without an admission test (with one, the merit list selects). Approving one at a time keeps
+  P3-H (submitted, shortlisted or selected).
+- **P3-a13 (review S1). Bringing back a withdrawn or rejected application** runs the duplicate and
+  per-phone checks under the row lock; a status change clears a bulk approval problem.
+- **P3-a14 (review S3). One application per birth registration number per cycle, not withdrawn:**
+  an advisory lock per number (after the phone's, the same order in the public function) and a
+  partial unique index as the backstop.
+- **P3-a15 (review N2, N7, N4).** Updates of cycles and their classes by column; a cycle edit takes
+  the cycle's lock exclusively and new applications take it shared, so turning the admission test
+  on cannot race the first application; a bulk problem is audited, and problems of applications
+  later rejected or withdrawn are not listed.
+- **P3-a16 (review N5, N3, recorded only).** A photo left on an application after a STORAGE_FULL
+  approval stays there (the student's own photo can be uploaded on the student page); the tests do
+  not force a bulk/single overlap or a second start while one runs (timing-dependent); one-row
+  locking is what guarantees both.
+- **P3-a17 (review N6).** The admission Playwright spec uses its own phone and birth registration
+  number per run and deactivates the student it made in a `finally` (the suite shares one database
+  and other specs count the demo school's students).
+- **P3-a18 (money, review round 2 NIT 6). An institute that marks next year current in December:**
+  an approved application still records the year's start (an application is always a new child, so
+  its admission fee is charged from the year's start instead of never). The staff "new student" form
+  and imports keep `!isCurrent`: they cannot tell a new child from an existing student typed in by
+  an institute in its first year (current from the day it was made), which P3-a10 protects from a
+  back-dated admission fee. **Owner:** a December admission typed on the staff form after an early
+  switch owes no "from the year's start" admission fee, as before P3; staff can approve it through
+  an application instead, or a later "new admission" switch on the form can decide it.
+- **P3-a19 (money, review round 2 NIT 6). The recorded date counts only for a year that starts on
+  or after it:** for an earlier year (the child also enrolled there, e.g. moved back by staff), or a
+  year whose start was moved earlier, the dues count from the later of the creation day and that
+  year's start, never from a date after the child joined (which would skip months: an under-charge).
+- **P3-a20 (review round 2 NIT 5, NIT 2, NIT 7).** Any move out of `WITHDRAWN` runs the duplicate
+  check (`REJECTED` counts as a duplicate and in the unique index); moving from `WITHDRAWN` or
+  `REJECTED` to a live status also runs the per-phone cap. A staff entry takes the cycle's shared
+  lock before reading the cycle. A bulk run approves an application only if it is still `SELECTED`
+  under the row lock.
+
+The public form, P3b (its own PR, stacked on P3a):
+
+- **P3-b1. Turnstile keys (the owner's instruction):** development uses Cloudflare's official
+  always-pass **test keys** (`.env.example`); the API and Playwright tests use a fake verifier
+  (`TURNSTILE_PROVIDER=fake`, refused outside `NODE_ENV=test`) and never call Cloudflare;
+  production refuses a missing or published test secret. A web build without a site key shows a
+  plain "I am not a robot" box whose token only the fake verifier accepts, so such a build fails
+  closed in production. The production compose requires `TURNSTILE_SITE_KEY` (a build argument).
+- **P3-b2. `admission_public_form` also returns the institute's id and timezone**, which the API
+  keeps (never sent to the browser): the code request then needs no fourth function.
+- **P3-b3. `admission_submit` hashes the photo itself** (no `p_photo_sha256` parameter) and
+  takes the name key from the API (`p_name_key`, made by the same `nameKey` as staff entries; review
+  N8: PostgreSQL's `lower` and `\s` could differ from JavaScript's and miss a duplicate).
+- **P3-b4. The two SMS jobs have their own queue, `admission-sms`** (the plan said `sms`): the
+  API's SMS processor is unchanged and the admission module owns its jobs. A code's log row is
+  kept across a send retry (no second row).
+- **P3-b5. A value the tables refuse answers `INVALID`** inside `admission_submit` (an exception
+  block around the inserts), never an error: the counter increment rolls back with it (no gap).
+- **P3-b6. The public calls run in a transaction with no institute and no person**
+  (`withContext({})`), following P1-J8's rule that no query runs outside a transaction.
+- **P3-b7. `/apply` restores no session** (the auth provider is inactive there, as on `/platform`):
+  the page never calls `/auth/refresh`.
+- **P3-b8. The "received" SMS** is in the institute's default language and carries the status
+  link only when `WEB_PUBLIC_URL` is set (required in production).
+- **P3-b9. The per-phone daily code limit counts across institutes** (5 a day per phone in all),
+  stricter than per institute: SMS pumping through many institutes' forms gets nothing extra.
+  **Owner, by design (review round 2):** anyone who knows a family's phone can spend its five
+  codes with five requests (each passes Turnstile and is one minute apart) and so shut that family
+  out of every institute's form for up to 24 hours (not the status page: its codes have their own
+  budget, P3-b16); the family still gets the five SMS, which shows something is wrong. The
+  alternative (per institute) multiplies what SMS pumping can send by the number of institutes.
+  Walk-in entry by staff (P3-J) is the fallback.
+- **P3-b10. Not measured here:** the 3-second budget on a throttled phone for `/apply/[slug]`
+  needs a running web app and API, and this run starts no servers (ports and memory). The page
+  loads no Turnstile script until the phone step; the build's size budget applies.
+
+After the security review of P3b (round 1):
+
+- **P3-b11 (review M1). Refused code requests never spend the shared budgets:** the per-address
+  and per-phone-cooldown limits are counted first; the phone's 5 a day and the institute's daily
+  ceiling are checked and counted together, atomically, only for a code that is sent
+  (`RateLimiter.consumeIfAllowed`, a Lua script). Before, one phone could shut an institute's form
+  for the day.
+- **P3-b12 (review S1; a change to P3-S for the owner). A duplicate tells its number only to the
+  same phone:** an application found by another family's birth registration number answers
+  "already applied, contact the institute" with no number; a phone at its cap is told so before any
+  duplicate check (no oracle).
+- **P3-b13 (review N5).** An injection as `jantrik_app` can call the public functions with any
+  phone and `p_now` (documented in database.md); `p_now` stays a parameter (the tests move time).
+- **P3-b14 (review S2). Turnstile:** with a real secret, the answer must name our action and the
+  web app's host; Cloudflare's test secrets report neither and are refused in production anyway.
+- **P3-b15 (review S3). The submit's upload is read only after a guard** checked the per-address
+  limit and the phone token (signature, expiry); the route then checks its institute.
+- **P3-b16 (review S4; for the owner). The status page's code works after the form closed**, but
+  is sent only when the phone made that application (same answer otherwise); `purpose: 'status'`
+  with the application number. The answer is the same in every budget state too, and a probe
+  leaves no trace (review round 2 and its follow-up): status codes spend **budgets of their own**
+  (per phone 5 a day across institutes; per institute a fixed fifth of the ceiling), never the
+  form's five a day or its share, which a later ordinary request would read; the code is sent
+  after the answer (not awaited), so the response time does not depend on a match either. A spent
+  status budget sends nothing and still answers 202 with no `Retry-After`. **A status code proves
+  the phone for the status only** (second follow-up): its own Redis slot, verified with
+  `purpose: 'status'` into a status token (`typ: admission-status`) that only `POST …/status`
+  accepts; that route refuses the form's token, and the submit and its upload guard refuse a
+  status token. **`ADMISSION_OTP_PER_TENANT_PER_DAY` caps all codes together**: the status page a
+  fixed fifth (60 of 300), the form the rest (240); fixed shares, because a shared counter would
+  let an ordinary request see whether a status code was sent. **Owner:** the form now has 240
+  codes a day per institute by default instead of 300 (raise the setting to 375 to keep 300 for
+  the form); with a setting under 5 the status page sends no codes. The status page never says
+  "try later" (the form's code request still answers 429 with `Retry-After`: it reveals nothing
+  about an application).
+- **P3-b17 (review S5, S6, N1, N2, N6).** The role's privileges are compared to an exact list; the
+  public folder's code scan also refuses `withTenant`/`tenantClient` and any `withContext` that
+  is not empty; the no-op `GRANT EXECUTE … app_verified_context() TO jantrik_admission` is gone
+  (nothing needed it); the role loses `CREATE` on the schema after taking its functions over;
+  public answers are `no-store`. `ADMISSION_OTP_PHONE_COOLDOWN_SEC` (60) is new (the Playwright
+  suite sets 1).
+- **P3-b19 (review round 2 NIT 2; for P4).** `admission_submit` takes the cycle's shared lock
+  before it reads the cycle. Replacing an `admission_*` function later needs `CREATE` on `public`
+  granted back to `jantrik_admission` around a `SET ROLE` (admission.md, "Changing these
+  functions later").
+- **P3-b18 (review N3, N4, N7, recorded).** A per-address limit runs before Turnstile and the
+  database on `/otp` (60 an hour) and `/otp/verify` (60 a quarter hour). The decompression-bomb
+  test is in; ten parallel uploads (at most two decoding) are covered by P2's `image.service.spec`;
+  codes and tokens are never logged (only error names are). Per-address limits are generous on
+  purpose: many guardians share one address behind mobile carriers' NAT (CGNAT); the per-phone and
+  per-institute limits are the real bounds.
+
+## Sprint 1, P4: admission test and merit list (2026-11-18)
+
+Built on P3b (`feature/sprint-1-p3b-admission-public` at `faefd06e`, stacked: PR #24). The plan's
+recommended defaults **P4-A to P4-N are adopted as written** (tie-break `OLDER_FIRST` default with
+`YOUNGER_FIRST` and `NONE`; everyone tied on the last seat selected with a warning; rolls for
+SUBMITTED and SHORTLISTED by application number, never renumbered; absent and below the pass marks
+unranked; statuses change only at publish; republish allowed, ADMITTED never demoted; move-up a
+staff action; the SMS without the score; hundredths up to 1 000 full marks; scores editable after
+publish, audited; the fixed admit card; OWNER/ADMIN only; nothing but the test's details before
+publish; staff print the cards). Decisions taken alone, and where the code differs from the plan:
+
+- **P4-a1 (privacy). A published snapshot, separate from the draft.** The plan wrote the draft's
+  places on the same columns the status page would read, so a rebuild (or a score edited after
+  publish) would have shown before republishing, against its own test ("a correction built but not
+  republished: still version 1's values"). Now a build writes the draft (`test_result`,
+  `merit_position`, `waitlist_position`) and a publish copies the snapshot (`result_*`, and
+  `results_full_marks` on the class). The lookup reads only the snapshot and the roll; the role
+  cannot even read the draft or a live score.
+- **P4-a2. The lookup replaced with P3-b19's recipe:** `GRANT CREATE ON SCHEMA public TO
+jantrik_admission; SET ROLE jantrik_admission; CREATE OR REPLACE …; RESET ROLE; REVOKE CREATE`
+  (same signature, grants kept). Classes were already readable as a whole by the role (P3b), so the
+  plan's column grants on classes were not needed.
+- **P4-a3. A build is stale when anything it read changed:** a hash of the settings, the
+  tie-break and each ranked applicant's score, absence, date of birth and submission time
+  (`merit_inputs_hash`), plus the `builtAt` the admin saw. The plan's `scores_changed_at` alone
+  missed a withdrawal, a corrected date of birth or a changed seat count; it is kept for "changed
+  since publish" (P4-J).
+- **P4-a4. Who is in the list:** a roll and SUBMITTED, SHORTLISTED, SELECTED, WAITLISTED or
+  ADMITTED, or REJECTED by an earlier publish (reason NOT_SELECTED, FAILED or ABSENT, so a
+  correction can move them up). Withdrawn applicants and those rejected by staff for another
+  reason are left out (and keep their old result version, so the status page shows no result).
+- **P4-a5. Who gets a result SMS** is read from the SMS log: the status each application was last
+  told is in the dedupe key (`admission-result:<class>:v<version>:<application>:<status>`), so a
+  move-up within a version is a new SMS; an SMS still waiting is cancelled when its version is no
+  longer published or the status moved on. Its own queue `admission-results` (two processors on
+  one queue would drop each other's jobs).
+- **P4-a6. An application with a test roll stays in its class** (409 `HAS_TEST_ROLL`): a roll
+  belongs to its class's sequence.
+- **P4-a7. Move-up:** everyone sharing the first waitlist position moves together (ties exist
+  only with `NONE`; a tie is never split, as P4-B); the rest renumber from 1. No SMS of its own:
+  the moved applicant appears in the result SMS preview (count 1 when nobody else changed), the
+  plan's "optional single SMS".
+- **P4-a8. The waitlist boundary under `NONE`:** everyone tied on the last waitlisted place is
+  waitlisted, at a shared position (`waitlistTie` warning), as P4-B for the seats.
+- **P4-a9. Rolls need only a test cycle** (no other setting); the first roll is 1 unless
+  `startAt` is given; 422 `ROLLS_EXHAUSTED` above 999 999.
+- **P4-a10. Scores:** typing `a`/`অ` marks absent (the exams' `parseMarks`); a score with absent
+  ticked is 422 `SCORE_AND_ABSENT`; scores need the full marks (422 `TEST_NOT_CONFIGURED`).
+- **P4-a11 (owner, SMS). The result SMS share the institute's daily cap** (2 × active students
+  unless set in the attendance settings): an institute admitting its first students has a cap of
+  0, so every result SMS is skipped until it sets a cap; the preview says "0 left today" and how
+  many would be skipped. Not changed here (the cap is the owner's money rule).
+- **P4-a12. Withdrawing** is P3's status route (`WITHDRAWN` with a reason); no new route.
+- **P4-a13. Publish** sets `status_by`/`status_at` and clears an approval problem only on rows
+  whose status or reason changes; one audit row with the version, counts, the ids by outcome and
+  the flagged ones.
+- **P4-a14. The trigger functions are not named `admission_*`** (`test_score_within_full_marks`,
+  `full_marks_keep_test_scores`): P3b's safety test reserves that prefix for the definer functions.
+- **P4-a15. Not done here:** the bn screenshots at 390 px and the admit card's print check run in
+  CI's Playwright only (this run starts no servers); per-subject marks stay for later (S12).
+- **P4-a16 (review M1). Publish locks before it reads:** every applicant of the class with a roll,
+  in id order (as move-up), then the inputs are checked under the locks; its UPDATE also requires
+  the status it read (409 `MERIT_STALE` otherwise, nothing published). A withdrawal that commits
+  while it waits makes the publish stale; an approval is kept (ADMITTED, flagged if needed).
+- **P4-a17 (review S1, N3). Told = SENT, or QUEUED of the published version.** A result SMS
+  cancelled by a republish or failed told nobody and is owed again; the dedupe key carries the run
+  (`…:<status>:<run id>`), so the resend is a new SMS; a run takes the SMS writers' lock and checks
+  who is still owed before queueing, so two runs never send one SMS twice.
+- **P4-a18 (review S2). A build is published once** (`results_built_at`, 409 `ALREADY_PUBLISHED`,
+  the button off): republishing needs a new build.
+- **P4-a19 (review N1, N2, N4, N5, N6).** Rolls go only to the rows locked and still eligible, and
+  the audit lists what was written; a renumbered waitlist position is audited; the preview's
+  segments and cost count only what the cap lets through; the merit view's counts and warnings
+  leave withdrawn applicants out at once; a safety test pins that `jantrik_admission` has no
+  `CREATE` on `public` after the migrations.
+- **P4-a20 (review round 2). No lock blocks a foreign key:** the class row and the applicant rows
+  P4 locks are taken `FOR NO KEY UPDATE`, so a new application (its foreign key's KEY SHARE on the
+  class) never waits on a test operation; that removed a three-way lock cycle with P3's phone
+  lock (a 500 from a deadlock). A deadlock (`40P01`) or serialization failure (`40001`) anywhere in
+  the API now answers 409 `BUSY` with Retry-After (the lock timeout's answer).
+- **P4-a21 (review round 2 N1). A published result is not put back by hand** to SUBMITTED or
+  SHORTLISTED (409 `TEST_RESULT_PUBLISHED`): the next rebuild would undo a move-up the applicant
+  may already have been told about. Withdraw, reject and approve stay allowed.
+- **P4-a22 (review round 2 N2, recorded, not changed).** An SMS the worker has taken (passed its
+  relevance check, provider call in flight) is still QUEUED; if a republish keeps the status and a
+  new run starts in that window, the applicant can get the same result twice. Closing it needs a
+  SENDING state in the shared SMS pipeline (all purposes), which is beyond P4: a rare duplicate
+  of the same news.
+- **P4-a23 (review round 2 N3, N4).** The rolls' audit lists `{applicationId, roll}` in roll order;
+  a run's `skipped` means "not queued": over the cap, or no longer owed when the run reached them.
+- **P4-a24. The migration `20261117300100_admission_test` was edited in place** after the first
+  review (`results_built_at`). No database outside scratch and CI ever applied it; any that applied
+  the earlier version must be recreated (Prisma would refuse the changed checksum).

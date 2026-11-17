@@ -35,6 +35,15 @@ const platformUrl = (): string => {
   return url.toString();
 };
 
+/** The password login's login (DATABASE_LOGIN_URL) on the e2e database, derived like the platform one. */
+const loginUrl = (): string => {
+  const url = new URL(required('DATABASE_URL_E2E'));
+  const login = new URL(required('DATABASE_LOGIN_URL'));
+  url.username = login.username;
+  url.password = login.password;
+  return url.toString();
+};
+
 /** The device receiver's login (DATABASE_INGEST_URL) on the e2e database, derived like the platform one. */
 const ingestUrl = (): string => {
   const url = new URL(required('DATABASE_URL_E2E'));
@@ -77,6 +86,7 @@ export default defineConfig({
         API_PORT: '4000',
         DATABASE_URL: required('DATABASE_URL_E2E'),
         DATABASE_PLATFORM_URL: platformUrl(),
+        DATABASE_LOGIN_URL: loginUrl(),
         DATABASE_INGEST_URL: ingestUrl(),
         INGEST_IN_PROCESS: 'true',
         INGEST_PORT: '4280',
@@ -85,6 +95,10 @@ export default defineConfig({
         REDIS_URL: E2E_REDIS_URL,
         QUEUE_PREFIX: 'jantrik-e2e',
         SMS_PROVIDER: 'outbox',
+        // The public admission form: the test stand-in's token passes, Cloudflare is never called.
+        TURNSTILE_PROVIDER: 'fake',
+        // The apply spec asks twice for a code to one phone (the form, then the status page).
+        ADMISSION_OTP_PHONE_COOLDOWN_SEC: '1',
         // A developer's .env may enable phone testing (dev only); e2e never runs with it.
         DEV_LAN: 'false',
         // One machine plays every user at test speed: the general request limits (300 a minute
