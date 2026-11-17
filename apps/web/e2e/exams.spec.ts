@@ -13,6 +13,7 @@ import {
   api,
   API_URL,
   apiLogin,
+  apiUploadPhoto,
   apiOtpLogin,
   DEMO,
   otpLoginWithBanglaDigits,
@@ -101,6 +102,12 @@ async function annualFor(classCode: string, subjectCode: string, otherCode: stri
     tahmidId: (await api<StudentsPage>(owner, '/students?q=SHS-2026-0002')).items[0]!.id,
   };
 }
+
+/** Undone after each test, passed or failed (the demo child's photo), so other specs see the seed. */
+const cleanups: (() => Promise<unknown>)[] = [];
+test.afterEach(async () => {
+  for (const undo of cleanups.splice(0)) await undo();
+});
 
 for (const c of CASES) {
   test(`${c.lang}: a teacher enters marks on a phone, the office publishes, a guardian sees the report card`, async ({
@@ -266,6 +273,15 @@ for (const c of CASES) {
     );
     await admin.emulateMedia({ media: 'screen' });
 
+    // The child gets a photo; the guardian's report card shows it through the guardian's own
+    // route (/me/children/:id/photo), checked once (sprint 1 P2, from the review).
+    const office = await apiLogin(DEMO.shaplaOwner);
+    const photoChild = (await api<StudentsPage>(office, `/students?q=${c.child}`)).items[0]!.id;
+    if (c.lang === 'bn') {
+      await apiUploadPhoto(office, photoChild);
+      cleanups.push(() => api(office, `/students/${photoChild}/photo`, { method: 'DELETE' }));
+    }
+
     // ── The guardian, 390 px ──
     const guardian = await newPage(browser, baseURL, GUARDIAN_PHONE);
     await otpLoginWithBanglaDigits(guardian, c.guardian);
@@ -282,6 +298,7 @@ for (const c of CASES) {
     const reportCard = guardian.getByTestId('report-card');
     await expect(reportCard).toBeVisible();
     await expect(reportCard.getByTestId('report-card-summary')).toBeVisible();
+    if (c.lang === 'bn') await expect(reportCard.getByTestId('student-photo')).toBeVisible();
     expect(await findLayoutProblems(guardian)).toEqual([]);
     await guardian.emulateMedia({ media: 'print' });
     const pdf = (await guardian.pdf({ preferCSSPageSize: true })).toString('latin1');

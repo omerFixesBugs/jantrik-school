@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { hash } from '@node-rs/argon2';
-import type { PrismaClient } from '../generated/prisma/client.js';
+import type { PrismaClient } from '../client.js';
 
 // `pnpm platform:admin <command>`: create or manage platform admins (Jantrik's own staff) from
 // the server shell. Works in production (unlike the seed). Connects as the owner role
