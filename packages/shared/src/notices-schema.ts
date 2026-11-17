@@ -15,7 +15,10 @@ const instant = z.iso.datetime({ offset: true }).transform((v) => new Date(v));
 
 export const noticeTargetSchema = z.object({
   classLevelId: z.uuid(),
-  sectionId: z.uuid().nullish().transform((v) => v ?? null),
+  sectionId: z
+    .uuid()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 
 /** POST /notices and PUT /notices/:id. */

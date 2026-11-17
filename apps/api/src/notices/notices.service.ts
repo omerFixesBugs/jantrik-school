@@ -89,7 +89,10 @@ export class NoticesService {
     const guardian = roles.includes('GUARDIAN');
     if (!guardian) return { staff, guardian, children: [] };
     const tx = this.db.tx;
-    const year = await tx.academicYear.findFirst({ where: { isCurrent: true }, select: { id: true } });
+    const year = await tx.academicYear.findFirst({
+      where: { isCurrent: true },
+      select: { id: true },
+    });
     const enrolments = await tx.enrolment.findMany({
       where: {
         academicYearId: year?.id ?? NO_ID,
@@ -124,7 +127,10 @@ export class NoticesService {
     return {
       status: 'PUBLISHED',
       publishAt: { lte: now },
-      AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }, { OR: who.length ? who : [{ id: NO_ID }] }],
+      AND: [
+        { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+        { OR: who.length ? who : [{ id: NO_ID }] },
+      ],
     };
   }
 
@@ -235,7 +241,6 @@ export class NoticesService {
   }
 
   // ── Management (OWNER/ADMIN) ──────────────────────────────────────────────────────────────
-
 
   private manageItem(
     n: Prisma.NoticeGetPayload<{ select: typeof manageSelect }>,
@@ -380,7 +385,8 @@ export class NoticesService {
       throw apiError(409, 'NOT_EDITABLE', 'A withdrawn notice cannot be edited');
     }
     const targets = await this.checkTargets(input.audience, input.targets);
-    const expiryChanged = (input.expiresAt?.getTime() ?? null) !== (row.expires_at?.getTime() ?? null);
+    const expiryChanged =
+      (input.expiresAt?.getTime() ?? null) !== (row.expires_at?.getTime() ?? null);
     this.checkExpiry(input.expiresAt, row.publish_at, expiryChanged);
     const published = row.status === 'PUBLISHED';
     await this.db.tx.notice.update({
@@ -410,7 +416,10 @@ export class NoticesService {
         audience: before.audience,
         pinned: before.pinned,
         expiresAt: before.expiresAt,
-        targets: before.targets.map((t) => ({ classLevelId: t.classLevelId, sectionId: t.sectionId })),
+        targets: before.targets.map((t) => ({
+          classLevelId: t.classLevelId,
+          sectionId: t.sectionId,
+        })),
         bodyLength: before.body.length,
       },
       newValues: this.auditValues(input, targets),
@@ -467,7 +476,12 @@ export class NoticesService {
     const now = this.clock.now();
     await this.db.tx.notice.update({
       where: { id },
-      data: { status: 'WITHDRAWN', withdrawnAt: now, withdrawnById: userId, withdrawnReason: reason },
+      data: {
+        status: 'WITHDRAWN',
+        withdrawnAt: now,
+        withdrawnById: userId,
+        withdrawnReason: reason,
+      },
       select: { id: true },
     });
     await this.audit.record({
@@ -501,7 +515,10 @@ export class NoticesService {
           ).map((m) => m.userId);
     let guardianIds: string[] = [];
     if (n.audience !== 'STAFF') {
-      const year = await tx.academicYear.findFirst({ where: { isCurrent: true }, select: { id: true } });
+      const year = await tx.academicYear.findFirst({
+        where: { isCurrent: true },
+        select: { id: true },
+      });
       const enrolment: Prisma.EnrolmentWhereInput = {
         academicYearId: year?.id ?? NO_ID,
         ...(n.targets.length

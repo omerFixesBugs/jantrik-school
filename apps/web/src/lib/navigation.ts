@@ -12,14 +12,7 @@ import {
 } from 'lucide-react';
 
 export type NavKey =
-  | 'dashboard'
-  | 'notices'
-  | 'students'
-  | 'attendance'
-  | 'fees'
-  | 'exams'
-  | 'setup'
-  | 'staff';
+  'dashboard' | 'notices' | 'students' | 'attendance' | 'fees' | 'exams' | 'setup' | 'staff';
 
 /** Sidebar groups, in display order. */
 export type NavGroup = 'overview' | 'academic' | 'accounts' | 'admin';

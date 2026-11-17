@@ -32,9 +32,10 @@ export default function NoticesManagePage() {
     queryKey: noticeKeys.manage(session?.tenant?.id),
     queryFn: () => client.api<NoticeManageItem[]>('/notices/manage'),
   });
-  const [dialog, setDialog] = useState<
-    { kind: 'publish' | 'withdraw'; notice: NoticeManageItem } | null
-  >(null);
+  const [dialog, setDialog] = useState<{
+    kind: 'publish' | 'withdraw';
+    notice: NoticeManageItem;
+  } | null>(null);
 
   return (
     <ContextGate allow={(c) => c.roles.includes('OWNER') || c.roles.includes('ADMIN')}>

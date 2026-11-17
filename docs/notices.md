@@ -57,18 +57,18 @@ use it; a notice the caller may not see is 404, as is another institute's.
 
 ## Routes
 
-| Route                          | Who          | What                                       |
-| ------------------------------ | ------------ | ------------------------------------------ |
-| `GET /notices`                 | every member | the board, pinned first, then newest       |
-| `GET /notices/:id`             | every member | one live notice (404 when not visible)     |
-| `POST /notices/:id/read`       | every member | mark read (204)                            |
-| `GET /notices/unread-count`    | every member | `{count}`, cached                          |
-| `GET /notices/manage[/:id]`    | OWNER/ADMIN  | every notice, with state and reads         |
-| `POST /notices`                | OWNER/ADMIN  | a draft                                    |
-| `PUT /notices/:id`             | OWNER/ADMIN  | edit (not withdrawn)                       |
-| `POST /notices/:id/publish`    | OWNER/ADMIN  | now or within 30 days                      |
-| `POST /notices/:id/withdraw`   | OWNER/ADMIN  | with a reason                              |
-| `GET /notices/:id/reads`       | OWNER/ADMIN  | read counts                                |
+| Route                        | Who          | What                                   |
+| ---------------------------- | ------------ | -------------------------------------- |
+| `GET /notices`               | every member | the board, pinned first, then newest   |
+| `GET /notices/:id`           | every member | one live notice (404 when not visible) |
+| `POST /notices/:id/read`     | every member | mark read (204)                        |
+| `GET /notices/unread-count`  | every member | `{count}`, cached                      |
+| `GET /notices/manage[/:id]`  | OWNER/ADMIN  | every notice, with state and reads     |
+| `POST /notices`              | OWNER/ADMIN  | a draft                                |
+| `PUT /notices/:id`           | OWNER/ADMIN  | edit (not withdrawn)                   |
+| `POST /notices/:id/publish`  | OWNER/ADMIN  | now or within 30 days                  |
+| `POST /notices/:id/withdraw` | OWNER/ADMIN  | with a reason                          |
+| `GET /notices/:id/reads`     | OWNER/ADMIN  | read counts                            |
 
 Pages: `/notices` (board), `/notices/[id]`, `/notices/manage` (list with publish and withdraw),
 `/notices/manage/new`, `/notices/manage/[id]` (edit).

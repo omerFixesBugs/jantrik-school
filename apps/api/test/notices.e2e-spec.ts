@@ -51,7 +51,9 @@ describe('notices', () => {
       const year = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
       const uid = await findOrCreateUser(tx, phone, 'Parent');
       await tx.membership.create({ data: { tenantId, userId: uid, role: 'GUARDIAN' } });
-      const g = await tx.guardian.create({ data: { tenantId, userId: uid, nameEn: 'Parent', phone } });
+      const g = await tx.guardian.create({
+        data: { tenantId, userId: uid, nameEn: 'Parent', phone },
+      });
       for (const c of children) {
         const s = await tx.student.create({
           data: { tenantId, studentCode: `N-${randomUUID().slice(0, 8)}`, nameEn: 'Child' },
@@ -66,7 +68,13 @@ describe('notices', () => {
           },
         });
         await tx.studentGuardian.create({
-          data: { tenantId, studentId: s.id, guardianId: g.id, relation: 'FATHER', isPrimary: true },
+          data: {
+            tenantId,
+            studentId: s.id,
+            guardianId: g.id,
+            relation: 'FATHER',
+            isPrimary: true,
+          },
         });
       }
       return uid;
@@ -77,8 +85,11 @@ describe('notices', () => {
   const draft = async (body: object): Promise<NoticeManageItem> =>
     (await api(admin).post('/notices', body).expect(201)).body as NoticeManageItem;
   const publish = async (id: string, publishAt?: string) =>
-    (await api(admin).post(`/notices/${id}/publish`, publishAt ? { publishAt } : {}).expect(200))
-      .body as NoticeManageItem;
+    (
+      await api(admin)
+        .post(`/notices/${id}/publish`, publishAt ? { publishAt } : {})
+        .expect(200)
+    ).body as NoticeManageItem;
   const published = async (body: object) => publish((await draft(body)).id);
 
   beforeAll(async () => {
@@ -113,7 +124,8 @@ describe('notices', () => {
     const other = await createTenant(h);
     otherAdmin = (await otpLogin(h, (await addMember(h, other.id, { roles: ['ADMIN'] })).phone))
       .accessToken;
-    otherClass = (await withTenant(h.prisma, other.id, (tx) => tx.classLevel.findFirstOrThrow())).id;
+    otherClass = (await withTenant(h.prisma, other.id, (tx) => tx.classLevel.findFirstOrThrow()))
+      .id;
   });
 
   afterAll(async () => {
@@ -162,13 +174,23 @@ describe('notices', () => {
     await api(otherAdmin).post(`/notices/${forClass1.id}/read`).expect(404);
   });
 
-  it('targets: never on a staff notice, only this institute\'s classes and sections', async () => {
+  it("targets: never on a staff notice, only this institute's classes and sections", async () => {
     const res = await api(admin)
-      .post('/notices', { title: 't', body: 'b', audience: 'STAFF', targets: [{ classLevelId: class1 }] })
+      .post('/notices', {
+        title: 't',
+        body: 'b',
+        audience: 'STAFF',
+        targets: [{ classLevelId: class1 }],
+      })
       .expect(422);
     expect(res.body.code).toBe('TARGET_INVALID');
     await api(admin)
-      .post('/notices', { title: 't', body: 'b', audience: 'ALL', targets: [{ classLevelId: otherClass }] })
+      .post('/notices', {
+        title: 't',
+        body: 'b',
+        audience: 'ALL',
+        targets: [{ classLevelId: otherClass }],
+      })
       .expect(422);
     // A section of another class.
     await api(admin)
@@ -238,9 +260,9 @@ describe('notices', () => {
     const before = await unread(g1);
     // Served from Redis on the second call (the key exists under the current version).
     const version = (await h.redis.get(noticesVersionKey(tenantId))) ?? '0';
-    expect(await h.redis.get(`tenant:${tenantId}:user:${g1UserId}:notices:unread:v${version}`)).toBe(
-      String(before),
-    );
+    expect(
+      await h.redis.get(`tenant:${tenantId}:user:${g1UserId}:notices:unread:v${version}`),
+    ).toBe(String(before));
     const n = await published({ title: 'Fee date', body: 'b', audience: 'ALL' });
     // The publish bumped the version: the new notice counts at once.
     expect(await unread(g1)).toBe(before + 1);
@@ -265,7 +287,12 @@ describe('notices', () => {
     await api(g1).post(`/notices/${n.id}/read`).expect(204);
     const edited = (
       await api(admin)
-        .put(`/notices/${n.id}`, { title: 'Sports day (new date)', body: 'b2', audience: 'ALL', pinned: true })
+        .put(`/notices/${n.id}`, {
+          title: 'Sports day (new date)',
+          body: 'b2',
+          audience: 'ALL',
+          pinned: true,
+        })
         .expect(200)
     ).body as NoticeManageItem;
     expect(edited.editedAt).not.toBeNull();
@@ -273,7 +300,10 @@ describe('notices', () => {
     const card = ((await api(g1).get('/notices').expect(200)).body as NoticeBoardItem[])[0];
     expect(card).toMatchObject({ id: n.id, pinned: true, edited: true, read: true });
     const audits = await withTenant(h.prisma, tenantId, (tx) =>
-      tx.auditLog.findMany({ where: { entity: 'notice', entityId: n.id }, orderBy: { createdAt: 'asc' } }),
+      tx.auditLog.findMany({
+        where: { entity: 'notice', entityId: n.id },
+        orderBy: { createdAt: 'asc' },
+      }),
     );
     expect(audits.map((a) => a.action)).toEqual(['CREATE', 'UPDATE', 'UPDATE']);
     expect(audits[2]!.newValues).toMatchObject({ title: 'Sports day (new date)', pinned: true });

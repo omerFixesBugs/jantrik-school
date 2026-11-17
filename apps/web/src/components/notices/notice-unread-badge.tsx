@@ -19,7 +19,9 @@ export function NoticeUnreadBadge({ active, collapsed }: { active: boolean; coll
       aria-label={t('unreadNotices', { count: formatCount(count, locale) })}
       className={cn(
         'min-w-5 rounded-full px-1.5 text-center text-xs leading-5 font-semibold',
-        active ? 'bg-sidebar-primary-foreground text-sidebar-primary' : 'bg-primary text-primary-foreground',
+        active
+          ? 'bg-sidebar-primary-foreground text-sidebar-primary'
+          : 'bg-primary text-primary-foreground',
         collapsed && 'absolute -end-0.5 -top-0.5 min-w-4 px-1 text-[10px] leading-4',
       )}
     >
