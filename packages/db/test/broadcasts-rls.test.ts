@@ -29,19 +29,20 @@ describe('broadcasts RLS', () => {
     userA = await newUser(a);
     classA = (await withTenant(app, a, (tx) => tx.classLevel.findFirstOrThrow())).id;
     classB = (await withTenant(app, b, (tx) => tx.classLevel.findFirstOrThrow())).id;
-    broadcastA = (
-      await withTenant(app, a, (tx) =>
-        tx.smsBroadcast.create({
-          data: {
-            tenantId: a,
-            body: 'Holiday tomorrow',
-            recipients: 'PRIMARY_GUARDIANS',
-            createdById: userA,
-            targets: { create: [{ tenantId: a, classLevelId: classA }] },
-          },
-        }),
-      )
-    ).id;
+    broadcastA = await withTenant(app, a, async (tx) => {
+      const row = await tx.smsBroadcast.create({
+        data: {
+          tenantId: a,
+          body: 'Holiday tomorrow',
+          recipients: 'PRIMARY_GUARDIANS',
+          createdById: userA,
+        },
+      });
+      await tx.smsBroadcastTarget.create({
+        data: { tenantId: a, broadcastId: row.id, classLevelId: classA },
+      });
+      return row.id;
+    });
   });
 
   afterAll(async () => {

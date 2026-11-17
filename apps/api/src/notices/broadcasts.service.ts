@@ -234,10 +234,14 @@ export class BroadcastsService implements OnModuleInit {
         recipients: input.recipients,
         noticeId: input.noticeId,
         createdById: userId,
-        targets: { create: targets.map((t) => ({ tenantId, ...t })) },
       },
       select: { id: true },
     });
+    if (targets.length) {
+      await this.db.tx.smsBroadcastTarget.createMany({
+        data: targets.map((t) => ({ tenantId, broadcastId: b.id, ...t })),
+      });
+    }
     await this.audit.record({
       entity: 'sms_broadcast',
       entityId: b.id,
