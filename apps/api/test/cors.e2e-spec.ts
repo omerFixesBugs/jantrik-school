@@ -38,6 +38,18 @@ describe('CORS (e2e)', () => {
     expect(res.headers['access-control-max-age']).toBe('7200');
   });
 
+  it('the public admission form may send its phone token header (sprint 1 P3b)', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/public/admission/some-school/applications')
+      .set('Origin', 'http://localhost:3000')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'x-admission-token')
+      .expect(204);
+    expect(res.headers['access-control-allow-headers']?.toLowerCase()).toContain(
+      'x-admission-token',
+    );
+  });
+
   it('gives any other origin no CORS headers, so it has nothing to cache', async () => {
     const res = await request(app.getHttpServer())
       .options('/auth/refresh')

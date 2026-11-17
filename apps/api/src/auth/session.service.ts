@@ -304,10 +304,14 @@ export class SessionService {
   }
 
   private async findToken(tokenHash: string): Promise<TokenRow | undefined> {
-    const rows = await this.prisma.client.$queryRaw<TokenRow[]>`
-      SELECT token_id::text, session_id::text, user_id::text, token_expires_at, rotated_at,
-             session_expires_at, revoked_at
-      FROM auth_find_refresh_token(${tokenHash})`;
+    // In a transaction like every app query (P1-J8 review: a query outside one could leave a
+    // transaction open on its connection), and schema-qualified.
+    const rows = await this.prisma.client.$transaction(
+      (tx) => tx.$queryRaw<TokenRow[]>`
+        SELECT token_id::text, session_id::text, user_id::text, token_expires_at, rotated_at,
+               session_expires_at, revoked_at
+        FROM public.auth_find_refresh_token(${tokenHash})`,
+    );
     return rows[0];
   }
 

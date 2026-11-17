@@ -77,7 +77,7 @@ import {
 import { DeltaPill, Pill } from '@/components/kit/pill';
 import { HalfGauge, HatchedColumns } from '@/components/story-charts';
 import { InvitationsBanner } from '@/components/invitations-banner';
-import { PersonAvatar } from '@/components/person-avatar';
+import { StudentAvatar } from '@/components/student-photo';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, ButtonLink } from '@/components/ui/button';
 import {
@@ -1241,7 +1241,13 @@ function ChildCard({
       className="bg-card rounded-card shadow-card flex flex-col overflow-hidden border"
     >
       <div className="flex items-center gap-4 p-4 sm:p-5">
-        <PersonAvatar name={name} photoUrl={child.photoUrl} size="xl" />
+        <StudentAvatar
+          studentId={child.id}
+          photoId={child.photoId}
+          name={name}
+          as="guardian"
+          size="xl"
+        />
         <div className="flex min-w-0 flex-col">
           <h3 className="truncate text-xl font-semibold">{name}</h3>
           <span className="text-muted-foreground text-sm">

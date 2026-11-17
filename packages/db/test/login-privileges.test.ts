@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createPrismaClient,
   loginPrivilegeProblems,
+  loginStartupVerdict,
   readLoginPrivileges,
   type LoginPrivileges,
   type PrismaClient,
@@ -10,8 +11,8 @@ import {
 import { APP_URL, INGEST_URL, OWNER_URL, PLATFORM_URL, superuserUrl } from './env.js';
 
 // Every running service checks its database login at start-up and refuses one that is a
-// superuser, bypasses RLS, or can become a role that does (or one of the pg_* roles that pass
-// every grant). These tests make such roles as the superuser and drop them afterwards.
+// superuser, bypasses RLS, has REPLICATION or CREATEROLE, or can become a role that does (or one
+// of the pg_* roles that pass every grant). These tests make such roles as the superuser and drop them afterwards.
 
 async function withClient<T>(url: string, fn: (c: PrismaClient) => Promise<T>): Promise<T> {
   const client = createPrismaClient(url);
@@ -66,6 +67,78 @@ describe('login privileges', () => {
     }
   });
 
+  it('reads TEMP: the runtime logins have none, the owner keeps it, a login granted it has it', async () => {
+    for (const url of [APP_URL, PLATFORM_URL, INGEST_URL]) {
+      const p = await withClient(url, readLoginPrivileges);
+      expect({ login: p.login, temp: p.temp }).toEqual({ login: p.login, temp: false });
+    }
+    expect((await withClient(OWNER_URL, readLoginPrivileges)).temp).toBe(true);
+    const url = await tempLogin('');
+    const login = new URL(url).username;
+    await su.$executeRawUnsafe(`GRANT TEMPORARY ON DATABASE ${database} TO ${login}`);
+    try {
+      const p = await withClient(url, readLoginPrivileges);
+      expect(p.temp).toBe(true);
+      expect(loginStartupVerdict(p, { production: true }).problems).toEqual([
+        'may create temporary objects (TEMP)',
+      ]);
+      const elsewhere = loginStartupVerdict(p, { production: false });
+      expect(elsewhere.problems).toEqual([]);
+      expect(elsewhere.warnings.join(' ')).toMatch(
+        /may create temporary objects.*REVOKE TEMPORARY/,
+      );
+    } finally {
+      await su.$executeRawUnsafe(`REVOKE TEMPORARY ON DATABASE ${database} FROM ${login}`);
+    }
+  });
+
+  it('reads TEMP through a role the login can only SET ROLE to (no INHERIT)', async () => {
+    const holder = await tempRole('NOLOGIN');
+    await su.$executeRawUnsafe(`GRANT TEMPORARY ON DATABASE ${database} TO ${holder}`);
+    const url = await tempLogin('');
+    const login = new URL(url).username;
+    await su.$executeRawUnsafe(`GRANT ${holder} TO ${login} WITH INHERIT FALSE, SET TRUE`);
+    try {
+      expect((await withClient(url, readLoginPrivileges)).temp).toBe(true);
+    } finally {
+      await su.$executeRawUnsafe(`REVOKE TEMPORARY ON DATABASE ${database} FROM ${holder}`);
+    }
+  });
+
+  it('reads role settings (for every database or this one); only the expected ones pass', async () => {
+    // The runtime logins: none, but the receiver's own 5 s statement timeout (decision #79; a
+    // volume made before step 11's role script may lack it: its pool sends the same limit).
+    expect((await withClient(APP_URL, readLoginPrivileges)).roleSettings).toEqual([]);
+    expect((await withClient(PLATFORM_URL, readLoginPrivileges)).roleSettings).toEqual([]);
+    const receiver = (await withClient(INGEST_URL, readLoginPrivileges)).roleSettings;
+    expect(receiver.filter((s) => s !== 'statement_timeout=5s')).toEqual([]);
+    // What an injection could store for its own login (P1-J8 review round 2): it outlives
+    // restarts (with a 1 ms timeout even the start-up check fails, which also stops the start).
+    // Here a harmless value on a login made for this test.
+    const url = await tempLogin('');
+    const login = new URL(url).username;
+    await su.$executeRawUnsafe(`ALTER ROLE ${login} SET work_mem = '64kB'`);
+    await su.$executeRawUnsafe(
+      `ALTER ROLE ${login} IN DATABASE ${database} SET statement_timeout = '7min'`,
+    );
+    try {
+      const p = await withClient(url, readLoginPrivileges);
+      expect(p.roleSettings).toEqual(['statement_timeout=7min', 'work_mem=64kB']);
+      expect(loginStartupVerdict(p, { production: true }).problems).toEqual([
+        'has role settings it should not have (statement_timeout=7min, work_mem=64kB)',
+      ]);
+      expect(
+        loginStartupVerdict(p, { production: true, expectedSettings: ['work_mem=64kB'] }).problems,
+      ).toEqual(['has role settings it should not have (statement_timeout=7min)']);
+      const elsewhere = loginStartupVerdict(p, { production: false });
+      expect(elsewhere.problems).toEqual([]);
+      expect(elsewhere.warnings.join(' ')).toMatch(/RESET ALL/);
+    } finally {
+      await su.$executeRawUnsafe(`ALTER ROLE ${login} RESET ALL`);
+      await su.$executeRawUnsafe(`ALTER ROLE ${login} IN DATABASE ${database} RESET ALL`);
+    }
+  });
+
   it('names the login it checked', async () => {
     const p = await withClient(APP_URL, readLoginPrivileges);
     expect(p.login).toBe(new URL(APP_URL).username);
@@ -111,6 +184,26 @@ describe('login privileges', () => {
     expect(loginPrivilegeProblems(p)).toEqual(['is a superuser']);
   });
 
+  it('refuses a login with REPLICATION (it can stream every row, RLS or not)', async () => {
+    const p = await withClient(await tempLogin('REPLICATION'), readLoginPrivileges);
+    expect(p.replication).toBe(true);
+    expect(loginPrivilegeProblems(p)).toEqual(['has REPLICATION']);
+  });
+
+  it('refuses a login with CREATEROLE (no runtime login needs it)', async () => {
+    const p = await withClient(await tempLogin('CREATEROLE'), readLoginPrivileges);
+    expect(p.createRole).toBe(true);
+    expect(loginPrivilegeProblems(p)).toEqual(['has CREATEROLE']);
+  });
+
+  it('refuses a login that can become a REPLICATION or CREATEROLE role', async () => {
+    for (const attribute of ['REPLICATION', 'CREATEROLE']) {
+      const role = await tempRole(`NOLOGIN ${attribute}`);
+      const p = await withClient(await tempLogin('', { member: role }), readLoginPrivileges);
+      expect(loginPrivilegeProblems(p)).toEqual([`can become ${role}`]);
+    }
+  });
+
   it('refuses a login that can become pg_read_all_data', async () => {
     const url = await tempLogin('', { member: 'pg_read_all_data' });
     const p = await withClient(url, readLoginPrivileges);
@@ -123,6 +216,10 @@ describe('loginPrivilegeProblems', () => {
     login: 'jantrik_app',
     superuser: false,
     bypassRls: false,
+    replication: false,
+    createRole: false,
+    temp: false,
+    roleSettings: [],
     canBecome: [],
   };
 
@@ -136,6 +233,14 @@ describe('loginPrivilegeProblems', () => {
       'can become a',
       'can become b',
     ]);
+  });
+
+  it('lists REPLICATION and CREATEROLE', () => {
+    expect(loginPrivilegeProblems({ ...safe, replication: true })).toEqual(['has REPLICATION']);
+    expect(loginPrivilegeProblems({ ...safe, createRole: true })).toEqual(['has CREATEROLE']);
+    expect(
+      loginPrivilegeProblems({ ...safe, bypassRls: true, replication: true, createRole: true }),
+    ).toEqual(['has BYPASSRLS', 'has REPLICATION', 'has CREATEROLE']);
   });
 
   it('says only "is a superuser" for a superuser (it can become every role anyway)', () => {

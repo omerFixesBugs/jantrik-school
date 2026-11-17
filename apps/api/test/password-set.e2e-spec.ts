@@ -390,6 +390,9 @@ describe('staff set their own password', () => {
       ).body.accessToken as string;
       expect(await rejected(token, 'my KODOM tola school!')).toEqual(['HAS_INSTITUTE_NAME']);
       expect(await rejected(token, 'বকুলকোচিংসেন্টার২০২৬')).toEqual(['HAS_INSTITUTE_NAME']);
+      // A distinctive word of either name is enough (P1-I); generic words alone are not.
+      expect(await rejected(token, 'kodom@2026 rain')).toEqual(['HAS_INSTITUTE_NAME']);
+      expect(await rejected(token, 'বকুল২০২৬১২৩৪৫')).toEqual(['HAS_INSTITUTE_NAME']);
       await passTime(phone, userId);
       const code = await codeFor(token, phone);
       await setPassword(token, code, GOOD).expect(204);

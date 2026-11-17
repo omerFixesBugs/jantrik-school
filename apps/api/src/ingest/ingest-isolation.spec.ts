@@ -40,6 +40,14 @@ export function apiReach(code: string): string[] {
   if (/tenant-job-runner|\bTenantJobRunner\b/.test(code)) found.push('uses TenantJobRunner');
   if (/tenancy\/tenancy\.module|\bTenancyModule\b/.test(code)) found.push('imports TenancyModule');
   if (/\b(withTenant|withContext|tenantClient)\b/.test(code)) found.push('opens a tenant context');
+  // The request context key (P1-J8): the receiver never signs an institute context.
+  if (
+    /\b(requestContextKey|signRequestContext|setRequestContextKeySource|loadRequestContextKey\w*)\b|auth_context_key/.test(
+      code,
+    )
+  ) {
+    found.push('reads the request context key');
+  }
   if (
     /common\/guards|platform-auth\.guard|\b(JwtAuthGuard|PlatformAuthGuard|TenantHeaderGuard|RolesGuard|ModuleGuard|RateLimitGuard)\b/.test(
       code,
@@ -73,6 +81,9 @@ describe('ingest isolation (code scan)', () => {
     ]);
     expect(apiReach('imports: [TenancyModule]')).toEqual(['imports TenancyModule']);
     expect(apiReach('withTenant(prisma, id, fn)')).toEqual(['opens a tenant context']);
+    expect(apiReach('await loadRequestContextKey(client)')).toEqual([
+      'reads the request context key',
+    ]);
     expect(apiReach("import { JwtAuthGuard } from '../common/guards.js';")).toEqual([
       'uses an auth guard',
     ]);

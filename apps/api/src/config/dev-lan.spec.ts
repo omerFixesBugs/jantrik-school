@@ -4,6 +4,7 @@ import { envSchema } from './env.js';
 const base = {
   DATABASE_URL: 'postgresql://x@localhost/jantrik',
   DATABASE_PLATFORM_URL: 'postgresql://p@localhost/jantrik',
+  DATABASE_LOGIN_URL: 'postgresql://l@localhost/jantrik',
   DATABASE_INGEST_URL: 'postgresql://i@localhost/jantrik',
   JWT_ACCESS_SECRET: 'x'.repeat(40),
   OTP_PEPPER: 'y'.repeat(40),
@@ -14,6 +15,8 @@ const prodRest = {
   SMS_PROVIDER: 'none',
   CORS_ORIGINS: 'https://app.example.com,https://platform.example.com',
   PLATFORM_ORIGINS: 'https://platform.example.com',
+  TURNSTILE_SECRET_KEY: '0x4AAAAAAAexampleRealSecretKeyXYZ',
+  WEB_PUBLIC_URL: 'https://app.example.com',
 };
 
 describe('env: loosened settings never leave development', () => {
@@ -71,6 +74,46 @@ describe('env: loosened settings never leave development', () => {
     expect(envSchema.safeParse({ ...base, NODE_ENV: 'development' }).success).toBe(true);
     const short = envSchema.safeParse({ ...base, NODE_ENV: 'production', PLATFORM_TOTP_KEY: 'x' });
     expect(short.success).toBe(false);
+  });
+
+  it('the fake Turnstile is for tests only; production needs a real secret and the web address', () => {
+    for (const NODE_ENV of ['development', 'production']) {
+      const result = envSchema.safeParse({
+        ...base,
+        ...prodRest,
+        NODE_ENV,
+        PLATFORM_TOTP_KEY: 'k'.repeat(32),
+        INGEST_PUBLIC_HOST: 'devices.example.com',
+        TURNSTILE_PROVIDER: 'fake',
+      });
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error)).toContain('TURNSTILE_PROVIDER');
+    }
+    expect(
+      envSchema.safeParse({ ...base, NODE_ENV: 'test', TURNSTILE_PROVIDER: 'fake' }).success,
+    ).toBe(true);
+    const prod = {
+      ...base,
+      ...prodRest,
+      NODE_ENV: 'production',
+      PLATFORM_TOTP_KEY: 'k'.repeat(32),
+      INGEST_PUBLIC_HOST: 'devices.example.com',
+    };
+    for (const secret of [undefined, '1x0000000000000000000000000000000AA']) {
+      const result = envSchema.safeParse({ ...prod, TURNSTILE_SECRET_KEY: secret });
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error)).toContain('TURNSTILE_SECRET_KEY');
+    }
+    const noWeb = envSchema.safeParse({ ...prod, WEB_PUBLIC_URL: undefined });
+    expect(JSON.stringify(noWeb.error)).toContain('WEB_PUBLIC_URL');
+    // Development may use Cloudflare's test keys.
+    expect(
+      envSchema.safeParse({
+        ...base,
+        NODE_ENV: 'development',
+        TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
+      }).success,
+    ).toBe(true);
   });
 
   it('DEV_LAN is off by default', () => {

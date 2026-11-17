@@ -99,6 +99,7 @@ describe('device receiver environment', () => {
     for (const key of [
       'DATABASE_URL',
       'DATABASE_PLATFORM_URL',
+      'DATABASE_LOGIN_URL',
       'JWT_ACCESS_SECRET',
       'OTP_PEPPER',
     ]) {
