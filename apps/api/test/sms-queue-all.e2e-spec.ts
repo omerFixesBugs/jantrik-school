@@ -47,30 +47,31 @@ describe('queueAll: all or nothing over the daily cap', () => {
   afterAll(() => h.close());
 
   it('cap 10 with 4 used: 6 fit, 7 do not (zero rows), and known keys do not count', async () => {
-    const used = batch(4, 'used');
-    await expect(queueAll(used, 10)).resolves.toEqual({
+    const seven = batch(7, 'seven');
+    // 4 used, two of them already the first two of the seven (as if sent before).
+    await expect(queueAll([...batch(2, 'used'), ...seven.slice(0, 2)], 10)).resolves.toEqual({
       outcome: 'QUEUED',
       queued: 4,
       duplicates: 0,
     });
-    const seven = batch(7, 'seven');
-    await expect(queueAll(seven, 10)).resolves.toEqual({
+    await expect(queueAll(batch(7, 'over'), 10)).resolves.toEqual({
       outcome: 'OVER_CAP',
       needed: 7,
       capLeft: 6,
     });
-    expect(await rows('qa:seven:')).toBe(0);
-    // Two of the seven were sent already (their keys exist): the other five fit.
-    await expect(queueAll(seven.slice(0, 2), 10)).resolves.toMatchObject({ queued: 2 });
+    expect(await rows('qa:over:')).toBe(0);
+    // The seven again: their two known keys do not count, so the other five fit.
     await expect(queueAll(seven, 10)).resolves.toEqual({
       outcome: 'QUEUED',
       queued: 5,
       duplicates: 2,
     });
     expect(await rows('qa:seven:')).toBe(7);
-    // Exactly at the cap: 10 used, nothing more fits, an empty batch is fine.
-    await expect(queueAll(batch(1), 10)).resolves.toMatchObject({
+    // 9 used: exactly one more fits, then nothing; an empty batch is fine.
+    await expect(queueAll(batch(1), 10)).resolves.toMatchObject({ outcome: 'QUEUED', queued: 1 });
+    await expect(queueAll(batch(1), 10)).resolves.toEqual({
       outcome: 'OVER_CAP',
+      needed: 1,
       capLeft: 0,
     });
     await expect(queueAll([], 10)).resolves.toEqual({
