@@ -92,10 +92,13 @@
     "schemeToLight": "আলো রঙে দেখুন",
     "schemeSaveFailed": "রঙের পছন্দ সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।",
     "schemeToDark": "অন্ধকার রঙে দেখুন",
-    "password": "পাসওয়ার্ড"
+    "password": "পাসওয়ার্ড",
+    "unreadNotices": "{count}টি নতুন নোটিশ"
   },
   "nav": {
     "dashboard": "ড্যাশবোর্ড",
+    "notices": "নোটিশ",
+    "broadcasts": "এসএমএস বার্তা",
     "students": "{student} তালিকা",
     "admission": "ভর্তি",
     "classesAndSections": "{classLevel} ও {section}",

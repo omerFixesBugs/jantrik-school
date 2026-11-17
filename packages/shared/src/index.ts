@@ -54,3 +54,7 @@ export * from './admission-schema.js';
 export * from './promotion.js';
 export * from './promotion-schema.js';
 export * from './admission-test.js';
+export * from './notices.js';
+export * from './notices-schema.js';
+export * from './broadcasts.js';
+export * from './broadcasts-schema.js';

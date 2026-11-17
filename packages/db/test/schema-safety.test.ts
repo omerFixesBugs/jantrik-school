@@ -78,6 +78,11 @@ describe('schema safety net', () => {
         'admission_counters',
         'promotion_runs',
         'promotion_run_students',
+        'notices',
+        'notice_targets',
+        'notice_reads',
+        'sms_broadcasts',
+        'sms_broadcast_targets',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

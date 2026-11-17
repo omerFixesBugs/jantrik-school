@@ -744,6 +744,36 @@ to_year_id)` → `enrolments` (two unique indexes on enrolments, supersets of th
   `409 REFERENCE_CONFLICT` (the foreign keys restrict); deleting the run first frees them.
 - Tests: `packages/db/test/promotion-rls.test.ts`, `students-leaving.test.ts`.
 
+### Notices (sprint 1 P6, docs/notices.md)
+
+- **`notices`** (tenant table): title (1–150 after trimming), body (1–5 000), `audience`
+  (`ALL`, `STAFF`, `GUARDIANS`), `status` (`DRAFT`, `PUBLISHED`, `WITHDRAWN`; "scheduled" is a
+  published notice whose `publish_at` is ahead, so no job flips it), `publish_at`, `expires_at`,
+  `pinned`, who created, published and withdrew it, `withdrawn_reason` (≤ 300), `edited_at`.
+  Grants SELECT, INSERT and UPDATE by column (not `created_by_id`); **no DELETE**: a notice is
+  withdrawn, never deleted. CHECKs: the lengths, published ⇒ `publish_at` and who, withdrawn ⇒
+  when and who, expiry after publishing.
+- **`notice_targets`** (tenant table): `(notice_id, class_level_id, section_id?)`, composite keys
+  to the notice, the class and `sections (tenant_id, id, class_level_id)` (a section of that
+  class). Targets narrow only the guardians part. Grants SELECT, INSERT, DELETE: the service
+  replaces a notice's targets whole, so there is no UPDATE.
+- **`notice_reads`** (tenant table): one row per notice and person (unique), **only for oneself**: a
+  restrictive policy `notice_reads_own_insert` checks `user_id = (SELECT app_current_user_id())`
+  on INSERT. SELECT stays institute-wide (the admin's read counts). Grants SELECT, INSERT: history,
+  no UPDATE, no DELETE.
+- Isolation, grants, the own-read policy and the CHECKs: `packages/db/test/notices-rls.test.ts`.
+- **`sms_broadcasts`** (tenant table, P6b): the text (1–480 characters; 1–3 segments in code),
+  `recipients`, `status` (`DRAFT`, `SCHEDULED`, `SENT`, `CANCELLED`, `FAILED_OVER_CAP`), the
+  time, the confirmed count, segments, the estimated cost, the queued count and the institute's
+  day, who created, scheduled and cancelled it, the cancel reason and the failure. Grants SELECT,
+  INSERT and UPDATE on every column but the id, the institute, who created it and when; **no
+  DELETE** (money history). CHECKs: scheduled ⇒ time and who; sent ⇒ when, count and day;
+  cancelled ⇒ when and a reason (`BY_ADMIN`, `ACTOR_NOT_ADMIN`); failed ⇒ the failure; counts
+  ≥ 0; 1–3 segments.
+- **`sms_broadcast_targets`** (tenant table): as `notice_targets`, for a broadcast's guardians.
+- `sms_purpose` has `BROADCAST` (its own migration). Isolation, grants and CHECKs:
+  `packages/db/test/broadcasts-rls.test.ts`.
+
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
 > **In the API, services never call these.** Every authenticated request already runs inside one
