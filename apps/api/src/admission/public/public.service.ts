@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { withContext, type TenantTx } from '@jantrik/db';
 import {
   admissionApplicationFieldsSchema,
+  applicationNameKey,
   normalizeBdPhone,
   todayIn,
   toAsciiDigits,
@@ -162,6 +163,7 @@ export class AdmissionPublicService {
     const image = photo?.length ? await this.images.process('APPLICANT_PHOTO', photo) : null;
     const now = this.clock.now();
     const payload = JSON.stringify(parsed.data);
+    const nameKey = applicationNameKey(parsed.data);
     const [r] = await this.call(
       (tx) =>
         tx.$queryRaw<
@@ -172,7 +174,7 @@ export class AdmissionPublicService {
             application_id: string | null;
           }[]
         >`SELECT * FROM public.admission_submit(${slug}, ${cycleClassId}::uuid, ${phone},
-          ${payload}::jsonb, ${image ? new Uint8Array(image.bytes) : null}::bytea,
+          ${payload}::jsonb, ${nameKey}, ${image ? new Uint8Array(image.bytes) : null}::bytea,
           ${image?.width ?? null}::int, ${image?.height ?? null}::int, ${now}::timestamptz)`,
     );
     switch (r?.outcome) {

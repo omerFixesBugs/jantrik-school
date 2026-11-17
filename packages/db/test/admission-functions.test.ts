@@ -58,6 +58,12 @@ const payload = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** The API's key (applicationNameKey): the Bangla name, else the English one, NFC, lower case, no spaces. */
+const nameKeyOf = (body: object) => {
+  const b = body as { nameBn?: string | null; nameEn?: string | null };
+  return (b.nameBn || b.nameEn || '').normalize('NFC').toLowerCase().replace(/\s+/gu, '');
+};
+
 let phoneN = 0;
 const phone = () =>
   `+88017${String(Date.now() % 1e6).padStart(6, '0')}${String(phoneN++ % 100).padStart(2, '0')}`;
@@ -95,7 +101,7 @@ describe('admission public functions', () => {
           application_id: string | null;
         }[]
       >`SELECT * FROM public.admission_submit(${slug}, ${cycleClassId}::uuid, ${ph},
-          ${JSON.stringify(body)}::jsonb, ${opts.photo ?? null}::bytea, ${opts.photo ? 300 : null}::int,
+          ${JSON.stringify(body)}::jsonb, ${nameKeyOf(body)}, ${opts.photo ?? null}::bytea, ${opts.photo ? 300 : null}::int,
           ${opts.photo ? 400 : null}::int, ${opts.now ?? NOW}::timestamptz)`;
       return r!;
     });
@@ -256,6 +262,20 @@ describe('admission public functions', () => {
       expect(byReg).toMatchObject({ outcome: 'DUPLICATE', application_no: first.application_no });
       const byName = await submit(a.slug, a.class6, ph, payload({ nameBn: '  দুইবার ' }));
       expect(byName).toMatchObject({ outcome: 'DUPLICATE', application_no: first.application_no });
+    });
+
+    it('the same child from two phones at the same moment: one CREATED, one DUPLICATE (review S3)', async () => {
+      const reg = `2019${String(Date.now()).slice(-13).padStart(13, '0')}`;
+      const results = await Promise.all(
+        [phone(), phone()].map((ph) =>
+          submit(a.slug, a.class6, ph, payload({ nameBn: 'যমজ নয়', birthRegistrationNo: reg })),
+        ),
+      );
+      expect(results.map((r) => r.outcome).sort()).toEqual(['CREATED', 'DUPLICATE']);
+      const created = results.find((r) => r.outcome === 'CREATED')!;
+      expect(results.find((r) => r.outcome === 'DUPLICATE')!.application_no).toBe(
+        created.application_no,
+      );
     });
 
     it('the fourth live application of a phone in the cycle is PHONE_CAP', async () => {

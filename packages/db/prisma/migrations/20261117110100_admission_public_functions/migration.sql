@@ -69,6 +69,7 @@ CREATE FUNCTION admission_submit(
   p_cycle_class_id uuid,
   p_phone text,
   p_payload jsonb,
+  p_name_key text,
   p_photo bytea,
   p_photo_width integer,
   p_photo_height integer,
@@ -131,6 +132,7 @@ BEGIN
 
   -- Shape: an object of known keys only, a valid phone.
   IF p_phone IS NULL OR p_phone !~ '^\+8801[3-9][0-9]{8}$'
+     OR p_name_key IS NULL OR char_length(p_name_key) NOT BETWEEN 1 AND 240
      OR p_payload IS NULL OR jsonb_typeof(p_payload) <> 'object'
      OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_payload) k WHERE k <> ALL (c_keys)) THEN
     RETURN QUERY SELECT 'INVALID'::text, NULL::text, v_tenant, c_null;
@@ -180,14 +182,19 @@ BEGIN
     RETURN;
   END;
   v_birth_reg := NULLIF(p_payload->>'birthRegistrationNo', '');
-  -- The duplicate key: the Bangla name, else the English one; NFC, lower case, no spaces
-  -- (nameKey in packages/shared/src/admission.ts).
-  v_name_key := regexp_replace(
-    lower(normalize(COALESCE(NULLIF(p_payload->>'nameBn', ''), p_payload->>'nameEn'), NFC)),
-    '\s+', '', 'g');
+  -- The duplicate key comes from the API: applicationNameKey in packages/shared/src/admission.ts,
+  -- the same function as staff entries use (PostgreSQL's lower() and \s could differ, review N8).
+  v_name_key := p_name_key;
 
-  -- One application of this phone at a time in this institute (the duplicate and cap checks).
+  -- The same locks, keys and order as the staff entry (applications.service.ts): the cycle's,
+  -- shared (an edit of the cycle takes it exclusively); one application of this phone at a time;
+  -- then one per birth registration number in the cycle (two phones, one child, at once).
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('admission-cycle:' || v_cycle.id::text, 0));
   PERFORM pg_advisory_xact_lock(hashtextextended('admission:' || v_tenant::text || ':' || p_phone, 0));
+  IF v_birth_reg IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      'admission-breg:' || v_tenant::text || ':' || v_cycle.id::text || ':' || v_birth_reg, 0));
+  END IF;
 
   SELECT a.application_no INTO v_dup
   FROM public.admission_applications a
@@ -244,7 +251,18 @@ BEGIN
       VALUES (v_tenant, v_id, 'image/jpeg', p_photo, encode(sha256(p_photo), 'hex'),
               p_photo_width, p_photo_height, now());
     END IF;
-  EXCEPTION WHEN check_violation OR invalid_text_representation OR not_null_violation
+  EXCEPTION WHEN unique_violation THEN
+    -- The index admission_applications_birth_reg_live (the locks above make this rare): the
+    -- earlier application's number, as for any duplicate.
+    SELECT a.application_no INTO v_dup
+    FROM public.admission_applications a
+    WHERE a.tenant_id = v_tenant AND a.cycle_id = v_cycle.id AND a.status <> 'WITHDRAWN'
+      AND a.birth_registration_no = v_birth_reg
+    ORDER BY a.submitted_at, a.id
+    LIMIT 1;
+    RETURN QUERY SELECT 'DUPLICATE'::text, v_dup, v_tenant, c_null;
+    RETURN;
+  WHEN check_violation OR invalid_text_representation OR not_null_violation
                  OR string_data_right_truncation OR numeric_value_out_of_range THEN
     -- A value the table refuses (the API validated it already; a direct call may not have).
     RETURN QUERY SELECT 'INVALID'::text, NULL::text, v_tenant, c_null;
@@ -297,7 +315,7 @@ DECLARE f text;
 BEGIN
   FOREACH f IN ARRAY ARRAY[
     'admission_public_form(text, timestamptz)',
-    'admission_submit(text, uuid, text, jsonb, bytea, integer, integer, timestamptz)',
+    'admission_submit(text, uuid, text, jsonb, text, bytea, integer, integer, timestamptz)',
     'admission_lookup(text, text, text)'
   ] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', f);
