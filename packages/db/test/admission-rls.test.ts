@@ -363,4 +363,26 @@ describe('admission tables', () => {
       tx.admissionCounter.create({ data: { tenantId: a.tenantId, year: 2027, lastNo: 1 } }),
     );
   });
+
+  it('one live application per birth registration number per cycle; a withdrawn one frees it (review S3)', async () => {
+    const reg = '20191111111111111';
+    const make = (no: string) =>
+      withTenant(app, a.tenantId, (tx) =>
+        tx.admissionApplication.create({
+          data: {
+            ...application(a.tenantId, a.cycleId, a.cycleClassId, no),
+            birthRegistrationNo: reg,
+          },
+        }),
+      );
+    const first = await make('2026-0101');
+    await expect(make('2026-0102')).rejects.toThrow(/unique/i);
+    await withTenant(app, a.tenantId, (tx) =>
+      tx.admissionApplication.update({
+        where: { id: first.id },
+        data: { status: 'WITHDRAWN', statusReason: 'x' },
+      }),
+    );
+    await make('2026-0103');
+  });
 });

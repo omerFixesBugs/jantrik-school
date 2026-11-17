@@ -375,4 +375,80 @@ describe('admission (staff): cycles and applications', () => {
       await api(h, other.tokens.admin).get(`/admission/applications/${a.id}/photo`).expect(404);
     });
   });
+
+  describe('after the review (S1, S3, N1, S2)', () => {
+    const status = (id: string, body: object) =>
+      api(h, s.tokens.admin).post(`/admission/applications/${id}/status`, body);
+
+    it('S1: reviving a withdrawn application runs the duplicate check', async () => {
+      const first = await staffApplication(h, s, class6, { nameEn: 'Probe Twin' });
+      await status(first.id, { status: 'WITHDRAWN', reason: 'By mistake' }).expect(200);
+      // The same child again, now allowed (the first one is withdrawn).
+      const second = await staffApplication(h, s, class6, {
+        nameEn: 'Probe Twin',
+        birthRegistrationNo: first.birthRegistrationNo,
+        phone: first.phone,
+      });
+      const revive = await status(first.id, { status: 'SUBMITTED' });
+      expect(revive.status).toBe(409);
+      expect(revive.body).toMatchObject({
+        code: 'ADMISSION_DUPLICATE',
+        applicationNo: second.applicationNo,
+      });
+    });
+
+    it('S1: reviving a rejected application counts against the three-per-phone cap', async () => {
+      const phone = randomPhone();
+      const rejected = await staffApplication(h, s, class6, { phone, nameBn: 'বাদ', nameEn: null });
+      await status(rejected.id, { status: 'REJECTED', reason: 'Too young' }).expect(200);
+      for (const name of ['এক', 'দুই', 'তিন']) {
+        await staffApplication(h, s, class6, { phone, nameBn: name, nameEn: null });
+      }
+      const revive = await status(rejected.id, { status: 'SHORTLISTED' });
+      expect(revive.status).toBe(422);
+      expect(revive.body.code).toBe('ADMISSION_PHONE_CAP');
+    });
+
+    it('S3: the same child from two phones at the same moment: one application, one duplicate', async () => {
+      const reg = `2019${String(Math.floor(Math.random() * 1e13)).padStart(13, '0')}`;
+      const [r1, r2] = await Promise.all(
+        [randomPhone(), randomPhone()].map((phone) =>
+          api(h, s.tokens.admin).post(
+            '/admission/applications',
+            staffApplicationBody(class6, { phone, birthRegistrationNo: reg }),
+          ),
+        ),
+      );
+      expect([r1.status, r2.status].sort()).toEqual([201, 409]);
+      const n = await withTenant(h.prisma, s.tenantId, (tx) =>
+        tx.admissionApplication.count({ where: { birthRegistrationNo: reg } }),
+      );
+      expect(n).toBe(1);
+    });
+
+    it('N1: an edit cannot empty a field the cycle requires', async () => {
+      const strict = await admissionCycle(h, s, { fields: { father_name: 'REQUIRED' } });
+      const a = await staffApplication(h, s, strict.classes[0]!.id, { fatherNameEn: 'Karim' });
+      const res = await api(h, s.tokens.admin).patch(`/admission/applications/${a.id}`, {
+        fatherNameEn: null,
+      });
+      expect(res.status).toBe(422);
+      expect(res.body).toMatchObject({
+        code: 'ADMISSION_FIELDS_REQUIRED',
+        fields: ['father_name'],
+      });
+    });
+
+    it('SELECTED by hand without an admission test; with one, the merit list selects', async () => {
+      const a = await staffApplication(h, s, class6);
+      const ok = (await status(a.id, { status: 'SELECTED' }).expect(200))
+        .body as AdmissionApplicationDetail;
+      expect(ok).toMatchObject({ status: 'SELECTED', approvable: true });
+      const tested = await admissionCycle(h, s, { requiresTest: true });
+      const b = await staffApplication(h, s, tested.classes[0]!.id);
+      const res = await status(b.id, { status: 'SELECTED' });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('SELECTED_BY_TEST');
+    });
+  });
 });
