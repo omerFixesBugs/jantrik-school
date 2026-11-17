@@ -217,3 +217,87 @@ shows the address to share.
   test only) and never call Cloudflare; production needs a real widget's keys (the API refuses the
   test secrets there). Without a site key built into the web app, the form shows a plain
   "I am not a robot" box that only the fake verifier accepts.
+
+## The admission test (P4)
+
+For a cycle with `requires_test` (P3), per class: staff (OWNER/ADMIN only, decision P4-L) set the
+test, issue rolls, print admit cards, enter one total score per applicant (S12), build and publish
+the merit list, tell applicants by SMS, and move the waitlist up. Applicants see the published
+result on the status page behind their status code (S13). Routes under `/admission`, page
+`/admission/cycle-classes/[id]/test` (linked from the cycle page).
+
+- **Setup** (`PATCH /admission/cycle-classes/:id/test`): date, time (the institute's local time),
+  venue (bn/en), full marks (1–1 000), pass marks (empty: nobody fails), seats (`select_count`) and
+  the waitlist size. 422 `TEST_NOT_REQUIRED` on a cycle without a test, `PASS_ABOVE_FULL`; 409
+  `SCORES_ABOVE_FULL` when the full marks would drop below (or away from) a score already entered
+  (a trigger, `full_marks_keep_test_scores`, backs it). Audited (`admission_test_setup`).
+- **Rolls** (`POST …/test-rolls {startAt?}`, decision P4-C): SUBMITTED and SHORTLISTED
+  applications without a roll, by application number (year, then number), from the last roll + 1
+  (or `startAt`, 1 by default, the first time). An issued roll never changes, and an application
+  with a roll cannot move to another class (409 `HAS_TEST_ROLL`). Unique per class.
+- **Admit cards** (`GET …/admit-cards?from&to`, P4-K, staff print only P4-N): the institute's
+  name and logo (P2), cycle, class, name, application number, the roll (large, ASCII), the photo
+  when there is one, date, time and venue, a note and two signature lines; two to an A4 inside the
+  exams' print area (`@page exam-a4`). 422 `ROLLS_NOT_ISSUED`.
+- **Scores** (`GET`/`PUT …/scores`, up to 500 rows, all checked before any is saved): as typed
+  (Bangla digits, two decimals at most, `a`/`অ` for absent; `parseMarks`), in hundredths within
+  the full marks (the trigger `test_score_within_full_marks` backs it). 422 `NO_ROLL`,
+  `SCORE_OUT_OF_RANGE`, `SCORE_INVALID`, `SCORE_AND_ABSENT` (each with the `applicationId`),
+  `TEST_NOT_CONFIGURED` (no full marks). Every change is audited with old and new values
+  (`admission_test_score`, rule 6); the grid saves the changed rows in chunks of 500.
+- **The merit list** (`POST …/merit`, a draft; `GET …/merit`): `admissionMerit()` in
+  `packages/shared/src/admission-test.ts`. Absent and below the pass marks are unranked (ABSENT,
+  FAILED, P4-D). The rest by score, then the cycle's tie-break (`OLDER_FIRST` default,
+  `YOUNGER_FIRST`, each then the earlier submission; `NONE`: shared places, P4-A); equal rows share
+  a place and the next skips (1, 2, 2, 4). Places up to the seats are SELECTED, everyone tied on
+  the last of them too (a warning: `boundaryTie`, P4-B); the next ones WAITLISTED with positions
+  (ties shared the same way, `waitlistTie`), the rest NOT_SELECTED. 422 `SCORES_MISSING {count}`.
+  **No status changes** (P4-E). In the list: applicants with a roll and a status in play
+  (SUBMITTED, SHORTLISTED, SELECTED, WAITLISTED, ADMITTED) or REJECTED by an earlier publish;
+  withdrawn ones and those rejected by staff for another reason are left out (P4-a4).
+- **Publish** (`POST …/publish {builtAt}`): refused unless the draft the admin saw is the latest
+  and still matches every input (409 `MERIT_NOT_BUILT`, `MERIT_STALE`: a hash of the settings, the
+  tie-break and each ranked applicant's score, absence, date of birth and submission time, P4-a3).
+  Version + 1; statuses become SELECTED, WAITLISTED or REJECTED with the reason `NOT_SELECTED`,
+  `FAILED` or `ABSENT` (P4-E); the published snapshot is copied (`result_*`); an ADMITTED applicant
+  keeps their status and, when the list no longer selects them, is flagged
+  `ADMITTED_NOT_SELECTED` for staff (P4-F); one audit row (`admission_merit_publish`: version,
+  counts, the ids by outcome). Republishing after a correction is allowed (P4-F, P4-J: the page
+  shows "changed since publish" until then). Only a published SELECTED applicant can be approved
+  (P3-H); the tie-break of a cycle is fixed once any of its classes published (409
+  `RESULTS_PUBLISHED`).
+- **The result SMS** (`GET …/result-sms/preview`, `POST …/result-sms {expected}`,
+  `GET /admission/result-sms/:runId`): the exams' pattern. Recipients: applicants of the published
+  version whose status (SELECTED, WAITLISTED, or REJECTED by the test) differs from what their last
+  result SMS told them (the first time: everyone); the text has the outcome, the place or waitlist
+  position, the application number and the status link, never the score (P4-H). The preview shows
+  the count, segments, cost, the cap left today and how many would be skipped; the send must match
+  (409 `PREVIEW_CHANGED`); a job on its own queue (`admission-results`, 25 per transaction, acting
+  as the admin, role checked again) queues them with `overCap: SKIP` (over the cap they are
+  skipped, never held, and stay in the next preview). An SMS still waiting is cancelled when its
+  version is no longer published or the applicant's status moved on. **The daily cap is the
+  institute's shared one** (2 × active students unless set): an institute with no students yet must
+  set a cap before result SMS can go out (the preview shows 0 left; P4-a11).
+- **Waitlist** (`POST …/move-up`, P4-G): a staff action. When a seat is free (selected + admitted
+  below the seats), the first on the published waitlist becomes SELECTED (everyone sharing that
+  position, P4-a7), the rest renumber; the applicant is then in the result SMS preview. 422
+  `NOT_PUBLISHED`, `WAITLIST_EMPTY`, `NO_SEAT_FREE`. A selected applicant gives the seat up through
+  the status route (`WITHDRAWN` with a reason).
+- **The status page** (`admission_lookup`, replaced with the same signature): `test` (roll, date,
+  time, venue) once a roll is issued (P4-M); `result` (version, place, waitlist position, score,
+  full marks, absent, published at) only from the published snapshot of the class's published
+  version, so a draft, a later score or an unpublished correction never shows (review focus 3).
+  The status itself is the outcome. The status route takes a status token only (P3-b16), so results
+  stay behind the status code; the code request still uses the lookup as a yes/no only, and every
+  answer there is unchanged (no new oracle).
+- **Locks:** every test operation on a class takes the cycle's advisory lock shared (P3's key),
+  then the class row `FOR UPDATE`, so they run one at a time per class and a cycle edit waits.
+- **Database** (migrations `20261117300000`–`300200`): `admission_cycles.merit_tie_break`
+  (`admission_tie_break`); on classes the test's settings, `merit_built_at` + `merit_inputs_hash`,
+  `scores_changed_at`, `results_version` / `results_published_at` / `results_full_marks`; on
+  applications `test_roll`, `test_score_h`, `test_absent`, the draft (`test_result`
+  `admission_test_result`, `merit_position`, `waitlist_position`), the published snapshot
+  (`result_version`, `result_merit_position`, `result_waitlist_position`, `result_score_h`,
+  `result_absent`) and `result_flag`; `sms_purpose` gains `ADMISSION_RESULT`. `jantrik_admission`
+  reads `test_roll` and the published snapshot only (pinned in `schema-safety.test.ts`). The lookup
+  was replaced as "Changing these functions later" says (CREATE granted back around `SET ROLE`).

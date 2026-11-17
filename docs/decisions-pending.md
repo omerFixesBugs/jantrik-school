@@ -1071,3 +1071,64 @@ After the security review of P3b (round 1):
   codes and tokens are never logged (only error names are). Per-address limits are generous on
   purpose: many guardians share one address behind mobile carriers' NAT (CGNAT); the per-phone and
   per-institute limits are the real bounds.
+
+## Sprint 1, P4: admission test and merit list (2026-11-18)
+
+Built on P3b (`feature/sprint-1-p3b-admission-public` at `faefd06e`, stacked: PR #24). The plan's
+recommended defaults **P4-A to P4-N are adopted as written** (tie-break `OLDER_FIRST` default with
+`YOUNGER_FIRST` and `NONE`; everyone tied on the last seat selected with a warning; rolls for
+SUBMITTED and SHORTLISTED by application number, never renumbered; absent and below the pass marks
+unranked; statuses change only at publish; republish allowed, ADMITTED never demoted; move-up a
+staff action; the SMS without the score; hundredths up to 1 000 full marks; scores editable after
+publish, audited; the fixed admit card; OWNER/ADMIN only; nothing but the test's details before
+publish; staff print the cards). Decisions taken alone, and where the code differs from the plan:
+
+- **P4-a1 (privacy). A published snapshot, separate from the draft.** The plan wrote the draft's
+  places on the same columns the status page would read, so a rebuild (or a score edited after
+  publish) would have shown before republishing, against its own test ("a correction built but not
+  republished: still version 1's values"). Now a build writes the draft (`test_result`,
+  `merit_position`, `waitlist_position`) and a publish copies the snapshot (`result_*`, and
+  `results_full_marks` on the class). The lookup reads only the snapshot and the roll; the role
+  cannot even read the draft or a live score.
+- **P4-a2. The lookup replaced with P3-b19's recipe:** `GRANT CREATE ON SCHEMA public TO
+jantrik_admission; SET ROLE jantrik_admission; CREATE OR REPLACE …; RESET ROLE; REVOKE CREATE`
+  (same signature, grants kept). Classes were already readable as a whole by the role (P3b), so the
+  plan's column grants on classes were not needed.
+- **P4-a3. A build is stale when anything it read changed:** a hash of the settings, the
+  tie-break and each ranked applicant's score, absence, date of birth and submission time
+  (`merit_inputs_hash`), plus the `builtAt` the admin saw. The plan's `scores_changed_at` alone
+  missed a withdrawal, a corrected date of birth or a changed seat count; it is kept for "changed
+  since publish" (P4-J).
+- **P4-a4. Who is in the list:** a roll and SUBMITTED, SHORTLISTED, SELECTED, WAITLISTED or
+  ADMITTED, or REJECTED by an earlier publish (reason NOT_SELECTED, FAILED or ABSENT, so a
+  correction can move them up). Withdrawn applicants and those rejected by staff for another
+  reason are left out (and keep their old result version, so the status page shows no result).
+- **P4-a5. Who gets a result SMS** is read from the SMS log: the status each application was last
+  told is in the dedupe key (`admission-result:<class>:v<version>:<application>:<status>`), so a
+  move-up within a version is a new SMS; an SMS still waiting is cancelled when its version is no
+  longer published or the status moved on. Its own queue `admission-results` (two processors on
+  one queue would drop each other's jobs).
+- **P4-a6. An application with a test roll stays in its class** (409 `HAS_TEST_ROLL`): a roll
+  belongs to its class's sequence.
+- **P4-a7. Move-up:** everyone sharing the first waitlist position moves together (ties exist
+  only with `NONE`; a tie is never split, as P4-B); the rest renumber from 1. No SMS of its own:
+  the moved applicant appears in the result SMS preview (count 1 when nobody else changed), the
+  plan's "optional single SMS".
+- **P4-a8. The waitlist boundary under `NONE`:** everyone tied on the last waitlisted place is
+  waitlisted, at a shared position (`waitlistTie` warning), as P4-B for the seats.
+- **P4-a9. Rolls need only a test cycle** (no other setting); the first roll is 1 unless
+  `startAt` is given; 422 `ROLLS_EXHAUSTED` above 999 999.
+- **P4-a10. Scores:** typing `a`/`অ` marks absent (the exams' `parseMarks`); a score with absent
+  ticked is 422 `SCORE_AND_ABSENT`; scores need the full marks (422 `TEST_NOT_CONFIGURED`).
+- **P4-a11 (owner, SMS). The result SMS share the institute's daily cap** (2 × active students
+  unless set in the attendance settings): an institute admitting its first students has a cap of
+  0, so every result SMS is skipped until it sets a cap; the preview says "0 left today" and how
+  many would be skipped. Not changed here (the cap is the owner's money rule).
+- **P4-a12. Withdrawing** is P3's status route (`WITHDRAWN` with a reason); no new route.
+- **P4-a13. Publish** sets `status_by`/`status_at` and clears an approval problem only on rows
+  whose status or reason changes; one audit row with the version, counts, the ids by outcome and
+  the flagged ones.
+- **P4-a14. The trigger functions are not named `admission_*`** (`test_score_within_full_marks`,
+  `full_marks_keep_test_scores`): P3b's safety test reserves that prefix for the definer functions.
+- **P4-a15. Not done here:** the bn screenshots at 390 px and the admit card's print check run in
+  CI's Playwright only (this run starts no servers); per-subject marks stay for later (S12).
