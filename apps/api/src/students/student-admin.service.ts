@@ -1,9 +1,19 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { GuardianRelation, Prisma } from '@jantrik/db';
-import { dateFromDb, dateToDb, type IsoDate, type StudentProfile } from '@jantrik/shared';
+import {
+  dateFromDb,
+  dateToDb,
+  type IsoDate,
+  type LeaveInput,
+  type StudentProfile,
+} from '@jantrik/shared';
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
 import { RequestContext } from '../common/request-context.js';
+import { AttendanceUsage } from '../attendance/attendance-usage.js';
+import { ExamUsage } from '../exams/setup/exam-usage.js';
+import { SubjectChoicesCopier } from '../exams/setup/subject-choices-copier.js';
+import { FeeUsage } from '../fees/fee-usage.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
 import { StudentAccess } from './student-access.service.js';
@@ -93,6 +103,10 @@ export class StudentAdminService {
     private readonly codes: StudentCodesService,
     private readonly guardians: GuardianLinker,
     private readonly access: StudentAccess,
+    private readonly choices: SubjectChoicesCopier,
+    private readonly attendanceUsage: AttendanceUsage,
+    private readonly examUsage: ExamUsage,
+    private readonly feeUsage: FeeUsage,
   ) {}
 
   private get tenantId(): string {
@@ -207,7 +221,8 @@ export class StudentAdminService {
         const enrolled = await tx.enrolment.count({
           where: {
             sectionId: e.sectionId,
-            student: { deletedAt: null },
+            // Only students still here take a seat: a leaver frees theirs (review round 2).
+            student: { deletedAt: null, status: 'ACTIVE' },
             ...(exceptEnrolmentId ? { id: { not: exceptEnrolmentId } } : {}),
           },
         });
@@ -300,7 +315,8 @@ export class StudentAdminService {
       motherNameEn: null,
       presentAddress: null,
       permanentAddress: null,
-      photoUrl: null,
+      leaveReason: null,
+      photoId: null,
       guardians: [],
       // The basics: the current class/section/roll, not the history.
       enrolments: current ? [current] : [],
@@ -361,8 +377,10 @@ export class StudentAdminService {
       motherNameEn: s.motherNameEn,
       presentAddress: s.presentAddress,
       permanentAddress: s.permanentAddress,
-      photoUrl: s.photoUrl,
+      photoId: s.photoFileId,
       status: s.status,
+      leftOn: s.leftOn ? dateFromDb(s.leftOn) : null,
+      leaveReason: s.leaveReason,
       deletedAt: s.deletedAt?.toISOString() ?? null,
       createdAt: s.createdAt.toISOString(),
       access: 'full',
@@ -614,6 +632,154 @@ export class StudentAdminService {
         })),
       },
       newValues: { status: 'INACTIVE', softDeleted: true },
+    });
+    return this.profile(studentId);
+  }
+
+  /**
+   * Corrects a placement in a year that is not current yet (P5-L: an applied promotion is final,
+   * so a student promoted or kept back by mistake is fixed here): class, section and study group,
+   * with the same checks as an enrolment (active class, section of that year and class, capacity),
+   * the roll cleared. Only while nothing of that year depends on the placement yet: no
+   * attendance, exam roster or fee dues there (409 ENROLMENT_IN_USE). Moving to another class
+   * removes that year's subject choices of the old class's subjects. Audited.
+   */
+  async changePlacement(
+    studentId: string,
+    enrolmentId: string,
+    input: { classLevelId: string; sectionId: string | null; studyGroupId: string | null },
+  ): Promise<StudentProfile> {
+    const tx = this.db.tx;
+    // Lock first, then read (review round 2): the enrolment for the change, the two years
+    // against a switch of the current year meanwhile.
+    const [locked] = await tx.$queryRaw<{ academic_year_id: string }[]>`
+      SELECT academic_year_id FROM enrolments
+      WHERE id = ${enrolmentId}::uuid AND student_id = ${studentId}::uuid FOR UPDATE`;
+    if (!locked) throw new NotFoundException('Enrolment not found');
+    await tx.$queryRaw`
+      SELECT id FROM academic_years
+      WHERE id = ${locked.academic_year_id}::uuid OR is_current FOR SHARE`;
+    const before = await this.active(studentId);
+    const e = before.enrolments.find((x) => x.id === enrolmentId);
+    if (!e) throw new NotFoundException('Enrolment not found');
+    const [year, current] = await Promise.all([
+      tx.academicYear.findUniqueOrThrow({
+        where: { id: e.academicYear.id },
+        select: { id: true, startDate: true, isCurrent: true },
+      }),
+      tx.academicYear.findFirst({ where: { isCurrent: true }, select: { startDate: true } }),
+    ]);
+    if (year.isCurrent || (current && year.startDate.getTime() <= current.startDate.getTime()))
+      throw apiError(422, 'NOT_A_NEW_YEAR', 'Only a year that is not current yet; use a transfer', {
+        field: 'enrolmentId',
+      });
+    const [attendance, exams, dues] = await Promise.all([
+      this.attendanceUsage.recordsInYear(studentId, year.id),
+      this.examUsage.candidatesInYear(studentId, year.id),
+      this.feeUsage.duesInYear(studentId, year.id),
+    ]);
+    if (attendance + exams + dues > 0)
+      throw apiError(409, 'ENROLMENT_IN_USE', 'This year already has records for the student', {
+        attendance,
+        exams,
+        dues,
+      });
+    await this.checkEnrolment(
+      {
+        academicYearId: year.id,
+        classLevelId: input.classLevelId,
+        sectionId: input.sectionId,
+        studyGroupId: input.studyGroupId,
+        roll: null,
+      },
+      enrolmentId,
+    );
+    const removedChoices =
+      e.classLevel.id === input.classLevelId && (e.studyGroup?.id ?? null) === input.studyGroupId
+        ? []
+        : await this.choices.removeNotTaken(
+            studentId,
+            year.id,
+            input.classLevelId,
+            input.studyGroupId,
+          );
+    await tx.enrolment.update({
+      where: { id: enrolmentId },
+      data: {
+        classLevelId: input.classLevelId,
+        sectionId: input.sectionId,
+        studyGroupId: input.studyGroupId,
+        roll: null,
+      },
+    });
+    await this.audit.record({
+      entity: 'enrolment',
+      entityId: enrolmentId,
+      action: 'UPDATE',
+      oldValues: {
+        classLevelId: e.classLevel.id,
+        sectionId: e.section?.id ?? null,
+        studyGroupId: e.studyGroup?.id ?? null,
+        roll: e.roll,
+      },
+      newValues: { ...input, roll: null, reason: 'placement', removedChoices },
+    });
+    return this.profile(studentId);
+  }
+
+  // ─────────────────────────── Leaving (P5, S14) ───────────────────────────
+
+  /**
+   * The student leaves (graduated, transferred, dropped out, or inactive) on a date, with an
+   * optional reason. Not a deletion: the ledger, the counter and history still find them; they
+   * drop out of attendance, the due list and new dues (all read ACTIVE students). Rolls are kept
+   * (history; a return finds them in place). Only an ACTIVE student leaves: the conditional
+   * update makes two leaves at once answer ALREADY_LEFT to the second.
+   */
+  async leave(studentId: string, input: LeaveInput): Promise<StudentProfile> {
+    const before = await this.active(studentId);
+    if (before.status !== 'ACTIVE')
+      throw apiError(422, 'ALREADY_LEFT', 'This student has already left', {
+        status: before.status,
+      });
+    const { count } = await this.db.tx.student.updateMany({
+      where: { id: studentId, status: 'ACTIVE', deletedAt: null },
+      data: { status: input.status, leftOn: dateToDb(input.leftOn), leaveReason: input.reason },
+    });
+    if (count === 0) throw apiError(422, 'ALREADY_LEFT', 'This student has already left');
+    await this.audit.record({
+      entity: 'student',
+      entityId: studentId,
+      action: 'UPDATE',
+      oldValues: { status: before.status },
+      newValues: { status: input.status, leftOn: input.leftOn, leaveReason: input.reason },
+    });
+    return this.profile(studentId);
+  }
+
+  /**
+   * A leaver comes back (P5-J): ACTIVE again, the date and reason cleared. They count against
+   * the student limit again, so the limit is checked as for an admission.
+   */
+  async returnStudent(studentId: string): Promise<StudentProfile> {
+    const before = await this.active(studentId);
+    if (before.status === 'ACTIVE') throw apiError(422, 'NOT_LEFT', 'This student has not left');
+    await this.assertStudentLimit();
+    const { count } = await this.db.tx.student.updateMany({
+      where: { id: studentId, status: { not: 'ACTIVE' }, deletedAt: null },
+      data: { status: 'ACTIVE', leftOn: null, leaveReason: null },
+    });
+    if (count === 0) throw apiError(422, 'NOT_LEFT', 'This student has not left');
+    await this.audit.record({
+      entity: 'student',
+      entityId: studentId,
+      action: 'UPDATE',
+      oldValues: {
+        status: before.status,
+        leftOn: before.leftOn,
+        leaveReason: before.leaveReason,
+      },
+      newValues: { status: 'ACTIVE', returned: true },
     });
     return this.profile(studentId);
   }

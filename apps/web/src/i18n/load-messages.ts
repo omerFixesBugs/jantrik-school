@@ -18,6 +18,9 @@ const STAFF_ATTENDANCE_AREAS = ['common', 'day', 'month'] as const;
 /** The person's own account likewise: messages/account/<area>.<locale>.json, into `account`. */
 const ACCOUNT_AREAS = ['password'] as const;
 
+/** Promotion and the new year (P5) likewise: messages/promotion/<area>.<locale>.json, into `promotion`. */
+const PROMOTION_AREAS = ['wizard'] as const;
+
 /** Every message of a language (server side; the browser gets each route's part). */
 export async function loadMessages(locale: Locale): Promise<Record<string, unknown>> {
   const base = (await import(`../../messages/${locale}.json`)).default;
@@ -47,6 +50,11 @@ export async function loadMessages(locale: Locale): Promise<Record<string, unkno
       async (area) => (await import(`../../messages/account/${area}.${locale}.json`)).default,
     ),
   );
+  const promotion = await Promise.all(
+    PROMOTION_AREAS.map(
+      async (area) => (await import(`../../messages/promotion/${area}.${locale}.json`)).default,
+    ),
+  );
   return {
     ...base,
     fees: Object.assign({}, ...fees),
@@ -54,5 +62,6 @@ export async function loadMessages(locale: Locale): Promise<Record<string, unkno
     devices: Object.assign({}, ...devices),
     staffAttendance: Object.assign({}, ...staffAttendance),
     account: Object.assign({}, ...account),
+    promotion: Object.assign({}, ...promotion),
   };
 }

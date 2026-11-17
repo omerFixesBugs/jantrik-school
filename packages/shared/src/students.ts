@@ -190,6 +190,16 @@ export const transferSchema = z.object({
   roll: rollSchema.optional().transform((v) => v ?? null),
 });
 
+/**
+ * PATCH /students/:id/enrolments/:enrolmentId: correct a placement in a year that is not current
+ * yet (a promotion applied by mistake, P5-L). The roll is cleared (number again).
+ */
+export const changePlacementSchema = z.object({
+  classLevelId: z.uuid(),
+  sectionId: z.uuid().nullable().default(null),
+  studyGroupId: z.uuid().nullable().default(null),
+});
+
 /** POST /students/:id/enrolments: enrol in a year the student is not in yet. */
 export const createEnrolmentSchema = enrolmentInputSchema;
 
@@ -255,8 +265,14 @@ export interface StudentProfile {
   motherNameEn: string | null;
   presentAddress: string | null;
   permanentAddress: string | null;
-  photoUrl: string | null;
+  /** The stored photo's id (GET …/photo serves it), or null; a replaced photo has a new id. */
+  photoId: string | null;
   status: StudentStatus;
+  /** The day a leaver left (status GRADUATED, TRANSFERRED, DROPPED_OUT or INACTIVE without
+   * deactivation, P5); null while the student stays. */
+  leftOn: IsoDate | null;
+  /** Why they left (OWNER/ADMIN and the student's own teachers; null in the basic view). */
+  leaveReason: string | null;
   /** Set when deactivated (soft delete). */
   deletedAt: string | null;
   /**

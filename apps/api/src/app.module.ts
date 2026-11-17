@@ -10,6 +10,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { DevicesModule } from './devices/devices.module.js';
 import { ExamsModule } from './exams/exams.module.js';
 import { FeesModule } from './fees/fees.module.js';
+import { FilesModule } from './files/files.module.js';
 import {
   JwtAuthGuard,
   ModuleGuard,
@@ -22,8 +23,10 @@ import { ZodValidationPipe } from './common/zod.js';
 import { validateEnv, type Env } from './config/env.js';
 import { HealthModule } from './health/health.module.js';
 import { ImportsModule } from './imports/imports.module.js';
+import { InstituteProfileModule } from './institute/institute-profile.module.js';
 import { MeModule } from './me/me.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { PromotionModule } from './promotion/promotion.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { SmsModule } from './sms/sms.module.js';
 import { SetupModule } from './setup/setup.module.js';
@@ -60,11 +63,13 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     PrismaModule,
     TenancyModule,
     AuditModule,
+    FilesModule,
     SmsModule,
     AuthModule,
     HealthModule,
     MeModule,
     AppearanceModule,
+    InstituteProfileModule,
     StudentsModule,
     SetupModule,
     StaffModule,
@@ -74,6 +79,7 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     StaffAttendanceModule,
     FeesModule,
     ExamsModule,
+    PromotionModule,
     PlatformModule,
   ],
   providers: [

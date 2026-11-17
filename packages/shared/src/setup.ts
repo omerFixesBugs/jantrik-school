@@ -104,6 +104,24 @@ export const updateSectionSchema = z.object({
 });
 export const sectionsQuerySchema = z.object({ academicYearId: z.uuid() });
 
+/** POST /setup/academic-years/:id/copy-teachers (P5): by class and section name. */
+export const copyTeachersSchema = z
+  .object({
+    fromAcademicYearId: z.uuid(),
+    classTeachers: z.boolean().default(true),
+    subjectTeachers: z.boolean().default(true),
+  })
+  .refine((v) => v.classTeachers || v.subjectTeachers, { message: 'Pick at least one' });
+
+export interface TeacherCopyResult {
+  /** section_teachers rows copied (class teachers and the other teachers of a section). */
+  sectionTeachers: number;
+  subjectTeachers: number;
+  /** Not copied: no section of that name in the new year, no longer active staff, a deactivated
+   * subject, or already there. */
+  skipped: number;
+}
+
 export const createSubjectSchema = z.object({
   classLevelId: z.uuid(),
   studyGroupId: z.uuid().nullable().default(null),

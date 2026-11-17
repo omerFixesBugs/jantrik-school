@@ -7,18 +7,25 @@ import {
   formatBdPhone,
   formatDate,
   formatIdentifier,
+  LEAVE_STATUSES,
+  type LeaveStatus,
+  type SetupClassLevel,
   type SetupSection,
+  type SetupStudyGroup,
   type StudentProfile,
 } from '@jantrik/shared';
 import {
   ArrowLeftRightIcon,
   CalendarCheckIcon,
+  CameraIcon,
+  DoorOpenIcon,
   KeyRoundIcon,
   LockIcon,
   PencilIcon,
   PhoneIcon,
   PlusIcon,
   PowerOffIcon,
+  RotateCcwIcon,
   StarIcon,
   Trash2Icon,
 } from 'lucide-react';
@@ -28,7 +35,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { SectionCard, SelectField, TextField } from '@/components/form-kit';
 import { PageGate } from '@/components/page-gate';
-import { PersonAvatar } from '@/components/person-avatar';
+import { StudentAvatar } from '@/components/student-photo';
+import { PhotoDialog } from '@/components/students/photo-dialog';
 import { ConfirmDialog, FormDialog } from '@/components/setup/setup-kit';
 import {
   BoardFields,
@@ -54,7 +62,16 @@ import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { displayName } from '@/lib/names';
 
 type Dialog =
-  'edit' | 'transfer' | 'guardian' | 'deactivate' | { removeLink: string; name: string } | null;
+  | 'edit'
+  | 'transfer'
+  | 'guardian'
+  | 'deactivate'
+  | 'leave'
+  | 'return'
+  | { placement: string }
+  | 'photo'
+  | { removeLink: string; name: string }
+  | null;
 
 export default function StudentProfilePage() {
   return (
@@ -89,6 +106,11 @@ function useStudentMutation<I>(
           GUARDIAN_REQUIRED: t('errorGuardianRequired'),
           DEACTIVATED: t('errorDeactivated'),
           NOT_ENROLLED: t('errorNotEnrolled'),
+          ALREADY_LEFT: t('errorAlreadyLeft'),
+          NOT_LEFT: t('errorNotLeft'),
+          STUDENT_LIMIT: t('errorStudentLimit'),
+          NOT_A_NEW_YEAR: t('errorNotANewYear'),
+          ENROLMENT_IN_USE: t('errorEnrolmentInUse'),
         };
         if (e.code && known[e.code]) return void toast.error(known[e.code]!);
         if ([400, 409, 422].includes(e.status)) return void toast.error(t('errorCheckForm'));
@@ -133,6 +155,11 @@ function Profile() {
     () => client.api<StudentProfile>(`/students/${id}/deactivate`, { method: 'POST' }),
     close,
   );
+  const returnStudent = useStudentMutation(
+    id,
+    () => client.api<StudentProfile>(`/students/${id}/return`, { method: 'POST' }),
+    close,
+  );
 
   if (profile.isPending) return <Skeleton className="h-96 rounded-xl" />;
   if (profile.isError)
@@ -167,9 +194,23 @@ function Profile() {
           </AlertDescription>
         </Alert>
       )}
+      {!p.deletedAt && p.status !== 'ACTIVE' && (
+        <Alert data-testid="left-notice">
+          <DoorOpenIcon aria-hidden />
+          <AlertDescription>
+            {p.leftOn
+              ? t('leftOn', {
+                  status: tStatus(p.status),
+                  date: formatDate(new Date(p.leftOn + 'T00:00:00Z'), locale, 'long'),
+                })
+              : tStatus(p.status)}
+            {p.leaveReason ? ' — ' + p.leaveReason : ''}
+          </AlertDescription>
+        </Alert>
+      )}
       <section className="bg-card flex flex-col gap-4 rounded-xl border p-4 shadow-xs sm:flex-row sm:items-center sm:p-5">
         <div className="flex min-w-0 flex-1 items-center gap-4">
-          <PersonAvatar name={name} photoUrl={p.photoUrl} size="xl" />
+          <StudentAvatar studentId={p.id} photoId={p.photoId} name={name} size="xl" />
           <div className="flex min-w-0 flex-col gap-1">
             <h2 className="text-xl font-semibold break-words sm:text-2xl">{name}</h2>
             {other && <span className="text-muted-foreground break-words">{other}</span>}
@@ -198,6 +239,14 @@ function Profile() {
             <>
               <Button
                 variant="outline"
+                onClick={() => setDialog('photo')}
+                data-testid="student-photo-button"
+              >
+                <CameraIcon aria-hidden />
+                {p.photoId ? t('changePhoto') : t('addPhoto')}
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => setDialog('edit')}
                 data-testid="edit-student"
               >
@@ -212,6 +261,25 @@ function Profile() {
                 >
                   <ArrowLeftRightIcon aria-hidden />
                   {t('transfer', { section: label('section', 'Section', { inText: true }) })}
+                </Button>
+              )}
+              {p.status === 'ACTIVE' ? (
+                <Button
+                  variant="outline"
+                  onClick={() => setDialog('leave')}
+                  data-testid="leave-student"
+                >
+                  <DoorOpenIcon aria-hidden />
+                  {t('leave')}
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  onClick={() => setDialog('return')}
+                  data-testid="return-student"
+                >
+                  <RotateCcwIcon aria-hidden />
+                  {t('return')}
                 </Button>
               )}
               <Button
@@ -242,6 +310,19 @@ function Profile() {
                   <span className="flex flex-wrap items-center gap-2 font-medium">
                     {e.academicYear.name}
                     {e.academicYear.isCurrent && <Badge variant="soft">{t('current')}</Badge>}
+                    {/* A year after the current one (listed above it): its placement can be
+                        corrected, e.g. a promotion applied by mistake (P5-L). */}
+                    {writable && laterYear(p, e) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDialog({ placement: e.id })}
+                        data-testid="change-placement"
+                      >
+                        <PencilIcon aria-hidden />
+                        {t('changePlacement')}
+                      </Button>
+                    )}
                   </span>
                   <span className="text-sm break-words">
                     {[
@@ -376,8 +457,22 @@ function Profile() {
       )}
 
       {dialog === 'edit' && <EditDialog profile={p} onClose={close} />}
+      {dialog === 'photo' && <PhotoDialog profile={p} name={name} onClose={close} />}
       {dialog === 'transfer' && current && <TransferDialog profile={p} onClose={close} />}
       {dialog === 'guardian' && <AddGuardianDialog profile={p} onClose={close} />}
+      {dialog === 'leave' && <LeaveDialog profile={p} name={name} onClose={close} />}
+      {dialog !== null && typeof dialog === 'object' && 'placement' in dialog && (
+        <PlacementDialog profile={p} enrolmentId={dialog.placement} onClose={close} />
+      )}
+      <ConfirmDialog
+        open={dialog === 'return'}
+        onOpenChange={(o) => !o && close()}
+        title={t('returnTitle', { name })}
+        body={t('returnBody')}
+        confirmLabel={t('return')}
+        pending={returnStudent.isPending}
+        onConfirm={() => returnStudent.mutate(undefined)}
+      />
       <ConfirmDialog
         open={dialog === 'deactivate'}
         onOpenChange={(o) => !o && close()}
@@ -388,21 +483,35 @@ function Profile() {
         onConfirm={() => deactivate.mutate(undefined)}
       />
       <ConfirmDialog
-        open={typeof dialog === 'object' && dialog !== null}
+        open={typeof dialog === 'object' && dialog !== null && 'removeLink' in dialog}
         onOpenChange={(o) => !o && close()}
         title={
-          typeof dialog === 'object' && dialog
+          typeof dialog === 'object' && dialog && 'removeLink' in dialog
             ? t('removeGuardianTitle', { name: dialog.name })
             : ''
         }
         confirmLabel={t('removeGuardian')}
         pending={removeGuardian.isPending}
         onConfirm={() =>
-          typeof dialog === 'object' && dialog && removeGuardian.mutate(dialog.removeLink)
+          typeof dialog === 'object' &&
+          dialog &&
+          'removeLink' in dialog &&
+          removeGuardian.mutate(dialog.removeLink)
         }
       />
     </div>
   );
+}
+
+/**
+ * An enrolment of a year after the current one (newest first: listed above the current one), or,
+ * with no current-year enrolment at all, the newest one. The API refuses any other (NOT_A_NEW_YEAR).
+ */
+function laterYear(p: StudentProfile, e: StudentProfile['enrolments'][number]): boolean {
+  if (e.academicYear.isCurrent) return false;
+  const current = p.enrolments.findIndex((x) => x.academicYear.isCurrent);
+  const i = p.enrolments.indexOf(e);
+  return current === -1 ? i === 0 : i < current;
 }
 
 function Item({ label, children, ltr }: { label: string; children: ReactNode; ltr?: boolean }) {
@@ -524,6 +633,176 @@ function TransferDialog({ profile, onClose }: { profile: StudentProfile; onClose
         dir="ltr"
         maxLength={6}
         error={errors['roll']}
+      />
+    </FormDialog>
+  );
+}
+
+/**
+ * Corrects a placement in a year that is not current yet (P5-L): class, section and group; the
+ * roll is cleared (numbered again). Refused once that year has records for the student.
+ */
+function PlacementDialog({
+  profile,
+  enrolmentId,
+  onClose,
+}: {
+  profile: StudentProfile;
+  enrolmentId: string;
+  onClose: () => void;
+}) {
+  const t = useTranslations('profile');
+  const label = useLabel();
+  const locale = useLocale() as Locale;
+  const { client, session } = useAuth();
+  const e = profile.enrolments.find((x) => x.id === enrolmentId)!;
+  const classes = useQuery({
+    queryKey: ['setup', session?.tenant?.id, '/setup/class-levels'],
+    queryFn: () => client.api<SetupClassLevel[]>('/setup/class-levels'),
+  });
+  const sections = useQuery({
+    queryKey: ['setup', session?.tenant?.id, `/setup/sections?academicYearId=${e.academicYear.id}`],
+    queryFn: () =>
+      client.api<SetupSection[]>(`/setup/sections?academicYearId=${e.academicYear.id}`),
+  });
+  const groups = useQuery({
+    queryKey: ['setup', session?.tenant?.id, '/setup/study-groups'],
+    queryFn: () => client.api<SetupStudyGroup[]>('/setup/study-groups'),
+  });
+  const [classLevelId, setClassLevelId] = useState(e.classLevel.id);
+  const [sectionId, setSectionId] = useState(e.section?.id ?? '');
+  const [studyGroupId, setStudyGroupId] = useState(e.studyGroup?.id ?? '');
+  const serverErrors = useServerFieldErrors();
+  const save = useStudentMutation(
+    profile.id,
+    () =>
+      client.api<StudentProfile>(`/students/${profile.id}/enrolments/${enrolmentId}`, {
+        method: 'PATCH',
+        json: {
+          classLevelId,
+          sectionId: sectionId || null,
+          studyGroupId: studyGroupId || null,
+        },
+      }),
+    onClose,
+  );
+  const errors = serverErrors(save.error);
+  return (
+    <FormDialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={t('placementTitle', { year: e.academicYear.name })}
+      description={t('placementHint')}
+      submitLabel={t('save')}
+      pending={save.isPending}
+      onSubmit={() => save.mutate(undefined)}
+      testId="placement-dialog"
+    >
+      <SelectField
+        id="placement-class"
+        label={label('class_level', 'Class')}
+        value={classLevelId}
+        onChange={(v) => {
+          setClassLevelId(v);
+          setSectionId('');
+        }}
+        required
+        options={(classes.data ?? [])
+          .filter((c) => c.isActive)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((c) => ({ value: c.id, label: displayName(c.nameBn, c.nameEn, locale) }))}
+        error={errors['classLevelId']}
+      />
+      <SelectField
+        id="placement-section"
+        label={label('section', 'Section')}
+        value={sectionId}
+        onChange={setSectionId}
+        placeholder={t('choose')}
+        options={(sections.data ?? [])
+          .filter((s) => s.isActive && s.classLevelId === classLevelId)
+          .map((s) => ({ value: s.id, label: s.name }))}
+        error={errors['sectionId']}
+      />
+      <SelectField
+        id="placement-group"
+        label={label('study_group', 'Group')}
+        value={studyGroupId}
+        onChange={setStudyGroupId}
+        placeholder={t('choose')}
+        options={(groups.data ?? [])
+          .filter((g) => g.isActive)
+          .map((g) => ({ value: g.id, label: displayName(g.nameBn, g.nameEn, locale) }))}
+        error={errors['studyGroupId']}
+      />
+    </FormDialog>
+  );
+}
+
+/** The student leaves (S14): a status, a date and an optional reason; nothing is deleted. */
+function LeaveDialog({
+  profile,
+  name,
+  onClose,
+}: {
+  profile: StudentProfile;
+  name: string;
+  onClose: () => void;
+}) {
+  const t = useTranslations('profile');
+  const tStatus = useTranslations('studentStatus');
+  const { client } = useAuth();
+  const { data: context } = useMeContext();
+  const [status, setStatus] = useState<LeaveStatus>('TRANSFERRED');
+  const [leftOn, setLeftOn] = useState(context?.today ?? '');
+  const [reason, setReason] = useState('');
+  const serverErrors = useServerFieldErrors();
+  const save = useStudentMutation(
+    profile.id,
+    () =>
+      client.api<StudentProfile>('/students/' + profile.id + '/leave', {
+        method: 'POST',
+        json: { status, leftOn, reason: reason.trim() || null },
+      }),
+    onClose,
+  );
+  const errors = serverErrors(save.error);
+  return (
+    <FormDialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={t('leaveTitle', { name })}
+      description={t('leaveHint')}
+      submitLabel={t('leave')}
+      pending={save.isPending}
+      onSubmit={() => leftOn && save.mutate(undefined)}
+      testId="leave-dialog"
+    >
+      <SelectField
+        id="leave-status"
+        label={t('leaveStatus')}
+        value={status}
+        onChange={(v) => setStatus(v as LeaveStatus)}
+        required
+        options={LEAVE_STATUSES.map((s) => ({ value: s, label: tStatus(s) }))}
+        error={errors['status']}
+      />
+      <TextField
+        id="leave-date"
+        type="date"
+        label={t('leaveDate')}
+        value={leftOn}
+        onChange={setLeftOn}
+        required
+        error={errors['leftOn']}
+      />
+      <TextField
+        id="leave-reason"
+        label={t('leaveReason')}
+        value={reason}
+        onChange={setReason}
+        maxLength={500}
+        error={errors['reason']}
       />
     </FormDialog>
   );

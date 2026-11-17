@@ -1,7 +1,7 @@
 'use client';
 
 import { dateToDb, formatCount, formatDate, type SetupAcademicYear } from '@jantrik/shared';
-import { CalendarPlusIcon, CheckCircle2Icon, PlusIcon } from 'lucide-react';
+import { CalendarPlusIcon, CheckCircle2Icon, GraduationCapIcon, PlusIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { SectionCard } from '@/components/form-kit';
@@ -16,7 +16,7 @@ import {
 import { YearDialog } from '@/components/setup/year-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Locale } from '@/i18n/config';
 import { useAuth } from '@/lib/auth/auth-provider';
@@ -60,6 +60,10 @@ export default function AcademicYearsPage() {
         hint={t('yearsHint', { year: yearInText })}
         actions={
           <>
+            <ButtonLink variant="outline" href="/setup/new-year" data-testid="new-year-wizard">
+              <GraduationCapIcon aria-hidden />
+              {t('newYearWizard', { year: yearInText })}
+            </ButtonLink>
             {latest && (
               <Button variant="outline" onClick={() => setNextFrom(latest)} data-testid="next-year">
                 <CalendarPlusIcon aria-hidden />

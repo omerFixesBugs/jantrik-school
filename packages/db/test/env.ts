@@ -65,3 +65,17 @@ export const INGEST_URL = (() => {
   url.password = new URL(login).password;
   return url.toString();
 })();
+
+/**
+ * The password login's own login (jantrik_login_app: user and password of DATABASE_LOGIN_URL) on
+ * the test database; server, port and database come from APP_URL. It may run one function,
+ * auth_find_user_for_password_login, and nothing else (P1-J).
+ */
+export const LOGIN_URL = (() => {
+  const login = process.env['DATABASE_LOGIN_URL'];
+  if (!login) throw new Error('DATABASE_LOGIN_URL is not set (see .env.example)');
+  const url = new URL(APP_URL);
+  url.username = new URL(login).username;
+  url.password = new URL(login).password;
+  return url.toString();
+})();

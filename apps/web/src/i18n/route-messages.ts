@@ -119,6 +119,8 @@ export const ROUTE_MESSAGES = {
   account: ['account'],
 
   setup: ['appearance', 'setup'],
+  /** The new-year wizard and a promotion run (P5). */
+  newYear: ['promotion'],
   setupWelcome: ['attendanceSettings', 'dashboard', 'onboarding', 'staff'],
   staff: ['setup', 'staff'],
 } as const satisfies Record<string, readonly string[]>;

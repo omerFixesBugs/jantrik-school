@@ -158,6 +158,39 @@ number is masked for the accountant.
 - Dashboard card: this month so far against the same days of last month, overdue (amount and
   students, as the defaulters list counts them), transfers waiting to be checked.
 
+## A new academic year (sprint 1 P5, S16, S17)
+
+Rules of the promotion itself: [promotion.md](promotion.md).
+
+- **Nothing moves (S17).** A promotion creates, changes and moves no due and no payment (tested).
+  Old dues stay on their year:
+  - a promoted student or a repeater, once enrolled in the new year (and once it is current),
+    is on the due list with them; the row's `previousYearsPaisa` (and the totals', and a
+    "previous years" column and CSV column) says how much of it is from earlier years;
+  - the staff ledger and the guardian's fees page mark such dues "previous year" (the ledger's
+    `currentYearId` names the current year), with a subtotal on the staff ledger;
+  - a leaver leaves the due list and gets no new dues, but keeps the ledger and can pay at the
+    counter.
+- **Leavers with dues** (Reports → "Leavers with dues", `GET /fees/reports/leavers-with-dues` and
+  `/csv`, OWNER/ADMIN/ACCOUNTANT, P5-K): everyone who owes but is not on the due list: leavers
+  (with status and date), ACTIVE students not enrolled in the current year ("not carried over"),
+  and deactivated students; each with the balance of all their open dues (every year) and their
+  latest class. Phones masked for the accountant; the CSV as the other reports (BOM, ASCII digits,
+  formula-safe).
+- **The admission fee is never charged again** (one ONE_TIME due per student and head across all
+  years); a YEARLY fee is charged each year.
+- **Copies into the new year** (OWNER/ADMIN, the wizard's fee step; each can run again and keeps
+  what is there; only into a year that starts later, and terms and concessions only from the
+  year just before it, `422 YEAR_ORDER`):
+  - amounts: `POST /fees/amounts/copy` (missing rows only);
+  - terms: `POST /fees/terms/copy`, exactly one year later (29 Feb → 28 Feb); a term of the same
+    Bangla name already in the new year is skipped; dates that fall outside the new year are
+    copied and counted (`outsideYear`, P5-M);
+  - concessions: `POST /fees/concessions/copy` (off by default in the wizard): those still
+    running on the old year's last day, for students still ACTIVE and enrolled in the new year,
+    from the new year's first day; one already there on that head is skipped (P5-N); one ending
+    in the new year keeps its end date. The audit row lists the copied student and head pairs.
+
 ## SMS
 
 Receipts and reminders share the institute's daily SMS cap with absent SMS (one budget; the cap is

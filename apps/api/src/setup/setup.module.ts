@@ -35,6 +35,8 @@ import {
   type SetupShift,
   type SetupStudyGroup,
   type SetupSubject,
+  copyTeachersSchema,
+  type TeacherCopyResult,
 } from '@jantrik/shared';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
@@ -51,6 +53,7 @@ class CreateShiftDto extends zodDto(createShiftSchema) {}
 class UpdateShiftDto extends zodDto(updateShiftSchema) {}
 class CreateSectionDto extends zodDto(createSectionSchema) {}
 class UpdateSectionDto extends zodDto(updateSectionSchema) {}
+class CopyTeachersDto extends zodDto(copyTeachersSchema) {}
 class SectionsQueryDto extends zodDto(sectionsQuerySchema) {}
 class CreateSubjectDto extends zodDto(createSubjectSchema) {}
 class UpdateSubjectDto extends zodDto(updateSubjectSchema) {}
@@ -80,6 +83,13 @@ export class SetupController {
   @Put('academic-years/:id')
   updateYear(@Id() id: string, @Body() dto: UpdateAcademicYearDto): Promise<SetupAcademicYear> {
     return this.setup.updateYear(id, dto);
+  }
+
+  /** Section and subject teachers from another year, by class and section name (P5). */
+  @Post('academic-years/:id/copy-teachers')
+  @HttpCode(200)
+  copyTeachers(@Id() id: string, @Body() dto: CopyTeachersDto): Promise<TeacherCopyResult> {
+    return this.setup.copyTeachers(id, dto);
   }
 
   @Post('academic-years/:id/current')

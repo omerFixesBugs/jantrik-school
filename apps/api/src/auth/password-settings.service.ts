@@ -56,10 +56,13 @@ export class PasswordSettingsService implements OnModuleInit {
   async status(principal: Principal): Promise<PasswordStatus> {
     const user = await this.db.tx.user.findUniqueOrThrow({
       where: { id: principal.userId },
-      select: { passwordHash: true, passwordChangedAt: true, phone: true },
+      select: { passwordChangedAt: true, phone: true },
     });
+    // The app login may not read password_hash (P1-J): a function says whether it is set.
+    const [set] = await this.db.tx.$queryRaw<{ value: boolean }[]>`
+      SELECT auth_my_password_is_set() AS value`;
     return {
-      hasPassword: user.passwordHash !== null,
+      hasPassword: set?.value === true,
       changedAt: user.passwordChangedAt?.toISOString() ?? null,
       phone: user.phone,
     };
