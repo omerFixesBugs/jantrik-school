@@ -346,10 +346,14 @@ export class NoticesService {
         expiresAt: input.expiresAt,
         pinned: input.pinned,
         createdById: userId,
-        targets: { create: targets.map((t) => ({ tenantId, ...t })) },
       },
       select: { id: true },
     });
+    if (targets.length) {
+      await this.db.tx.noticeTarget.createMany({
+        data: targets.map((t) => ({ tenantId, noticeId: n.id, ...t })),
+      });
+    }
     await this.audit.record({
       entity: 'notice',
       entityId: n.id,

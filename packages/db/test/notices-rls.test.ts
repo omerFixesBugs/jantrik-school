@@ -40,20 +40,19 @@ describe('notices RLS', () => {
       return { classA: c1!.id, classA2: c2!.id, sectionA2: s.id };
     }));
     classB = (await withTenant(app, b, (tx) => tx.classLevel.findFirstOrThrow())).id;
-    noticeA = (
-      await withTenant(app, a, (tx) =>
-        tx.notice.create({
-          data: {
-            tenantId: a,
-            title: 'Holiday',
-            body: 'School is closed tomorrow.',
-            audience: 'ALL',
-            createdById: userA,
-            targets: { create: [{ tenantId: a, classLevelId: classA }] },
-          },
-        }),
-      )
-    ).id;
+    noticeA = await withTenant(app, a, async (tx) => {
+      const n = await tx.notice.create({
+        data: {
+          tenantId: a,
+          title: 'Holiday',
+          body: 'School is closed tomorrow.',
+          audience: 'ALL',
+          createdById: userA,
+        },
+      });
+      await tx.noticeTarget.create({ data: { tenantId: a, noticeId: n.id, classLevelId: classA } });
+      return n.id;
+    });
   });
 
   afterAll(async () => {
