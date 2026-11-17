@@ -129,7 +129,7 @@ export class BroadcastsService implements OnModuleInit {
       sentAt: b.sentAt?.toISOString() ?? null,
       cancelledAt: b.cancelledAt?.toISOString() ?? null,
       cancelReason: (b.cancelReason as BroadcastView['cancelReason']) ?? null,
-      failure: (b.failure as BroadcastView['failure']) ?? null,
+      failure: (b.failure as unknown as BroadcastView['failure']) ?? null,
       createdAt: b.createdAt.toISOString(),
       sms: {
         queued: n('QUEUED') + n('HELD_OVER_LIMIT'),
