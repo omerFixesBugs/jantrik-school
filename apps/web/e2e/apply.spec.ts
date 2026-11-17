@@ -16,8 +16,11 @@ interface Options {
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
-test('apply → status → the owner approves → the student appears', async ({ page }) => {
-  test.setTimeout(120_000);
+test('apply → status → the owner approves → the student appears', async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  // A phone of its own per attempt: a phone gets one code a minute and five a day.
+  const phone = `0182233445${testInfo.retry}`;
+  const phoneBn = phone.replace(/\d/g, (d) => '০১২৩৪৫৬৭৮৯'[Number(d)]!);
   const owner = await apiLogin(DEMO.shaplaOwner);
   const options = await api<Options>(owner, '/admission/options');
   const cycle = await api<Cycle>(owner, '/admission/cycles', {
@@ -45,10 +48,11 @@ test('apply → status → the owner approves → the student appears', async ({
   await page.getByText('অষ্টম শ্রেণি').first().tap();
   await page.getByRole('button', { name: 'পরের ধাপ' }).tap();
 
-  await page.locator('#apply-phone').fill('০১৮২২৩৩৪৪৫৫');
+  await page.locator('#apply-phone').fill(phoneBn);
   await page.getByTestId('turnstile-standin').check();
   await page.getByRole('button', { name: 'কোড পাঠান' }).tap();
-  const code = await readOtp('01822334455');
+  const code = await readOtp(phone);
+  const firstCodeAt = Date.now();
   await page.locator('#apply-code').fill(code);
   await page.getByRole('button', { name: 'এগিয়ে যান' }).tap();
 
@@ -56,10 +60,15 @@ test('apply → status → the owner approves → the student appears', async ({
   await page.locator('#nameBn').fill('সাদিয়া ইসলাম');
   await page.locator('#dateOfBirth').fill('১৫/০৩/২০১২');
   await page.locator('#gender').selectOption('FEMALE');
-  await page.locator('#birthRegistrationNo').fill('২০১২ ২৬৯২ ৫১২৩ ৭৭৭৭ ১');
+  // Its own birth registration number per attempt too (an earlier attempt's would be a duplicate).
+  await page
+    .locator('#birthRegistrationNo')
+    .fill(`২০১২ ২৬৯২ ৫১২৩ ৭৭৭৭ ${'০১২৩৪৫৬৭৮৯'[testInfo.retry]}`);
   await page.locator('#guardianNameBn').fill('রফিকুল ইসলাম');
   await page.getByTestId('apply-next').tap();
-  await expect(page.getByTestId('apply-review')).toContainText('01822-334455');
+  await expect(page.getByTestId('apply-review')).toContainText(
+    `${phone.slice(0, 5)}-${phone.slice(5)}`,
+  );
   // The form ticket refuses a submit under 15 s after the form opened (decision P3-L).
   await page.waitForTimeout(15_000);
   await page.getByTestId('turnstile-standin').check();
@@ -68,13 +77,14 @@ test('apply → status → the owner approves → the student appears', async ({
   await expect(slip).toHaveText(/^\d{4}-\d{4,6}$/);
   const applicationNo = (await slip.textContent())!.trim();
 
-  // The status, with a new code to the same phone.
+  // The status, with a new code to the same phone (one code a minute per phone).
+  await page.waitForTimeout(Math.max(0, firstCodeAt + 61_000 - Date.now()));
   await page.goto('/apply/shapla-school/status');
   await page.locator('#status-no').fill(applicationNo);
-  await page.locator('#status-phone').fill('01822334455');
+  await page.locator('#status-phone').fill(phone);
   await page.getByTestId('turnstile-standin').check();
   await page.getByRole('button', { name: 'কোড পাঠান' }).tap();
-  const second = await readOtp('01822334455', code);
+  const second = await readOtp(phone, code);
   await page.locator('#status-code').fill(second);
   await page.getByRole('button', { name: 'অবস্থা দেখুন' }).tap();
   await expect(page.getByTestId('status-shown')).toContainText('জমা হয়েছে');
