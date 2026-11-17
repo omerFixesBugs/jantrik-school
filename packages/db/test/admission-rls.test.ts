@@ -488,6 +488,7 @@ describe('admission tables', () => {
         resultsVersion: 1,
         resultsPublishedAt: new Date(),
         resultsFullMarks: 100,
+        resultsBuiltAt: new Date(),
       });
       await expect(setApp(t.applicationId, { resultFlag: 'SOMETHING' })).rejects.toThrow(
         /check constraint/i,

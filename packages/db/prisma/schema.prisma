@@ -3387,6 +3387,8 @@ model AdmissionCycleClass {
   resultsVersion     Int       @default(0) @map("results_version")
   resultsPublishedAt DateTime? @map("results_published_at") @db.Timestamptz(3)
   resultsFullMarks   Int?      @map("results_full_marks")
+  /// The build the published version came from (never published twice).
+  resultsBuiltAt     DateTime? @map("results_built_at") @db.Timestamptz(3)
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 

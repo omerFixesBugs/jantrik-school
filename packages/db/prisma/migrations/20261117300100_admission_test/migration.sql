@@ -32,6 +32,8 @@ ALTER TABLE "admission_cycle_classes"
   ADD COLUMN "results_version" INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN "results_published_at" TIMESTAMPTZ(3),
   ADD COLUMN "results_full_marks" INTEGER,
+  -- The build that version was published from: the same build is never published twice.
+  ADD COLUMN "results_built_at" TIMESTAMPTZ(3),
   ADD CONSTRAINT "admission_cycle_classes_test_venue_bn_len"
     CHECK ("test_venue_bn" IS NULL OR char_length("test_venue_bn") BETWEEN 1 AND 200),
   ADD CONSTRAINT "admission_cycle_classes_test_venue_en_len"
@@ -52,7 +54,9 @@ ALTER TABLE "admission_cycle_classes"
     CHECK (("results_version" = 0) = ("results_published_at" IS NULL)),
   ADD CONSTRAINT "admission_cycle_classes_results_full_marks"
     CHECK (("results_version" = 0) = ("results_full_marks" IS NULL)
-           AND ("results_full_marks" IS NULL OR "results_full_marks" BETWEEN 1 AND 1000));
+           AND ("results_full_marks" IS NULL OR "results_full_marks" BETWEEN 1 AND 1000)),
+  ADD CONSTRAINT "admission_cycle_classes_results_built"
+    CHECK (("results_version" = 0) = ("results_built_at" IS NULL));
 
 -- ─────────────────────────── Applications ───────────────────────────
 ALTER TABLE "admission_applications"
@@ -161,7 +165,7 @@ CREATE TRIGGER full_marks_keep_test_scores
 GRANT UPDATE (merit_tie_break) ON admission_cycles TO jantrik_app;
 GRANT UPDATE (test_date, test_time, test_venue_bn, test_venue_en, full_marks, pass_marks,
               select_count, waitlist_count, merit_built_at, merit_inputs_hash, scores_changed_at,
-              results_version, results_published_at, results_full_marks)
+              results_version, results_published_at, results_full_marks, results_built_at)
   ON admission_cycle_classes TO jantrik_app;
 GRANT UPDATE (test_roll, test_score_h, test_absent, test_result, merit_position,
               waitlist_position, result_version, result_merit_position, result_waitlist_position,

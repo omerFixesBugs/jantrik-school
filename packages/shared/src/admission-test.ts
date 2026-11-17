@@ -217,6 +217,8 @@ export interface AdmissionMeritRow extends AdmissionScoreRow {
 export interface AdmissionMeritView {
   /** The draft's build time (ISO) or null; publish sends it back. */
   builtAt: string | null;
+  /** The build the published version came from: equal to `builtAt` means nothing to publish. */
+  publishedBuiltAt: string | null;
   /** The draft no longer matches the scores, statuses or settings: build again. */
   stale: boolean;
   /** Extra seats used by a tie on the last selected place; on the last waitlisted one. */

@@ -34,12 +34,19 @@ export interface AdmissionResultSmsJobData {
 }
 
 /**
- * One SMS per application, version and status told (P4-a5): a move-up within a version is a new
- * SMS, and the status in the key is how the next preview knows what each applicant was told.
+ * One SMS per run, application, version and status told (P4-a5, review N3): the status and the
+ * version in the key are how the next preview knows what each applicant was told; the run makes a
+ * resend of a cancelled or failed SMS a new SMS, not a DUPLICATE.
  */
-const dedupeKey = (cycleClassId: string, version: number, applicationId: string, told: Told) =>
-  `admission-result:${cycleClassId}:v${version}:${applicationId}:${told}`;
-const TOLD_RE = /^admission-result:[0-9a-f-]{36}:v\d+:[0-9a-f-]{36}:(SELECTED|WAITLISTED|REJECTED)/;
+const dedupeKey = (
+  cycleClassId: string,
+  version: number,
+  applicationId: string,
+  told: Told,
+  runId: string,
+) => `admission-result:${cycleClassId}:v${version}:${applicationId}:${told}:${runId}`;
+const TOLD_RE =
+  /^admission-result:[0-9a-f-]{36}:v(\d+):[0-9a-f-]{36}:(SELECTED|WAITLISTED|REJECTED)(?::|$)/;
 const entity = (cycleClassId: string, version: number, told: Told) =>
   `admission_result:${cycleClassId}:v${version}:${told}`;
 const ENTITY_RE = /^admission_result:([0-9a-f-]{36}):v(\d+):(SELECTED|WAITLISTED|REJECTED)$/;
@@ -93,8 +100,7 @@ export class AdmissionResultSmsService implements OnModuleInit {
     const tx = this.db.tx;
     const cls = await this.publishedClass(cycleClassId);
     const all = await this.recipients(cls);
-    const toSend = await this.notYetTold(all);
-    const segments = toSend.reduce((n, r) => n + smsLength(r.text).segments, 0);
+    const toSend = await this.notYetTold(all, cls.resultsVersion);
     const [rate] = await tx.$queryRaw<{ rate: number }[]>`
       SELECT sms_cost_per_segment_paisa AS rate FROM public.platform_settings`;
     const { today } = await this.settings.load();
@@ -102,6 +108,8 @@ export class AdmissionResultSmsService implements OnModuleInit {
       where: { localDate: dateToDb(today), status: { in: ['QUEUED', 'SENT'] } },
     });
     const capLeft = Math.max(0, (await this.settings.smsDailyCap()) - used);
+    // The segments and the cost of what will go out today, not of what the cap skips (N4).
+    const segments = toSend.slice(0, capLeft).reduce((n, r) => n + smsLength(r.text).segments, 0);
     return {
       publishedVersion: cls.resultsVersion,
       applications: all.length,
@@ -122,7 +130,7 @@ export class AdmissionResultSmsService implements OnModuleInit {
       });
     }
     const cls = await this.publishedClass(cycleClassId);
-    const toSend = await this.notYetTold(await this.recipients(cls));
+    const toSend = await this.notYetTold(await this.recipients(cls), cls.resultsVersion);
     const runId = randomUUID();
     await this.audit.record({
       entity: 'admission_result_sms_run',
@@ -173,9 +181,14 @@ export class AdmissionResultSmsService implements OnModuleInit {
       select: { id: true, resultsVersion: true },
     });
     if (!cls || cls.resultsVersion !== data.version) return;
+    // The SMS writers' lock first (TenantSmsService's), then who is still owed: two runs at once
+    // never send the same SMS twice.
+    await this.db.tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtextextended('sms:' || app_current_tenant_id()::text, 0))`;
     const wanted = new Map(chunk.map((c) => [c.applicationId, c.told]));
-    const recipients = (await this.recipients(cls)).filter(
-      (r) => wanted.get(r.applicationId) === r.told,
+    const recipients = await this.notYetTold(
+      (await this.recipients(cls)).filter((r) => wanted.get(r.applicationId) === r.told),
+      data.version,
     );
     const { today } = await this.settings.load();
     const cap = await this.settings.smsDailyCap();
@@ -185,7 +198,7 @@ export class AdmissionResultSmsService implements OnModuleInit {
         phone: r.phone,
         body: r.text,
         localDate: today,
-        dedupeKey: dedupeKey(data.cycleClassId, data.version, r.applicationId, r.told),
+        dedupeKey: dedupeKey(data.cycleClassId, data.version, r.applicationId, r.told, data.runId),
         relatedEntity: entity(data.cycleClassId, data.version, r.told),
         relatedId: r.applicationId,
         delayMs: 0,
@@ -208,7 +221,7 @@ export class AdmissionResultSmsService implements OnModuleInit {
       recipients: { applicationId: string; told: Told }[];
     };
     const keys = run.recipients.map((r) =>
-      dedupeKey(run.cycleClassId, run.version, r.applicationId, r.told),
+      dedupeKey(run.cycleClassId, run.version, r.applicationId, r.told, runId),
     );
     const logs = await tx.smsLog.groupBy({
       by: ['status'],
@@ -295,22 +308,29 @@ export class AdmissionResultSmsService implements OnModuleInit {
     });
   }
 
-  /** Those whose last result SMS (any version) told another status, or who had none. */
-  private async notYetTold(recipients: Recipient[]): Promise<Recipient[]> {
+  /**
+   * Those not yet told their current status (review S1): told means an SMS that went out (SENT),
+   * or one of this version still waiting (QUEUED). A cancelled or failed one told nobody, so it is
+   * owed again; the latest such SMS (any version) says what the applicant was last told.
+   */
+  private async notYetTold(recipients: Recipient[], version: number): Promise<Recipient[]> {
     if (recipients.length === 0) return [];
     const logs = await this.db.tx.smsLog.findMany({
       where: {
         purpose: 'ADMISSION_RESULT',
         relatedId: { in: recipients.map((r) => r.applicationId) },
+        status: { in: ['SENT', 'QUEUED'] },
       },
       orderBy: { createdAt: 'desc' },
-      select: { relatedId: true, dedupeKey: true },
+      select: { relatedId: true, dedupeKey: true, status: true },
     });
     const last = new Map<string, string>();
     for (const l of logs) {
       if (!l.relatedId || last.has(l.relatedId)) continue;
       const m = l.dedupeKey ? TOLD_RE.exec(l.dedupeKey) : null;
-      if (m) last.set(l.relatedId, m[1]!);
+      if (!m) continue;
+      if (l.status === 'QUEUED' && Number(m[1]) !== version) continue;
+      last.set(l.relatedId, m[2]!);
     }
     return recipients.filter((r) => last.get(r.applicationId) !== r.told);
   }

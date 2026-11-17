@@ -126,8 +126,12 @@ export class AdmissionMeritService {
       AdmissionTestResult,
       number
     >;
-    for (const r of rows) if (r.testResult) counts[r.testResult]++;
+    // Only applicants still in the list: a withdrawal shows at once, before a rebuild (N5).
+    for (const r of rows) if (r.testResult && ranked(r)) counts[r.testResult]++;
     const out: AdmissionMeritRow[] = rows
+      .map((r) =>
+        ranked(r) ? r : { ...r, testResult: null, meritPosition: null, waitlistPosition: null },
+      )
       .map((r) => ({
         applicationId: r.id,
         applicationNo: r.applicationNo,
@@ -158,6 +162,7 @@ export class AdmissionMeritService {
       );
     return {
       builtAt: cls.meritBuiltAt?.toISOString() ?? null,
+      publishedBuiltAt: cls.resultsBuiltAt?.toISOString() ?? null,
       stale: !!cls.meritInputsHash && cls.meritInputsHash !== this.inputsHash(cls, rows),
       boundaryTie: Math.max(0, counts.SELECTED - (cls.selectCount ?? counts.SELECTED)),
       waitlistTie: Math.max(0, counts.WAITLISTED - (cls.waitlistCount ?? counts.WAITLISTED)),
@@ -253,6 +258,19 @@ export class AdmissionMeritService {
     if (!cls.meritBuiltAt || !cls.meritInputsHash) {
       throw apiError(409, 'MERIT_NOT_BUILT', 'Build the merit list first');
     }
+    // The same build is published once (review S2): a second publish would only bump the
+    // version and cancel the SMS of the first.
+    if (cls.resultsBuiltAt && cls.resultsBuiltAt.getTime() === cls.meritBuiltAt.getTime()) {
+      throw apiError(409, 'ALREADY_PUBLISHED', 'This list is already published');
+    }
+    // Every applicant with a roll locked (id order, as moveUp) before anything is read (review
+    // M1): a withdrawal or an approval that committed while this waited is seen, makes the
+    // inputs differ (409 MERIT_STALE) or is kept (an ADMITTED status), and nothing changes under
+    // the publish. P3's status changes and approvals lock the same rows.
+    await tx.$queryRaw`
+      SELECT id FROM public.admission_applications
+       WHERE cycle_class_id = ${id}::uuid AND test_roll IS NOT NULL
+       ORDER BY id FOR UPDATE`;
     const rows = await this.rows(id);
     if (
       Date.parse(builtAt) !== cls.meritBuiltAt.getTime() ||
@@ -267,6 +285,7 @@ export class AdmissionMeritService {
     const byOutcome: Record<string, string[]> = {};
     const flagged: string[] = [];
     const ids: string[] = [];
+    const before: string[] = [];
     const statuses: string[] = [];
     const reasons: (string | null)[] = [];
     const flags: (string | null)[] = [];
@@ -287,13 +306,14 @@ export class AdmissionMeritService {
         reason = status === 'REJECTED' ? result : null;
       }
       ids.push(r.id);
+      before.push(r.status);
       statuses.push(status);
       reasons.push(reason);
       flags.push(flag);
       changed.push(status !== r.status || reason !== r.statusReason);
     }
     if (ids.length > 0) {
-      await tx.$executeRaw`
+      const updated = await tx.$executeRaw`
         UPDATE public.admission_applications a
            SET status = v.status::public.admission_application_status,
                status_reason = CASE WHEN v.changed THEN v.reason ELSE a.status_reason END,
@@ -308,13 +328,23 @@ export class AdmissionMeritService {
                result_absent = a.test_absent,
                result_flag = v.flag,
                updated_at = now()
-          FROM unnest(${ids}::uuid[], ${statuses}::text[], ${reasons}::text[], ${flags}::text[],
-                      ${changed}::boolean[]) AS v(id, status, reason, flag, changed)
-         WHERE a.id = v.id`;
+          FROM unnest(${ids}::uuid[], ${before}::text[], ${statuses}::text[], ${reasons}::text[],
+                      ${flags}::text[], ${changed}::boolean[])
+               AS v(id, before, status, reason, flag, changed)
+         WHERE a.id = v.id AND a.status = v.before::public.admission_application_status`;
+      // The rows are locked, so this holds; if it ever does not, nothing is published.
+      if (updated !== ids.length) {
+        throw apiError(409, 'MERIT_STALE', 'The list changed while publishing: build it again');
+      }
     }
     await tx.admissionCycleClass.update({
       where: { id },
-      data: { resultsVersion: version, resultsPublishedAt: now, resultsFullMarks: cls.fullMarks },
+      data: {
+        resultsVersion: version,
+        resultsPublishedAt: now,
+        resultsFullMarks: cls.fullMarks,
+        resultsBuiltAt: cls.meritBuiltAt,
+      },
       select: { id: true },
     });
     await this.audit.record({
@@ -409,6 +439,14 @@ export class AdmissionMeritService {
           where: { id: w.id },
           data: { resultWaitlistPosition: next },
           select: { id: true },
+        });
+        // A published position changes: audited like any published value (review N2).
+        await this.audit.record({
+          entity: 'admission_application',
+          entityId: w.id,
+          action: 'UPDATE',
+          oldValues: { waitlistPosition: w.resultWaitlistPosition },
+          newValues: { waitlistPosition: next, reason: 'MOVED_UP' },
         });
       }
     }

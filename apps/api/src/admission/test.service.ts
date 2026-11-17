@@ -201,6 +201,12 @@ export class AdmissionTestService {
     const tx = this.db.tx;
     const cls = await this.lockClass(id);
     this.requireTest(cls);
+    // The rows to number, locked before they are read (a status change waits, review N1).
+    await tx.$queryRaw`
+      SELECT id FROM public.admission_applications
+       WHERE cycle_class_id = ${id}::uuid AND test_roll IS NULL
+         AND status IN ('SUBMITTED', 'SHORTLISTED')
+       ORDER BY id FOR UPDATE`;
     const [last, waiting] = await Promise.all([
       tx.admissionApplication.aggregate({ where: { cycleClassId: id }, _max: { testRoll: true } }),
       tx.admissionApplication.findMany({
@@ -215,18 +221,24 @@ export class AdmissionTestService {
     if (to > 999_999) throw apiError(422, 'ROLLS_EXHAUSTED', 'Test rolls go up to 999999');
     const ids = waiting.map((w) => w.id);
     const rolls = waiting.map((_, i) => from + i);
-    await tx.$executeRaw`
+    const written = await tx.$queryRaw<{ id: string }[]>`
       UPDATE public.admission_applications a
          SET test_roll = v.roll, updated_at = now()
         FROM unnest(${ids}::uuid[], ${rolls}::int[]) AS v(id, roll)
-       WHERE a.id = v.id AND a.test_roll IS NULL`;
+       WHERE a.id = v.id AND a.cycle_class_id = ${id}::uuid AND a.test_roll IS NULL
+         AND a.status IN ('SUBMITTED', 'SHORTLISTED')
+      RETURNING a.id`;
+    if (written.length !== ids.length) {
+      // The rows were locked; if this ever happens, nothing is numbered (no gaps).
+      throw apiError(409, 'ROLLS_CHANGED', 'The applications changed: issue the rolls again');
+    }
     await this.audit.record({
       entity: 'admission_test_rolls',
       entityId: id,
       action: 'UPDATE',
-      newValues: { from, to, applicationIds: ids },
+      newValues: { from, to, applicationIds: written.map((w) => w.id) },
     });
-    return { issued: waiting.length, from, to };
+    return { issued: written.length, from, to };
   }
 
   /** GET …/admit-cards: the issued rolls (a roll range), with the institute's header. */

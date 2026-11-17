@@ -657,6 +657,7 @@ function MeritTab({ view }: { view: AdmissionTestClassView }) {
       toast.error(t('missing', { count: formatCount(body?.count ?? 0, locale) }));
     } else if (code === 'TEST_NOT_CONFIGURED') toast.error(t('notConfigured'));
     else if (code === 'MERIT_STALE' || code === 'MERIT_NOT_BUILT') toast.error(t('meritStale'));
+    else if (code === 'ALREADY_PUBLISHED') toast.error(t('alreadyPublished'));
     else toast.error(describe(e));
   };
   const build = useMutation({
@@ -695,7 +696,9 @@ function MeritTab({ view }: { view: AdmissionTestClassView }) {
           </Button>
           <Button
             onClick={() => publish.mutate()}
-            disabled={publish.isPending || !m.builtAt || m.stale}
+            disabled={
+              publish.isPending || !m.builtAt || m.stale || m.builtAt === m.publishedBuiltAt
+            }
             data-testid="publish-merit"
           >
             {t('publish')}

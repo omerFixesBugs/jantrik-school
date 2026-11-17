@@ -298,7 +298,8 @@
       "resultsPublished": "A merit list of this cycle is published: the order can no longer change.",
       "byClass": "Admission test by class",
       "openTest": "Open the test",
-      "hasTestRoll": "An applicant with a test roll stays in their class."
+      "hasTestRoll": "An applicant with a test roll stays in their class.",
+      "alreadyPublished": "This list is already published: build it again after a change."
     }
   }
 }

@@ -417,7 +417,12 @@ describe('admission public functions', () => {
 
       // Published (version 1): the snapshot.
       const at = new Date('2026-12-25T06:00:00Z');
-      await setClass({ resultsVersion: 1, resultsPublishedAt: at, resultsFullMarks: 100 });
+      await setClass({
+        resultsVersion: 1,
+        resultsPublishedAt: at,
+        resultsFullMarks: 100,
+        resultsBuiltAt: at,
+      });
       await setApp({
         status: 'SELECTED',
         resultVersion: 1,
