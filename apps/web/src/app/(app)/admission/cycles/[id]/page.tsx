@@ -4,11 +4,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ADMISSION_FIELD_SETTINGS,
   ADMISSION_FIELDS,
+  ADMISSION_TIE_BREAKS,
   DEFAULT_ADMISSION_FIELDS,
   type AdmissionCycleView,
   type AdmissionFieldSetting,
+  type AdmissionTieBreak,
 } from '@jantrik/shared';
-import { PlusIcon, Trash2Icon } from 'lucide-react';
+import { ClipboardListIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
@@ -51,6 +54,7 @@ interface Basics {
   requiresTest: boolean;
   collectPhoto: boolean;
   fields: Partial<Record<string, AdmissionFieldSetting>>;
+  meritTieBreak: AdmissionTieBreak;
 }
 
 interface ClassRow {
@@ -73,12 +77,14 @@ function basicsFrom(c: AdmissionCycleView): Basics {
     requiresTest: c.requiresTest,
     collectPhoto: c.collectPhoto,
     fields: { ...c.fields },
+    meritTieBreak: c.meritTieBreak,
   };
 }
 
 function Cycle() {
   const t = useTranslations('admissions.staff');
   const tc = useTranslations('admissions.staff.cycle');
+  const tt = useTranslations('admissions.staff.test');
   const locale = useLocale() as Locale;
   const params = useParams<{ id: string }>();
   const isNew = params.id === 'new';
@@ -115,6 +121,7 @@ function Cycle() {
       requiresTest: false,
       collectPhoto: false,
       fields: {},
+      meritTieBreak: 'OLDER_FIRST',
     });
   }
   if (cycle.data && cycle.data !== source) {
@@ -141,6 +148,7 @@ function Cycle() {
     else if (code === 'CYCLE_HAS_APPLICATIONS') toast.error(tc('errorHasApplications'));
     else if (code === 'CYCLE_HAS_NO_CLASSES') toast.error(tc('errorNoClasses'));
     else if (code === 'CLASS_HAS_APPLICATIONS') toast.error(tc('errorClassHasApplications'));
+    else if (code === 'RESULTS_PUBLISHED') toast.error(tt('resultsPublished'));
     else toast.error(describe(e));
   };
 
@@ -163,7 +171,7 @@ function Cycle() {
         ? client.api<AdmissionCycleView>('/admission/cycles', { method: 'POST', json })
         : client.api<AdmissionCycleView>(`/admission/cycles/${params.id}`, {
             method: 'PATCH',
-            json,
+            json: { ...json, ...(b.requiresTest ? { meritTieBreak: b.meritTieBreak } : {}) },
           });
     },
     onSuccess: (c) => {
@@ -341,6 +349,21 @@ function Cycle() {
             onChange={set('collectPhoto')}
             label={tc('collectPhoto')}
           />
+          {!isNew && basics.requiresTest && (
+            <FormGrid>
+              <SelectField
+                id="meritTieBreak"
+                label={tt('tieBreak')}
+                hint={tt('tieBreakHint')}
+                value={basics.meritTieBreak}
+                onChange={(v) => setBasics({ ...basics, meritTieBreak: v as AdmissionTieBreak })}
+                options={ADMISSION_TIE_BREAKS.map((x) => ({
+                  value: x,
+                  label: tt(`tieBreaks.${x}`),
+                }))}
+              />
+            </FormGrid>
+          )}
         </SectionCard>
 
         <SectionCard id="cycle-fields" title={tc('fields')} hint={tc('fieldsHint')}>
@@ -477,6 +500,30 @@ function Cycle() {
               {tc('saveClasses')}
             </Button>
           </div>
+        </SectionCard>
+      )}
+
+      {c?.requiresTest && c.classes.length > 0 && (
+        <SectionCard id="cycle-tests" title={tt('byClass')}>
+          <ul className="flex flex-col gap-2">
+            {c.classes.map((cc) => (
+              <li key={cc.id} className="flex flex-wrap items-center gap-3">
+                <span className="flex-1">
+                  {displayName(cc.classLevel.nameBn, cc.classLevel.nameEn, locale)}
+                  {cc.studyGroup &&
+                    ` · ${displayName(cc.studyGroup.nameBn, cc.studyGroup.nameEn, locale)}`}
+                </span>
+                <Link
+                  href={`/admission/cycle-classes/${cc.id}/test`}
+                  className="text-primary inline-flex min-h-(--control-h) items-center gap-1 text-sm underline-offset-4 hover:underline"
+                  data-testid="open-test"
+                >
+                  <ClipboardListIcon aria-hidden className="size-4" />
+                  {tt('openTest')}
+                </Link>
+              </li>
+            ))}
+          </ul>
         </SectionCard>
       )}
     </div>
