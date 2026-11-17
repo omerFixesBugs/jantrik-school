@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { withContext, withTenant, type PrismaClient } from '../src/index.js';
 import { appClient, createTenant, platformClient, ingestClient } from './helpers.js';
 
@@ -317,6 +317,30 @@ describe('admission public functions', () => {
       expect((await submit(a.slug, a.class6, ph, payload({ nameBn: 'চার' }))).outcome).toBe(
         'PHONE_CAP',
       );
+    });
+
+    it('a submit that waited for a cycle edit sees the edit: a cycle closed meanwhile is CLOSED (review round 2, NIT 2)', async () => {
+      const c = await school(app);
+      let racing: ReturnType<typeof submit> | undefined;
+      await withTenant(app, c.tenantId, async (tx) => {
+        // As AdmissionCyclesService.lock() and a status change: the cycle's lock, exclusively.
+        const key = `admission-cycle:${c.cycleId}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+        await tx.admissionCycle.update({ where: { id: c.cycleId }, data: { status: 'CLOSED' } });
+        racing = submit(c.slug, c.class6, phone(), payload());
+        // Commit only once the submit waits for the cycle's lock.
+        await vi.waitFor(
+          async () => {
+            const [w] = await tx.$queryRaw<{ n: number }[]>`
+              SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock'
+                AND wait_event = 'advisory' AND query LIKE '%admission_submit%'`;
+            if (w!.n === 0) throw new Error('the submit is not waiting yet');
+          },
+          { timeout: 5_000, interval: 25 },
+        );
+      });
+      expect((await racing!).outcome).toBe('CLOSED');
     });
   });
 

@@ -92,6 +92,7 @@ DECLARE
   v_name_key text;
   v_dob date;
   v_birth_reg text;
+  v_cycle_id uuid;
   v_dup text;
   v_dup_phone text;
   v_live integer;
@@ -116,6 +117,18 @@ BEGIN
     RETURN QUERY SELECT 'UNKNOWN'::text, NULL::text, c_null, c_null;
     RETURN;
   END IF;
+
+  -- The class's cycle, then the cycle's lock (shared; an edit of the cycle takes it exclusively),
+  -- and only then the cycle itself: an edit that committed while this waited is seen (review
+  -- round 2, NIT 2: a cycle closed meanwhile used to still take this application).
+  SELECT cc.cycle_id INTO v_cycle_id
+  FROM public.admission_cycle_classes cc
+  WHERE cc.tenant_id = v_tenant AND cc.id = p_cycle_class_id;
+  IF v_cycle_id IS NULL THEN
+    RETURN QUERY SELECT 'CLOSED'::text, NULL::text, v_tenant, c_null;
+    RETURN;
+  END IF;
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('admission-cycle:' || v_cycle_id::text, 0));
 
   SELECT c.id, c.fields, c.collect_photo, ay.start_date INTO v_cycle
   FROM public.admission_cycle_classes cc
@@ -188,9 +201,8 @@ BEGIN
   v_name_key := p_name_key;
 
   -- The same locks, keys and order as the staff entry (applications.service.ts): the cycle's,
-  -- shared (an edit of the cycle takes it exclusively); one application of this phone at a time;
+  -- shared (taken above, before the cycle was read); one application of this phone at a time;
   -- then one per birth registration number in the cycle (two phones, one child, at once).
-  PERFORM pg_advisory_xact_lock_shared(hashtextextended('admission-cycle:' || v_cycle.id::text, 0));
   PERFORM pg_advisory_xact_lock(hashtextextended('admission:' || v_tenant::text || ':' || p_phone, 0));
   IF v_birth_reg IS NOT NULL THEN
     PERFORM pg_advisory_xact_lock(hashtextextended(
