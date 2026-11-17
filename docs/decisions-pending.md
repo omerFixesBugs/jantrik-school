@@ -870,3 +870,34 @@ Also decided while building:
 - The migrations were written by hand (no development database is used in this run) and checked with `prisma migrate diff` against a scratch database: empty.
 - `sharp` 0.35.5 was already in the lockfile through Next.js; the API now depends on it directly (S8).
 - Encoding effort is moderate (PNG palette effort 4, WebP effort 4): the worst case (pure noise) stays well under the request's 15 s; a test pins it under 8 s per image on this PC.
+
+## Sprint 1, P6: notices and broadcast (2026-11-17)
+
+Built during the unattended day run of 2026-11-17 from the P6 plan (PR #15,
+`docs/plans/sprint-1-p6-notices.md`) with its recommended defaults P6-A to P6-N and its split
+(P6a notices, P6b broadcasts). Decisions taken alone, each the safest option:
+
+- **P6-a1. Notices have no `SCHEDULED` status** (P6-A as recommended): visibility is computed
+  from `status`, `publish_at` and `expires_at` when read; no job. Publishing again moves a
+  scheduled notice's time; a live notice cannot be "published" again (409 `NOT_EDITABLE`).
+- **P6-a2. A publish time more than a minute in the past is refused** (422
+  `SCHEDULE_OUT_OF_RANGE`), not treated as "now": a past date is a mistake in the form.
+- **P6-a3. Targets on a `STAFF` notice are refused** (422 `TARGET_INVALID`) rather than ignored,
+  and a target section must be a current-year section of the target class (sections belong to a
+  year; one of another year would match no child).
+- **P6-a4. The expiry is a last day** in the form (the notice leaves the board at the end of that
+  day, Asia/Dhaka); the API stores the instant. It must be after the publish time (422
+  `EXPIRY_INVALID`); an unchanged past expiry does not block other edits.
+- **P6-a5. Only ACTIVE, not deleted children count** for a guardian's targeted notices and for the
+  read counts (a child who left no longer brings their class's notices).
+- **P6-a6. Audit entries hold the body's length, not the body** (a notice can be 5 000
+  characters; the title, audience, targets, pin and expiry are recorded).
+- **P6-a7. The dashboard card shows for staff and guardians** below the role's own cards, from
+  the same query as the board (no extra request when both are open).
+- **P6-a8. The Playwright spec signs in staff only** (owner and teacher by password): the demo
+  guardians' OTP budget (one code a minute, 5 per 15 minutes) is already shared by other specs.
+  Guardian visibility is covered by the API tests.
+- **Plan and code differences:** the plan's `/notices/new` and `/notices/[id]/edit` live under
+  `/notices/manage/` (one layout sends the management texts only to OWNER/ADMIN pages); the
+  manage page lists notices as rows rather than a table (it works at 390 px without scrolling
+  sideways).
