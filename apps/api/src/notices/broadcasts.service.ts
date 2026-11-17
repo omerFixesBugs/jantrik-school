@@ -1,0 +1,858 @@
+import { createHash } from 'node:crypto';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Inject, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@jantrik/db';
+import {
+  BROADCAST_LIMITS,
+  broadcastProblems,
+  cutText,
+  inQuietHours,
+  nextAllowedAt,
+  smsLength,
+  todayIn,
+  dateToDb,
+  type BroadcastAlert,
+  type BroadcastInput,
+  type BroadcastPreview,
+  type BroadcastView,
+  type NoticeTargetRef,
+} from '@jantrik/shared';
+import type { Queue } from 'bullmq';
+import type { Redis } from 'ioredis';
+import { AttendanceSettingsService } from '../attendance/attendance-settings.service.js';
+import { AuditService } from '../audit/audit.module.js';
+import { apiError } from '../common/api-error.js';
+import { Clock } from '../common/clock.js';
+import { RequestContext } from '../common/request-context.js';
+import { REDIS } from '../redis/redis.constants.js';
+import { TenantSmsService } from '../sms/tenant-sms.service.js';
+import { Db } from '../tenancy/db.service.js';
+import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
+import { AudienceService } from './audience.service.js';
+import { NoticesService } from './notices.service.js';
+
+export const NOTICES_QUEUE = 'notices';
+export const BROADCAST_SEND_JOB = 'broadcast-send';
+export const NOTICES_SWEEP_JOB = 'notices-sweep';
+/** Scheduled broadcasts by due time (score = ms): `<tenantId>|<broadcastId>`, our own values. */
+export const NOTICES_DUE_KEY = 'notices:due';
+
+export interface BroadcastJobData {
+  tenantId: string;
+  broadcastId: string;
+}
+
+export const broadcastJobId = (broadcastId: string) => `broadcast-${broadcastId}`;
+const relatedEntity = (id: string) => `broadcast:${id}`;
+/** Statuses an edit may start from (a broadcast that was never sent goes back to DRAFT, N-a). */
+const EDITABLE = new Set(['DRAFT', 'SCHEDULED', 'FAILED_OVER_CAP', 'EXPIRED', 'COST_CHANGED']);
+/** The send job: retried with backoff; a failed one is kept (the sweep replaces it, B2). */
+const JOB_OPTS = {
+  attempts: 3,
+  backoff: { type: 'exponential' as const, delay: 5_000 },
+  removeOnComplete: true,
+  removeOnFail: 50,
+};
+/** Overdue this long, a SCHEDULED broadcast is re-queued when an admin opens the list (P6-K). */
+const HEAL_AFTER_MS = 2 * 60_000;
+/** The dashboard warning looks back this far (P6-D). */
+const ALERT_DAYS = 3;
+
+type Row = Prisma.SmsBroadcastGetPayload<{
+  include: { targets: { include: { classLevel: true; section: true } } };
+}>;
+
+/** The outcome of one run of the send job, for its caller to finish after commit. */
+export type SendOutcome =
+  | { kind: 'STOP' }
+  | { kind: 'SENT'; queued: number }
+  | { kind: 'FAILED_OVER_CAP' }
+  | { kind: 'CANCELLED_ACTOR' }
+  | { kind: 'EXPIRED' }
+  | { kind: 'COST_CHANGED' }
+  | { kind: 'ALREADY_SENT' }
+  | { kind: 'LATER'; at: Date };
+
+/**
+ * SMS broadcasts (sprint 1 P6b, docs/notices.md → Broadcasts). A draft is previewed (recipients,
+ * segments, cost, the cap left), then sent now or scheduled outside quiet hours; the job
+ * resolves the audience at that moment (S19) and queues every SMS in one transaction, or none
+ * when they do not fit today's cap (S18). OWNER/ADMIN only (S20).
+ */
+@Injectable()
+export class BroadcastsService implements OnModuleInit {
+  constructor(
+    @InjectQueue(NOTICES_QUEUE) private readonly queue: Queue<BroadcastJobData>,
+    private readonly db: Db,
+    private readonly context: RequestContext,
+    private readonly audit: AuditService,
+    private readonly clock: Clock,
+    private readonly sms: TenantSmsService,
+    private readonly cap: AttendanceSettingsService,
+    private readonly audience: AudienceService,
+    private readonly notices: NoticesService,
+    private readonly jobs: TenantJobRunner,
+    @Inject(REDIS) private readonly redis: Redis,
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    // A queued SMS of a broadcast cancelled afterwards is dropped before sending (P6-L).
+    this.sms.registerRelevanceCheck('BROADCAST', async (log) => {
+      if (!log.relatedId) return false;
+      const b = await this.db.tx.smsBroadcast.findFirst({
+        where: { id: log.relatedId },
+        select: { status: true },
+      });
+      return b?.status === 'SENT';
+    });
+    // The sweep: re-adds jobs Redis lost (one scheduler for every API instance).
+    await this.queue.upsertJobScheduler(
+      'notices-sweep',
+      { every: 5 * 60_000 },
+      { name: NOTICES_SWEEP_JOB, opts: { removeOnComplete: true, removeOnFail: 50 } },
+    );
+  }
+
+  // ── Reading ──────────────────────────────────────────────────────────────────────────────
+
+  private readonly include = {
+    targets: { include: { classLevel: true, section: true }, orderBy: { createdAt: 'asc' } },
+  } as const;
+
+  /** SMS by state for these broadcasts, in one grouped query (B6). */
+  private async smsCounts(ids: string[]) {
+    const groups = ids.length
+      ? await this.db.tx.smsLog.groupBy({
+          by: ['relatedId', 'status'],
+          where: { relatedId: { in: ids }, purpose: 'BROADCAST' },
+          _count: true,
+        })
+      : [];
+    return (id: string, status: string) =>
+      groups.find((g) => g.relatedId === id && g.status === status)?._count ?? 0;
+  }
+
+  private async view(
+    b: Row,
+    counts?: (id: string, status: string) => number,
+  ): Promise<BroadcastView> {
+    const c = counts ?? (await this.smsCounts([b.id]));
+    const n = (s: string) => c(b.id, s);
+    return {
+      id: b.id,
+      body: b.body,
+      recipients: b.recipients,
+      status: b.status,
+      noticeId: b.noticeId,
+      targets: b.targets.map((t) => ({
+        classLevelId: t.classLevelId,
+        sectionId: t.sectionId,
+        classNameBn: t.classLevel.nameBn,
+        classNameEn: t.classLevel.nameEn,
+        sectionName: t.section?.name ?? null,
+      })),
+      scheduledAt: b.scheduledAt?.toISOString() ?? null,
+      previewCount: b.previewCount,
+      segments: b.segments,
+      estimatedCostPaisa: b.estimatedCostPaisa,
+      queuedCount: b.queuedCount,
+      sentCostPaisa: b.sentCostPaisa,
+      sentAt: b.sentAt?.toISOString() ?? null,
+      cancelledAt: b.cancelledAt?.toISOString() ?? null,
+      cancelReason: (b.cancelReason as BroadcastView['cancelReason']) ?? null,
+      failure: (b.failure as unknown as BroadcastView['failure']) ?? null,
+      createdAt: b.createdAt.toISOString(),
+      sms: {
+        queued: n('QUEUED') + n('HELD_OVER_LIMIT'),
+        sent: n('SENT'),
+        failed: n('FAILED') + n('EXPIRED'),
+        cancelled: n('CANCELLED'),
+      },
+    };
+  }
+
+  private async row(id: string): Promise<Row> {
+    const b = await this.db.tx.smsBroadcast.findFirst({ where: { id }, include: this.include });
+    if (!b) throw new NotFoundException('Broadcast not found');
+    return b;
+  }
+
+  async get(id: string): Promise<BroadcastView> {
+    return this.view(await this.row(id));
+  }
+
+  /** The list. Opening it re-queues scheduled broadcasts overdue by 2 minutes (P6-K). */
+  async list(): Promise<BroadcastView[]> {
+    await this.healOverdue();
+    const rows = await this.db.tx.smsBroadcast.findMany({
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 200,
+      include: this.include,
+    });
+    await this.healWaitingSms(rows.filter((b) => b.status === 'SENT').map((b) => b.id));
+    const counts = await this.smsCounts(rows.map((b) => b.id));
+    return Promise.all(rows.map((b) => this.view(b, counts)));
+  }
+
+  /**
+   * SMS of sent broadcasts still QUEUED 10 minutes after they were stored, outside quiet hours:
+   * their jobs may be lost (or waited out the night); re-added after commit (a no-op for jobs
+   * that exist, N-c). Stopping a sent broadcast is not offered (P6-L).
+   */
+  private async healWaitingSms(ids: string[]): Promise<void> {
+    if (!ids.length) return;
+    const { now, timeZone } = await this.tenantNow();
+    if (inQuietHours(now, timeZone)) return;
+    const waiting = await this.db.tx.smsLog.findMany({
+      where: {
+        relatedId: { in: ids },
+        purpose: 'BROADCAST',
+        status: 'QUEUED',
+        createdAt: { lt: new Date(Date.now() - 10 * 60_000) },
+      },
+      select: { id: true },
+      take: 5000,
+    });
+    if (!waiting.length) return;
+    const tenantId = this.context.requireTenantId();
+    await this.context.afterCommit(() =>
+      this.sms.enqueueBulk(
+        tenantId,
+        waiting.map((w) => w.id),
+      ),
+    );
+  }
+
+  private async healOverdue(): Promise<void> {
+    const tenantId = this.context.requireTenantId();
+    const overdue = await this.db.tx.smsBroadcast.findMany({
+      where: {
+        status: 'SCHEDULED',
+        scheduledAt: { lt: new Date(this.clock.now().getTime() - HEAL_AFTER_MS) },
+      },
+      select: { id: true, scheduledAt: true },
+    });
+    for (const b of overdue) await this.enqueueAfterCommit(tenantId, b.id, b.scheduledAt!);
+  }
+
+  /** The dashboard warning: failed over the cap, cancelled because the admin lost the role, or overdue. */
+  async alerts(): Promise<BroadcastAlert[]> {
+    const now = this.clock.now();
+    const since = new Date(now.getTime() - ALERT_DAYS * 86_400_000);
+    const rows = await this.db.tx.smsBroadcast.findMany({
+      where: {
+        OR: [
+          { status: 'FAILED_OVER_CAP', updatedAt: { gte: since } },
+          { status: 'CANCELLED', cancelReason: 'ACTOR_NOT_ADMIN', cancelledAt: { gte: since } },
+          { status: 'EXPIRED', updatedAt: { gte: since } },
+          { status: 'COST_CHANGED', updatedAt: { gte: since } },
+          { status: 'SCHEDULED', scheduledAt: { lt: new Date(now.getTime() - 10 * 60_000) } },
+        ],
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        status: true,
+        body: true,
+        updatedAt: true,
+        cancelledAt: true,
+        scheduledAt: true,
+      },
+    });
+    return rows.map((b) => ({
+      id: b.id,
+      status:
+        b.status === 'SCHEDULED'
+          ? 'OVERDUE'
+          : (b.status as 'FAILED_OVER_CAP' | 'CANCELLED' | 'EXPIRED' | 'COST_CHANGED'),
+      at: (b.status === 'SCHEDULED'
+        ? b.scheduledAt!
+        : (b.cancelledAt ?? b.updatedAt)
+      ).toISOString(),
+      bodyStart: cutText(b.body, 60),
+    }));
+  }
+
+  // ── Writing ──────────────────────────────────────────────────────────────────────────────
+
+  /** Text of 1–3 segments; targets only for guardians, this institute's classes and sections. */
+  private async check(input: BroadcastInput): Promise<NoticeTargetRef[]> {
+    const problems = broadcastProblems(input.body);
+    if (problems.includes('EMPTY')) {
+      throw apiError(422, 'SMS_EMPTY', 'The broadcast has no text');
+    }
+    if (problems.includes('SMS_TOO_LONG')) {
+      const { segments } = smsLength(input.body);
+      throw apiError(422, 'SMS_TOO_LONG', 'A broadcast is 1 to 3 SMS segments', {
+        segments,
+        max: BROADCAST_LIMITS.segments,
+      });
+    }
+    if (input.recipients === 'STAFF' && input.targets.length) {
+      throw apiError(422, 'TARGET_INVALID', 'A broadcast to staff takes no class targets');
+    }
+    if (input.noticeId) await this.notices.manageOne(input.noticeId); // 404 when not ours
+    return this.notices.checkTargets('GUARDIANS', input.targets);
+  }
+
+  async create(input: BroadcastInput): Promise<BroadcastView> {
+    const tenantId = this.context.requireTenantId();
+    const userId = this.context.requirePrincipal().userId;
+    const targets = await this.check(input);
+    const b = await this.db.tx.smsBroadcast.create({
+      data: {
+        tenantId,
+        body: input.body,
+        recipients: input.recipients,
+        noticeId: input.noticeId,
+        createdById: userId,
+      },
+      select: { id: true },
+    });
+    if (targets.length) {
+      await this.db.tx.smsBroadcastTarget.createMany({
+        data: targets.map((t) => ({ tenantId, broadcastId: b.id, ...t })),
+      });
+    }
+    await this.audit.record({
+      entity: 'sms_broadcast',
+      entityId: b.id,
+      action: 'CREATE',
+      newValues: this.auditValues(input, targets),
+    });
+    return this.get(b.id);
+  }
+
+  /**
+   * Edits a draft, or a scheduled broadcast, which goes back to DRAFT (its job stops on its own):
+   * the admin previews and schedules again, so every check runs again.
+   */
+  async update(id: string, input: BroadcastInput): Promise<BroadcastView> {
+    const tenantId = this.context.requireTenantId();
+    const before = await this.lockRow(id);
+    if (!EDITABLE.has(before.status)) {
+      throw apiError(409, 'NOT_EDITABLE', 'A sent or cancelled broadcast cannot be edited');
+    }
+    const targets = await this.check(input);
+    await this.db.tx.smsBroadcast.update({
+      where: { id },
+      data: {
+        body: input.body,
+        recipients: input.recipients,
+        noticeId: input.noticeId,
+        status: 'DRAFT',
+        scheduledAt: null,
+        scheduledById: null,
+        previewCount: null,
+        segments: null,
+        estimatedCostPaisa: null,
+        failure: Prisma.DbNull,
+      },
+      select: { id: true },
+    });
+    await this.db.tx.smsBroadcastTarget.deleteMany({ where: { broadcastId: id } });
+    if (targets.length) {
+      await this.db.tx.smsBroadcastTarget.createMany({
+        data: targets.map((t) => ({ tenantId, broadcastId: id, ...t })),
+      });
+    }
+    await this.audit.record({
+      entity: 'sms_broadcast',
+      entityId: id,
+      action: 'UPDATE',
+      oldValues: {
+        status: before.status,
+        bodyLength: before.body.length,
+        recipients: before.recipients,
+        failure: before.failure ?? null,
+      },
+      newValues: { status: 'DRAFT', ...(this.auditValues(input, targets) as object) },
+    });
+    if (before.status === 'SCHEDULED') await this.dequeueAfterCommit(tenantId, id);
+    return this.get(id);
+  }
+
+  private auditValues(input: BroadcastInput, targets: NoticeTargetRef[]): Prisma.InputJsonValue {
+    return {
+      recipients: input.recipients,
+      noticeId: input.noticeId,
+      targets: targets.map((t) => ({ classLevelId: t.classLevelId, sectionId: t.sectionId })),
+      bodyLength: input.body.length,
+      segments: smsLength(input.body).segments,
+    };
+  }
+
+  /** The broadcast's row, locked for this transaction (FOR UPDATE NOWAIT when `nowait`). */
+  private async lockRow(id: string, nowait = false) {
+    try {
+      const rows = nowait
+        ? await this.db.tx.$queryRaw<{ id: string }[]>`
+            SELECT id FROM public.sms_broadcasts WHERE id = ${id}::uuid FOR UPDATE NOWAIT`
+        : await this.db.tx.$queryRaw<{ id: string }[]>`
+            SELECT id FROM public.sms_broadcasts WHERE id = ${id}::uuid FOR UPDATE`;
+      if (!rows.length) throw new NotFoundException('Broadcast not found');
+    } catch (e) {
+      if (nowait && String((e as Error).message).includes('55P03')) {
+        throw apiError(409, 'ALREADY_SENDING', 'The broadcast is being sent right now');
+      }
+      throw e;
+    }
+    return this.row(id);
+  }
+
+  // ── Preview, send, schedule, cancel ──────────────────────────────────────────────────────
+
+  private async tenantNow() {
+    const tenant = await this.db.tx.tenant.findFirstOrThrow({
+      select: { timezone: true, name: true },
+    });
+    const now = this.clock.now();
+    return { now, timeZone: tenant.timezone, today: todayIn(tenant.timezone, now) };
+  }
+
+  async preview(id: string): Promise<BroadcastPreview> {
+    const b = await this.row(id);
+    return this.previewOf(b);
+  }
+
+  private async previewOf(b: Row): Promise<BroadcastPreview> {
+    const tx = this.db.tx;
+    const { now, timeZone, today } = await this.tenantNow();
+    const audience = await this.audience.resolve(
+      b.recipients,
+      b.targets.map((t) => ({ classLevelId: t.classLevelId, sectionId: t.sectionId })),
+    );
+    const { segments, encoding } = smsLength(b.body);
+    const [rate] = await tx.$queryRaw<{ rate: number }[]>`
+      SELECT sms_cost_per_segment_paisa AS rate FROM public.platform_settings`;
+    const used = await tx.smsLog.count({
+      where: { localDate: dateToDb(today), status: { in: ['QUEUED', 'SENT'] } },
+    });
+    const capLeft = Math.max(0, (await this.cap.smsDailyCap()) - used);
+    const recipients = audience.phones.length;
+    const costPaisa = recipients * segments * Number(rate?.rate ?? 0);
+    const token = createHash('sha256')
+      .update(
+        JSON.stringify({
+          body: b.body,
+          kind: b.recipients,
+          noticeId: b.noticeId,
+          targets: b.targets.map((t) => `${t.classLevelId}|${t.sectionId ?? ''}`).sort(),
+          recipients,
+          segments,
+          costPaisa,
+        }),
+      )
+      .digest('hex');
+    return {
+      recipients,
+      withoutPhone: audience.withoutPhone,
+      mergedPhones: audience.mergedPhones,
+      segments,
+      encoding,
+      costPaisa,
+      capLeftToday: capLeft,
+      fits: recipients <= capLeft,
+      quietNow: inQuietHours(now, timeZone),
+      nextAllowedAt: nextAllowedAt(now, timeZone).toISOString(),
+      sampleText: b.body,
+      token,
+    };
+  }
+
+  /** Send now = schedule at now, after the same checks; the job sends it at once. */
+  async send(
+    id: string,
+    confirmed: { expectedRecipients: number; previewToken: string },
+  ): Promise<BroadcastView> {
+    const b = await this.lockRow(id);
+    this.assertDraft(b);
+    const preview = await this.previewOf(b);
+    this.assertPreview(preview, confirmed);
+    if (!preview.fits) {
+      throw apiError(422, 'OVER_CAP', "The SMS do not fit today's limit", {
+        needed: preview.recipients,
+        capLeft: preview.capLeftToday,
+      });
+    }
+    if (preview.quietNow) {
+      throw apiError(422, 'QUIET_HOURS', 'No SMS between 21:00 and 08:00', {
+        nextAllowedAt: preview.nextAllowedAt,
+      });
+    }
+    return this.markScheduled(b, this.clock.now(), preview);
+  }
+
+  async schedule(
+    id: string,
+    scheduledAt: Date,
+    confirmed: { expectedRecipients: number; previewToken: string },
+  ): Promise<BroadcastView> {
+    const b = await this.lockRow(id);
+    this.assertDraft(b);
+    const { now, timeZone } = await this.tenantNow();
+    const min = now.getTime() + BROADCAST_LIMITS.minAheadMinutes * 60_000;
+    const max = now.getTime() + BROADCAST_LIMITS.maxDays * 86_400_000;
+    if (scheduledAt.getTime() < min || scheduledAt.getTime() > max) {
+      throw apiError(422, 'SCHEDULE_OUT_OF_RANGE', 'Schedule between 5 minutes and 30 days ahead');
+    }
+    if (inQuietHours(scheduledAt, timeZone)) {
+      throw apiError(422, 'QUIET_HOURS', 'No SMS between 21:00 and 08:00', {
+        nextAllowedAt: nextAllowedAt(scheduledAt, timeZone).toISOString(),
+      });
+    }
+    const preview = await this.previewOf(b);
+    this.assertPreview(preview, confirmed);
+    return this.markScheduled(b, scheduledAt, preview);
+  }
+
+  private assertDraft(b: Row) {
+    if (b.status !== 'DRAFT') {
+      throw apiError(409, 'NOT_EDITABLE', 'Only a draft can be sent or scheduled');
+    }
+  }
+
+  /** The count and the token the admin saw must both still hold (B1: cost, text, audience). */
+  private assertPreview(
+    preview: BroadcastPreview,
+    confirmed: { expectedRecipients: number; previewToken: string },
+  ) {
+    if (
+      preview.recipients !== confirmed.expectedRecipients ||
+      preview.token !== confirmed.previewToken
+    ) {
+      throw apiError(
+        409,
+        'PREVIEW_CHANGED',
+        'The broadcast changed since the preview: preview again',
+        {
+          recipients: preview.recipients,
+          segments: preview.segments,
+          costPaisa: preview.costPaisa,
+        },
+      );
+    }
+  }
+
+  private async markScheduled(b: Row, at: Date, preview: BroadcastPreview) {
+    const tenantId = this.context.requireTenantId();
+    const userId = this.context.requirePrincipal().userId;
+    await this.db.tx.smsBroadcast.update({
+      where: { id: b.id },
+      data: {
+        status: 'SCHEDULED',
+        scheduledAt: at,
+        scheduledById: userId,
+        previewCount: preview.recipients,
+        segments: preview.segments,
+        estimatedCostPaisa: preview.costPaisa,
+      },
+      select: { id: true },
+    });
+    await this.audit.record({
+      entity: 'sms_broadcast',
+      entityId: b.id,
+      action: 'UPDATE',
+      oldValues: { status: b.status },
+      newValues: {
+        status: 'SCHEDULED',
+        scheduledAt: at.toISOString(),
+        previewCount: preview.recipients,
+        segments: preview.segments,
+        estimatedCostPaisa: preview.costPaisa,
+      },
+    });
+    await this.enqueueAfterCommit(tenantId, b.id, at);
+    return this.get(b.id);
+  }
+
+  /** A draft or a scheduled broadcast. 409 ALREADY_SENDING while the job holds the row. */
+  async cancel(id: string): Promise<BroadcastView> {
+    const tenantId = this.context.requireTenantId();
+    const userId = this.context.requirePrincipal().userId;
+    const b = await this.lockRow(id, true);
+    if (b.status !== 'DRAFT' && b.status !== 'SCHEDULED') {
+      throw apiError(409, 'NOT_EDITABLE', 'A sent or failed broadcast cannot be cancelled');
+    }
+    await this.db.tx.smsBroadcast.update({
+      where: { id },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: this.clock.now(),
+        cancelledById: userId,
+        cancelReason: 'BY_ADMIN',
+      },
+      select: { id: true },
+    });
+    await this.audit.record({
+      entity: 'sms_broadcast',
+      entityId: id,
+      action: 'UPDATE',
+      oldValues: { status: b.status },
+      newValues: { status: 'CANCELLED', cancelReason: 'BY_ADMIN' },
+    });
+    if (b.status === 'SCHEDULED') await this.dequeueAfterCommit(tenantId, id);
+    return this.get(id);
+  }
+
+  // ── The job ──────────────────────────────────────────────────────────────────────────────
+
+  /** Who the send job acts for (read first, outside the actor's context). */
+  async scheduledBy(id: string): Promise<{ status: string; scheduledById: string | null } | null> {
+    return this.db.tx.smsBroadcast.findFirst({
+      where: { id },
+      select: { status: true, scheduledById: true },
+    });
+  }
+
+  /**
+   * The send job's transaction (acting as the scheduling admin): the row under FOR UPDATE; stop
+   * unless SCHEDULED; cancel when the admin lost the role (S19); wait out quiet hours (and an
+   * early run); resolve the audience now; queue every SMS or none (S18).
+   */
+  async sendDue(id: string, actor: { userId: string; stillAdmin: boolean }): Promise<SendOutcome> {
+    const b = await this.lockRow(id);
+    if (b.status === 'SENT') return { kind: 'ALREADY_SENT' };
+    if (b.status !== 'SCHEDULED') return { kind: 'STOP' };
+    const { now, timeZone, today } = await this.tenantNow();
+    // Rescheduled by someone else since the role was checked: run again for them (N2).
+    if (b.scheduledById !== actor.userId) return { kind: 'LATER', at: now };
+    const lateMs = b.scheduledAt ? now.getTime() - b.scheduledAt.getTime() : 0;
+    if (lateMs > BROADCAST_LIMITS.staleAfterHours * 3_600_000) {
+      return this.expire(id, now, Math.floor(lateMs / 60_000));
+    }
+    if (!actor.stillAdmin) {
+      await this.db.tx.smsBroadcast.update({
+        where: { id },
+        data: { status: 'CANCELLED', cancelledAt: now, cancelReason: 'ACTOR_NOT_ADMIN' },
+        select: { id: true },
+      });
+      await this.audit.record({
+        entity: 'sms_broadcast',
+        entityId: id,
+        action: 'UPDATE',
+        oldValues: { status: 'SCHEDULED' },
+        newValues: { status: 'CANCELLED', cancelReason: 'ACTOR_NOT_ADMIN' },
+      });
+      return { kind: 'CANCELLED_ACTOR' };
+    }
+    if (b.scheduledAt && b.scheduledAt > now) return { kind: 'LATER', at: b.scheduledAt };
+    if (inQuietHours(now, timeZone)) {
+      // Waiting for 08:00 keeps the chosen time (the lateness counts from it, SF2): a wait that
+      // would make it more than 3 hours late expires it now instead.
+      const at = nextAllowedAt(now, timeZone);
+      const lateAt = b.scheduledAt ? at.getTime() - b.scheduledAt.getTime() : 0;
+      if (lateAt > BROADCAST_LIMITS.staleAfterHours * 3_600_000) {
+        return this.expire(id, now, Math.floor(lateAt / 60_000));
+      }
+      return { kind: 'LATER', at };
+    }
+    const audience = await this.audience.resolve(
+      b.recipients,
+      b.targets.map((t) => ({ classLevelId: t.classLevelId, sectionId: t.sectionId })),
+    );
+    const segments = smsLength(b.body).segments;
+    const [rateRow] = await this.db.tx.$queryRaw<{ rate: number }[]>`
+      SELECT sms_cost_per_segment_paisa AS rate FROM public.platform_settings`;
+    const rate = Number(rateRow?.rate ?? 0);
+    const costPaisa = audience.phones.length * segments * rate;
+    const confirmedCostPaisa = b.estimatedCostPaisa ?? 0;
+    if (
+      costPaisa * 100 > confirmedCostPaisa * (100 + BROADCAST_LIMITS.costTolerancePercent) &&
+      costPaisa - confirmedCostPaisa > segments * rate
+    ) {
+      const failure = { confirmedCostPaisa, costPaisa, recipients: audience.phones.length };
+      await this.db.tx.smsBroadcast.update({
+        where: { id },
+        data: { status: 'COST_CHANGED', failure, updatedAt: now },
+        select: { id: true },
+      });
+      await this.audit.record({
+        entity: 'sms_broadcast',
+        entityId: id,
+        action: 'UPDATE',
+        oldValues: { status: 'SCHEDULED' },
+        newValues: { status: 'COST_CHANGED', ...failure },
+      });
+      return { kind: 'COST_CHANGED' };
+    }
+    const result = await this.sms.queueAll(
+      audience.phones.map((phone) => ({
+        purpose: 'BROADCAST' as const,
+        phone,
+        body: b.body,
+        dedupeKey: `broadcast:${id}:${phone}`,
+        relatedEntity: relatedEntity(id),
+        relatedId: id,
+      })),
+      { dailyCap: await this.cap.smsDailyCap(), localDate: today },
+    );
+    if (result.outcome === 'OVER_CAP') {
+      await this.db.tx.smsBroadcast.update({
+        where: { id },
+        data: {
+          status: 'FAILED_OVER_CAP',
+          failure: { needed: result.needed, capLeft: result.capLeft },
+          // The institute's clock (the dashboard warning looks back 3 days from it).
+          updatedAt: now,
+        },
+        select: { id: true },
+      });
+      await this.audit.record({
+        entity: 'sms_broadcast',
+        entityId: id,
+        action: 'UPDATE',
+        oldValues: { status: 'SCHEDULED' },
+        newValues: { status: 'FAILED_OVER_CAP', needed: result.needed, capLeft: result.capLeft },
+      });
+      return { kind: 'FAILED_OVER_CAP' };
+    }
+    const sentCostPaisa = result.queued * segments * rate;
+    await this.db.tx.smsBroadcast.update({
+      where: { id },
+      data: {
+        status: 'SENT',
+        sentAt: now,
+        queuedCount: result.queued,
+        sentCostPaisa,
+        localDate: dateToDb(today),
+        segments,
+      },
+      select: { id: true },
+    });
+    await this.audit.record({
+      entity: 'sms_broadcast',
+      entityId: id,
+      action: 'UPDATE',
+      oldValues: { status: 'SCHEDULED' },
+      newValues: {
+        status: 'SENT',
+        queued: result.queued,
+        duplicates: result.duplicates,
+        withoutPhone: audience.withoutPhone,
+        costPaisa: sentCostPaisa,
+        confirmedCostPaisa,
+      },
+    });
+    return { kind: 'SENT', queued: result.queued };
+  }
+
+  /** Not sent: found (or would go out) more than 3 hours after its time (B3, SF2). */
+  private async expire(id: string, now: Date, lateMinutes: number): Promise<SendOutcome> {
+    await this.db.tx.smsBroadcast.update({
+      where: { id },
+      data: { status: 'EXPIRED', failure: { lateMinutes }, updatedAt: now },
+      select: { id: true },
+    });
+    await this.audit.record({
+      entity: 'sms_broadcast',
+      entityId: id,
+      action: 'UPDATE',
+      oldValues: { status: 'SCHEDULED' },
+      newValues: { status: 'EXPIRED', lateMinutes },
+    });
+    return { kind: 'EXPIRED' };
+  }
+
+  // ── Queue and the due set (after commit) ────────────────────────────────────────────────
+
+  private member = (tenantId: string, id: string) => `${tenantId}|${id}`;
+
+  private enqueueAfterCommit(tenantId: string, id: string, at: Date): Promise<void> {
+    return this.context.afterCommit(() => this.enqueue(tenantId, id, at));
+  }
+
+  /** Adds (or keeps) the job and the due-set entry. The same job id is a no-op while it exists. */
+  async enqueue(tenantId: string, id: string, at: Date): Promise<void> {
+    const delay = Math.max(0, at.getTime() - this.clock.now().getTime());
+    await this.redis.zadd(NOTICES_DUE_KEY, at.getTime(), this.member(tenantId, id));
+    const existing = await this.queue.getJob(broadcastJobId(id));
+    // A job already running or waiting keeps its place; a delayed one is moved to the new time.
+    if (existing && (await existing.isDelayed())) await existing.remove().catch(() => undefined);
+    else if (existing && !(await existing.isCompleted()) && !(await existing.isFailed())) return;
+    else if (existing) await existing.remove().catch(() => undefined);
+    await this.queue.add(
+      BROADCAST_SEND_JOB,
+      { tenantId, broadcastId: id },
+      { jobId: broadcastJobId(id), delay, ...JOB_OPTS },
+    );
+  }
+
+  private dequeueAfterCommit(tenantId: string, id: string): Promise<void> {
+    return this.context.afterCommit(() => this.forget(tenantId, id, true));
+  }
+
+  /** Re-adds the jobs of this broadcast's QUEUED SMS (a no-op for jobs that exist; B4). */
+  async ensureSmsJobs(tenantId: string, id: string): Promise<number> {
+    const ids = (
+      await this.jobs.run(tenantId, () =>
+        this.db.tx.smsLog.findMany({
+          where: { relatedId: id, purpose: 'BROADCAST', status: 'QUEUED' },
+          select: { id: true },
+        }),
+      )
+    ).map((l) => l.id);
+    await this.sms.enqueueBulk(tenantId, ids);
+    return ids.length;
+  }
+
+  /** The due-set entry at its (new) time, for the sweep. */
+  async markDue(tenantId: string, id: string, at: Date): Promise<void> {
+    await this.redis.zadd(NOTICES_DUE_KEY, at.getTime(), this.member(tenantId, id));
+  }
+
+  /** The due-set score seen now (compare it when dropping the entry later, B7). */
+  async dueScore(tenantId: string, id: string): Promise<string | null> {
+    return this.redis.zscore(NOTICES_DUE_KEY, this.member(tenantId, id));
+  }
+
+  /**
+   * Drops the due-set entry only if it still has the score seen at the start of the job: a new
+   * schedule made meanwhile (another score) keeps its entry for the sweep (B7).
+   */
+  async forgetIfUnchanged(tenantId: string, id: string, score: string | null): Promise<void> {
+    if (score === null) return;
+    await this.redis.eval(
+      "if redis.call('ZSCORE', KEYS[1], ARGV[1]) == ARGV[2] then return redis.call('ZREM', KEYS[1], ARGV[1]) end return 0",
+      1,
+      NOTICES_DUE_KEY,
+      this.member(tenantId, id),
+      score,
+    );
+  }
+
+  /** Drops the due-set entry (and the job, when asked: a failed removal is harmless). */
+  async forget(tenantId: string, id: string, removeJob = false): Promise<void> {
+    await this.redis.zrem(NOTICES_DUE_KEY, this.member(tenantId, id));
+    if (removeJob) {
+      const job = await this.queue.getJob(broadcastJobId(id));
+      if (job && !(await job.isActive())) await job.remove().catch(() => undefined);
+    }
+  }
+
+  /** The sweep: re-adds every due job Redis lost; entries older than 7 days are dropped. */
+  async sweep(): Promise<number> {
+    const now = this.clock.now().getTime();
+    await this.redis.zremrangebyscore(NOTICES_DUE_KEY, '-inf', now - 7 * 86_400_000);
+    const due = await this.redis.zrangebyscore(NOTICES_DUE_KEY, '-inf', now);
+    let added = 0;
+    for (const m of due) {
+      const [tenantId, id] = m.split('|');
+      if (!tenantId || !id) continue;
+      const existing = await this.queue.getJob(broadcastJobId(id));
+      if (existing) {
+        // A job that failed (or finished) is replaced; one waiting, delayed or running is kept.
+        if (!(await existing.isFailed()) && !(await existing.isCompleted())) continue;
+        await existing.remove().catch(() => undefined);
+      }
+      await this.queue.add(
+        BROADCAST_SEND_JOB,
+        { tenantId, broadcastId: id },
+        { jobId: broadcastJobId(id), ...JOB_OPTS },
+      );
+      added++;
+    }
+    return added;
+  }
+}

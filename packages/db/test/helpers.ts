@@ -1,24 +1,28 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { PrismaPg } from '@prisma/adapter-pg';
 import {
-  PrismaClient,
   createPrismaClient,
   hashPlatformToken,
   provisionTenant,
   withTenant,
+  type PrismaClient,
   type ProvisionTenantInput,
   type Tenant,
 } from '../src/index.js';
-import { APP_URL, INGEST_URL, OWNER_URL, PLATFORM_URL } from './env.js';
+import { APP_URL, INGEST_URL, LOGIN_URL, OWNER_URL, PLATFORM_URL } from './env.js';
+import { phoneSource } from './test-phones.js';
 
 export const appClient = (): PrismaClient => createPrismaClient(APP_URL);
 
-/** A random valid Bangladeshi mobile number (E.164). */
-export const randomPhone = (): string =>
-  `+88017${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
+/**
+ * A valid Bangladeshi mobile number (E.164) that no other test user of this database has, in this
+ * run or an earlier one (`test-phones.ts`; the API tests draw from +88013, these from +88014).
+ */
+export const randomPhone: () => string = phoneSource('+88014', APP_URL);
 export const ownerClient = (): PrismaClient => createPrismaClient(OWNER_URL);
 /** The API platform module's role: the only one that may run the platform_* functions. */
 export const platformClient = (): PrismaClient => createPrismaClient(PLATFORM_URL);
+/** The password login's login (P1-J): only auth_find_user_for_password_login. */
+export const loginClient = (): PrismaClient => createPrismaClient(LOGIN_URL);
 /** The device receiver's login: no table grants, only the ingest_* functions. */
 export const ingestClient = (): PrismaClient => createPrismaClient(INGEST_URL);
 
@@ -52,7 +56,7 @@ export async function newPlatformSession(
 
 /** App-role client with a single pooled connection, to test connection reuse. */
 export const singleConnectionAppClient = (): PrismaClient =>
-  new PrismaClient({ adapter: new PrismaPg({ connectionString: APP_URL, max: 1 }) });
+  createPrismaClient(APP_URL, { max: 1 });
 
 export async function createTenant(
   app: PrismaClient,

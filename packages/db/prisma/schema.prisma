@@ -315,6 +315,8 @@ enum SmsPurpose {
   ATTENDANCE_ENTRY
   /// A student's exit punch, to the primary guardian (devices; at most one a day).
   ATTENDANCE_EXIT
+  /// An admin's SMS broadcast to guardians or staff (notices, sprint 1 P6b).
+  BROADCAST
 
   @@map("sms_purpose")
 }
@@ -592,6 +594,17 @@ model User {
   deviceSourceIpsTrusted   DeviceSourceIp[]     @relation("DeviceSourceIpTrustedBy")
   staffDaysUpdated         StaffAttendanceDay[] @relation("StaffAttendanceDayUpdatedBy")
 
+  storedFilesCreated StoredFile[] @relation("StoredFileCreatedBy")
+
+  noticesCreated   Notice[]     @relation("NoticeCreatedBy")
+  noticesPublished Notice[]     @relation("NoticePublishedBy")
+  noticesWithdrawn Notice[]     @relation("NoticeWithdrawnBy")
+  noticeReads      NoticeRead[]
+
+  smsBroadcastsCreated   SmsBroadcast[] @relation("SmsBroadcastCreatedBy")
+  smsBroadcastsScheduled SmsBroadcast[] @relation("SmsBroadcastScheduledBy")
+  smsBroadcastsCancelled SmsBroadcast[] @relation("SmsBroadcastCancelledBy")
+
   @@map("users")
 }
 
@@ -686,6 +699,17 @@ model Tenant {
   devicePunches       DevicePunch[]
   deviceSourceIps     DeviceSourceIp[]
   staffAttendanceDays StaffAttendanceDay[]
+
+  storedFiles      StoredFile[]
+  storedFileUsage  StoredFileUsage?
+  instituteProfile InstituteProfile?
+
+  notices       Notice[]
+  noticeTargets NoticeTarget[]
+  noticeReads   NoticeRead[]
+
+  smsBroadcasts       SmsBroadcast[]
+  smsBroadcastTargets SmsBroadcastTarget[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -865,6 +889,8 @@ model ClassLevel {
   enrolments     Enrolment[]
   feeAmounts     FeeAmount[]
   examClasses    ExamClass[]
+  noticeTargets  NoticeTarget[]
+  broadcastTargets SmsBroadcastTarget[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -964,6 +990,8 @@ model Section {
   examCandidates     ExamCandidate[]
   examMarkSheets     ExamMarkSheet[]
   examResults        ExamResult[]
+  noticeTargets      NoticeTarget[]
+  broadcastTargets   SmsBroadcastTarget[]
 
   @@unique([tenantId, id])
   /// So rows can carry the class level and be checked against a subject's class.
@@ -996,34 +1024,38 @@ model Membership {
 }
 
 model Student {
-  id                  String        @id @default(uuid(7)) @db.Uuid
-  tenantId            String        @map("tenant_id") @db.Uuid
-  studentCode         String        @map("student_code")
-  userId              String?       @map("user_id") @db.Uuid
-  nameBn              String?       @map("name_bn")
-  nameEn              String?       @map("name_en")
-  dateOfBirth         DateTime?     @map("date_of_birth") @db.Date
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  tenantId            String         @map("tenant_id") @db.Uuid
+  studentCode         String         @map("student_code")
+  userId              String?        @map("user_id") @db.Uuid
+  nameBn              String?        @map("name_bn")
+  nameEn              String?        @map("name_en")
+  dateOfBirth         DateTime?      @map("date_of_birth") @db.Date
   gender              Gender?
-  photoUrl            String?       @map("photo_url")
-  status              StudentStatus @default(ACTIVE)
+  /// The student's photo (stored_files, kind STUDENT_PHOTO); replaced files are deleted.
+  photoFileId         String?        @map("photo_file_id") @db.Uuid
+  /// Always STUDENT_PHOTO (CHECK): part of the foreign key, so the photo can only be a photo.
+  photoFileKind       StoredFileKind @default(STUDENT_PHOTO) @map("photo_file_kind")
+  status              StudentStatus  @default(ACTIVE)
   // Fields required for Bangladesh education board registration.
-  fatherNameBn        String?       @map("father_name_bn")
-  fatherNameEn        String?       @map("father_name_en")
-  motherNameBn        String?       @map("mother_name_bn")
-  motherNameEn        String?       @map("mother_name_en")
+  fatherNameBn        String?        @map("father_name_bn")
+  fatherNameEn        String?        @map("father_name_en")
+  motherNameBn        String?        @map("mother_name_bn")
+  motherNameEn        String?        @map("mother_name_en")
   religion            Religion?
   /// 17-digit birth registration number; unique per tenant when present.
-  birthRegistrationNo String?       @map("birth_registration_no")
-  bloodGroup          BloodGroup?   @map("blood_group")
-  presentAddress      String?       @map("present_address")
-  permanentAddress    String?       @map("permanent_address")
+  birthRegistrationNo String?        @map("birth_registration_no")
+  bloodGroup          BloodGroup?    @map("blood_group")
+  presentAddress      String?        @map("present_address")
+  permanentAddress    String?        @map("permanent_address")
   /// Soft delete. Queries must filter `deletedAt: null` themselves.
-  deletedAt           DateTime?     @map("deleted_at") @db.Timestamptz(3)
-  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt           DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  photoFile  StoredFile?       @relation("StudentPhoto", fields: [tenantId, photoFileId, photoFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
   guardians  StudentGuardian[]
   enrolments Enrolment[]
 
@@ -1042,6 +1074,8 @@ model Student {
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
   @@unique([tenantId, birthRegistrationNo])
+  // A file belongs to one student (also the foreign key's index).
+  @@unique([tenantId, photoFileId, photoFileKind])
   @@index([tenantId, status], where: raw("deleted_at IS NULL"))
   @@index([tenantId, nameEn])
   // Trigram indexes for ILIKE '%…%' search (GET /students).
@@ -1848,6 +1882,8 @@ model SmsLog {
   @@index([tenantId, createdAt(sort: Desc)])
   /// Platform usage: a month's sent SMS across institutes.
   @@index([localDate], map: "sms_logs_sent_local_date", where: raw("status = 'SENT'"))
+  /// A broadcast's SMS by state (the broadcasts list, sprint 1 P6b).
+  @@index([tenantId, relatedId])
   @@map("sms_logs")
 }
 
@@ -3111,4 +3147,297 @@ model StaffAttendanceDay {
   @@unique([tenantId, userId, date])
   @@index([tenantId, date])
   @@map("staff_attendance_days")
+}
+
+// ───────────────────────────── Files and the institute profile (sprint 1 P2) ─────────────────────────────
+// docs/files.md. Only apps/api/src/files/postgres-file-store.ts reads or writes stored_files and
+// stored_file_usage (a code scan checks it); callers use the FileStore interface.
+
+enum StoredFileKind {
+  STUDENT_PHOTO
+  APPLICANT_PHOTO
+  LOGO
+  SIGNATURE
+  SEAL
+  DOCUMENT_ASSET
+
+  @@map("stored_file_kind")
+}
+
+/// An image stored in the database, already re-encoded by the API (never the uploaded bytes).
+/// Rows never change (no UPDATE grant): a replaced image is a new row, and the old one is deleted.
+model StoredFile {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  tenantId    String         @map("tenant_id") @db.Uuid
+  kind        StoredFileKind
+  /// image/jpeg, image/png or image/webp; the CHECK pairs each kind with its formats.
+  mime        String
+  bytes       Bytes
+  /// = octet_length(bytes); at most the kind's cap (CHECK).
+  sizeBytes   Int            @map("size_bytes")
+  /// Hex SHA-256 of bytes: the ETag.
+  sha256      String         @db.Char(64)
+  width       Int
+  height      Int
+  createdById String?        @map("created_by_id") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User?  @relation("StoredFileCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Restrict)
+
+  student          Student?          @relation("StudentPhoto")
+  profileLogo      InstituteProfile? @relation("InstituteProfileLogo")
+  profileSignature InstituteProfile? @relation("InstituteProfileSignature")
+  profileSeal      InstituteProfile? @relation("InstituteProfileSeal")
+
+  @@unique([tenantId, id])
+  // What the kind-bound foreign keys point at.
+  @@unique([tenantId, id, kind])
+  @@index([tenantId, kind])
+  @@map("stored_files")
+}
+
+/// One row per institute once it stores a file: the running total for the per-institute cap
+/// (FILE_STORAGE_PER_TENANT_MB), changed with every put and delete under the institute's lock.
+model StoredFileUsage {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @unique @map("tenant_id") @db.Uuid
+  bytesUsed BigInt   @default(0) @map("bytes_used")
+  fileCount Int      @default(0) @map("file_count")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@map("stored_file_usage")
+}
+
+/// The institute's own profile (at most one per institute, created on the first save or image).
+/// tenants.name stays the name the platform registered; these are the institute's own words.
+model InstituteProfile {
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  tenantId            String         @unique @map("tenant_id") @db.Uuid
+  nameBn              String?        @map("name_bn")
+  nameEn              String?        @map("name_en")
+  shortName           String?        @map("short_name")
+  /// BANBEIS EIIN: 6 ASCII digits.
+  eiin                String?
+  addressBn           String?        @map("address_bn")
+  addressEn           String?        @map("address_en")
+  /// 5-15 ASCII digits with an optional leading + (a Bangladeshi mobile is stored as E.164).
+  phone               String?
+  email               String?
+  website             String?
+  headTitleBn         String?        @map("head_title_bn")
+  headTitleEn         String?        @map("head_title_en")
+  headNameBn          String?        @map("head_name_bn")
+  headNameEn          String?        @map("head_name_en")
+  establishedYear     Int?           @map("established_year") @db.SmallInt
+  logoFileId          String?        @map("logo_file_id") @db.Uuid
+  headSignatureFileId String?        @map("head_signature_file_id") @db.Uuid
+  sealFileId          String?        @map("seal_file_id") @db.Uuid
+  /// Fixed kinds (CHECK institute_profiles_file_kinds), part of each image's foreign key, so a
+  /// logo is a LOGO file, the signature a SIGNATURE and the seal a SEAL.
+  logoFileKind        StoredFileKind @default(LOGO) @map("logo_file_kind")
+  signatureFileKind   StoredFileKind @default(SIGNATURE) @map("head_signature_file_kind")
+  sealFileKind        StoredFileKind @default(SEAL) @map("seal_file_kind")
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  logoFile      StoredFile? @relation("InstituteProfileLogo", fields: [tenantId, logoFileId, logoFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+  signatureFile StoredFile? @relation("InstituteProfileSignature", fields: [tenantId, headSignatureFileId, signatureFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+  sealFile      StoredFile? @relation("InstituteProfileSeal", fields: [tenantId, sealFileId, sealFileKind], references: [tenantId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  // One file is used in one place (also each foreign key's index).
+  @@unique([tenantId, logoFileId, logoFileKind])
+  @@unique([tenantId, headSignatureFileId, signatureFileKind])
+  @@unique([tenantId, sealFileId, sealFileKind])
+  @@map("institute_profiles")
+}
+
+// ───────────────────────────── Notices (sprint 1 P6, docs/notices.md) ─────────────────────────────
+
+enum NoticeAudience {
+  ALL
+  STAFF
+  GUARDIANS
+
+  @@map("notice_audience")
+}
+
+/// "Scheduled" is a PUBLISHED notice whose publish_at is still ahead (P6-A): visibility is computed
+/// when read, so no job flips it.
+enum NoticeStatus {
+  DRAFT
+  PUBLISHED
+  WITHDRAWN
+
+  @@map("notice_status")
+}
+
+/// A notice on the board. Never deleted (withdrawn instead); OWNER/ADMIN write it (S20).
+model Notice {
+  id              String         @id @default(uuid(7)) @db.Uuid
+  tenantId        String         @map("tenant_id") @db.Uuid
+  title           String
+  body            String
+  audience        NoticeAudience
+  status          NoticeStatus   @default(DRAFT)
+  publishAt       DateTime?      @map("publish_at") @db.Timestamptz(3)
+  expiresAt       DateTime?      @map("expires_at") @db.Timestamptz(3)
+  pinned          Boolean        @default(false)
+  createdById     String         @map("created_by_id") @db.Uuid
+  publishedById   String?        @map("published_by_id") @db.Uuid
+  withdrawnById   String?        @map("withdrawn_by_id") @db.Uuid
+  withdrawnAt     DateTime?      @map("withdrawn_at") @db.Timestamptz(3)
+  withdrawnReason String?        @map("withdrawn_reason")
+  /// The last edit after publishing ("edited" on the board, P6-N).
+  editedAt        DateTime?      @map("edited_at") @db.Timestamptz(3)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User           @relation("NoticeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  publishedBy User?          @relation("NoticePublishedBy", fields: [publishedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  withdrawnBy User?          @relation("NoticeWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targets     NoticeTarget[]
+  reads       NoticeRead[]
+  broadcasts  SmsBroadcast[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status, publishAt(sort: Desc)])
+  @@map("notices")
+}
+
+/// Narrows a notice's guardians to some classes (or one section of a class); none = everyone of
+/// the audience. Staff see an ALL or STAFF notice whatever its targets (P6-G). Replaced whole on
+/// save (delete + insert), so there is no UPDATE.
+model NoticeTarget {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  noticeId     String   @map("notice_id") @db.Uuid
+  classLevelId String   @map("class_level_id") @db.Uuid
+  sectionId    String?  @map("section_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  notice     Notice     @relation(fields: [tenantId, noticeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel ClassLevel @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// A section of that class.
+  section    Section?   @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, noticeId])
+  @@map("notice_targets")
+}
+
+/// Who read a notice. Only for oneself (a restrictive policy); history: no UPDATE, no DELETE.
+model NoticeRead {
+  id       String   @id @default(uuid(7)) @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  noticeId String   @map("notice_id") @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  readAt   DateTime @default(now()) @map("read_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  notice Notice @relation(fields: [tenantId, noticeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, noticeId, userId])
+  @@index([tenantId, userId])
+  @@map("notice_reads")
+}
+
+enum BroadcastRecipients {
+  PRIMARY_GUARDIANS
+  ALL_GUARDIANS
+  STAFF
+
+  @@map("broadcast_recipients")
+}
+
+/// SENT means every SMS was handed to the SMS queue (in one transaction); delivery is read live
+/// from sms_logs (P6-C). FAILED_OVER_CAP: nothing was sent (all or nothing, S18).
+enum BroadcastStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+  CANCELLED
+  FAILED_OVER_CAP
+  /// Found more than 3 hours late (its job was lost): not sent; a new preview and send is needed.
+  EXPIRED
+  /// At send time it would cost much more than confirmed (the audience grew): not sent.
+  COST_CHANGED
+
+  @@map("broadcast_status")
+}
+
+/// An SMS to guardians or staff, sent now or at a set time, whole or not at all (S18–S20). Never
+/// deleted (money history).
+model SmsBroadcast {
+  id                 String              @id @default(uuid(7)) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  body               String
+  noticeId           String?             @map("notice_id") @db.Uuid
+  recipients         BroadcastRecipients
+  status             BroadcastStatus     @default(DRAFT)
+  scheduledAt        DateTime?           @map("scheduled_at") @db.Timestamptz(3)
+  /// The recipient count the admin confirmed (an estimate: the audience is resolved at send, S19).
+  previewCount       Int?                @map("preview_count")
+  segments           Int?                @db.SmallInt
+  estimatedCostPaisa Int?                @map("estimated_cost_paisa")
+  queuedCount        Int?                @map("queued_count")
+  /// The real cost of what was queued (SENT), integer paisa.
+  sentCostPaisa      Int?                @map("sent_cost_paisa")
+  /// The institute's day it was sent (cap and billing).
+  localDate          DateTime?           @map("local_date") @db.Date
+  createdById        String              @map("created_by_id") @db.Uuid
+  /// The admin the send job acts for.
+  scheduledById      String?             @map("scheduled_by_id") @db.Uuid
+  sentAt             DateTime?           @map("sent_at") @db.Timestamptz(3)
+  cancelledById      String?             @map("cancelled_by_id") @db.Uuid
+  cancelledAt        DateTime?           @map("cancelled_at") @db.Timestamptz(3)
+  /// BY_ADMIN or ACTOR_NOT_ADMIN.
+  cancelReason       String?             @map("cancel_reason")
+  /// {needed, capLeft} for FAILED_OVER_CAP.
+  failure            Json?
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  notice      Notice?              @relation(fields: [tenantId, noticeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User                 @relation("SmsBroadcastCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  scheduledBy User?                @relation("SmsBroadcastScheduledBy", fields: [scheduledById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cancelledBy User?                @relation("SmsBroadcastCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targets     SmsBroadcastTarget[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status, scheduledAt])
+  @@index([tenantId, noticeId])
+  @@map("sms_broadcasts")
+}
+
+/// A broadcast's guardian targets (as notice_targets): a class, or a section of that class.
+model SmsBroadcastTarget {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  broadcastId  String   @map("broadcast_id") @db.Uuid
+  classLevelId String   @map("class_level_id") @db.Uuid
+  sectionId    String?  @map("section_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  broadcast  SmsBroadcast @relation(fields: [tenantId, broadcastId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel ClassLevel   @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  section    Section?     @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, broadcastId])
+  @@map("sms_broadcast_targets")
 }

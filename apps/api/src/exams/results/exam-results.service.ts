@@ -455,7 +455,7 @@ export class ExamResultsService {
                 studentCode: true,
                 nameBn: true,
                 nameEn: true,
-                photoUrl: true,
+                photoFileId: true,
                 fatherNameBn: true,
                 fatherNameEn: true,
                 motherNameBn: true,
@@ -490,7 +490,8 @@ export class ExamResultsService {
           studentCode: st.studentCode,
           nameBn: st.nameBn,
           nameEn: st.nameEn,
-          photoUrl: st.photoUrl,
+          // The photo is part of the full record (as on the student's page).
+          photoId: sees ? st.photoFileId : null,
           fatherNameBn: sees ? st.fatherNameBn : null,
           fatherNameEn: sees ? st.fatherNameEn : null,
           motherNameBn: sees ? st.motherNameBn : null,

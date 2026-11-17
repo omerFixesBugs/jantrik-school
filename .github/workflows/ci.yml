@@ -21,12 +21,15 @@ env:
   DB_APP_PASSWORD: app_ci_password
   DB_PLATFORM_PASSWORD: platform_ci_password
   DB_INGEST_PASSWORD: ingest_ci_password
+  DB_LOGIN_PASSWORD: login_ci_password
   # Same roles as local dev; tests run against jantrik_test.
   DATABASE_URL: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_test
   # The API platform module's own role (tests point it at their database themselves).
   DATABASE_PLATFORM_URL: postgresql://jantrik_platform_app:platform_ci_password@localhost:5432/jantrik_test
   # The device receiver's own role (tests point it at their database themselves).
   DATABASE_INGEST_URL: postgresql://jantrik_ingest_app:ingest_ci_password@localhost:5432/jantrik_test
+  # The password login's own role (tests point it at their database themselves).
+  DATABASE_LOGIN_URL: postgresql://jantrik_login_app:login_ci_password@localhost:5432/jantrik_test
   DATABASE_MIGRATION_URL: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
   DATABASE_URL_TEST: postgresql://jantrik_app:app_ci_password@localhost:5432/jantrik_test
   DATABASE_MIGRATION_URL_TEST: postgresql://jantrik_owner:owner_ci_password@localhost:5432/jantrik_test
@@ -52,8 +55,9 @@ jobs:
   checks:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-24.04
-    # Normal runs take well under 5 minutes; this only stops a hung job.
-    timeout-minutes: 10
+    # Runs take 8 to 10 minutes now (all API test files run one after another); this only stops
+    # a hung job, so it leaves room to grow.
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -71,7 +75,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: redis:7-alpine
+        image: redis:7.4.11-alpine
         ports:
           - 6379:6379
         options: >-
@@ -156,7 +160,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: redis:7-alpine
+        image: redis:7.4.11-alpine
         ports:
           - 6379:6379
         options: >-
@@ -261,22 +265,25 @@ jobs:
           APP=$(openssl rand -hex 24)
           PLATFORM=$(openssl rand -hex 24)
           INGEST=$(openssl rand -hex 24)
-          for pw in "$OWNER" "$APP" "$PLATFORM" "$INGEST"; do echo "::add-mask::$pw"; done
+          LOGIN=$(openssl rand -hex 24)
+          for pw in "$OWNER" "$APP" "$PLATFORM" "$INGEST" "$LOGIN"; do echo "::add-mask::$pw"; done
           url() { echo "postgresql://$1:$2@localhost:5432/jantrik"; }
           {
             echo "DB_OWNER_PASSWORD=$OWNER"
             echo "DB_APP_PASSWORD=$APP"
             echo "DB_PLATFORM_PASSWORD=$PLATFORM"
             echo "DB_INGEST_PASSWORD=$INGEST"
+            echo "DB_LOGIN_PASSWORD=$LOGIN"
             echo "DATABASE_MIGRATION_URL=$(url jantrik_owner "$OWNER")"
             echo "DATABASE_URL=$(url jantrik_app "$APP")"
             echo "DATABASE_PLATFORM_URL=$(url jantrik_platform_app "$PLATFORM")"
             echo "DATABASE_INGEST_URL=$(url jantrik_ingest_app "$INGEST")"
+            echo "DATABASE_LOGIN_URL=$(url jantrik_login_app "$LOGIN")"
           } >> "$GITHUB_ENV"
 
       - name: Check the passwords are this run's
         run: |
-          for v in "$DB_OWNER_PASSWORD" "$DB_APP_PASSWORD" "$DB_PLATFORM_PASSWORD" "$DB_INGEST_PASSWORD"; do
+          for v in "$DB_OWNER_PASSWORD" "$DB_APP_PASSWORD" "$DB_PLATFORM_PASSWORD" "$DB_INGEST_PASSWORD" "$DB_LOGIN_PASSWORD"; do
             [ "${#v}" -eq 48 ] || { echo "a DB_*_PASSWORD is not this run's"; exit 1; }
           done
           case "$DATABASE_URL" in
@@ -323,6 +330,11 @@ jobs:
           exit "$status"
 
       - name: Create the roles and the production database (create-roles.sh)
+        run: sh deploy/postgres/create-roles.sh
+
+      # An upgrade runs it again on a live cluster to add new roles (docs/deploy.md → Upgrades):
+      # a second run must succeed and change nothing that exists.
+      - name: create-roles.sh again (safe to re-run)
         run: sh deploy/postgres/create-roles.sh
 
       # Version comes from "packageManager" in package.json.

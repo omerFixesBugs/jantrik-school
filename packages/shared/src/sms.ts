@@ -20,26 +20,46 @@ export interface SmsLength {
 }
 
 export function smsLength(text: string): SmsLength {
-  let septets = 0;
+  // Units per character: GSM-7 septets (an extension character is 2, never split across parts),
+  // or UTF-16 code units (an emoji is 2, never split either).
+  const septets: number[] = [];
   let gsm = true;
   for (const ch of text) {
-    if (BASIC.has(ch)) septets += 1;
-    else if (EXTENDED.has(ch)) septets += 2;
+    if (BASIC.has(ch)) septets.push(1);
+    else if (EXTENDED.has(ch)) septets.push(2);
     else {
       gsm = false;
       break;
     }
   }
   if (gsm) {
-    return { encoding: 'GSM7', length: septets, segments: segmentCount(septets, 160, 153) };
+    const length = septets.reduce((sum, n) => sum + n, 0);
+    return { encoding: 'GSM7', length, segments: segmentCount(septets, length, 160, 153) };
   }
-  // UCS-2 counts UTF-16 code units (an emoji is two).
-  return { encoding: 'UCS2', length: text.length, segments: segmentCount(text.length, 70, 67) };
+  const units = Array.from(text, (ch) => ch.length);
+  return {
+    encoding: 'UCS2',
+    length: text.length,
+    segments: segmentCount(units, text.length, 70, 67),
+  };
 }
 
-function segmentCount(length: number, single: number, perPart: number): number {
-  if (length === 0) return 1;
-  return length <= single ? 1 : Math.ceil(length / perPart);
+/**
+ * Parts the way a gateway splits a long SMS: whole characters per part, so a 2-unit character at
+ * a part's end starts the next part (the count, and the price, can be one more than length/part).
+ */
+function segmentCount(units: number[], length: number, single: number, perPart: number): number {
+  if (length <= single) return 1;
+  let segments = 1;
+  let used = 0;
+  for (const n of units) {
+    if (used + n > perPart) {
+      segments++;
+      used = 0;
+    }
+    used += n;
+  }
+  return segments;
 }
 
 /** Variables a tenant SMS template may use. */
