@@ -84,7 +84,8 @@ export default function StatusPage() {
       const e164 = normalizeBdPhone(phone);
       const v = await publicApi<{ phoneToken: string }>(`/${slug}/otp/verify`, {
         method: 'POST',
-        json: { phone: e164, code: toAsciiDigits(code.trim()) },
+        // A status code verifies only as one, into a token that only reads the status.
+        json: { phone: e164, code: toAsciiDigits(code.trim()), purpose: 'status' },
       });
       const s = await publicApi<AdmissionPublicStatus>(`/${slug}/status`, {
         method: 'POST',

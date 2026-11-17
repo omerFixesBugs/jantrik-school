@@ -995,9 +995,10 @@ The public form, P3b (its own PR, stacked on P3a):
   stricter than per institute: SMS pumping through many institutes' forms gets nothing extra.
   **Owner, by design (review round 2):** anyone who knows a family's phone can spend its five
   codes with five requests (each passes Turnstile and is one minute apart) and so shut that family
-  out of every institute's form and status page for up to 24 hours; the family still gets the
-  five SMS, which shows something is wrong. The alternative (per institute) multiplies what SMS
-  pumping can send by the number of institutes. Walk-in entry by staff (P3-J) is the fallback.
+  out of every institute's form for up to 24 hours (not the status page: its codes have their own
+  budget, P3-b16); the family still gets the five SMS, which shows something is wrong. The
+  alternative (per institute) multiplies what SMS pumping can send by the number of institutes.
+  Walk-in entry by staff (P3-J) is the fallback.
 - **P3-b10. Not measured here:** the 3-second budget on a throttled phone for `/apply/[slug]`
   needs a running web app and API, and this run starts no servers (ports and memory). The page
   loads no Turnstile script until the phone step; the build's size budget applies.
@@ -1023,12 +1024,18 @@ After the security review of P3b (round 1):
   is sent only when the phone made that application (same answer otherwise); `purpose: 'status'`
   with the application number. The answer is the same in every budget state too, and a probe
   leaves no trace (review round 2 and its follow-up): status codes spend **budgets of their own**
-  (per phone 5 a day across institutes, per institute 100 a day: constants in
-  `admission-otp.service.ts`), never the form's five a day or its ceiling, which a later ordinary
-  request would read; the code is sent after the answer (not awaited), so the response time does
-  not depend on a match either. A spent status budget sends nothing and still answers 202 with
-  no `Retry-After`. **Owner:** an institute's SMS for admission codes are now bounded by
-  `ADMISSION_OTP_PER_TENANT_PER_DAY` (300) plus 100 status codes a day; the status page never says
+  (per phone 5 a day across institutes; per institute a fixed fifth of the ceiling), never the
+  form's five a day or its share, which a later ordinary request would read; the code is sent
+  after the answer (not awaited), so the response time does not depend on a match either. A spent
+  status budget sends nothing and still answers 202 with no `Retry-After`. **A status code proves
+  the phone for the status only** (second follow-up): its own Redis slot, verified with
+  `purpose: 'status'` into a status token (`typ: admission-status`) that only `POST …/status`
+  accepts; that route refuses the form's token, and the submit and its upload guard refuse a
+  status token. **`ADMISSION_OTP_PER_TENANT_PER_DAY` caps all codes together**: the status page a
+  fixed fifth (60 of 300), the form the rest (240); fixed shares, because a shared counter would
+  let an ordinary request see whether a status code was sent. **Owner:** the form now has 240
+  codes a day per institute by default instead of 300 (raise the setting to 375 to keep 300 for
+  the form); with a setting under 5 the status page sends no codes. The status page never says
   "try later" (the form's code request still answers 429 with `Retry-After`: it reveals nothing
   about an application).
 - **P3-b17 (review S5, S6, N1, N2, N6).** The role's privileges are compared to an exact list; the

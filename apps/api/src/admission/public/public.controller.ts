@@ -66,7 +66,7 @@ export class AdmissionPublicController {
   @HttpCode(200)
   verify(
     @Param('slug') slug: string,
-    @Body() body: { phone?: unknown; code?: unknown },
+    @Body() body: { phone?: unknown; code?: unknown; purpose?: unknown },
     @Req() req: Request,
   ): Promise<{ phoneToken: string; expiresIn: number }> {
     return this.admission.verifyOtp(slugParam(slug), body ?? {}, req.ip ?? 'unknown');

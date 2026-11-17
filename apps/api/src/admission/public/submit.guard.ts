@@ -25,7 +25,8 @@ export class AdmissionSubmitGuard implements CanActivate {
       windowSec: 3600,
     });
     const token = req.headers['x-admission-token'];
-    if (!this.phones.valid(typeof token === 'string' ? token : undefined)) {
+    // A form token only: a status token proves the phone for the status page, never a submit.
+    if (!this.phones.valid(typeof token === 'string' ? token : undefined, 'form')) {
       throw apiError(401, 'ADMISSION_TOKEN_INVALID', 'Verify the phone again');
     }
     return true;

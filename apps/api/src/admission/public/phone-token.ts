@@ -6,10 +6,15 @@ import { Clock } from '../../common/clock.js';
 
 /** How long a proved phone may submit and look up applications (minutes). */
 export const PHONE_TOKEN_TTL_SEC = 30 * 60;
-const TYP = 'admission-phone';
+/**
+ * What the code proved the phone for: the form (submit) or the status page (read the status).
+ * A token of one kind is refused where the other is needed (review round 2, second follow-up).
+ */
+const TYP = { form: 'admission-phone', status: 'admission-status' } as const;
+export type PhoneTokenKind = keyof typeof TYP;
 
 interface PhoneClaims {
-  typ: typeof TYP;
+  typ: (typeof TYP)[PhoneTokenKind];
   /** The institute the code was sent for. */
   aud: string;
   /** The proved phone (E.164). */
@@ -44,10 +49,10 @@ export class PhoneTokens {
     );
   }
 
-  sign(tenantId: string, phone: string): string {
+  sign(tenantId: string, phone: string, kind: PhoneTokenKind): string {
     const header = b64(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
     const claims: PhoneClaims = {
-      typ: TYP,
+      typ: TYP[kind],
       aud: tenantId,
       sub: phone,
       exp: Math.floor(this.clock.now().getTime() / 1000) + PHONE_TOKEN_TTL_SEC,
@@ -56,18 +61,21 @@ export class PhoneTokens {
     return `${header}.${payload}.${this.mac(`${header}.${payload}`)}`;
   }
 
-  /** The proved phone for this institute, or null (bad, expired, another institute's, not ours). */
-  verify(token: string | undefined, tenantId: string): string | null {
+  /**
+   * The proved phone for this institute and this kind, or null (bad, expired, another
+   * institute's, the other kind, not ours).
+   */
+  verify(token: string | undefined, tenantId: string, kind: PhoneTokenKind): string | null {
     const claims = this.claims(token);
-    return claims && claims.aud === tenantId ? claims.sub : null;
+    return claims && claims.typ === TYP[kind] && claims.aud === tenantId ? claims.sub : null;
   }
 
   /**
-   * A token of ours, not expired, for any institute (the upload guard's check before the body is
-   * read; the route then checks the institute).
+   * A token of ours of this kind, not expired, for any institute (the upload guard's check before
+   * the body is read; the route then checks the institute).
    */
-  valid(token: string | undefined): boolean {
-    return this.claims(token) !== null;
+  valid(token: string | undefined, kind: PhoneTokenKind): boolean {
+    return this.claims(token)?.typ === TYP[kind];
   }
 
   private claims(token: string | undefined): PhoneClaims | null {
@@ -86,7 +94,11 @@ export class PhoneTokens {
     } catch {
       return null;
     }
-    if (claims.typ !== TYP || typeof claims.aud !== 'string' || typeof claims.sub !== 'string') {
+    if (
+      (claims.typ !== TYP.form && claims.typ !== TYP.status) ||
+      typeof claims.aud !== 'string' ||
+      typeof claims.sub !== 'string'
+    ) {
       return null;
     }
     if (typeof claims.exp !== 'number' || claims.exp * 1000 <= this.clock.now().getTime()) {

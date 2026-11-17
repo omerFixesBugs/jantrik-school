@@ -72,6 +72,25 @@ describe('admission (public): form, codes, submit, status', () => {
       .expect(200);
     return { phone, token: res.body.phoneToken as string };
   };
+  /** A status token: a status code to a phone that applied, verified as a status code. */
+  const proveStatus = async (slug: string, phone: string, applicationNo: string) => {
+    const before = h.sms.sentTo(phone).length;
+    await http(h)
+      .post(pub(slug, '/otp'))
+      .set('X-Forwarded-For', randomIp())
+      .send({ phone, turnstileToken: TURNSTILE_DUMMY_TOKEN, purpose: 'status', applicationNo })
+      .expect(202);
+    await vi.waitFor(() => expect(h.sms.sentTo(phone).length).toBeGreaterThan(before), {
+      timeout: 15_000,
+    });
+    const code = await lastCode(phone);
+    const res = await http(h)
+      .post(pub(slug, '/otp/verify'))
+      .set('X-Forwarded-For', randomIp())
+      .send({ phone, code, purpose: 'status' })
+      .expect(200);
+    return res.body.phoneToken as string;
+  };
   const fields = (over: Record<string, unknown> = {}) => ({
     nameBn: 'রাফি আহমেদ',
     dateOfBirth: '2019-05-01',
@@ -173,9 +192,10 @@ describe('admission (public): form, codes, submit, status', () => {
     );
   });
 
-  it('the status: the proved phone sees it; another phone gets 404', async () => {
+  it('the status: a status code proves the phone that applied; another phone gets 404; the form token is refused', async () => {
     const form = await getForm(a.slug);
     const me = await prove(a.slug);
+    const other = await prove(a.slug);
     clock.advance(20_000);
     const no = (
       await submit(a.slug, me.token, {
@@ -184,24 +204,38 @@ describe('admission (public): form, codes, submit, status', () => {
         payload: fields({ nameBn: 'অবস্থা দেখা' }),
       }).expect(201)
     ).body.applicationNo as string;
+    const otherNo = (
+      await submit(a.slug, other.token, {
+        cycleClassId: classA,
+        ticket: form.formTicket,
+        payload: fields({ nameBn: 'অন্য শিশু' }),
+      }).expect(201)
+    ).body.applicationNo as string;
+    const byForm = await http(h)
+      .post(pub(a.slug, '/status'))
+      .set('X-Admission-Token', me.token)
+      .send({ applicationNo: no });
+    expect(byForm.status).toBe(401);
+    await new Promise((r) => setTimeout(r, 5_500)); // the phones' cooldown (Redis, real time)
+    const mine = await proveStatus(a.slug, me.phone, no);
     const st = (
       await http(h)
         .post(pub(a.slug, '/status'))
-        .set('X-Admission-Token', me.token)
+        .set('X-Admission-Token', mine)
         .send({ applicationNo: no })
         .expect(200)
     ).body as AdmissionPublicStatus;
     expect(st).toMatchObject({ applicationNo: no, status: 'SUBMITTED', nameBn: 'অবস্থা দেখা' });
-    const other = await prove(a.slug);
+    const theirs = await proveStatus(a.slug, other.phone, otherNo);
     const res = await http(h)
       .post(pub(a.slug, '/status'))
-      .set('X-Admission-Token', other.token)
+      .set('X-Admission-Token', theirs)
       .send({ applicationNo: no });
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('APPLICATION_NOT_FOUND');
   });
 
-  it('review focus 1: 50 phones from 10 addresses against a ceiling of 20 → exactly 20 codes', async () => {
+  it("review focus 1: 50 phones from 10 addresses against a ceiling of 20 → exactly 16 codes (the form's share; the status page keeps 4)", async () => {
     const t = await admissionSchool(h);
     await admissionCycle(h, t);
     const ips = Array.from({ length: 10 }, () => randomIp());
@@ -210,13 +244,13 @@ describe('admission (public): form, codes, submit, status', () => {
     for (let i = 0; i < phones.length; i++) {
       results.push((await askCode(t.slug, phones[i]!, ips[i % 10])).status);
     }
-    expect(results.filter((s) => s === 202)).toHaveLength(20);
-    expect(results.filter((s) => s === 429)).toHaveLength(30);
+    expect(results.filter((s) => s === 202)).toHaveLength(16);
+    expect(results.filter((s) => s === 429)).toHaveLength(34);
     await vi.waitFor(
       async () =>
         expect(
           (await smsLogs(t.tenantId)).filter((l) => l.purpose === 'ADMISSION_OTP'),
-        ).toHaveLength(20),
+        ).toHaveLength(16),
       { timeout: 20_000, interval: 250 },
     );
   });

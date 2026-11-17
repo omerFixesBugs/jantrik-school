@@ -31,15 +31,31 @@ export const ADMISSION_OTP_TTL_SEC = 5 * 60;
 export const ADMISSION_OTP_MAX_ATTEMPTS = 5;
 /**
  * The status page's codes have budgets of their own (review round 2, follow-up), which the form's
- * code requests never read: per phone 5 a day across institutes, per institute 100 a day. Only a
- * phone that made the application gets one, so these bound what knowing (phone, number) can send.
+ * code requests never read: per phone 5 a day across institutes, and a fixed fifth of the
+ * institute's ceiling (admissionOtpCeilings). Only a phone that made the application gets one.
  */
 export const ADMISSION_STATUS_OTP_PER_PHONE_PER_DAY = 5;
-export const ADMISSION_STATUS_OTP_PER_TENANT_PER_DAY = 100;
 
-const codeKey = (tenantId: string, phone: string) => `otp:admission:${tenantId}:${phone}`;
-const attemptsKey = (tenantId: string, phone: string) =>
-  `otp:admission:attempts:${tenantId}:${phone}`;
+/** What a code is for: the form (a submit) or the status page (read the status). */
+export type AdmissionCodePurpose = 'form' | 'status';
+
+/**
+ * ADMISSION_OTP_PER_TENANT_PER_DAY caps all of an institute's codes in a day together (second
+ * follow-up): the status page gets a fixed fifth, the form the rest. Fixed shares, so neither side
+ * reads the other's counter (no oracle) and the two never add up to more than the setting.
+ */
+export function admissionOtpCeilings(total: number): Record<AdmissionCodePurpose, number> {
+  const status = Math.floor(total / 5);
+  return { form: total - status, status };
+}
+
+/** Each purpose has its own code and attempts: a status code never verifies as a form code. */
+const slot = (purpose: AdmissionCodePurpose) =>
+  purpose === 'status' ? 'otp:admission-status' : 'otp:admission';
+const codeKey = (purpose: AdmissionCodePurpose, tenantId: string, phone: string) =>
+  `${slot(purpose)}:${tenantId}:${phone}`;
+const attemptsKey = (purpose: AdmissionCodePurpose, tenantId: string, phone: string) =>
+  `${slot(purpose)}:attempts:${tenantId}:${phone}`;
 
 /**
  * The applicant's phone code (sprint 1 P3b). Codes live only in Redis as
@@ -47,7 +63,8 @@ const attemptsKey = (tenantId: string, phone: string) =>
  * use even under races (the delete wins), like the login code; but any valid Bangladeshi mobile may
  * get one (applicants have no account). Limits (review focus 1): per phone one a minute and five a
  * day, per address 20 an hour, and per institute ADMISSION_OTP_PER_TENANT_PER_DAY a day whatever
- * the phones and addresses. The caller checks Turnstile first, so a refused token uses no counter.
+ * the phones and addresses (both kinds of code together, admissionOtpCeilings). The caller checks
+ * Turnstile first, so a refused token uses no counter.
  */
 @Injectable()
 export class AdmissionOtpService {
@@ -86,10 +103,13 @@ export class AdmissionOtpService {
     phone: string;
     today: string;
     locale: 'bn' | 'en';
-    purpose?: 'form' | 'status';
+    purpose: AdmissionCodePurpose;
   }): Promise<boolean> {
-    const { tenantId, phone } = input;
-    if (input.purpose === 'status') {
+    const { tenantId, phone, purpose } = input;
+    const ceiling = admissionOtpCeilings(
+      this.config.get('ADMISSION_OTP_PER_TENANT_PER_DAY', { infer: true }),
+    )[purpose];
+    if (purpose === 'status') {
       const sent = await this.limiter.tryConsume(
         {
           key: `adm-otp-status-phone:${phone}`,
@@ -98,7 +118,7 @@ export class AdmissionOtpService {
         },
         {
           key: `adm-otp-status-tenant:${tenantId}:${input.today}`,
-          limit: ADMISSION_STATUS_OTP_PER_TENANT_PER_DAY,
+          limit: ceiling,
           windowSec: 86_400,
         },
       );
@@ -106,18 +126,19 @@ export class AdmissionOtpService {
     } else {
       await this.limiter.consumeIfAllowed(
         { key: `adm-otp-phone-day:${phone}`, limit: 5, windowSec: 86_400 },
-        {
-          key: `adm-otp-tenant:${tenantId}:${input.today}`,
-          limit: this.config.get('ADMISSION_OTP_PER_TENANT_PER_DAY', { infer: true }),
-          windowSec: 86_400,
-        },
+        { key: `adm-otp-tenant:${tenantId}:${input.today}`, limit: ceiling, windowSec: 86_400 },
       );
     }
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     await this.redis
       .multi()
-      .set(codeKey(tenantId, phone), this.hmac(tenantId, phone, code), 'EX', ADMISSION_OTP_TTL_SEC)
-      .del(attemptsKey(tenantId, phone))
+      .set(
+        codeKey(purpose, tenantId, phone),
+        this.hmac(tenantId, phone, code),
+        'EX',
+        ADMISSION_OTP_TTL_SEC,
+      )
+      .del(attemptsKey(purpose, tenantId, phone))
       .exec();
     await this.queue.add(
       ADMISSION_OTP_JOB,
@@ -133,28 +154,33 @@ export class AdmissionOtpService {
   }
 
   /** True once for a correct code; every failure looks the same. */
-  async verify(input: { tenantId: string; phone: string; code: string; ip: string }) {
-    const { tenantId, phone } = input;
+  async verify(input: {
+    tenantId: string;
+    phone: string;
+    code: string;
+    ip: string;
+    purpose: AdmissionCodePurpose;
+  }) {
+    const { tenantId, phone, purpose } = input;
+    const codeAt = codeKey(purpose, tenantId, phone);
+    const attemptsAt = attemptsKey(purpose, tenantId, phone);
     await this.limiter.consume({ key: `adm-verify-ip:${input.ip}`, limit: 30, windowSec: 900 });
-    const stored = await this.redis.get(codeKey(tenantId, phone));
+    const stored = await this.redis.get(codeAt);
     if (!stored) return false;
-    const attempts = await this.redis.incr(attemptsKey(tenantId, phone));
-    if (attempts === 1)
-      await this.redis.expire(attemptsKey(tenantId, phone), ADMISSION_OTP_TTL_SEC);
+    const attempts = await this.redis.incr(attemptsAt);
+    if (attempts === 1) await this.redis.expire(attemptsAt, ADMISSION_OTP_TTL_SEC);
     if (attempts > ADMISSION_OTP_MAX_ATTEMPTS) {
-      await this.redis.del(codeKey(tenantId, phone), attemptsKey(tenantId, phone));
+      await this.redis.del(codeAt, attemptsAt);
       return false;
     }
     const expected = Buffer.from(stored, 'hex');
     const actual = Buffer.from(this.hmac(tenantId, phone, input.code), 'hex');
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-      if (attempts >= ADMISSION_OTP_MAX_ATTEMPTS) {
-        await this.redis.del(codeKey(tenantId, phone), attemptsKey(tenantId, phone));
-      }
+      if (attempts >= ADMISSION_OTP_MAX_ATTEMPTS) await this.redis.del(codeAt, attemptsAt);
       return false;
     }
-    if ((await this.redis.del(codeKey(tenantId, phone))) !== 1) return false;
-    await this.redis.del(attemptsKey(tenantId, phone));
+    if ((await this.redis.del(codeAt)) !== 1) return false;
+    await this.redis.del(attemptsAt);
     return true;
   }
 

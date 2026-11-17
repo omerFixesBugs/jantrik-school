@@ -39,15 +39,20 @@ describe('admission (public): the status code request is no oracle', () => {
       purpose: 'status',
       applicationNo,
     });
-  const lastCode = async (phone: string) =>
+  // A code SMS (not the "application received" one, which can arrive in any order).
+  const CODE = /(?:কোড|code): (\d{6})/;
+  const codesTo = (phone: string) => h.sms.sentTo(phone).filter((m) => CODE.test(m));
+  /** The newest code SMS to this phone once there are more than `before` of them. */
+  const nextCode = (phone: string, before: number) =>
     vi.waitFor(
       () => {
-        const m = /(\d{6})/.exec(h.sms.sentTo(phone).at(-1) ?? '');
-        if (!m) throw new Error('no code yet');
-        return m[1]!;
+        const codes = codesTo(phone);
+        if (codes.length <= before) throw new Error('no new code yet');
+        return CODE.exec(codes.at(-1)!)![1]!;
       },
       { timeout: 15_000, interval: 100 },
     );
+  const lastCode = (phone: string) => nextCode(phone, 0);
   /** An application made through the form; returns its phone, number and form token. */
   const applied = async (slug: string, cycleClassId: string) => {
     const form = (await http(h).get(pub(slug)).set('X-Forwarded-For', randomIp()).expect(200))
@@ -150,15 +155,10 @@ describe('admission (public): the status code request is no oracle', () => {
         await askCode(v.slug, phone).expect(202); // 4 of 5
       }
       await sleep(1_200);
-      const before = h.sms.sentTo(phone).length;
+      const before = codesTo(phone).length;
       await askStatusCode(v.slug, phone, matching ? no : '2027-0999').expect(202);
       // The matching pair still gets its code (the status page works).
-      if (matching) {
-        await vi.waitFor(() => expect(h.sms.sentTo(phone).length).toBe(before + 1), {
-          timeout: 15_000,
-          interval: 100,
-        });
-      }
+      if (matching) await nextCode(phone, before);
       await sleep(1_200);
       return seen(await askCode(v.slug, phone));
     };
@@ -182,8 +182,9 @@ describe('admission (public): the status code request is no oracle', () => {
     expect(byForm.body.code).toBe('ADMISSION_TOKEN_INVALID');
 
     await sleep(1_200);
+    const beforeStatus = codesTo(phone).length;
     await askStatusCode(v.slug, phone, no).expect(202);
-    const statusCode = await lastCode(phone);
+    const statusCode = await nextCode(phone, beforeStatus);
     // A status code is not a form code (its own slot) ...
     expect((await verify(v.slug, phone, statusCode)).status).toBe(422);
     // ... it verifies only as a status code, into a token that reads the status ...
@@ -205,8 +206,9 @@ describe('admission (public): the status code request is no oracle', () => {
 
     // A form code does not verify as a status code.
     await sleep(1_200);
+    const beforeForm = codesTo(phone).length;
     await askCode(v.slug, phone).expect(202);
-    const formCode = await lastCode(phone);
+    const formCode = await nextCode(phone, beforeForm);
     expect((await verify(v.slug, phone, formCode, 'status')).status).toBe(422);
   });
 
@@ -218,7 +220,7 @@ describe('admission (public): the status code request is no oracle', () => {
     for (let i = 0; i < 3; i++) await askCode(z.slug, randomPhone()).expect(202); // 5 of 5
     await askCode(z.slug, randomPhone()).expect(429);
     await sleep(1_200);
-    const sent = (phone: string) => h.sms.sentTo(phone).length;
+    const sent = (phone: string) => codesTo(phone).length;
     const before = sent(first.phone) + sent(second.phone);
     await askStatusCode(z.slug, first.phone, first.no).expect(202); // the status page 1 of 1
     await askStatusCode(z.slug, second.phone, second.no).expect(202); // none left: nothing sent

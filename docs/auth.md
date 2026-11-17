@@ -470,7 +470,9 @@ with no institute and no person (`withContext({})`). A code-scan test keeps `Db`
   in the MAC input), then carried for 30 minutes in a phone token: HS256 with a key derived from
   `JWT_ACCESS_SECRET` by HKDF (`jantrik/admission-phone/v1`), `typ: admission-phone`, audience the
   institute's id. The access-token guard refuses it (another key and `typ`); the admission routes
-  refuse an access token; another institute's token is refused.
+  refuse an access token; another institute's token is refused. The status page's code has its
+  own Redis slot and gives a status token (`typ: admission-status`): only the status route takes
+  it, and the status route takes nothing else (so a status code never opens the form).
 - **Turnstile** guards every code and every submit; a form ticket (its own HKDF key) dates the
   form for the 15 s / 2 h rule. Both fail closed.
 

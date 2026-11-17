@@ -150,7 +150,10 @@ export const envSchema = z
     TURNSTILE_PROVIDER: z.enum(['cloudflare', 'fake']).default('cloudflare'),
     /** The Turnstile secret key. Required in production, and never a published test secret. */
     TURNSTILE_SECRET_KEY: z.string().min(1).optional(),
-    /** Admission codes per institute per day, whatever the phones and addresses (review focus 1). */
+    /**
+     * Admission codes per institute per day, whatever the phones and addresses (review focus 1):
+     * both kinds together, the status page a fifth and the form the rest.
+     */
     ADMISSION_OTP_PER_TENANT_PER_DAY: z.coerce.number().int().min(1).max(100_000).default(300),
     /** Seconds before a phone may get another admission code (the Playwright suite sets 1). */
     ADMISSION_OTP_PHONE_COOLDOWN_SEC: z.coerce.number().int().min(1).max(3600).default(60),

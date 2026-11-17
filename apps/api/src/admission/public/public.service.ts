@@ -23,7 +23,7 @@ import {
   type AdmissionSubmittedJob,
 } from './admission-otp.service.js';
 import { FormTickets } from './form-ticket.js';
-import { PHONE_TOKEN_TTL_SEC, PhoneTokens } from './phone-token.js';
+import { PHONE_TOKEN_TTL_SEC, PhoneTokens, type PhoneTokenKind } from './phone-token.js';
 import { TurnstileVerifier } from './turnstile.js';
 
 /** admission_public_form's answer, with the two fields the browser never gets. */
@@ -82,8 +82,8 @@ export class AdmissionPublicService {
     }
   }
 
-  private phoneFrom(token: string | undefined, tenantId: string): string {
-    const phone = this.phones.verify(token, tenantId);
+  private phoneFrom(token: string | undefined, tenantId: string, kind: PhoneTokenKind): string {
+    const phone = this.phones.verify(token, tenantId, kind);
     if (!phone) throw apiError(401, 'ADMISSION_TOKEN_INVALID', 'Verify the phone again');
     return phone;
   }
@@ -153,12 +153,22 @@ export class AdmissionPublicService {
       phone,
       today: todayIn(f.timezone, this.clock.now()),
       locale: f.institute.locale === 'en' ? 'en' : 'bn',
+      purpose: 'form',
     });
     return { expiresIn: 300 };
   }
 
-  /** POST /public/admission/:slug/otp/verify: the phone token (30 minutes). */
-  async verifyOtp(slug: string, body: { phone?: unknown; code?: unknown }, ip: string) {
+  /**
+   * POST /public/admission/:slug/otp/verify: the phone token (30 minutes). `purpose: 'status'`
+   * checks a status code and gives a status token, which only reads the status; otherwise a form
+   * code and a form token, which only submits (review round 2, second follow-up).
+   */
+  async verifyOtp(
+    slug: string,
+    body: { phone?: unknown; code?: unknown; purpose?: unknown },
+    ip: string,
+  ) {
+    const purpose = body.purpose === 'status' ? 'status' : 'form';
     const phone = typeof body.phone === 'string' ? normalizeBdPhone(body.phone) : null;
     const code = typeof body.code === 'string' ? toAsciiDigits(body.code.trim()) : '';
     // Before the database is reached (N3); the per-code attempts are counted in verify().
@@ -167,10 +177,13 @@ export class AdmissionPublicService {
       throw apiError(422, 'ADMISSION_CODE_INVALID', 'The code is not right');
     }
     const f = await this.open(slug);
-    if (!(await this.otp.verify({ tenantId: f.tenantId, phone, code, ip }))) {
+    if (!(await this.otp.verify({ tenantId: f.tenantId, phone, code, ip, purpose }))) {
       throw apiError(422, 'ADMISSION_CODE_INVALID', 'The code is not right');
     }
-    return { phoneToken: this.phones.sign(f.tenantId, phone), expiresIn: PHONE_TOKEN_TTL_SEC };
+    return {
+      phoneToken: this.phones.sign(f.tenantId, phone, purpose),
+      expiresIn: PHONE_TOKEN_TTL_SEC,
+    };
   }
 
   /** POST /public/admission/:slug/applications (multipart). */
@@ -184,7 +197,7 @@ export class AdmissionPublicService {
     // The per-address limit and the token's signature ran in AdmissionSubmitGuard, before the
     // upload was read (review S3); here the token must also be this institute's.
     const f = await this.open(slug);
-    const phone = this.phoneFrom(token, f.tenantId);
+    const phone = this.phoneFrom(token, f.tenantId, 'form');
     await this.limiter.consume({ key: `adm-submit-phone:${phone}`, limit: 10, windowSec: 86_400 });
     // A filled honeypot or a form sent too soon or too late: the same vague answer (P3-L), never
     // a fake success (a real guardian whose browser filled the hidden field learns to retry).
@@ -266,7 +279,8 @@ export class AdmissionPublicService {
   ): Promise<AdmissionPublicStatus> {
     await this.limiter.consume({ key: `adm-status-ip:${ip}`, limit: 30, windowSec: 3600 });
     const f = await this.open(slug);
-    const phone = this.phoneFrom(token, f.tenantId);
+    // A status token only (a status code to a phone that applied): never the form's.
+    const phone = this.phoneFrom(token, f.tenantId, 'status');
     await this.limiter.consume({ key: `adm-status-phone:${phone}`, limit: 20, windowSec: 86_400 });
     const no =
       typeof body.applicationNo === 'string' ? toAsciiDigits(body.applicationNo.trim()) : '';

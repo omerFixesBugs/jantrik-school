@@ -163,20 +163,26 @@ shows the address to share.
   `POST …/otp/verify {phone, code}` returns a phone token (HS256 with its own key derived from
   `JWT_ACCESS_SECRET`, `typ: admission-phone`, audience the institute, 30 minutes, decision P3-N)
   for the `X-Admission-Token` header. It is never an access token, and an access token never works
-  here.
+  here. A status code (below) has its own slot in Redis and verifies only with
+  `purpose: 'status'`, into a **status token** (`typ: admission-status`): only `POST …/status`
+  accepts it, and `…/status` accepts nothing else; the submit (and its upload guard, before the
+  body is read) accepts only the form's token (review round 2, second follow-up).
 - **Limits (review focus 1):** a code request first passes a per-address limit (60 an hour,
   before the database or Cloudflare is reached), then Turnstile (a refused token uses no code
   counter), then per address 20 an hour and per phone one a minute
   (`ADMISSION_OTP_PHONE_COOLDOWN_SEC`, 60); the shared budgets, per phone 5 a day (across
-  institutes) and per institute `ADMISSION_OTP_PER_TENANT_PER_DAY` (300) a day whatever the phones
-  and addresses, are checked together and spent **only by a code that is sent** (one atomic
-  Redis script), so refused requests can never exhaust an institute's day.
+  institutes) and per institute the form's share of `ADMISSION_OTP_PER_TENANT_PER_DAY` a day
+  whatever the phones and addresses, are checked together and spent **only by a code that is
+  sent** (one atomic Redis script), so refused requests can never exhaust an institute's day.
+  `ADMISSION_OTP_PER_TENANT_PER_DAY` (300) caps **all** of an institute's codes in a day: the
+  status page has a fixed fifth (60), the form the rest (240), so the total never exceeds it
+  (`admissionOtpCeilings`).
 - **The status page** asks for a code with the application number (`purpose: 'status'`): it
   works after the form closed, and the code is sent only when that phone made that application;
   the answer is the same either way, **in every budget state, and leaves no trace** (review
-  round 2 and its follow-up): a status code spends budgets of its own (per phone 5 a day across
-  institutes, per institute 100 a day), which the form's code requests never read, and it is
-  sent after the answer (not awaited). So neither the answer (202 `{expiresIn: 300}`, no
+  round 2 and its follow-ups): a status code spends budgets of its own (per phone 5 a day across
+  institutes, per institute the status page's fifth of the ceiling), which the form's code
+  requests never read, and it is sent after the answer (not awaited). So neither the answer (202 `{expiresIn: 300}`, no
   `Retry-After`), nor its time, nor any later request's answer depends on whether the pair
   matched; a spent status budget sends nothing (the guardian tries the next day). The form: 60 a
   minute per address; submit 10 an hour per address and 10 a day per phone; status 30 an hour per
