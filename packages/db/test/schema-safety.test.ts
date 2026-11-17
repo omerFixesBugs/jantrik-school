@@ -76,6 +76,8 @@ describe('schema safety net', () => {
         'admission_applications',
         'admission_application_photos',
         'admission_counters',
+        'promotion_runs',
+        'promotion_run_students',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
