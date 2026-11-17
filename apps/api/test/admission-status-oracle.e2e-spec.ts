@@ -16,6 +16,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * for a matching (phone, application number) and for any other pair in every budget state, so it
  * is never an oracle for "this phone made this application". Before the fix, a spent institute
  * ceiling or a spent per-phone day made a match answer 429 (with Retry-After) and a non-match 202.
+ * Nor may a probe leave a trace a later request can read: a match used to spend the form's shared
+ * budgets, so the next ordinary code request answered 429 only after a match (follow-up review).
  */
 describe('admission (public): the status code request is no oracle', () => {
   const clock = new FakeClock('2026-11-20T06:00:00.000Z');
@@ -122,4 +124,33 @@ describe('admission (public): the status code request is no oracle', () => {
     expect(seen(match)).toEqual(seen(wrongNo));
     expect(match.status).toBe(202);
   });
+
+  it("a status probe leaves no trace in the budgets the form's code request reads", async () => {
+    // One institute per victim, so each stays under the ceiling (6): the phone's day decides.
+    const trace = async (matching: boolean) => {
+      const v = await admissionSchool(h);
+      const cc = (await admissionCycle(h, v)).classes.find((x) => x.classLevel.id === v.class6)!.id;
+      const { phone, no } = await applied(v.slug, cc); // the phone's day 1 of 5
+      for (let i = 0; i < 3; i++) {
+        await sleep(1_200);
+        await askCode(v.slug, phone).expect(202); // 4 of 5
+      }
+      await sleep(1_200);
+      const before = h.sms.sentTo(phone).length;
+      await askStatusCode(v.slug, phone, matching ? no : '2027-0999').expect(202);
+      // The matching pair still gets its code (the status page works).
+      if (matching) {
+        await vi.waitFor(() => expect(h.sms.sentTo(phone).length).toBe(before + 1), {
+          timeout: 15_000,
+          interval: 100,
+        });
+      }
+      await sleep(1_200);
+      return seen(await askCode(v.slug, phone));
+    };
+    const afterMatch = await trace(true);
+    const afterOther = await trace(false);
+    expect(afterMatch).toEqual(afterOther);
+    expect(afterMatch[0]).toBe(202);
+  }, 90_000);
 });
