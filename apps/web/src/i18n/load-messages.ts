@@ -19,7 +19,7 @@ const STAFF_ATTENDANCE_AREAS = ['common', 'day', 'month'] as const;
 const ACCOUNT_AREAS = ['password'] as const;
 
 /** Notices likewise: messages/notices/<area>.<locale>.json, merged into `notices`. */
-const NOTICE_AREAS = ['board', 'manage'] as const;
+const NOTICE_AREAS = ['board', 'manage', 'broadcasts'] as const;
 
 /** Every message of a language (server side; the browser gets each route's part). */
 export async function loadMessages(locale: Locale): Promise<Record<string, unknown>> {

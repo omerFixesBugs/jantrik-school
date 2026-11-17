@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { formatCount, formatDate, type NoticeManageItem, type NoticeState } from '@jantrik/shared';
-import { PencilIcon, PlusIcon, SendIcon, Undo2Icon } from 'lucide-react';
+import { MessageSquareTextIcon, PencilIcon, PlusIcon, SendIcon, Undo2Icon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { SectionCard } from '@/components/form-kit';
@@ -100,6 +100,12 @@ export default function NoticesManagePage() {
                       <SendIcon aria-hidden />
                       {t('publish')}
                     </Button>
+                  )}
+                  {(n.state === 'PUBLISHED' || n.state === 'SCHEDULED') && (
+                    <ButtonLink variant="outline" size="sm" href={`/broadcasts/new?notice=${n.id}`}>
+                      <MessageSquareTextIcon aria-hidden />
+                      {t('sms')}
+                    </ButtonLink>
                   )}
                   {n.status !== 'WITHDRAWN' && (
                     <Button

@@ -1,0 +1,79 @@
+{
+  "broadcasts": {
+    "title": "SMS broadcasts",
+    "hint": "SMS to guardians or staff: see the cost and today's limit before sending. It goes out whole, or not at all.",
+    "new": "New broadcast",
+    "empty": "No broadcasts yet.",
+    "status": {
+      "DRAFT": "Draft",
+      "SCHEDULED": "Scheduled",
+      "SENT": "Sent",
+      "CANCELLED": "Cancelled",
+      "FAILED_OVER_CAP": "Not sent: over the daily limit"
+    },
+    "recipients": {
+      "PRIMARY_GUARDIANS": "Primary guardians",
+      "ALL_GUARDIANS": "All guardians",
+      "STAFF": "Staff"
+    },
+    "counts": "Sent {sent}, waiting {queued}, failed {failed}",
+    "scheduledFor": "Goes out {date} {time}",
+    "sentAt": "Sent {date} {time}",
+    "compose": {
+      "newTitle": "New SMS broadcast",
+      "editTitle": "Edit broadcast",
+      "bodyLabel": "Message",
+      "bodyHint": "Sent exactly as you type it.",
+      "counter": "{chars} characters · {segments} SMS ({encoding})",
+      "tooLong": "At most 3 SMS. Please shorten it.",
+      "recipientsLabel": "Send to",
+      "targetsLabel": "Only some classes or sections (optional)",
+      "targetsHint": "Leave empty for every guardian.",
+      "addTarget": "Add a class",
+      "removeTarget": "Remove",
+      "classLabel": "Class",
+      "sectionLabel": "Section",
+      "wholeClass": "Whole class",
+      "preview": "Preview"
+    },
+    "preview": {
+      "title": "Before sending",
+      "recipients": "Recipients",
+      "withoutPhone": "Without a phone",
+      "merged": "Shared phones (sent once)",
+      "segments": "SMS each",
+      "cost": "Estimated cost",
+      "capLeft": "Left for today",
+      "notFits": "Does not fit today's limit: nothing would be sent. Choose fewer recipients or send tomorrow.",
+      "quiet": "No SMS from 9 pm to 8 am. Next possible time: {time}",
+      "sendNow": "Send now",
+      "schedule": "Send at a set time",
+      "date": "Date",
+      "time": "Time",
+      "scheduleHint": "At least 5 minutes ahead, at most 30 days; not between 9 pm and 8 am.",
+      "confirmSchedule": "Schedule",
+      "sent": "Broadcast is being sent",
+      "scheduled": "Broadcast scheduled"
+    },
+    "cancel": "Cancel broadcast",
+    "cancelled": "Broadcast cancelled",
+    "back": "All broadcasts",
+    "alertsTitle": "SMS broadcast problems",
+    "alert": {
+      "FAILED_OVER_CAP": "A broadcast was not sent: it did not fit the daily limit.",
+      "CANCELLED": "A broadcast was cancelled: the admin who scheduled it is no longer an admin.",
+      "OVERDUE": "A scheduled broadcast has not gone out yet. Opening the list tries again."
+    },
+    "alertOpen": "Open",
+    "errors": {
+      "SMS_TOO_LONG": "At most 3 SMS.",
+      "TARGET_INVALID": "A chosen class or section is not valid. Staff broadcasts take no classes.",
+      "OVER_CAP": "Does not fit today's limit: nothing was sent.",
+      "QUIET_HOURS": "No SMS from 9 pm to 8 am.",
+      "SCHEDULE_OUT_OF_RANGE": "Choose a time between 5 minutes and 30 days ahead.",
+      "PREVIEW_CHANGED": "The number of recipients changed. Preview again.",
+      "NOT_EDITABLE": "This broadcast can no longer be changed.",
+      "ALREADY_SENDING": "The broadcast is being sent right now."
+    }
+  }
+}

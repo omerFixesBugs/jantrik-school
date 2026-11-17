@@ -73,6 +73,7 @@
       "EXPIRY_INVALID": "The end date must be after the notice is published.",
       "SCHEDULE_OUT_OF_RANGE": "Choose now or a time within 30 days.",
       "NOT_EDITABLE": "This notice can no longer be changed."
-    }
+    },
+    "sms": "SMS"
   }
 }

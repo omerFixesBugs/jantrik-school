@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import type { BroadcastStatus } from '@jantrik/shared';
 import { useAuth } from '@/lib/auth/auth-provider';
 
 /** The board's query keys (per institute), so a read or a publish can refresh them. */
@@ -42,3 +43,15 @@ export function expiryDay(instant: string): string {
 /** A date and an HH:MM time picked in the form (Asia/Dhaka) → an ISO instant with offset. */
 export const dhakaInstant = (day: string, time: string): string =>
   new Date(`${day}T${time}:00+06:00`).toISOString();
+
+/** A broadcast status as a badge. */
+export const BROADCAST_STATUS_VARIANT: Record<
+  BroadcastStatus,
+  'outline' | 'info' | 'success' | 'destructive'
+> = {
+  DRAFT: 'outline',
+  SCHEDULED: 'info',
+  SENT: 'success',
+  CANCELLED: 'outline',
+  FAILED_OVER_CAP: 'destructive',
+};

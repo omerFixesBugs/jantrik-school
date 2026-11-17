@@ -98,6 +98,7 @@
   "nav": {
     "dashboard": "Dashboard",
     "notices": "Notices",
+    "broadcasts": "SMS broadcasts",
     "students": "{student} list",
     "classesAndSections": "{classLevel} & {section}",
     "attendance": "Attendance",

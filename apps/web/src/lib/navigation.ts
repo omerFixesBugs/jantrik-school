@@ -4,6 +4,7 @@ import {
   CalendarCheckIcon,
   LayoutDashboardIcon,
   MegaphoneIcon,
+  MessageSquareTextIcon,
   Settings2Icon,
   UserCogIcon,
   UsersIcon,
@@ -14,6 +15,7 @@ import {
 export type NavKey =
   | 'dashboard'
   | 'notices'
+  | 'broadcasts'
   | 'students'
   | 'attendance'
   | 'fees'
@@ -71,6 +73,14 @@ export const NAV_ITEMS: NavItem[] = [
     group: 'overview',
     module: 'CORE',
     roles: [...STAFF_ROLES, 'GUARDIAN'],
+  },
+  {
+    key: 'broadcasts',
+    href: '/broadcasts',
+    icon: MessageSquareTextIcon,
+    group: 'overview',
+    module: 'CORE',
+    roles: ['OWNER', 'ADMIN'],
   },
   {
     key: 'students',
