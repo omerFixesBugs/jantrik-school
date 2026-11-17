@@ -125,6 +125,13 @@ export class AdmissionApplicationsService {
     const tx = this.db.tx;
     const key = `admission:${this.tenantId}:${c.phone}`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+    // Two phones submitting the same child at once (review S3): one at a time per birth
+    // registration number in the cycle, after the phone's lock (the same order in
+    // admission_submit). The unique index admission_applications_birth_reg_live backs it up.
+    if (c.birthRegistrationNo) {
+      const reg = `admission-breg:${this.tenantId}:${c.cycleId}:${c.birthRegistrationNo}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${reg}, 0))`;
+    }
     const not = exceptId ? { id: { not: exceptId } } : {};
     const duplicate = await tx.admissionApplication.findFirst({
       where: {
@@ -158,6 +165,12 @@ export class AdmissionApplicationsService {
         limit: APPLICATIONS_PER_PHONE,
       });
     }
+  }
+
+  /** The cycle's lock, shared: a cycle edit (exclusive) never races a new application (review N7). */
+  async shareCycleLock(cycleId: string): Promise<void> {
+    const key = `admission-cycle:${cycleId}`;
+    await this.db.tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${key}, 0))`;
   }
 
   /** The next number of the year (<year>-<NNNN>, decision P3-G); the row lock orders takers. */
@@ -204,6 +217,7 @@ export class AdmissionApplicationsService {
       });
     }
     const nameKey = applicationNameKey(fields);
+    await this.shareCycleLock(cc.cycleId);
     await this.checkCandidate({
       cycleId: cc.cycleId,
       phone: input.phone,
@@ -292,6 +306,25 @@ export class AdmissionApplicationsService {
         });
       }
     }
+    const cycle = await tx.admissionCycle.findUniqueOrThrow({
+      where: { id: old.cycleId },
+      select: { fields: true, collectPhoto: true },
+    });
+    const after = toFields({
+      ...(old as unknown as AdmissionApplicationFields),
+      dateOfBirth: dateFromDb(old.dateOfBirth),
+      ...(next as Partial<AdmissionApplicationFields>),
+    });
+    const missing = missingAdmissionFields(
+      effectiveAdmissionFields(cycle.fields as Record<string, string>, cycle.collectPhoto),
+      after,
+      true,
+    );
+    if (missing.length > 0) {
+      throw apiError(422, 'ADMISSION_FIELDS_REQUIRED', 'Some required fields are empty', {
+        fields: missing,
+      });
+    }
     const nameKey = applicationNameKey(merged);
     const dateOfBirth = (next['dateOfBirth'] as string | undefined) ?? dateFromDb(old.dateOfBirth);
     const phone = (next['phone'] as string | undefined) ?? old.phone;
@@ -336,6 +369,31 @@ export class AdmissionApplicationsService {
     if (old.status === 'ADMITTED') {
       throw apiError(409, 'APPLICATION_ADMITTED', 'An admitted application cannot be changed');
     }
+    if (status === 'SELECTED') {
+      const cycle = await this.db.tx.admissionCycle.findUniqueOrThrow({
+        where: { id: old.cycleId },
+        select: { requiresTest: true },
+      });
+      if (cycle.requiresTest) {
+        throw apiError(409, 'SELECTED_BY_TEST', 'With an admission test, the merit list selects');
+      }
+    }
+    const reviving =
+      (old.status === 'WITHDRAWN' || old.status === 'REJECTED') &&
+      status !== 'WITHDRAWN' &&
+      status !== 'REJECTED';
+    if (reviving) {
+      await this.checkCandidate(
+        {
+          cycleId: old.cycleId,
+          phone: old.phone,
+          nameKey: old.nameKey,
+          dateOfBirth: dateFromDb(old.dateOfBirth),
+          birthRegistrationNo: old.birthRegistrationNo,
+        },
+        id,
+      );
+    }
     const at = this.clock.now();
     await this.db.tx.admissionApplication.update({
       where: { id },
@@ -344,6 +402,8 @@ export class AdmissionApplicationsService {
         statusReason: reason,
         statusBy: this.context.requirePrincipal().userId,
         statusAt: at,
+        approvalProblem: null,
+        approvalProblemAt: null,
       },
       select: { id: true },
     });

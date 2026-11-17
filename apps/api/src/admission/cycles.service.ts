@@ -363,6 +363,9 @@ export class AdmissionCyclesService {
 
   /** The cycle row, locked for this transaction (edits of one cycle run one at a time). */
   private async lock(id: string) {
+    // Exclusive against new applications, which take it shared (review N7).
+    const key = `admission-cycle:${id}`;
+    await this.db.tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
     await this.db.tx
       .$queryRaw`SELECT id FROM public.admission_cycles WHERE id = ${id}::uuid FOR UPDATE`;
     const row = await this.db.tx.admissionCycle.findUnique({ where: { id } });

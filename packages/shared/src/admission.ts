@@ -22,10 +22,14 @@ export type AdmissionApplicationStatus = (typeof ADMISSION_APPLICATION_STATUSES)
 export const ADMISSION_SOURCES = ['ONLINE', 'STAFF'] as const;
 export type AdmissionSource = (typeof ADMISSION_SOURCES)[number];
 
-/** Statuses staff set by hand (P4 adds SELECTED and WAITLISTED through the merit list). */
+/**
+ * Statuses staff set by hand. SELECTED only in a cycle without an admission test (with one, the
+ * merit list selects, P4); bulk approval approves SELECTED applications only (review S2).
+ */
 export const ADMISSION_STAFF_STATUSES = [
   'SUBMITTED',
   'SHORTLISTED',
+  'SELECTED',
   'REJECTED',
   'WITHDRAWN',
 ] as const;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  admissionDateForYear,
+  duesAdmissionDate,
   allocate,
   amountInWords,
   concessionAmount,
@@ -512,9 +512,9 @@ describe('planStudentDues (which dues a student should have)', () => {
   });
 });
 
-describe('admissionDateForYear (sprint 1 P3, review focus 5: admitted in December for January)', () => {
+describe('duesAdmissionDate (sprint 1 P3, review focus 5: admitted in December for January)', () => {
   const year = { id: 'y27', startDate: '2027-01-01', endDate: '2027-12-31' };
-  const plan = (createdOn: string, enrolledBefore: boolean, asOf: string) =>
+  const plan = (createdOn: string, admissionDateForDues: string | null, asOf: string) =>
     planStudentDues({
       asOf,
       upTo: null,
@@ -550,7 +550,7 @@ describe('admissionDateForYear (sprint 1 P3, review focus 5: admitted in Decembe
       ],
       student: {
         id: 's1',
-        admittedOn: admissionDateForYear({ createdOn, yearStart: year.startDate, enrolledBefore }),
+        admittedOn: duesAdmissionDate({ createdOn, admissionDateForDues }),
         classLevelId: 'c1',
         studyGroupId: null,
         siblingRank: null,
@@ -558,32 +558,17 @@ describe('admissionDateForYear (sprint 1 P3, review focus 5: admitted in Decembe
       concessions: [],
     });
 
-  it('the rule itself', () => {
-    expect(
-      admissionDateForYear({
-        createdOn: '2026-12-10',
-        yearStart: '2027-01-01',
-        enrolledBefore: false,
-      }),
-    ).toBe('2027-01-01');
-    expect(
-      admissionDateForYear({
-        createdOn: '2026-12-10',
-        yearStart: '2027-01-01',
-        enrolledBefore: true,
-      }),
-    ).toBe('2026-12-10');
-    expect(
-      admissionDateForYear({
-        createdOn: '2027-03-15',
-        yearStart: '2027-01-01',
-        enrolledBefore: false,
-      }),
-    ).toBe('2027-03-15');
+  it('the recorded date wins; otherwise the creation day', () => {
+    expect(duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: '2027-01-01' })).toBe(
+      '2027-01-01',
+    );
+    expect(duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: null })).toBe(
+      '2026-12-10',
+    );
   });
 
-  it('admitted on 10 December: the admission fee is due 15 days after the year starts, January on the 10th, no fine on 5 January', () => {
-    const dues = plan('2026-12-10', false, '2027-01-05');
+  it('admitted on 10 December for January: the admission fee is due 15 days after the year starts, January on the 10th, no fine on 5 January', () => {
+    const dues = plan('2026-12-10', '2027-01-01', '2027-01-05');
     const once = dues.find((d) => d.feeHeadId === 'admission');
     const january = dues.find((d) => d.periodKey === '2027-01');
     expect(once).toMatchObject({ periodKey: 'ONCE', dueDate: '2027-01-16', amountPaisa: 500000 });
@@ -594,23 +579,16 @@ describe('admissionDateForYear (sprint 1 P3, review focus 5: admitted in Decembe
     expect(fineAccrued(fine, january!.dueDate, '2027-01-05')).toBe(0);
   });
 
-  it('before the fix the same child owed nothing (one_time_from after the admission day)', () => {
-    // The real admission day, as the dues used it before: before one_time_from, so no fee at all.
-    const dues = plan('2026-12-10', true, '2027-01-05');
-    expect(dues.some((d) => d.feeHeadId === 'admission')).toBe(false);
-  });
-
-  it('a promoted student (enrolled in an earlier year) is never charged the one-time fee again', () => {
-    const dues = plan('2025-03-01', true, '2027-02-20');
+  it('a student created before the year starts with nothing recorded (an import, an existing student) is unchanged: no one-time fee from a later date', () => {
+    const dues = plan('2026-12-10', null, '2027-02-20');
     expect(dues.some((d) => d.feeHeadId === 'admission')).toBe(false);
     expect(dues.map((d) => d.periodKey)).toEqual(['2027-01', '2027-02']);
   });
 
   it('admitted mid-year: unchanged (due 15 days later, that month extended for a late joiner)', () => {
-    const dues = plan('2027-03-15', false, '2027-03-20');
+    const dues = plan('2027-03-15', null, '2027-03-20');
     expect(dues.find((d) => d.feeHeadId === 'admission')).toMatchObject({ dueDate: '2027-03-30' });
     expect(dues.find((d) => d.periodKey === '2027-03')).toMatchObject({ dueDate: '2027-03-22' });
-    // Months before the admission are never charged.
     expect(dues.some((d) => d.periodKey === '2027-02')).toBe(false);
   });
 });
