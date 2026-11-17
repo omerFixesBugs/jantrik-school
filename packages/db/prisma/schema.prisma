@@ -319,6 +319,7 @@ enum SmsPurpose {
   ADMISSION_OTP
   /// "Application received" to the applicant's phone (online admission, S11).
   ADMISSION_SUBMITTED
+  ADMISSION_RESULT
 
   @@map("sms_purpose")
 }
@@ -3333,6 +3334,26 @@ enum AdmissionSource {
   @@map("admission_source")
 }
 
+/// How applicants with the same test score are ordered (decision P4-A).
+enum AdmissionTieBreak {
+  OLDER_FIRST
+  YOUNGER_FIRST
+  NONE
+
+  @@map("admission_tie_break")
+}
+
+/// The draft outcome of the last merit list build (P4); statuses change only at publish.
+enum AdmissionTestResult {
+  SELECTED
+  WAITLISTED
+  NOT_SELECTED
+  FAILED
+  ABSENT
+
+  @@map("admission_test_result")
+}
+
 /// An admission window for one academic year (usually the next one).
 model AdmissionCycle {
   id             String               @id @default(uuid(7)) @db.Uuid
@@ -3352,6 +3373,8 @@ model AdmissionCycle {
   collectPhoto   Boolean              @default(false) @map("collect_photo")
   /// { <field>: "HIDDEN" | "OPTIONAL" | "REQUIRED" } for the optional form fields (CHECK).
   fields         Json                 @default("{}") @db.JsonB
+  /// How equal test scores are ordered in the merit list (P4).
+  meritTieBreak  AdmissionTieBreak    @default(OLDER_FIRST) @map("merit_tie_break")
   /// The admin who made it (no FK: users are global, as audit_logs.user_id).
   createdBy      String?              @map("created_by") @db.Uuid
   createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -3369,16 +3392,36 @@ model AdmissionCycle {
 
 /// A class (and group) a cycle takes applications for.
 model AdmissionCycleClass {
-  id           String   @id @default(uuid(7)) @db.Uuid
-  tenantId     String   @map("tenant_id") @db.Uuid
-  cycleId      String   @map("cycle_id") @db.Uuid
-  classLevelId String   @map("class_level_id") @db.Uuid
-  studyGroupId String?  @map("study_group_id") @db.Uuid
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
+  cycleId            String    @map("cycle_id") @db.Uuid
+  classLevelId       String    @map("class_level_id") @db.Uuid
+  studyGroupId       String?   @map("study_group_id") @db.Uuid
   /// Shown to staff only; NULL: no limit.
-  seats        Int?
-  isOpen       Boolean  @default(true) @map("is_open")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  seats              Int?
+  isOpen             Boolean   @default(true) @map("is_open")
+  // ── The admission test (P4); the time is the institute's local time.
+  testDate           DateTime? @map("test_date") @db.Date
+  testTime           DateTime? @map("test_time") @db.Time(0)
+  testVenueBn        String?   @map("test_venue_bn")
+  testVenueEn        String?   @map("test_venue_en")
+  fullMarks          Int?      @map("full_marks")
+  passMarks          Int?      @map("pass_marks")
+  selectCount        Int?      @map("select_count")
+  waitlistCount      Int?      @map("waitlist_count")
+  /// The draft merit list: when it was built and a hash of what it was built from.
+  meritBuiltAt       DateTime? @map("merit_built_at") @db.Timestamptz(3)
+  meritInputsHash    String?   @map("merit_inputs_hash")
+  /// The latest score change (the list shows "changed since publish").
+  scoresChangedAt    DateTime? @map("scores_changed_at") @db.Timestamptz(3)
+  /// The published version (0: never published), when, and its full marks.
+  resultsVersion     Int       @default(0) @map("results_version")
+  resultsPublishedAt DateTime? @map("results_published_at") @db.Timestamptz(3)
+  resultsFullMarks   Int?      @map("results_full_marks")
+  /// The build the published version came from (never published twice).
+  resultsBuiltAt     DateTime? @map("results_built_at") @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   cycle        AdmissionCycle         @relation(fields: [tenantId, cycleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
@@ -3398,50 +3441,66 @@ model AdmissionCycleClass {
 
 /// One child's application. History: never deleted; a status change keeps who, when and why.
 model AdmissionApplication {
-  id                  String                     @id @default(uuid(7)) @db.Uuid
-  tenantId            String                     @map("tenant_id") @db.Uuid
-  cycleId             String                     @map("cycle_id") @db.Uuid
-  cycleClassId        String                     @map("cycle_class_id") @db.Uuid
+  id                     String                     @id @default(uuid(7)) @db.Uuid
+  tenantId               String                     @map("tenant_id") @db.Uuid
+  cycleId                String                     @map("cycle_id") @db.Uuid
+  cycleClassId           String                     @map("cycle_class_id") @db.Uuid
   /// <year>-<NNNN>, unique per institute (decision P3-G).
-  applicationNo       String                     @map("application_no")
-  source              AdmissionSource
-  nameBn              String?                    @map("name_bn")
-  nameEn              String?                    @map("name_en")
+  applicationNo          String                     @map("application_no")
+  source                 AdmissionSource
+  nameBn                 String?                    @map("name_bn")
+  nameEn                 String?                    @map("name_en")
   /// Lower-cased NFC name without spaces, for duplicate checks.
-  nameKey             String                     @map("name_key")
-  dateOfBirth         DateTime                   @map("date_of_birth") @db.Date
-  gender              Gender
-  religion            Religion?
-  bloodGroup          BloodGroup?                @map("blood_group")
-  birthRegistrationNo String?                    @map("birth_registration_no")
+  nameKey                String                     @map("name_key")
+  dateOfBirth            DateTime                   @map("date_of_birth") @db.Date
+  gender                 Gender
+  religion               Religion?
+  bloodGroup             BloodGroup?                @map("blood_group")
+  birthRegistrationNo    String?                    @map("birth_registration_no")
   /// Kept on the application only (decision P3-I).
-  previousInstitute   String?                    @map("previous_institute")
-  presentAddress      String?                    @map("present_address")
-  permanentAddress    String?                    @map("permanent_address")
-  fatherNameBn        String?                    @map("father_name_bn")
-  fatherNameEn        String?                    @map("father_name_en")
-  motherNameBn        String?                    @map("mother_name_bn")
-  motherNameEn        String?                    @map("mother_name_en")
-  guardianNameBn      String?                    @map("guardian_name_bn")
-  guardianNameEn      String?                    @map("guardian_name_en")
-  guardianRelation    GuardianRelation           @map("guardian_relation")
+  previousInstitute      String?                    @map("previous_institute")
+  presentAddress         String?                    @map("present_address")
+  permanentAddress       String?                    @map("permanent_address")
+  fatherNameBn           String?                    @map("father_name_bn")
+  fatherNameEn           String?                    @map("father_name_en")
+  motherNameBn           String?                    @map("mother_name_bn")
+  motherNameEn           String?                    @map("mother_name_en")
+  guardianNameBn         String?                    @map("guardian_name_bn")
+  guardianNameEn         String?                    @map("guardian_name_en")
+  guardianRelation       GuardianRelation           @map("guardian_relation")
   /// Kept on the application; becomes the guardian's occupation at approval.
-  guardianOccupation  String?                    @map("guardian_occupation")
+  guardianOccupation     String?                    @map("guardian_occupation")
   /// The applicant's (guardian's) phone, E.164.
-  phone               String
-  status              AdmissionApplicationStatus @default(SUBMITTED)
-  statusReason        String?                    @map("status_reason")
-  statusBy            String?                    @map("status_by") @db.Uuid
-  statusAt            DateTime?                  @map("status_at") @db.Timestamptz(3)
-  staffNote           String?                    @map("staff_note")
+  phone                  String
+  status                 AdmissionApplicationStatus @default(SUBMITTED)
+  statusReason           String?                    @map("status_reason")
+  statusBy               String?                    @map("status_by") @db.Uuid
+  statusAt               DateTime?                  @map("status_at") @db.Timestamptz(3)
+  staffNote              String?                    @map("staff_note")
   /// The student made from it (status ADMITTED, and only then).
-  studentId           String?                    @map("student_id") @db.Uuid
+  studentId              String?                    @map("student_id") @db.Uuid
   /// Why bulk approval skipped it (decision P3-T).
-  approvalProblem     String?                    @map("approval_problem")
-  approvalProblemAt   DateTime?                  @map("approval_problem_at") @db.Timestamptz(3)
-  submittedAt         DateTime                   @map("submitted_at") @db.Timestamptz(3)
-  createdAt           DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  approvalProblem        String?                    @map("approval_problem")
+  approvalProblemAt      DateTime?                  @map("approval_problem_at") @db.Timestamptz(3)
+  // ── The admission test (P4). A score in hundredths, within the class's full marks (trigger).
+  testRoll               Int?                       @map("test_roll")
+  testScoreH             Int?                       @map("test_score_h")
+  testAbsent             Boolean                    @default(false) @map("test_absent")
+  /// The draft of the last build: never shown to the applicant.
+  testResult             AdmissionTestResult?       @map("test_result")
+  meritPosition          Int?                       @map("merit_position")
+  waitlistPosition       Int?                       @map("waitlist_position")
+  /// The published snapshot (the only result columns the public lookup reads).
+  resultVersion          Int?                       @map("result_version")
+  resultMeritPosition    Int?                       @map("result_merit_position")
+  resultWaitlistPosition Int?                       @map("result_waitlist_position")
+  resultScoreH           Int?                       @map("result_score_h")
+  resultAbsent           Boolean?                   @map("result_absent")
+  /// ADMITTED_NOT_SELECTED: admitted, but a corrected list would not select them (P4-F).
+  resultFlag             String?                    @map("result_flag")
+  submittedAt            DateTime                   @map("submitted_at") @db.Timestamptz(3)
+  createdAt              DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant     Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   cycle      AdmissionCycle             @relation(fields: [tenantId, cycleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
@@ -3454,9 +3513,12 @@ model AdmissionApplication {
   @@unique([tenantId, studentId])
   /// One live application per birth registration number per cycle (the duplicate rule).
   @@unique([tenantId, cycleId, birthRegistrationNo], map: "admission_applications_birth_reg_live", where: raw("birth_registration_no IS NOT NULL AND status <> 'WITHDRAWN'"))
+  /// One test roll per class (P4-C).
+  @@unique([tenantId, cycleClassId, testRoll], map: "admission_applications_test_roll_key", where: raw("test_roll IS NOT NULL"))
   @@index([tenantId, cycleId, status])
   @@index([tenantId, phone])
   @@index([tenantId, cycleClassId])
+  @@index([tenantId, cycleClassId, meritPosition], map: "admission_applications_merit_idx")
   @@map("admission_applications")
 }
 

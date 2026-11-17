@@ -376,6 +376,91 @@ describe('admission public functions', () => {
       expect(await lookup(b.slug, r.application_no!, ph)).toBeNull();
       expect(await lookup(a.slug, '2027-9999', ph)).toBeNull();
     });
+
+    // Sprint 1 P4, review focus 3: nothing about the test or the list before publish; then the
+    // published snapshot only (P4-M, S13).
+    it('the test details once a roll is issued; the published result only, never the draft or a later score', async () => {
+      const c = await school(app);
+      const ph = phone();
+      const r = await submit(c.slug, c.class6, ph, payload({ nameBn: 'ফলাফল' }));
+      const id = r.application_id!;
+      const setApp = (data: Record<string, unknown>) =>
+        withTenant(app, c.tenantId, (tx) =>
+          tx.admissionApplication.update({ where: { id }, data }),
+        );
+      const setClass = (data: Record<string, unknown>) =>
+        withTenant(app, c.tenantId, (tx) =>
+          tx.admissionCycleClass.update({ where: { id: c.class6 }, data }),
+        );
+      const seen = () => lookup(c.slug, r.application_no!, ph);
+
+      // Before rolls: neither.
+      let v = await seen();
+      expect(v).not.toHaveProperty('test');
+      expect(v).not.toHaveProperty('result');
+
+      // A roll, the test's details, a score and a built draft: the details only.
+      await setClass({
+        fullMarks: 100,
+        testDate: new Date('2026-12-20'),
+        testTime: new Date('1970-01-01T10:30:00Z'),
+        testVenueBn: 'মূল ভবন',
+      });
+      await setApp({ testRoll: 1001, testScoreH: 8550 });
+      await setApp({ testResult: 'SELECTED', meritPosition: 1 });
+      v = await seen();
+      expect(v).toMatchObject({
+        test: { roll: 1001, date: '2026-12-20', time: '10:30', venueBn: 'মূল ভবন', venueEn: null },
+      });
+      expect(v).not.toHaveProperty('result');
+      expect(JSON.stringify(v)).not.toContain('8550');
+
+      // Published (version 1): the snapshot.
+      const at = new Date('2026-12-25T06:00:00Z');
+      await setClass({
+        resultsVersion: 1,
+        resultsPublishedAt: at,
+        resultsFullMarks: 100,
+        resultsBuiltAt: at,
+      });
+      await setApp({
+        status: 'SELECTED',
+        resultVersion: 1,
+        resultMeritPosition: 1,
+        resultScoreH: 8550,
+        resultAbsent: false,
+      });
+      v = await seen();
+      expect(v).toMatchObject({
+        status: 'SELECTED',
+        result: {
+          version: 1,
+          meritPosition: 1,
+          waitlistPosition: null,
+          scoreH: 8550,
+          fullMarks: 100,
+          absent: false,
+        },
+      });
+
+      // A correction built but not republished: still version 1's values.
+      await setApp({
+        testScoreH: 4000,
+        testResult: 'WAITLISTED',
+        meritPosition: 5,
+        waitlistPosition: 1,
+      });
+      v = await seen();
+      expect(v).toMatchObject({ result: { meritPosition: 1, scoreH: 8550 } });
+      expect(JSON.stringify(v)).not.toContain('4000');
+
+      // Version 2 published without this applicant (withdrawn meanwhile): no result.
+      await setClass({ resultsVersion: 2, resultsPublishedAt: new Date() });
+      v = await seen();
+      expect(v).not.toHaveProperty('result');
+      // Another phone still sees nothing at all.
+      expect(await lookup(c.slug, r.application_no!, phone())).toBeNull();
+    });
   });
 
   describe('the role (review focus 4)', () => {

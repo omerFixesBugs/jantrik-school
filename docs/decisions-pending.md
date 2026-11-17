@@ -1214,3 +1214,97 @@ YEAR_ORDER`); amounts from any earlier year (they carry no dates). The wizard co
   legacy class teachers.
 - **P5-b15. The run page lets a stopped run be fixed** (APPLYING with an error): rows edited,
   refreshed, the run deleted when nothing is applied; the API refuses while a retry is queued.
+
+## Sprint 1, P4: admission test and merit list (2026-11-18)
+
+Built on P3b (`feature/sprint-1-p3b-admission-public` at `faefd06e`, stacked: PR #24). The plan's
+recommended defaults **P4-A to P4-N are adopted as written** (tie-break `OLDER_FIRST` default with
+`YOUNGER_FIRST` and `NONE`; everyone tied on the last seat selected with a warning; rolls for
+SUBMITTED and SHORTLISTED by application number, never renumbered; absent and below the pass marks
+unranked; statuses change only at publish; republish allowed, ADMITTED never demoted; move-up a
+staff action; the SMS without the score; hundredths up to 1 000 full marks; scores editable after
+publish, audited; the fixed admit card; OWNER/ADMIN only; nothing but the test's details before
+publish; staff print the cards). Decisions taken alone, and where the code differs from the plan:
+
+- **P4-a1 (privacy). A published snapshot, separate from the draft.** The plan wrote the draft's
+  places on the same columns the status page would read, so a rebuild (or a score edited after
+  publish) would have shown before republishing, against its own test ("a correction built but not
+  republished: still version 1's values"). Now a build writes the draft (`test_result`,
+  `merit_position`, `waitlist_position`) and a publish copies the snapshot (`result_*`, and
+  `results_full_marks` on the class). The lookup reads only the snapshot and the roll; the role
+  cannot even read the draft or a live score.
+- **P4-a2. The lookup replaced with P3-b19's recipe:** `GRANT CREATE ON SCHEMA public TO
+jantrik_admission; SET ROLE jantrik_admission; CREATE OR REPLACE …; RESET ROLE; REVOKE CREATE`
+  (same signature, grants kept). Classes were already readable as a whole by the role (P3b), so the
+  plan's column grants on classes were not needed.
+- **P4-a3. A build is stale when anything it read changed:** a hash of the settings, the
+  tie-break and each ranked applicant's score, absence, date of birth and submission time
+  (`merit_inputs_hash`), plus the `builtAt` the admin saw. The plan's `scores_changed_at` alone
+  missed a withdrawal, a corrected date of birth or a changed seat count; it is kept for "changed
+  since publish" (P4-J).
+- **P4-a4. Who is in the list:** a roll and SUBMITTED, SHORTLISTED, SELECTED, WAITLISTED or
+  ADMITTED, or REJECTED by an earlier publish (reason NOT_SELECTED, FAILED or ABSENT, so a
+  correction can move them up). Withdrawn applicants and those rejected by staff for another
+  reason are left out (and keep their old result version, so the status page shows no result).
+- **P4-a5. Who gets a result SMS** is read from the SMS log: the status each application was last
+  told is in the dedupe key (`admission-result:<class>:v<version>:<application>:<status>`), so a
+  move-up within a version is a new SMS; an SMS still waiting is cancelled when its version is no
+  longer published or the status moved on. Its own queue `admission-results` (two processors on
+  one queue would drop each other's jobs).
+- **P4-a6. An application with a test roll stays in its class** (409 `HAS_TEST_ROLL`): a roll
+  belongs to its class's sequence.
+- **P4-a7. Move-up:** everyone sharing the first waitlist position moves together (ties exist
+  only with `NONE`; a tie is never split, as P4-B); the rest renumber from 1. No SMS of its own:
+  the moved applicant appears in the result SMS preview (count 1 when nobody else changed), the
+  plan's "optional single SMS".
+- **P4-a8. The waitlist boundary under `NONE`:** everyone tied on the last waitlisted place is
+  waitlisted, at a shared position (`waitlistTie` warning), as P4-B for the seats.
+- **P4-a9. Rolls need only a test cycle** (no other setting); the first roll is 1 unless
+  `startAt` is given; 422 `ROLLS_EXHAUSTED` above 999 999.
+- **P4-a10. Scores:** typing `a`/`অ` marks absent (the exams' `parseMarks`); a score with absent
+  ticked is 422 `SCORE_AND_ABSENT`; scores need the full marks (422 `TEST_NOT_CONFIGURED`).
+- **P4-a11 (owner, SMS). The result SMS share the institute's daily cap** (2 × active students
+  unless set in the attendance settings): an institute admitting its first students has a cap of
+  0, so every result SMS is skipped until it sets a cap; the preview says "0 left today" and how
+  many would be skipped. Not changed here (the cap is the owner's money rule).
+- **P4-a12. Withdrawing** is P3's status route (`WITHDRAWN` with a reason); no new route.
+- **P4-a13. Publish** sets `status_by`/`status_at` and clears an approval problem only on rows
+  whose status or reason changes; one audit row with the version, counts, the ids by outcome and
+  the flagged ones.
+- **P4-a14. The trigger functions are not named `admission_*`** (`test_score_within_full_marks`,
+  `full_marks_keep_test_scores`): P3b's safety test reserves that prefix for the definer functions.
+- **P4-a15. Not done here:** the bn screenshots at 390 px and the admit card's print check run in
+  CI's Playwright only (this run starts no servers); per-subject marks stay for later (S12).
+- **P4-a16 (review M1). Publish locks before it reads:** every applicant of the class with a roll,
+  in id order (as move-up), then the inputs are checked under the locks; its UPDATE also requires
+  the status it read (409 `MERIT_STALE` otherwise, nothing published). A withdrawal that commits
+  while it waits makes the publish stale; an approval is kept (ADMITTED, flagged if needed).
+- **P4-a17 (review S1, N3). Told = SENT, or QUEUED of the published version.** A result SMS
+  cancelled by a republish or failed told nobody and is owed again; the dedupe key carries the run
+  (`…:<status>:<run id>`), so the resend is a new SMS; a run takes the SMS writers' lock and checks
+  who is still owed before queueing, so two runs never send one SMS twice.
+- **P4-a18 (review S2). A build is published once** (`results_built_at`, 409 `ALREADY_PUBLISHED`,
+  the button off): republishing needs a new build.
+- **P4-a19 (review N1, N2, N4, N5, N6).** Rolls go only to the rows locked and still eligible, and
+  the audit lists what was written; a renumbered waitlist position is audited; the preview's
+  segments and cost count only what the cap lets through; the merit view's counts and warnings
+  leave withdrawn applicants out at once; a safety test pins that `jantrik_admission` has no
+  `CREATE` on `public` after the migrations.
+- **P4-a20 (review round 2). No lock blocks a foreign key:** the class row and the applicant rows
+  P4 locks are taken `FOR NO KEY UPDATE`, so a new application (its foreign key's KEY SHARE on the
+  class) never waits on a test operation; that removed a three-way lock cycle with P3's phone
+  lock (a 500 from a deadlock). A deadlock (`40P01`) or serialization failure (`40001`) anywhere in
+  the API now answers 409 `BUSY` with Retry-After (the lock timeout's answer).
+- **P4-a21 (review round 2 N1). A published result is not put back by hand** to SUBMITTED or
+  SHORTLISTED (409 `TEST_RESULT_PUBLISHED`): the next rebuild would undo a move-up the applicant
+  may already have been told about. Withdraw, reject and approve stay allowed.
+- **P4-a22 (review round 2 N2, recorded, not changed).** An SMS the worker has taken (passed its
+  relevance check, provider call in flight) is still QUEUED; if a republish keeps the status and a
+  new run starts in that window, the applicant can get the same result twice. Closing it needs a
+  SENDING state in the shared SMS pipeline (all purposes), which is beyond P4: a rare duplicate
+  of the same news.
+- **P4-a23 (review round 2 N3, N4).** The rolls' audit lists `{applicationId, roll}` in roll order;
+  a run's `skipped` means "not queued": over the cap, or no longer owed when the run reached them.
+- **P4-a24. The migration `20261117300100_admission_test` was edited in place** after the first
+  review (`results_built_at`). No database outside scratch and CI ever applied it; any that applied
+  the earlier version must be recreated (Prisma would refuse the changed checksum).

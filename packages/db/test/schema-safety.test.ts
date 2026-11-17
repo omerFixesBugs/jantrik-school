@@ -671,6 +671,12 @@ describe('schema safety net', () => {
     });
   });
 
+  it('jantrik_admission has no CREATE on schema public once the migrations ran (P3b N2, P4)', async () => {
+    const [r] = await app.$queryRaw<{ create: boolean }[]>`
+      SELECT has_schema_privilege('jantrik_admission', 'public', 'CREATE') AS create`;
+    expect(r!.create).toBe(false);
+  });
+
   // A snapshot: widening what the public form's functions may touch fails here.
   it("jantrik_admission's table and column privileges are exactly the plan's", async () => {
     // From the catalogs: information_schema shows only the grants the current login may see.
@@ -730,6 +736,13 @@ describe('schema safety net', () => {
         'status',
         'submitted_at',
         'tenant_id',
+        // P4: the test roll and the published snapshot only, never the draft or a live score.
+        'test_roll',
+        'result_version',
+        'result_merit_position',
+        'result_waitlist_position',
+        'result_score_h',
+        'result_absent',
       ),
       'admission_applications:INSERT': cols(
         'id',

@@ -2,8 +2,11 @@
 
 import {
   formatBdPhone,
+  formatCount,
   formatDate,
   formatIdentifier,
+  formatMarks,
+  formatWallClock,
   normalizeBdPhone,
   toAsciiDigits,
   type AdmissionPublicStatus,
@@ -168,6 +171,59 @@ export default function StatusPage() {
           <p className="text-muted-foreground text-sm">
             {t('submittedOn', { date: formatDate(status.submittedAt, locale) })}
           </p>
+          {status.result ? (
+            <div className="mt-2 flex flex-col gap-1 border-t pt-3" data-testid="status-result">
+              <p className="font-semibold">{t('result.title')}</p>
+              {status.result.absent ? (
+                <p>{t('result.absent')}</p>
+              ) : (
+                status.result.scoreH != null && (
+                  <p>
+                    {t('result.score', {
+                      score: formatMarks(status.result.scoreH, locale),
+                      full: formatCount(status.result.fullMarks, locale),
+                    })}
+                  </p>
+                )
+              )}
+              {status.result.meritPosition != null && (
+                <p>
+                  {t('result.place', { place: formatCount(status.result.meritPosition, locale) })}
+                </p>
+              )}
+              {status.status === 'WAITLISTED' && status.result.waitlistPosition != null && (
+                <p>
+                  {t('result.waitlist', {
+                    position: formatCount(status.result.waitlistPosition, locale),
+                  })}
+                </p>
+              )}
+            </div>
+          ) : (
+            status.test && (
+              <div className="mt-2 flex flex-col gap-1 border-t pt-3" data-testid="status-test">
+                <p className="font-semibold">{t('test.title')}</p>
+                <p>
+                  {t('test.roll')}:{' '}
+                  <span className="font-mono text-lg">{formatIdentifier(status.test.roll)}</span>
+                </p>
+                {status.test.date && (
+                  <p>
+                    {t('test.when')}: {formatDate(status.test.date, locale)}
+                    {status.test.time && `, ${formatWallClock(status.test.time, locale)}`}
+                  </p>
+                )}
+                {(status.test.venueBn || status.test.venueEn) && (
+                  <p>
+                    {t('test.venue')}:{' '}
+                    {locale === 'bn'
+                      ? (status.test.venueBn ?? status.test.venueEn)
+                      : (status.test.venueEn ?? status.test.venueBn)}
+                  </p>
+                )}
+              </div>
+            )
+          )}
         </section>
       )}
     </main>
