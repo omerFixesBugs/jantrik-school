@@ -72,3 +72,89 @@ use it; a notice the caller may not see is 404, as is another institute's.
 
 Pages: `/notices` (board), `/notices/[id]`, `/notices/manage` (list with publish and withdraw),
 `/notices/manage/new`, `/notices/manage/[id]` (edit).
+
+## SMS broadcasts (P6b)
+
+An SMS to guardians or staff, written by OWNER/ADMIN at `/broadcasts` (S20). In development and
+tests SMS go only to the console, memory or outbox providers; production sends nothing until the
+gateway exists.
+
+### Who receives it
+
+Resolved when it is previewed, and again **when it is sent** (S19):
+
+- `PRIMARY_GUARDIANS`: the primary guardian's phone of each targeted ACTIVE, not deleted student
+  enrolled in the current year;
+- `ALL_GUARDIANS`: every linked guardian's phone of those students;
+- `STAFF`: the login phone of every ACTIVE staff member, once per person (P6-H). A staff broadcast
+  takes no class targets (422 `TARGET_INVALID`).
+
+Phones are merged: siblings sharing a guardian's phone get one SMS. Every SMS has the dedupe key
+`broadcast:<id>:<phone>`, so nothing is ever sent twice to one phone for one broadcast.
+
+### Preview, cost and the cap (S18)
+
+`POST /broadcasts/:id/preview` answers the recipients (after merging), the students or staff
+without a phone, the merged phones, the segments per SMS (`smsLength`: GSM-7 160/153, otherwise
+UCS-2 70/67; Bangla is UCS-2), the cost (recipients × segments × the platform's rate, integer
+paisa), today's cap left, `fits`, whether it is quiet hours now and the next allowed time.
+
+- **The text** is exactly what the admin types (P6-M; the composer starts it with the institute's
+  name and a colon, and from a notice with its title). 1 to 3 segments: more is 422
+  `SMS_TOO_LONG`.
+- **The cap** is the institute's daily SMS cap (shared with every other SMS; it counts messages,
+  not segments). **All or nothing:** a send that does not fit is refused (422 `OVER_CAP`); at send
+  time a broadcast that no longer fits sends **nothing** and becomes `FAILED_OVER_CAP`, which the
+  OWNER/ADMIN dashboard shows for 3 days (P6-D).
+- **Confirmed count:** send and schedule carry the recipient count the admin saw; a different
+  count is 409 `PREVIEW_CHANGED`.
+
+### Quiet hours, sending and scheduling
+
+- **Quiet hours** are 21:00–08:00 in the institute's timezone (`inQuietHours`, `nextAllowedAt` in
+  `packages/shared/src/broadcasts.ts`; fixed for every institute this sprint, P6-E). "Send now"
+  inside them is 422 `QUIET_HOURS` with the next allowed time (P6-F); so is scheduling into them.
+- **Schedule**: between 5 minutes and 30 days ahead (422 `SCHEDULE_OUT_OF_RANGE`).
+- **Editing** a draft keeps it a draft; editing a scheduled broadcast puts it back to draft (its
+  job stops by itself), so it is previewed and scheduled again with every check.
+- **Cancel** a draft or a scheduled broadcast; 409 `ALREADY_SENDING` while the send job holds it,
+  409 `NOT_EDITABLE` once sent. A sent broadcast cannot be stopped (P6-L); a queued SMS of a
+  broadcast that is no longer `SENT` is dropped before sending (the relevance check).
+
+### The job and the sweep
+
+- Send now and schedule both store `SCHEDULED` and, after commit, add the job `broadcast-send`
+  (queue `notices`, job id `broadcast-<id>`, delayed to the time) and a member
+  `<tenantId>|<broadcastId>` scored by the time in the Redis sorted set `notices:due`. Job data is
+  ids only.
+- **The job** (acting as the admin who scheduled it): locks the broadcast; stops unless
+  `SCHEDULED`; cancels it (`ACTOR_NOT_ADMIN`, nothing sent) when that admin is no longer OWNER or
+  ADMIN; waits (the same job is delayed) when it runs early or inside quiet hours (a job due at
+  23:30 sends at 08:00); resolves the audience; and queues every SMS in **one transaction** with
+  `TenantSmsService.queueAll`, which holds the institute's SMS lock, skips known dedupe keys and
+  stores either every new SMS or none. Then `SENT` with the count and the institute's day, or
+  `FAILED_OVER_CAP` with `{needed, capLeft}`. Running it twice sends nothing more.
+- **The sweep** (`notices-sweep`, every 5 minutes) re-adds the job of every due member of
+  `notices:due` that Redis lost; members older than 7 days are dropped. No SQL runs outside an
+  institute.
+- **Heal on read:** opening the broadcasts list re-queues the institute's `SCHEDULED` broadcasts
+  more than 2 minutes overdue (the sorted set itself could be lost with Redis, P6-K). The
+  dashboard lists one more than 10 minutes overdue.
+- Sent, waiting and failed counts are read live from `sms_logs` (`related_entity =
+'broadcast:<id>'`), never stored (P6-C).
+- Every create, edit, schedule, cancel, send and outcome is audited with counts and cost, never
+  phone numbers.
+
+| Route                                                             | What                               |
+| ----------------------------------------------------------------- | ---------------------------------- |
+| `GET /broadcasts`                                                 | list (heals overdue ones)          |
+| `GET /broadcasts/alerts`                                          | the dashboard warning              |
+| `GET /broadcasts/:id`                                             | one, with SMS counts by state      |
+| `POST /broadcasts`, `PUT /broadcasts/:id`                         | a draft (edit: draft or scheduled) |
+| `POST /broadcasts/:id/preview`                                    | the preview                        |
+| `POST /broadcasts/:id/send {expectedRecipients}`                  | now                                |
+| `POST /broadcasts/:id/schedule {scheduledAt, expectedRecipients}` | later                              |
+| `POST /broadcasts/:id/cancel`                                     | a draft or a scheduled one         |
+
+All OWNER/ADMIN, module CORE. Pages: `/broadcasts`, `/broadcasts/new` (`?notice=<id>` from a
+notice), `/broadcasts/[id]` (a draft opens in the composer).

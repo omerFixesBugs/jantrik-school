@@ -901,3 +901,22 @@ Built during the unattended day run of 2026-11-17 from the P6 plan (PR #15,
   `/notices/manage/` (one layout sends the management texts only to OWNER/ADMIN pages); the
   manage page lists notices as rows rather than a table (it works at 390 px without scrolling
   sideways).
+
+P6b (SMS broadcasts), taken alone:
+
+- **P6-b1. Editing a scheduled broadcast puts it back to DRAFT** (its job stops by itself): the
+  admin previews and schedules again, so the cap, the count and quiet hours are all checked again.
+- **P6-b2. A draft can be cancelled too** (status CANCELLED): broadcasts are never deleted, so this
+  is how an admin tidies one away.
+- **P6-b3. A job that runs early or inside quiet hours delays itself** (BullMQ `moveToDelayed`
+  on the same job id) and moves `scheduled_at` and the `notices:due` score to the new time; the
+  sweep remains the safety net.
+- **P6-b4. Who is "without phone":** a student with no guardian phone of the chosen kind (no
+  primary guardian phone for `PRIMARY_GUARDIANS`), or a staff member with no login phone.
+- **P6-b5. The relevance check sends a queued broadcast SMS only while the broadcast is `SENT`**
+  (P6-L is ready: a later "stop" only has to change the status).
+- **P6-b6. The composer's prefix is the institute's registered name** (`MeContext.tenant.name`),
+  not the profile's short name (P2): the name is always there, and the admin may edit it.
+- **P6-b7. The Playwright spec composes and previews but does not send:** CI runs at any hour, and
+  inside Dhaka's quiet hours a send is refused by design. Sending, the cap, quiet hours and the
+  job are covered by the API tests with a fake clock.

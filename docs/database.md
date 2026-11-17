@@ -585,6 +585,17 @@ RESTRICT`) and unique. The kind column is fixed by a CHECK (`students.photo_file
   on INSERT. SELECT stays institute-wide (the admin's read counts). Grants SELECT, INSERT: history,
   no UPDATE, no DELETE.
 - Isolation, grants, the own-read policy and the CHECKs: `packages/db/test/notices-rls.test.ts`.
+- **`sms_broadcasts`** (tenant table, P6b): the text (1–480 characters; 1–3 segments in code),
+  `recipients`, `status` (`DRAFT`, `SCHEDULED`, `SENT`, `CANCELLED`, `FAILED_OVER_CAP`), the
+  time, the confirmed count, segments, the estimated cost, the queued count and the institute's
+  day, who created, scheduled and cancelled it, the cancel reason and the failure. Grants SELECT,
+  INSERT and UPDATE on every column but the id, the institute, who created it and when; **no
+  DELETE** (money history). CHECKs: scheduled ⇒ time and who; sent ⇒ when, count and day;
+  cancelled ⇒ when and a reason (`BY_ADMIN`, `ACTOR_NOT_ADMIN`); failed ⇒ the failure; counts
+  ≥ 0; 1–3 segments.
+- **`sms_broadcast_targets`** (tenant table): as `notice_targets`, for a broadcast's guardians.
+- `sms_purpose` has `BROADCAST` (its own migration). Isolation, grants and CHECKs:
+  `packages/db/test/broadcasts-rls.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
