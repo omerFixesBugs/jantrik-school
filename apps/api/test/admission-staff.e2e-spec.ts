@@ -419,7 +419,7 @@ describe('admission (staff): cycles and applications', () => {
           ),
         ),
       );
-      expect([r1.status, r2.status].sort()).toEqual([201, 409]);
+      expect([r1!.status, r2!.status].sort()).toEqual([201, 409]);
       const n = await withTenant(h.prisma, s.tenantId, (tx) =>
         tx.admissionApplication.count({ where: { birthRegistrationNo: reg } }),
       );
