@@ -945,3 +945,34 @@ December dues rule: P3a (this PR). Decisions taken alone, each the safest option
   then promote; or cancel those dues. Not changed: the rule is the approved P3-K.
 - **P3-a11. No trigram index on application names:** 2 000 applications list in well under
   300 ms with `ILIKE` (the API test measures it).
+
+The public form, P3b (its own PR, stacked on P3a):
+
+- **P3-b1. Turnstile keys (the owner's instruction):** development uses Cloudflare's official
+  always-pass **test keys** (`.env.example`); the API and Playwright tests use a fake verifier
+  (`TURNSTILE_PROVIDER=fake`, refused outside `NODE_ENV=test`) and never call Cloudflare;
+  production refuses a missing or published test secret. A web build without a site key shows a
+  plain "I am not a robot" box whose token only the fake verifier accepts, so such a build fails
+  closed in production. The production compose requires `TURNSTILE_SITE_KEY` (a build argument).
+- **P3-b2. `admission_public_form` also returns the institute's id and timezone**, which the API
+  keeps (never sent to the browser): the code request then needs no fourth function.
+- **P3-b3. `admission_submit` hashes the photo and makes the name key itself** (no
+  `p_photo_sha256` parameter). Its key (PostgreSQL `lower`, `normalize(NFC)`, no whitespace) can
+  differ from the API's for unusual case or space characters: only duplicate detection between a
+  staff entry and an online one could miss such a name.
+- **P3-b4. The two SMS jobs have their own queue, `admission-sms`** (the plan said `sms`): the
+  API's SMS processor is unchanged and the admission module owns its jobs. A code's log row is
+  kept across a send retry (no second row).
+- **P3-b5. A value the tables refuse answers `INVALID`** inside `admission_submit` (an exception
+  block around the inserts), never an error: the counter increment rolls back with it (no gap).
+- **P3-b6. The public calls run in a transaction with no institute and no person**
+  (`withContext({})`), following P1-J8's rule that no query runs outside a transaction.
+- **P3-b7. `/apply` restores no session** (the auth provider is inactive there, as on `/platform`):
+  the page never calls `/auth/refresh`.
+- **P3-b8. The "received" SMS** is in the institute's default language and carries the status
+  link only when `WEB_PUBLIC_URL` is set (required in production).
+- **P3-b9. The per-phone daily code limit counts across institutes** (5 a day per phone in all),
+  stricter than per institute: SMS pumping through many institutes' forms gets nothing extra.
+- **P3-b10. Not measured here:** the 3-second budget on a throttled phone for `/apply/[slug]`
+  needs a running web app and API, and this run starts no servers (ports and memory). The page
+  loads no Turnstile script until the phone step; the build's size budget applies.
