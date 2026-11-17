@@ -95,6 +95,7 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { bnGenitive, classLevelName, displayName, displayUserName } from '@/lib/names';
 import { canSee, isStaff, navItem } from '@/lib/navigation';
+import { NoticesCard } from '@/components/notices/notices-card';
 import { useSetupChecklist, wizardHref } from '@/lib/setup-checklist';
 import { cn } from '@/lib/utils';
 
@@ -112,6 +113,8 @@ export default function DashboardPage() {
       ) : (
         <Greeting subtitle={null} today={context.today} />
       )}
+      {context.modules.includes('CORE') &&
+        (isStaff(context.roles) || context.roles.includes('GUARDIAN')) && <NoticesCard />}
     </>
   );
 }
