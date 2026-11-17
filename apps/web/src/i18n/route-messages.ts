@@ -127,10 +127,11 @@ export const ROUTE_MESSAGES = {
   apply: [
     'admission',
     'admissions.apply',
+    'admissions.staff.detail',
     'admissions.staff.form',
-    'admissions.staff.detail.staffNote',
     'dateInput',
     'enums',
+    'setup',
   ],
 } as const satisfies Record<string, readonly string[]>;
 
