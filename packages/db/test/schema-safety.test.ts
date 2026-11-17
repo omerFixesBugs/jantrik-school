@@ -71,6 +71,9 @@ describe('schema safety net', () => {
         'stored_files',
         'stored_file_usage',
         'institute_profiles',
+        'notices',
+        'notice_targets',
+        'notice_reads',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
