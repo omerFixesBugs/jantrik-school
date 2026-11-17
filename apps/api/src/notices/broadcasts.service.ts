@@ -566,6 +566,8 @@ export class BroadcastsService implements OnModuleInit {
         data: {
           status: 'FAILED_OVER_CAP',
           failure: { needed: result.needed, capLeft: result.capLeft },
+          // The institute's clock (the dashboard warning looks back 3 days from it).
+          updatedAt: now,
         },
         select: { id: true },
       });
