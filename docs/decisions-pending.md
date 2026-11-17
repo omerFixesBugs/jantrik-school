@@ -593,11 +593,88 @@ P0-9. **The login check reads `session_user`** (the login), never `current_user`
 
 Left by the final review for later (not built, each small):
 
-- **Redis runs as root and its image floats.** `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
-- **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
+- **Redis runs as root ~~and its image floats~~** (the image is pinned since the follow-ups of 2026-11-16, F-4 below; running as root is still open). `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
+- **Done 2026-11-16 (F-3 below).** **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
 - **The receiver's key scope `~<prefix>:devices:*` includes the worker's job schedulers** (the devices tick, expire-punches): code run in the receiver could delete them until the worker restarts and recreates them. Accepted for now (the scope the plan set); narrower read/write key selectors are possible at some cost across BullMQ upgrades.
-- **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
+- **Done 2026-11-16 (F-5 below).** **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
 - **Local Playwright configs** that are not in git (`playwright.alt*.config.ts`, `dbg`, `shots`) set `CORS_ORIGINS` but not `PLATFORM_ORIGINS`: their platform specs now get 403 until they set it.
+
+## Small follow-ups (day run 2026-11-16)
+
+Branch `chore/small-followups`, one PR. Decided by the agent alone (the owner was away); each can
+be changed in review.
+
+F-1. **P1-I is built as the owner answered:** a password is also refused when it contains a
+distinctive word of an institute's name. The name is split at spaces, punctuation, symbols and
+zero-width spaces; generic words and words of digits only (`2026` in "Udvash 2026 Batch") are
+dropped; every remaining word of 4 or more code points (the whole-name rule's counting) is
+refused. The whole-name rule stays (digits included). Both sides are compared like the phone rule:
+NFKC (full-width letters and digits), lower case, ASCII digits, khanda ta in its old encoding
+(ত + ্ + ZWJ) read as ৎ, and without spaces, punctuation, symbols or invisible characters (soft
+hyphen, zero-width space and joiners, word joiner…), so `ko.dom2026` or `k-o-d-o-m` count as
+`kodom`. **Glued endings:** generic words glued to the end of a word are cut off only when they
+are 6 or more code points together (`শাপলাউচ্চবিদ্যালয়` → `শাপলা`, `Kodomtolaschool` →
+`kodomtola`), so a short generic ending leaves no fragment (`Australia` keeps its `alia`; `austr`
+is not a word of the name). The error code stays `HAS_INSTITUTE_NAME` (its message now says "the
+name or a word from it"), so the web and the API did not change shape.
+
+F-2. **The generic words** (`GENERIC_NAME_WORDS` in `packages/shared/src/password.ts`), chosen
+from the owner's examples "and similar": the kind of institute (school, college, madrasa, academy,
+coaching, centre, institute, kindergarten, polytechnic, pathshala…), its level (high, secondary,
+primary, junior, dakhil, alim, fazil, kamil…), who it is for (girls, boys, mohila…), its medium and
+standing (english, bangla, version, international, model, ideal, public, government/govt, cadet,
+residential, pilot, memorial, smriti, shaheed…), madrasa name words (darul, uloom, jamia, hafizia,
+nurani, qawmi, islamia, quran, ebtedayee…), nursery and shishu, `and` written in Bangla, each in
+Bangla and in English letters with common spellings (madrasah, madrassa, bidyalay, uchcha,
+balika, madhyamik, prathomik, adarsha, sarkari, মাদরাসা, সরকারী, একাডেমী…). Not generic: place
+names and people's names (`Dhaka`, `Motijheel`, `Cantonment`, `Salim`): they point at the
+institute, so they are refused. Choices beyond the owner's words:
+
+- **Generic words glued to the end of a word** are cut off too (6 or more code points together,
+  F-1), and the whole glued word is still refused as well, so the rule never refuses less than
+  splitting at spaces alone. Only endings: a generic word at the start of an ordinary word is not
+  cut (`Highland` stays `highland`, so `highschool2026` is allowed).
+- **Invisible characters and other ways of writing** are ignored on both sides, for whole names
+  too (F-1). Unicode forms (য় as one code point or two) were already unified.
+- **The slug is not checked** (the decision mentioned it as a "perhaps"; the owner's answer did not
+  ask for it).
+
+F-3. **`CORS_ORIGINS` is normalised in `env.ts`** like `PLATFORM_ORIGINS` (lower-case host, no
+trailing slash or default port). An entry that is not exactly an origin (`*`, a bare host, or a
+URL with a login, a path, a query or a fragment) is kept as written instead of stopping the start:
+it matches no browser's Origin, production refuses it, and a developer's existing `.env` keeps
+working. **Also fixed for `PLATFORM_ORIGINS`** (they share the helper, which used `URL.origin`):
+`https://app.jantrik.com.bd@evil.example` used to become `https://evil.example` and pass the
+production check (in both lists, since before this PR for `PLATFORM_ORIGINS`). Such an entry is
+now no origin: production refuses it in either list, and `PLATFORM_ORIGINS` refuses it everywhere,
+as it already refused entries that are not URLs.
+
+F-4. **Redis is pinned to `redis:7.4.11-alpine`**, the version of the image this PC had (built
+2026-09-17; the tag exists on Docker Hub), in the production compose, the development compose and
+both CI jobs; a test checks the four agree and are exact. The exact tag, not a digest: Docker's
+patched rebuilds of the same version can still be taken (`compose.sh pull redis`, deploy.md §
+11). Your local Redis container keeps running `redis:7-alpine` until the next
+`docker compose up -d`, which pulls 7.4.11 and restarts it on the same volume. Postgres
+(`postgres:16-alpine`) and Caddy (`caddy:2-alpine`) still float: not asked, same fix if wanted.
+
+F-5. **The login check refuses REPLICATION and CREATEROLE** for the runtime logins, and a login
+that can become a role with either. CREATEROLE is refused too (the decision said "possibly"): no
+runtime login has or needs it, the local init script creates none with it, and `create-roles.sh`
+already refuses both for every role it makes, so no correct setup stops starting.
+
+F-6. **Test users' phones are unique per database, across runs too** (the appearance flake,
+P0-8). A per-run counter is not enough: the test database keeps every run's users, and Vitest
+gives each test file its own module (no shared memory). So one counter per database lives in a
+file in the OS temp folder (`jantrik-test-phones/`), taken 200 numbers at a time under a lock, and
+never behind a clock that moves 1 number a second (a deleted file restarts ahead of older runs,
+given about an hour and a half per 5 000 phones they used). New phones use operators no test used
+before (API +88013, db package +88014, 50 000 000 to 98 999 999; the seeds' fixed numbers are lower
+and the old random phones were 017/018), so they cannot meet old test users either. **The numbers
+never wrap:** when the 49 million are used up (the clock alone gets there in about May 2028),
+drawing stops with a message to recreate the test database and move the start date, instead of
+repeating numbers older runs gave out. The lock is taken over only when stale (10 s), by moving it
+aside first and checking its owner, and Windows' "being removed" answers (EPERM, EACCES) mean
+"busy". `randomPhone` kept its name (about 40 files call it).
 
 ## The refresh race fix (2026-11-15)
 
@@ -649,10 +726,190 @@ P1-G. **The rules are checked before the code** (a change to the plan's order, w
 
 P1-H. **`GET /me/password` also returns the person's own phone** (an addition to the plan), so the form can check the phone rule as they type. It is their own number, returned only to them.
 
-P1-I. **Open, for the owner: catch part of an institute's name too?** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widens the rule you set, so it is not built.
+P1-I. **Built in the follow-ups PR (`chore/small-followups`, the owner's answer of 2026-11-16; see F-1): a distinctive word of an institute's name is refused too.** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widened the rule you set, so it waited for your answer.
 
 - To change: `passwordProblems` in `packages/shared/src/password.ts` (the server and the form share it).
 
-P1-J. **Follow-up, for the owner: hide `users.password_hash` from the app login.** Real staff hashes now exist, and `jantrik_app` may still SELECT every column of the users it can see (itself, and the members of the current institute, through `users_visible`). An injection in a request could read co-members' hashes (argon2id, so slow to attack, but still). The fix: revoke SELECT on that column from `jantrik_app` and read `hasPassword` through a definer function, as the login already does; every full-row read of `users` in the app and the tests must then name its columns. A database and security change, so it needs a plan and your approval first.
+P1-J. **Built (day run 2026-11-16), for the owner's review with its PR: no ordinary request can read a password hash.** Plan: [plans/sprint-1-p1j-password-hash.md](plans/sprint-1-p1j-password-hash.md), written and built while the owner was away, as asked, then changed after the database-security review (P1-J7). `jantrik_app` lost SELECT on `users.password_hash` (granted column by column; UPDATE kept), its login lookup returns no password data, and the password login looks the hash up on its own database login (`jantrik_login_app`, `DATABASE_LOGIN_URL`) through one function only that login may run. Every Prisma client omits the hash. **Setup on your machine, in this order:** create the role once (docs/database.md → Database roles, the `CREATE ROLE jantrik_login_app …` line), add `DATABASE_LOGIN_URL` to `.env` (from `.env.example`), then `pnpm db:migrate`. Decisions taken alone, each the safest option (P1-J1 to P1-J7):
+
+P1-J1. **The app's login lookup returned any user's hash, so it changed too.** `auth_find_user_for_login`, which `jantrik_app` may run, returned `password_hash` for any phone or email, whatever the institute: hiding the column alone would have closed nothing. It now returns id, name and locale only (the OTP login never needed more).
+
+P1-J2. **`hasPassword` comes from `auth_my_password_is_set()`**, a definer function for `app.user_id` with no parameter. **It leaks one bit:** any SQL in a request can set `app.user_id` with `set_config`, so an injection can learn whether a given person has a password (yes or no; nothing about the password). Moving it to the login's own login would close that too; not done, to keep that login used by the password login only.
+
+P1-J3. **Every Prisma client omits `passwordHash`** (a global `omit` in `createPrismaClient`), instead of a `select` at each call site. The package's `PrismaClient` type is that client's, so a read without `select` has no `passwordHash` and `new PrismaClient` from the package does not type-check (the test helper's one-connection client now comes from the factory, with a new `max` pool option). Not stopped by TypeScript, only by the database: an explicit `select: { passwordHash: true }`, and the generated class, which the package's `export *` still exports at runtime.
+
+P1-J4. **A cost ceiling for stored hashes at login:** at most 64 MiB, 10 passes, 4 lanes (today's hashes: 19 MiB, 2, 1). Above it, or unreadable, the stored hash counts as no password (the dummy check runs, so the time is the same). Before, argon2 verified whatever parameters a stored hash named, so someone who wrote a huge-cost hash into their own row could make each of their login attempts arbitrarily expensive.
+
+P1-J5. **(Dropped after the review.)** The first version accepted only argon2id v19 with a 32-byte digest, because the API recomputed the hash. With argon2's own verify back (P1-J7) any argon2 hash within the ceiling works again.
+
+P1-J6. **Not changed: the platform admins' login** (`platform_find_admin_for_login` returns `platform_admins` hashes and TOTP secrets to `jantrik_platform_app`). It is a separate login with no tenant traffic; the same change can follow if you want it.
+
+P1-J7. **Built after the review; you may drop these commits:** the first version kept the hash in the database and compared a digest there (`auth_my_password_matches`). The review showed that an injection could read any user's salt, set `app.user_id` to them and check 200,000 offline-computed guesses in one 6.4-second statement: close to reading the hash. Now a dedicated login, `jantrik_login_app`, is the only one that may run the hash lookup (`auth_find_user_for_password_login`); `jantrik_app` has neither the lookup nor any comparison function, and the API verifies with argon2 as before. It follows the platform and receiver logins: its own env URL (required, refused in production as the owner or superuser, never given to the receiver), its own small pool, the fail-closed privilege check and a mixed-up-URLs check at start-up, and the role in `01-roles.sh`, `create-roles.sh`, the production compose, CI, the restore check and the docs. **Upgrade:** the migration first checks that `jantrik_login_app` exists and refuses to run otherwise (Prisma does not run a migration in one transaction, so a failure half-way would leave the first statements applied); every statement can run again after `prisma migrate resolve --rolled-back`. On a server the role is created after the checkout and before `migrate` (docs/deploy.md → Upgrades). Between `migrate` and the restart, the old API fails whole-row reads of `users` (the refresh, `/auth/me`) and both logins; a failed refresh is retried and nobody is signed out.
+
+P1-J8. **Follow-up for the owner (not built, and not new): an SQL injection can still take over an account.** The request's identity is `app.user_id` (and `app.tenant_id`), set with `set_config`, which any SQL in the same transaction can change. Set to a victim's id, RLS lets it update the victim's `password_hash` (then sign in with a password it chose) or insert a session for them. P1-J stops reading hashes (it protects the password, which people reuse elsewhere), not this. Options, each a larger change: a verified context (e.g. the API signs the context and a definer function checks the signature before anything trusts it), or writes to `users.password_hash` and `sessions` only through definer functions that check a server-side secret or the session itself. Main has the same today.
+
+P1-J9. **Follow-up for the owner (not built): email login lookups are case-insensitive but not indexed.** Both login lookups compare `lower(u.email) = lower(p_email)`; `users_email_key` is case-sensitive, so that comparison scans the table (an unknown email takes longer as the table grows) and two emails differing only in case can coexist. The fix: check for such duplicates first, then a unique index on `lower(email)` (and drop the old one). Not in this PR, because existing data could hold duplicates.
 
 P1-K. **Fixed from the review** (each with a test that failed first): a code is single use even when two requests race with it (login codes too); the phone rule ignores every punctuation mark and symbol between the digits; the other sessions are revoked in one statement; the common-password list is read at start-up; password login accepts up to 512 code points (a 128-character password typed decomposed); the wrong-code message asks to check the code before sending a new one. Kept as they are: the staff check after a correct password costs one extra query (it only confirms a password the caller already has); the login page's hint sits under the password tab, which guardians do not use.
+
+## Sprint 1, P2: institute profile, files, photos (2026-11-16)
+
+Plan: [plans/sprint-1-p2-files.md](plans/sprint-1-p2-files.md), written and built during the unattended day run of 2026-11-16 (the owner asked for it while away). The PR is the approval step. Each decision below is the safe default; all are reversible.
+
+F1. **Who sees what.** A student's photo is part of the full record, as on the student's page today (the basic view for a teacher of another section already left it out): OWNER and ADMIN for every student, a TEACHER for the students of their current sections, a guardian for their own children only (`GET /me/children/:id/photo`). Anyone else gets 404, as for a student that does not exist. The logo: every member, guardians too. The head's signature and the seal: OWNER and ADMIN only (they could be misused on forged papers; P8/P9 widen this for printing). The profile fields: OWNER and ADMIN.
+
+F2. **Lists keep initials.** The student list, the cards view and other lists do not load photos: fifty photos of up to 200 KB would not fit the 3 s budget on slow 4G. Photos show on the student's page and side peek, the guardian's child card and the report card. A small thumbnail kind for lists is a follow-up.
+
+F3. **`photoId` replaces `photoUrl`** in every API type (student list, profile, guardian children, report cards, admit cards): the stored file's id or null. The web fetches the image with the bearer token from the entity route and caches it by that id.
+
+F4. **EIIN is exactly 6 digits** (BANBEIS), optional. One CHECK to widen if an institute has another form.
+
+F5. **The institute's phone** may be a mobile (stored as E.164) or a landline (5–15 digits, optional `+`).
+
+F6. **An image uploaded before the first save** creates the profile with the registered name (`tenants.name`) in its script (Bangla or English), so the "one name" rule holds.
+
+F7. **Formats.** JPEG, PNG and WebP only, by content. HEIC is refused (iPhones send JPEG to the browser's file picker; sharp's prebuilt build cannot decode HEVC). A transparent photo is flattened on white. Truncated files are refused; other decoder warnings are tolerated (some phone JPEGs have harmless ones).
+
+F8. **60 uploads per person per 10 minutes** (`file-upload:<userId>`), on top of the general limits: each upload costs CPU.
+
+F9. **A deactivated student's photo** can be viewed by OWNER/ADMIN but not changed (409 `DEACTIVATED`, like other student writes).
+
+F10. **Replacing an image deletes the old file** in the same transaction; there is no image history. The audit row keeps the old and the new file id.
+
+F11. **The per-institute total is counted, not recomputed**, under the institute's advisory lock; tests check it equals the sum of the files after puts, replaces, deletes and two uploads at once.
+
+F12. **No institute header or logo on the report card yet.** The profile and images exist for P3 (the admission slip), P8 and P9 (documents); the report card gains only the student photo, as the sprint plan says.
+
+Changed after the review (each code fix with a test that failed first; R3 is checked by Playwright
+in CI; R9 and R10 are docs and tests only; details in the plan → "Changed after the review"):
+
+- **R1. Uploads no longer run inside the request transaction** (must-fix). `TenantContextInterceptor`
+  (a global interceptor) opened the 15 s transaction and took a pool connection before multer read
+  the body: a 2–5 MB photo on slow 4G took longer than 15 s (a 500 every time), and ten slow
+  uploads could hold all 10 connections (every other institute failing). The two upload routes
+  are now `@OwnTransaction()`: the body is read, the upload limit applied and the image decoded
+  with no connection; then `RequestTransaction.run` (the interceptor's own logic, moved into a
+  service) opens the same tenant transaction for the short store. The image queue is bounded (8
+  waiting; more get 503 `IMAGE_BUSY`), and the browser shrinks a chosen image to 1600 px on the
+  long side (JPEG 0.85 for photos, PNG for the others) before sending, so a phone sends about
+  300 KB. Test: while a slow body arrives, no session of the app login is idle in a transaction.
+- **R2. The code scan also catches Prisma relation fields** (`photoFile`, `logoFile`,
+  `signatureFile`, `sealFile`, `storedFiles`, `storedFileUsage`, `storedFilesCreated`, the
+  `profile*` back-relations).
+- **R3. The guardian's report card shows the photo** through `/me/children/:id/photo`
+  (`ReportCardsPrint as="guardian"`); Playwright checks it in the exams spec.
+- **R4. The web address's scheme is stored in lower case** (`HTTPS://x` → `https://x`), as the
+  database CHECK is case-sensitive; it was a 500.
+- **R5. The image queue hands a freed slot straight to the next waiter**, so it can never run
+  three at once.
+- **R6. A file reference is tied to its kind in the database.** `stored_files` has
+  `UNIQUE (tenant_id, id, kind)`; `students.photo_file_kind` (always `STUDENT_PHOTO`) and
+  `institute_profiles.logo_file_kind`, `head_signature_file_kind`, `seal_file_kind` (always
+  `LOGO`, `SIGNATURE`, `SEAL`, by CHECK) are part of each foreign key, so a photo column can only
+  hold a photo, a logo column a logo, and so on.
+- **R7. Replacing an image near the cap is allowed** when the total would not grow: `put` takes the
+  id it replaces (read under the file lock) and counts it.
+- **R8. The first image and the first save cannot collide:** the row an image creates is inserted
+  with `ON CONFLICT DO NOTHING`.
+- **R9.** F1 above now says what the code does (a teacher sees photos of their own sections only).
+- **R10.** The database tests name the rule that refuses each write; a PNG `eXIf` GPS case was
+  added to the image tests.
+
+- **For the owner (backlog): the CSV imports read their uploads inside the request transaction
+  too** (student import up to 5 MB, device people up to 1 MB). Smaller and rarer than photos, so
+  not changed here; they can move to `@OwnTransaction()` the same way.
+
+Changed after the review, round 2 (each code fix with a test that failed first):
+
+- **R11. Uploads in flight are bounded.** With R1 nothing limited how many upload bodies could be
+  in memory. `UploadGuard` (before multer) allows 16 per process and 2 per person, refuses more at
+  once with 503 `IMAGE_BUSY`, gives the slot back when the response closes (sent, failed or
+  dropped by the client), and drops a body not received within 60 s.
+- **R12. `RequestTransaction.run` refuses to nest** inside a request transaction (it would replace
+  the outer one in the request context). The interceptor itself uses an unchecked entry (`around`): it is the outermost transaction, and a request made from inside a running job (as some tests do) inherits that job\'s request context.
+- **R13. The upload's transaction re-checks the session and the route's roles** (OWNER/ADMIN),
+  read in the transaction, besides the institute's status and the membership: an admin
+  downgraded, or a session revoked, while the body arrives stores nothing (403 / 401).
+- **R14. The target is checked before decoding:** a student photo for an unknown or deactivated
+  student, or any upload in a suspended institute or by someone who lost the role, is refused
+  before the image is decoded or the upload quota is used.
+- **R15. sharp's own 10 s timeout** on the decode and each encode → 422 `IMAGE_TIMEOUT`.
+- **R16. A replacement no bigger than the old file is never refused**, even when the total is over
+  a lowered cap; `FileStore.put`'s contract says the caller deletes the replaced file in the same
+  transaction.
+- **R17. A profile save takes the file lock before reading the row**, so a first save racing a
+  first image is audited as an UPDATE (one CREATE per institute).
+- **R18. The browser asks for the EXIF orientation explicitly** (`imageOrientation:
+'from-image'`); an engine without it sends the original, which the server turns upright.
+- **Tests:** a deterministic database test of the ON CONFLICT path (an insert held uncommitted);
+  the slow-body check sampled every 100 ms, for the logo route too; suspended institute and
+  disabled member → 403 with nothing stored; the signature column's wrong kind; the exams spec
+  removes the demo child's photo in an `afterEach`.
+- **Migrations edited in place:** both migrations of this PR changed after it was first pushed
+  (R6). Nothing outside this run's scratch databases applied them; any database that did needs
+  a fresh one (or a reset) before applying the final versions.
+
+Changed after the review, round 3 (each code fix with a test that failed first):
+
+- **R19. No upload slot leaks when the client leaves early** (must-fix). If the socket closed while
+  the global guards awaited Redis, the response's one 'close' event was already past when
+  `UploadGuard` listened for it, so the slot was never given back. A client already gone (the
+  test on-finished uses: the request or response destroyed, the answer sent, or the socket no
+  longer writable) now gets no slot, and every slot is given back after 5 minutes at the latest
+  (a backstop).
+- **R20. The revoked-session check runs before the transaction**, with Redis's 2 s deadline (503
+  `SERVICE_UNAVAILABLE`), so a slow Redis never holds a pooled connection; the roles are still
+  read in the transaction.
+- **R21. A browser that predates `imageOrientation`** (a TypeError) decodes without it when the
+  photo needs no turning (no EXIF orientation, or 1; a small JPEG reader checks), and sends the
+  original otherwise (the server turns it upright).
+- **R22.** The timeout test uses sharp 0.35.5's real message (`timeout: N% complete`).
+
+Also decided while building:
+
+- The migrations were written by hand (no development database is used in this run) and checked with `prisma migrate diff` against a scratch database: empty.
+- `sharp` 0.35.5 was already in the lockfile through Next.js; the API now depends on it directly (S8).
+- Encoding effort is moderate (PNG palette effort 4, WebP effort 4): the worst case (pure noise) stays well under the request's 15 s; a test pins it under 8 s per image on this PC.
+
+## Sprint 1, P6: notices and broadcast (2026-11-17)
+
+Built during the unattended day run of 2026-11-17 from the P6 plan (PR #15,
+`docs/plans/sprint-1-p6-notices.md`) with its recommended defaults P6-A to P6-N and its split
+(P6a notices, P6b broadcasts). Decisions taken alone, each the safest option:
+
+- **P6-a1. Notices have no `SCHEDULED` status** (P6-A as recommended): visibility is computed
+  from `status`, `publish_at` and `expires_at` when read; no job. Publishing again moves a
+  scheduled notice's time; a live notice cannot be "published" again (409 `NOT_EDITABLE`).
+- **P6-a2. A publish time more than a minute in the past is refused** (422
+  `SCHEDULE_OUT_OF_RANGE`), not treated as "now": a past date is a mistake in the form.
+- **P6-a3. Targets on a `STAFF` notice are refused** (422 `TARGET_INVALID`) rather than ignored,
+  and a target section must be a current-year section of the target class (sections belong to a
+  year; one of another year would match no child).
+- **P6-a4. The expiry is a last day** in the form (the notice leaves the board at the end of that
+  day, Asia/Dhaka); the API stores the instant. It must be after the publish time (422
+  `EXPIRY_INVALID`); an unchanged past expiry does not block other edits.
+- **P6-a5. Only ACTIVE, not deleted children count** for a guardian's targeted notices and for the
+  read counts (a child who left no longer brings their class's notices).
+- **P6-a6. Audit entries hold the body's length, not the body** (a notice can be 5 000
+  characters; the title, audience, targets, pin and expiry are recorded).
+- **P6-a7. The dashboard card shows for staff and guardians** below the role's own cards, from
+  the same query as the board (no extra request when both are open).
+- **P6-a8. The Playwright spec signs in staff only** (owner and teacher by password): the demo
+  guardians' OTP budget (one code a minute, 5 per 15 minutes) is already shared by other specs.
+  Guardian visibility is covered by the API tests.
+- **Plan and code differences:** the plan's `/notices/new` and `/notices/[id]/edit` live under
+  `/notices/manage/` (one layout sends the management texts only to OWNER/ADMIN pages); the
+  manage page lists notices as rows rather than a table (it works at 390 px without scrolling
+  sideways).
+
+Changed after the review of #25 (round 1, nits only):
+
+- **P6-a9. The unread count's cache has a per-person read version** bumped after a read commits,
+  instead of deleting the entry (a count computed just before the read could otherwise be cached
+  again, stale, for 2 minutes).
+- **P6-a10. An edit keeps the targets the notice already had** without the current-year check; new
+  targets are still checked. An edit locks the notice before reading what the audit records.
+- **P6-a11. The board excerpt is cut at 200 characters as people see them** (grapheme clusters:
+  a Bangla conjunct or a multi-code-point emoji is never split; round 2).
+- **P6-a12. The per-person read version expires after an hour** (set with the increment), longer
+  than any count cached under it (round 2).

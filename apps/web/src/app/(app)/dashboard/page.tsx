@@ -77,7 +77,7 @@ import {
 import { DeltaPill, Pill } from '@/components/kit/pill';
 import { HalfGauge, HatchedColumns } from '@/components/story-charts';
 import { InvitationsBanner } from '@/components/invitations-banner';
-import { PersonAvatar } from '@/components/person-avatar';
+import { StudentAvatar } from '@/components/student-photo';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, ButtonLink } from '@/components/ui/button';
 import {
@@ -95,6 +95,7 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { bnGenitive, classLevelName, displayName, displayUserName } from '@/lib/names';
 import { canSee, isStaff, navItem } from '@/lib/navigation';
+import { NoticesCard } from '@/components/notices/notices-card';
 import { useSetupChecklist, wizardHref } from '@/lib/setup-checklist';
 import { cn } from '@/lib/utils';
 
@@ -112,6 +113,8 @@ export default function DashboardPage() {
       ) : (
         <Greeting subtitle={null} today={context.today} />
       )}
+      {context.modules.includes('CORE') &&
+        (isStaff(context.roles) || context.roles.includes('GUARDIAN')) && <NoticesCard />}
     </>
   );
 }
@@ -1241,7 +1244,13 @@ function ChildCard({
       className="bg-card rounded-card shadow-card flex flex-col overflow-hidden border"
     >
       <div className="flex items-center gap-4 p-4 sm:p-5">
-        <PersonAvatar name={name} photoUrl={child.photoUrl} size="xl" />
+        <StudentAvatar
+          studentId={child.id}
+          photoId={child.photoId}
+          name={name}
+          as="guardian"
+          size="xl"
+        />
         <div className="flex min-w-0 flex-col">
           <h3 className="truncate text-xl font-semibold">{name}</h3>
           <span className="text-muted-foreground text-sm">

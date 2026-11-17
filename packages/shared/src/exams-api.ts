@@ -513,7 +513,7 @@ export interface AdmitCards {
       studentCode: string;
       nameBn: string | null;
       nameEn: string | null;
-      photoUrl: string | null;
+      photoId: string | null;
     };
     classLevel: CodedRef;
     section: { id: string; name: string };
@@ -817,7 +817,7 @@ export interface ReportCard {
     studentCode: string;
     nameBn: string | null;
     nameEn: string | null;
-    photoUrl: string | null;
+    photoId: string | null;
     /** Only for OWNER/ADMIN, the student's current section teachers and the guardian (#19). */
     fatherNameBn: string | null;
     fatherNameEn: string | null;

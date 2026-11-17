@@ -47,3 +47,7 @@ export * from './staff-attendance-api.js';
 export * from './staff-attendance-schema.js';
 export * from './password.js';
 export * from './password-schema.js';
+export * from './files.js';
+export * from './files-schema.js';
+export * from './notices.js';
+export * from './notices-schema.js';
