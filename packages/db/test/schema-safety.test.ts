@@ -74,6 +74,8 @@ describe('schema safety net', () => {
         'notices',
         'notice_targets',
         'notice_reads',
+        'sms_broadcasts',
+        'sms_broadcast_targets',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
