@@ -93,4 +93,7 @@ test('apply → status → the owner approves → the student appears', async ({
   await passwordLogin(page, DEMO.shaplaOwner);
   await page.goto(`/students/${approved.studentId}`);
   await expect(page.getByTestId('student-profile')).toContainText('সাদিয়া ইসলাম');
+
+  // The suite shares one database: the specs after this one count the demo school's students.
+  await api(owner, `/students/${approved.studentId}/deactivate`, { method: 'POST' });
 });
