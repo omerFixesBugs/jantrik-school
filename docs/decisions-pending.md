@@ -993,6 +993,11 @@ The public form, P3b (its own PR, stacked on P3a):
   link only when `WEB_PUBLIC_URL` is set (required in production).
 - **P3-b9. The per-phone daily code limit counts across institutes** (5 a day per phone in all),
   stricter than per institute: SMS pumping through many institutes' forms gets nothing extra.
+  **Owner, by design (review round 2):** anyone who knows a family's phone can spend its five
+  codes with five requests (each passes Turnstile and is one minute apart) and so shut that family
+  out of every institute's form and status page for up to 24 hours; the family still gets the
+  five SMS, which shows something is wrong. The alternative (per institute) multiplies what SMS
+  pumping can send by the number of institutes. Walk-in entry by staff (P3-J) is the fallback.
 - **P3-b10. Not measured here:** the 3-second budget on a throttled phone for `/apply/[slug]`
   needs a running web app and API, and this run starts no servers (ports and memory). The page
   loads no Turnstile script until the phone step; the build's size budget applies.
@@ -1016,13 +1021,26 @@ After the security review of P3b (round 1):
   limit and the phone token (signature, expiry); the route then checks its institute.
 - **P3-b16 (review S4; for the owner). The status page's code works after the form closed**, but
   is sent only when the phone made that application (same answer otherwise); `purpose: 'status'`
-  with the application number.
+  with the application number. The answer is the same in every budget state too, and a probe
+  leaves no trace (review round 2 and its follow-up): status codes spend **budgets of their own**
+  (per phone 5 a day across institutes, per institute 100 a day: constants in
+  `admission-otp.service.ts`), never the form's five a day or its ceiling, which a later ordinary
+  request would read; the code is sent after the answer (not awaited), so the response time does
+  not depend on a match either. A spent status budget sends nothing and still answers 202 with
+  no `Retry-After`. **Owner:** an institute's SMS for admission codes are now bounded by
+  `ADMISSION_OTP_PER_TENANT_PER_DAY` (300) plus 100 status codes a day; the status page never says
+  "try later" (the form's code request still answers 429 with `Retry-After`: it reveals nothing
+  about an application).
 - **P3-b17 (review S5, S6, N1, N2, N6).** The role's privileges are compared to an exact list; the
   public folder's code scan also refuses `withTenant`/`tenantClient` and any `withContext` that
   is not empty; the no-op `GRANT EXECUTE … app_verified_context() TO jantrik_admission` is gone
   (nothing needed it); the role loses `CREATE` on the schema after taking its functions over;
   public answers are `no-store`. `ADMISSION_OTP_PHONE_COOLDOWN_SEC` (60) is new (the Playwright
   suite sets 1).
+- **P3-b19 (review round 2 NIT 2; for P4).** `admission_submit` takes the cycle's shared lock
+  before it reads the cycle. Replacing an `admission_*` function later needs `CREATE` on `public`
+  granted back to `jantrik_admission` around a `SET ROLE` (admission.md, "Changing these
+  functions later").
 - **P3-b18 (review N3, N4, N7, recorded).** A per-address limit runs before Turnstile and the
   database on `/otp` (60 an hour) and `/otp/verify` (60 a quarter hour). The decompression-bomb
   test is in; ten parallel uploads (at most two decoding) are covered by P2's `image.service.spec`;

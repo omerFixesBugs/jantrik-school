@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { withContext, type TenantTx } from '@jantrik/db';
 import {
   admissionApplicationFieldsSchema,
@@ -39,6 +39,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 @Injectable()
 export class AdmissionPublicService {
+  private readonly logger = new Logger(AdmissionPublicService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly clock: Clock,
@@ -97,9 +99,10 @@ export class AdmissionPublicService {
    * POST /public/admission/:slug/otp: a code to the phone, after Turnstile. `purpose: 'status'`
    * (the status page, review S4) works while the institute is active even with no cycle open, and
    * sends the code only when that phone has that application here; the answer is the same either
-   * way, so it tells a stranger nothing. That holds in every budget state too (review round 2):
-   * a spent shared budget (the phone's day, the institute's ceiling) sends nothing and still
-   * answers 202 with no Retry-After, as for a pair that does not match.
+   * way, so it tells a stranger nothing. That holds in every budget state too (review round 2),
+   * and nothing a later request reads differs (its follow-up): the status code spends budgets of
+   * its own, never the form's, and is sent after the answer, so neither the answer, its time nor
+   * any later answer depends on whether the pair matched.
    */
   async requestOtp(
     slug: string,
@@ -128,14 +131,28 @@ export class AdmissionPublicService {
           tx.$queryRaw<{ v: unknown }[]>`
           SELECT public.admission_lookup(${slug}, ${applicationNo}, ${phone}) AS v`,
       );
-      if (!row?.v) return { expiresIn: 300 };
+      if (row?.v) {
+        // Not awaited: the answer does not wait for the budgets, the code or the queue.
+        void this.otp
+          .issue({
+            tenantId: f.tenantId,
+            phone,
+            today: todayIn(f.timezone, this.clock.now()),
+            locale: f.institute.locale === 'en' ? 'en' : 'bn',
+            purpose: 'status',
+          })
+          .catch((error: unknown) =>
+            // The name only: the error could carry the phone.
+            this.logger.error(`Status code not sent: ${(error as Error).name}`),
+          );
+      }
+      return { expiresIn: 300 };
     }
     await this.otp.issue({
       tenantId: f.tenantId,
       phone,
       today: todayIn(f.timezone, this.clock.now()),
       locale: f.institute.locale === 'en' ? 'en' : 'bn',
-      quiet: forStatus,
     });
     return { expiresIn: 300 };
   }

@@ -29,6 +29,13 @@ export interface AdmissionSubmittedJob {
 
 export const ADMISSION_OTP_TTL_SEC = 5 * 60;
 export const ADMISSION_OTP_MAX_ATTEMPTS = 5;
+/**
+ * The status page's codes have budgets of their own (review round 2, follow-up), which the form's
+ * code requests never read: per phone 5 a day across institutes, per institute 100 a day. Only a
+ * phone that made the application gets one, so these bound what knowing (phone, number) can send.
+ */
+export const ADMISSION_STATUS_OTP_PER_PHONE_PER_DAY = 5;
+export const ADMISSION_STATUS_OTP_PER_TENANT_PER_DAY = 100;
 
 const codeKey = (tenantId: string, phone: string) => `otp:admission:${tenantId}:${phone}`;
 const attemptsKey = (tenantId: string, phone: string) =>
@@ -70,29 +77,41 @@ export class AdmissionOtpService {
    * Sends a code. The shared budgets (the phone's five a day across institutes, the institute's
    * ceiling) are spent only by a code that is really sent: both are checked first and counted
    * together, or neither (review of P3b, M1: refused requests used to exhaust the ceiling).
-   * A spent budget is 429 with Retry-After; with `quiet` (the status page) it sends nothing and
-   * answers false instead, so the caller can answer as for any other pair (review round 2).
+   * A spent budget is 429 with Retry-After. A status-page code (`purpose: 'status'`) spends only
+   * the status budgets, never the form's, and a spent one sends nothing and answers false: no
+   * request can tell that a status code was or was not sent (review round 2 and its follow-up).
    */
   async issue(input: {
     tenantId: string;
     phone: string;
     today: string;
     locale: 'bn' | 'en';
-    quiet?: boolean;
+    purpose?: 'form' | 'status';
   }): Promise<boolean> {
     const { tenantId, phone } = input;
-    const budgets = [
-      { key: `adm-otp-phone-day:${phone}`, limit: 5, windowSec: 86_400 },
-      {
-        key: `adm-otp-tenant:${tenantId}:${input.today}`,
-        limit: this.config.get('ADMISSION_OTP_PER_TENANT_PER_DAY', { infer: true }),
-        windowSec: 86_400,
-      },
-    ];
-    if (input.quiet) {
-      if (!(await this.limiter.tryConsume(...budgets))) return false;
+    if (input.purpose === 'status') {
+      const sent = await this.limiter.tryConsume(
+        {
+          key: `adm-otp-status-phone:${phone}`,
+          limit: ADMISSION_STATUS_OTP_PER_PHONE_PER_DAY,
+          windowSec: 86_400,
+        },
+        {
+          key: `adm-otp-status-tenant:${tenantId}:${input.today}`,
+          limit: ADMISSION_STATUS_OTP_PER_TENANT_PER_DAY,
+          windowSec: 86_400,
+        },
+      );
+      if (!sent) return false;
     } else {
-      await this.limiter.consumeIfAllowed(...budgets);
+      await this.limiter.consumeIfAllowed(
+        { key: `adm-otp-phone-day:${phone}`, limit: 5, windowSec: 86_400 },
+        {
+          key: `adm-otp-tenant:${tenantId}:${input.today}`,
+          limit: this.config.get('ADMISSION_OTP_PER_TENANT_PER_DAY', { infer: true }),
+          windowSec: 86_400,
+        },
+      );
     }
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     await this.redis
