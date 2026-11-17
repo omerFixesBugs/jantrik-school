@@ -728,6 +728,13 @@ describe('schema safety net', () => {
         'status',
         'submitted_at',
         'tenant_id',
+        // P4: the test roll and the published snapshot only, never the draft or a live score.
+        'test_roll',
+        'result_version',
+        'result_merit_position',
+        'result_waitlist_position',
+        'result_score_h',
+        'result_absent',
       ),
       'admission_applications:INSERT': cols(
         'id',

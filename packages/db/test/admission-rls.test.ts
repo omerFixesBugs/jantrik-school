@@ -385,4 +385,122 @@ describe('admission tables', () => {
     );
     await make('2026-0103');
   });
+
+  // ─────────────────────────── Sprint 1 P4: the admission test ───────────────────────────
+
+  describe('the admission test (P4)', () => {
+    /** A class of its own with full marks 100, and one application in it. */
+    const testClass = async (no: string, full: number | null = 100) =>
+      withTenant(app, a.tenantId, async (tx) => {
+        const cycle = await tx.admissionCycle.create({
+          data: {
+            tenantId: a.tenantId,
+            academicYearId: a.yearId,
+            nameBn: `পরীক্ষা ${no}`,
+            requiresTest: true,
+            opensAt: new Date('2026-11-01T00:00:00Z'),
+            closesAt: new Date('2026-12-31T00:00:00Z'),
+          },
+        });
+        const cc = await tx.admissionCycleClass.create({
+          data: {
+            tenantId: a.tenantId,
+            cycleId: cycle.id,
+            classLevelId: a.classLevelIds[0]!,
+            fullMarks: full,
+          },
+        });
+        const row = await tx.admissionApplication.create({
+          data: application(a.tenantId, cycle.id, cc.id, no),
+        });
+        return { cycleId: cycle.id, cycleClassId: cc.id, applicationId: row.id };
+      });
+    const setApp = (id: string, data: Record<string, unknown>) =>
+      withTenant(app, a.tenantId, (tx) => tx.admissionApplication.update({ where: { id }, data }));
+    const setClass = (id: string, data: Record<string, unknown>) =>
+      withTenant(app, a.tenantId, (tx) => tx.admissionCycleClass.update({ where: { id }, data }));
+
+    it('a score stays within its class full marks (hundredths); no score without full marks', async () => {
+      const t = await testClass('2026-0201');
+      await setApp(t.applicationId, { testRoll: 1001, testScoreH: 10_000 });
+      await expect(setApp(t.applicationId, { testScoreH: 10_001 })).rejects.toThrow(
+        /test_score_within_full_marks/,
+      );
+      const none = await testClass('2026-0202', null);
+      await expect(setApp(none.applicationId, { testScoreH: 5_000 })).rejects.toThrow(
+        /test_score_within_full_marks/,
+      );
+      // Full marks cannot drop below a score already entered, nor be removed.
+      await expect(setClass(t.cycleClassId, { fullMarks: 90 })).rejects.toThrow(
+        /full_marks_keep_test_scores/,
+      );
+      await expect(setClass(t.cycleClassId, { fullMarks: null })).rejects.toThrow(
+        /full_marks_keep_test_scores/,
+      );
+      await setClass(t.cycleClassId, { fullMarks: 120 });
+    });
+
+    it('an absent applicant has no score; the pass marks are within the full marks; counts are bounded', async () => {
+      const t = await testClass('2026-0203');
+      await expect(setApp(t.applicationId, { testAbsent: true, testScoreH: 0 })).rejects.toThrow(
+        /check constraint/i,
+      );
+      await setApp(t.applicationId, { testAbsent: true });
+      await expect(setClass(t.cycleClassId, { passMarks: 101 })).rejects.toThrow(
+        /check constraint/i,
+      );
+      await expect(setClass(t.cycleClassId, { fullMarks: 1001 })).rejects.toThrow(
+        /check constraint/i,
+      );
+      await expect(setClass(t.cycleClassId, { selectCount: 5001 })).rejects.toThrow(
+        /check constraint/i,
+      );
+      await expect(setClass(t.cycleClassId, { testVenueBn: 'ক'.repeat(201) })).rejects.toThrow(
+        /check constraint/i,
+      );
+      await setClass(t.cycleClassId, { passMarks: 33, selectCount: 40, waitlistCount: 10 });
+    });
+
+    it('a test roll is unique within its class; a waitlist position needs a WAITLISTED draft', async () => {
+      const t = await testClass('2026-0204');
+      await setApp(t.applicationId, { testRoll: 1001 });
+      const other = await withTenant(app, a.tenantId, async (tx) => {
+        const cycleClass = await tx.admissionCycleClass.findUniqueOrThrow({
+          where: { id: t.cycleClassId },
+        });
+        return tx.admissionApplication.create({
+          data: application(a.tenantId, cycleClass.cycleId, t.cycleClassId, '2026-0205'),
+        });
+      });
+      await expect(setApp(other.id, { testRoll: 1001 })).rejects.toThrow(/unique/i);
+      await setApp(other.id, { testRoll: 1002 });
+      await expect(setApp(other.id, { waitlistPosition: 1 })).rejects.toThrow(/check constraint/i);
+      await setApp(other.id, { testResult: 'WAITLISTED', waitlistPosition: 1, meritPosition: 3 });
+      await expect(setApp(other.id, { testRoll: 0 })).rejects.toThrow(/check constraint/i);
+    });
+
+    it('a published version has its time and its full marks; a flag is one of the known ones', async () => {
+      const t = await testClass('2026-0206');
+      await expect(setClass(t.cycleClassId, { resultsVersion: 1 })).rejects.toThrow(
+        /check constraint/i,
+      );
+      await setClass(t.cycleClassId, {
+        resultsVersion: 1,
+        resultsPublishedAt: new Date(),
+        resultsFullMarks: 100,
+      });
+      await expect(setApp(t.applicationId, { resultFlag: 'SOMETHING' })).rejects.toThrow(
+        /check constraint/i,
+      );
+      await setApp(t.applicationId, { resultFlag: 'ADMITTED_NOT_SELECTED' });
+    });
+
+    it('the tie-break defaults to the older first', async () => {
+      const t = await testClass('2026-0207');
+      const cycle = await withTenant(app, a.tenantId, (tx) =>
+        tx.admissionCycle.findUniqueOrThrow({ where: { id: t.cycleId } }),
+      );
+      expect(cycle.meritTieBreak).toBe('OLDER_FIRST');
+    });
+  });
 });
