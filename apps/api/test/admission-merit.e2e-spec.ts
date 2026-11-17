@@ -148,6 +148,13 @@ describe('admission test (P4): scores and the draft merit list', () => {
     expect([r[b]!.meritPosition, r[c]!.meritPosition]).toEqual([2, 2]);
     expect([r[b]!.testResult, r[c]!.testResult]).toEqual(['SELECTED', 'SELECTED']);
     expect(none.boundaryTie).toBe(1);
+    // One of the tied two withdraws: the warning and the counts leave them out at once (N5).
+    await admin()
+      .post(`/admission/applications/${b}/status`, { status: 'WITHDRAWN', reason: 'Gave up' })
+      .expect(200);
+    const after = (await admin().get(cc(t.cc, 'merit')).expect(200)).body as AdmissionMeritView;
+    expect(after).toMatchObject({ stale: true, boundaryTie: 0 });
+    expect(after.counts.SELECTED).toBe(2);
   });
 
   it('review focus 5: a change after the build makes it stale; publish refuses a stale or an older build (409 MERIT_STALE), and one never built', async () => {

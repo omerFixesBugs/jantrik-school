@@ -239,11 +239,186 @@ describe('admission test (P4): publish, result SMS and the waitlist', () => {
     ]);
     // Nobody has had a result SMS yet: b and c (a withdrew).
     expect((await preview(t.cc)).toSend).toBe(2);
+    // c's renumbered position is audited (review N2).
+    const renumbered = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.auditLog.findFirst({
+        where: { entity: 'admission_application', entityId: c, action: 'UPDATE' },
+      }),
+    );
+    expect(renumbered).toMatchObject({
+      oldValues: { waitlistPosition: 2 },
+      newValues: { waitlistPosition: 1 },
+    });
     await withdraw(b);
     await moveUp().expect(200);
     await withdraw(c);
     const empty = await moveUp();
     expect(empty.status).toBe(422);
     expect(empty.body.code).toBe('WAITLIST_EMPTY');
+  });
+
+  describe('review round 1', () => {
+    const publishPath = (id: string) => cc(id, 'publish');
+    const build = async (id: string) =>
+      ((await admin().post(cc(id, 'merit')).expect(200)).body as AdmissionMeritView).builtAt!;
+    /** The transaction's id as pg_locks shows it (32 bits). */
+    const xidOf = async (tx: { $queryRaw: typeof h.prisma.$queryRaw }) =>
+      (
+        await tx.$queryRaw<{ xid: string }[]>`
+          SELECT (txid_current() % 4294967296)::text AS xid`
+      )[0]!.xid;
+    /**
+     * Waits until `n` transactions wait for a row this one holds: the first waits on its
+     * transaction id, the next ones queue on the row's tuple lock behind it.
+     */
+    const waitedOn = (tx: { $queryRaw: typeof h.prisma.$queryRaw }, xid: string, n: number) =>
+      vi.waitFor(
+        async () => {
+          const [w] = await tx.$queryRaw<{ n: number }[]>`
+            SELECT count(*)::int AS n FROM pg_locks
+             WHERE NOT granted
+               AND ((locktype = 'transactionid' AND transactionid::text = ${xid})
+                 OR (locktype = 'tuple'
+                     AND relation = 'public.admission_applications'::regclass))`;
+          if (w!.n < n) throw new Error(`${w!.n} waiting, not ${n} yet`);
+        },
+        { timeout: 15_000, interval: 25 },
+      );
+
+    it('M1: a withdrawal that commits while publish waits for the row makes the publish stale (409); the withdrawal stands', async () => {
+      const t = await published(['90', '80'], { selectCount: 1, waitlistCount: 1 });
+      const [a] = t.ids as [string, string];
+      await setScores(t.cc, t.ids, ['91', '80']);
+      const builtAt = await build(t.cc);
+      let publishing: Promise<{ status: number; body: { code?: string } }> | undefined;
+      await withTenant(
+        h.prisma,
+        s.tenantId,
+        async (tx) => {
+          const xid = await xidOf(tx);
+          await tx.$queryRaw`SELECT id FROM public.admission_applications WHERE id = ${a}::uuid FOR UPDATE`;
+          await tx.admissionApplication.update({
+            where: { id: a },
+            data: { status: 'WITHDRAWN', statusReason: 'Gave up' },
+          });
+          publishing = admin()
+            .post(publishPath(t.cc), { builtAt })
+            .then((r) => r);
+          await waitedOn(tx, xid, 1);
+        },
+        { timeout: 30_000 },
+      );
+      const res = await publishing!;
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('MERIT_STALE');
+      expect((await rows([a]))[0]).toMatchObject({
+        status: 'WITHDRAWN',
+        statusReason: 'Gave up',
+        resultVersion: 1,
+      });
+    });
+
+    it('M1: an approval that commits while publish waits: publish succeeds and the applicant stays ADMITTED', async () => {
+      const t = await published(['90', '80'], { selectCount: 1, waitlistCount: 1 });
+      const [a] = t.ids as [string, string];
+      await setScores(t.cc, t.ids, ['91', '80']);
+      const builtAt = await build(t.cc);
+      let approving: Promise<{ status: number }> | undefined;
+      let publishing: Promise<{ status: number; body: unknown }> | undefined;
+      await withTenant(
+        h.prisma,
+        s.tenantId,
+        async (tx) => {
+          const xid = await xidOf(tx);
+          await tx.$queryRaw`SELECT id FROM public.admission_applications WHERE id = ${a}::uuid FOR UPDATE`;
+          approving = admin()
+            .post(`/admission/applications/${a}/approve`, { sectionId: s.sectionB })
+            .then((r) => r);
+          await waitedOn(tx, xid, 1);
+          publishing = admin()
+            .post(publishPath(t.cc), { builtAt })
+            .then((r) => r);
+          await waitedOn(tx, xid, 2);
+        },
+        { timeout: 30_000 },
+      );
+      expect((await approving!).status).toBe(200);
+      expect((await publishing!).status).toBe(200);
+      expect((await rows([a]))[0]).toMatchObject({
+        status: 'ADMITTED',
+        resultVersion: 2,
+        resultFlag: null,
+      });
+    });
+
+    it('S2: the same build is published once (409 ALREADY_PUBLISHED)', async () => {
+      const t = await published(['90', '80'], { selectCount: 1, waitlistCount: 1 });
+      const merit = (await admin().get(cc(t.cc, 'merit')).expect(200)).body as AdmissionMeritView;
+      expect(merit.publishedBuiltAt).toBe(merit.builtAt);
+      const again = await admin().post(publishPath(t.cc), { builtAt: merit.builtAt });
+      expect(again.status).toBe(409);
+      expect(again.body.code).toBe('ALREADY_PUBLISHED');
+      expect((await admin().get(cc(t.cc, 'test')).expect(200)).body).toMatchObject({
+        resultsVersion: 1,
+      });
+    });
+
+    it('S1: an SMS cancelled by a republish is still owed when the status did not change; it then goes out', async () => {
+      const t = await published(['90', '80'], { selectCount: 1, waitlistCount: 1 });
+      const [a, b] = t.ids as [string, string];
+      // v1's two SMS were waiting (an hour's delay) when the list was corrected and republished.
+      const logIds: string[] = [];
+      for (const [id, told, phone] of [
+        [a, 'SELECTED', t.apps[0]!.phone],
+        [b, 'WAITLISTED', t.apps[1]!.phone],
+      ] as const) {
+        const dedupeKey = `admission-result:${t.cc}:v1:${id}:${told}:manual`;
+        await h.app.get(TenantJobRunner).run(
+          s.tenantId,
+          () =>
+            h.app.get(TenantSmsService).queue({
+              purpose: 'ADMISSION_RESULT',
+              phone,
+              body: 'v1',
+              localDate: todayIn('Asia/Dhaka'),
+              dedupeKey,
+              relatedEntity: `admission_result:${t.cc}:v1:${told}`,
+              relatedId: id,
+              delayMs: 3_600_000,
+              dailyCap: 1000,
+            }),
+          { actorUserId: s.userIds.admin },
+        );
+        logIds.push(
+          (
+            await withTenant(h.prisma, s.tenantId, (tx) =>
+              tx.smsLog.findFirstOrThrow({ where: { dedupeKey }, select: { id: true } }),
+            )
+          ).id,
+        );
+      }
+      expect((await preview(t.cc)).toSend).toBe(0);
+      // A score corrected without changing anyone's status: version 2.
+      await setScores(t.cc, t.ids, ['91', '80']);
+      await republish(t.cc);
+      for (const id of logIds) {
+        await h.app
+          .get(SmsProcessor)
+          .process({ name: 'tenant', data: { tenantId: s.tenantId, smsLogId: id } } as Job);
+      }
+      expect(
+        await withTenant(h.prisma, s.tenantId, (tx) =>
+          tx.smsLog.count({ where: { id: { in: logIds }, status: 'CANCELLED' } }),
+        ),
+      ).toBe(2);
+      // Nobody was told: both are owed again, and they go out.
+      expect(await preview(t.cc)).toMatchObject({ publishedVersion: 2, toSend: 2 });
+      const run = (await send(t.cc, 2).expect(202)).body as AdmissionResultSmsRun;
+      await vi.waitFor(async () => expect((await runStatus(run.runId)).counts.SENT).toBe(2), {
+        timeout: 15_000,
+        interval: 200,
+      });
+      expect((await preview(t.cc)).toSend).toBe(0);
+    });
   });
 });
