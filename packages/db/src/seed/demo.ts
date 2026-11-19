@@ -3,9 +3,9 @@ import {
   Prisma,
   type GuardianRelation,
   type ModuleKey,
-  type PrismaClient,
   type Role,
 } from '../generated/prisma/client.js';
+import type { PrismaClient } from '../client.js';
 import { hash } from '@node-rs/argon2';
 import { withContext, withTenant, type TenantTx } from '../tenancy/context.js';
 import { provisionTenant } from '../tenancy/provision.js';

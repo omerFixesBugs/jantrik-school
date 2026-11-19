@@ -11,6 +11,7 @@ import {
   waitForOtp,
   type Harness,
 } from './support/harness.js';
+import { ownerClient } from './support/platform.js';
 
 const PASSWORD = 'correct horse battery staple';
 
@@ -45,10 +46,16 @@ describe('password login', () => {
       roles: ['ADMIN'],
     });
 
-    const user = await withContext(h.prisma, { userId }, (tx) =>
-      tx.user.findUniqueOrThrow({ where: { id: userId } }),
-    );
-    expect(user.passwordHash).toMatch(/^\$argon2id\$/);
+    // The app login may not read the hash (P1-J): the owner reads it, as that user.
+    const owner = ownerClient();
+    try {
+      const user = await withContext(owner, { userId }, (tx) =>
+        tx.user.findUniqueOrThrow({ where: { id: userId }, select: { passwordHash: true } }),
+      );
+      expect(user.passwordHash).toMatch(/^\$argon2id\$/);
+    } finally {
+      await owner.$disconnect();
+    }
   });
 
   it('wrong password, unknown user and OTP-only user get the identical response', async () => {
