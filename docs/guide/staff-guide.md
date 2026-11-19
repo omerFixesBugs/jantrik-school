@@ -63,31 +63,31 @@ Everything in this guide that mentions an SMS assumes the gateway is working.
 Each person has one or more **roles** in an institute. One person can hold several roles, for
 example a teacher who also collects fees.
 
-| Role (Bangla)                  | In short                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------ |
-| Owner [প্রতিষ্ঠান প্রধান]      | Everything an admin can do, plus: owners' roles, the institute's look, the bKash/Nagad numbers. |
-| Admin [প্রশাসক]                | Runs the office: setup, students, staff, attendance settings, fee setup, exams.                  |
-| Accountant [হিসাবরক্ষক]        | The fee counter: collect, receipts, bKash/Nagad checks, own daily closing, fee reports.          |
-| Teacher [শিক্ষক]               | Attendance and marks for the sections and subjects they are given.                               |
-| Staff [কর্মী]                  | Today: the dashboard and their own password only. **To check** what this role is for.           |
-| Guardian [অভিভাবক]             | Not staff. Sees their own children only (section 10.4).                                          |
+| Role (Bangla)             | In short                                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| Owner [প্রতিষ্ঠান প্রধান] | Everything an admin can do, plus: owners' roles, the institute's look, the bKash/Nagad numbers. |
+| Admin [প্রশাসক]           | Runs the office: setup, students, staff, attendance settings, fee setup, exams.                 |
+| Accountant [হিসাবরক্ষক]   | The fee counter: collect, receipts, bKash/Nagad checks, own daily closing, fee reports.         |
+| Teacher [শিক্ষক]          | Attendance and marks for the sections and subjects they are given.                              |
+| Staff [কর্মী]             | Today: the dashboard and their own password only. **To check** what this role is for.           |
+| Guardian [অভিভাবক]        | Not staff. Sees their own children only (section 10.4).                                         |
 
-| Area                                  | Owner | Admin                           | Accountant           | Teacher                                   |
-| ------------------------------------- | ----- | ------------------------------- | -------------------- | ----------------------------------------- |
-| Dashboard                             | yes   | yes                             | yes                  | yes                                       |
-| Institute setup, profile              | yes   | yes                             | no                   | no                                        |
-| Appearance (the institute's look)     | yes   | no                              | no                   | no                                        |
-| Staff list and invitations            | yes   | yes (not owners)                | no                   | no                                        |
-| Student list                          | yes   | yes                             | no                   | yes (full details only for own sections)  |
-| Admit, import, edit students, photos  | yes   | yes                             | no                   | no                                        |
-| Take attendance                       | yes   | yes                             | no                   | own sections, within the edit window      |
-| Attendance settings, devices          | yes   | yes                             | no                   | no                                        |
-| Fee setup                             | yes   | yes (not the bKash/Nagad numbers) | no                 | no                                        |
-| Collect fees, receipts                | yes   | yes                             | yes                  | only if also given "fee collection"       |
-| Void a receipt, waive a fine          | yes   | yes                             | no                   | no                                        |
-| Fee reminders (SMS)                   | yes   | yes                             | no                   | no                                        |
-| Exam setup, lock, publish, print      | yes   | yes                             | no                   | no                                        |
-| Enter marks                           | yes   | yes                             | no                   | own subject and section                   |
+| Area                                 | Owner | Admin                             | Accountant | Teacher                                  |
+| ------------------------------------ | ----- | --------------------------------- | ---------- | ---------------------------------------- |
+| Dashboard                            | yes   | yes                               | yes        | yes                                      |
+| Institute setup, profile             | yes   | yes                               | no         | no                                       |
+| Appearance (the institute's look)    | yes   | no                                | no         | no                                       |
+| Staff list and invitations           | yes   | yes (not owners)                  | no         | no                                       |
+| Student list                         | yes   | yes                               | no         | yes (full details only for own sections) |
+| Admit, import, edit students, photos | yes   | yes                               | no         | no                                       |
+| Take attendance                      | yes   | yes                               | no         | own sections, within the edit window     |
+| Attendance settings, devices         | yes   | yes                               | no         | no                                       |
+| Fee setup                            | yes   | yes (not the bKash/Nagad numbers) | no         | no                                       |
+| Collect fees, receipts               | yes   | yes                               | yes        | only if also given "fee collection"      |
+| Void a receipt, waive a fine         | yes   | yes                               | no         | no                                       |
+| Fee reminders (SMS)                  | yes   | yes                               | no         | no                                       |
+| Exam setup, lock, publish, print     | yes   | yes                               | no         | no                                       |
+| Enter marks                          | yes   | yes                               | no         | own subject and section                  |
 
 If a button or page you need is missing, your role does not include it. **Ask your
 institute's admin.** Admins: if something is missing for you, ask your institute's owner, or
@@ -161,15 +161,15 @@ office computers.
 
 ### 3.7 Messages you may see
 
-| Message                                                                                    | What it means and what to do                                                                                                               |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| "The phone number, code or password is not correct." [ফোন নম্বর, কোড বা পাসওয়ার্ড সঠিক নয়।] | Wrong code or password, an expired code, or a number the institute has not added. For safety the app never says which. Check and try again. |
-| "Too many attempts. Try again in N seconds."                                               | You (or someone) tried too often. Wait. A phone gets at most one code a minute and 10 codes a day; 5 wrong passwords lock it for 15 minutes. |
-| "No password yet? Sign in with a code, then set one from your menu."                      | You have no password. Use a code (3.1), then 3.2.                                                                                          |
-| "You don't have access to any active institute."                                          | Your invitation is not accepted, has expired, or your access was turned off. Ask your institute's admin.                                  |
-| "Temporarily unavailable" [সাময়িকভাবে বন্ধ] next to an institute                          | Jantrik has paused that institute's account. The owner should contact Jantrik.                                                             |
-| "Can't reach the server" [সার্ভারের সাথে সংযোগ হচ্ছে না]                                   | Weak internet. You are not signed out. The app keeps trying by itself; attendance and marks kept on the phone are sent later.              |
-| "The code is wrong or has expired." (password page)                                        | Send a new code. A refused password does not use the code up, so fix the password first.                                                  |
+| Message                                                                                       | What it means and what to do                                                                                                                 |
+| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| "The phone number, code or password is not correct." [ফোন নম্বর, কোড বা পাসওয়ার্ড সঠিক নয়।] | Wrong code or password, an expired code, or a number the institute has not added. For safety the app never says which. Check and try again.  |
+| "Too many attempts. Try again in N seconds."                                                  | You (or someone) tried too often. Wait. A phone gets at most one code a minute and 10 codes a day; 5 wrong passwords lock it for 15 minutes. |
+| "No password yet? Sign in with a code, then set one from your menu."                          | You have no password. Use a code (3.1), then 3.2.                                                                                            |
+| "You don't have access to any active institute."                                              | Your invitation is not accepted, has expired, or your access was turned off. Ask your institute's admin.                                     |
+| "Temporarily unavailable" [সাময়িকভাবে বন্ধ] next to an institute                             | Jantrik has paused that institute's account. The owner should contact Jantrik.                                                               |
+| "Can't reach the server" [সার্ভারের সাথে সংযোগ হচ্ছে না]                                      | Weak internet. You are not signed out. The app keeps trying by itself; attendance and marks kept on the phone are sent later.                |
+| "The code is wrong or has expired." (password page)                                           | Send a new code. A refused password does not use the code up, so fix the password first.                                                     |
 
 ## 4. The dashboard
 
@@ -262,12 +262,12 @@ How IDs are made for **new** admissions. Existing IDs never change.
 
 ### 5.8 Messages
 
-| Message                                                                   | What to do                                                         |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| "This name or code already exists."                                       | Use another name or code.                                          |
-| "It is deactivated; activate it first."                                   | **Activate again** [আবার চালু করুন], then use it.                   |
-| "It is linked to something else, or what you picked no longer exists."   | Someone changed it meanwhile. Reload the page.                     |
-| "There is no current academic year. Make one current in institute setup first." | 5.2.                                                         |
+| Message                                                                         | What to do                                        |
+| ------------------------------------------------------------------------------- | ------------------------------------------------- |
+| "This name or code already exists."                                             | Use another name or code.                         |
+| "It is deactivated; activate it first."                                         | **Activate again** [আবার চালু করুন], then use it. |
+| "It is linked to something else, or what you picked no longer exists."          | Someone changed it meanwhile. Reload the page.    |
+| "There is no current academic year. Make one current in institute setup first." | 5.2.                                              |
 
 ## 6. The institute profile: logo, signature and seal
 
@@ -297,14 +297,14 @@ PR #27 use the logo).
 
 Image messages:
 
-| Message                                                                     | What to do                                                          |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| "This file is not a JPEG, PNG or WebP image, or it is damaged."             | Use another image (other formats, such as HEIC, are refused).      |
-| "The file is larger than 5 MB."                                             | Choose a smaller one.                                               |
-| "The image has too many pixels (at most 50 megapixels)."                    | Choose a smaller one.                                               |
-| "This image could not be made small enough."                               | Choose another image.                                               |
-| "Many images are being prepared right now. Try again in a moment."          | Wait a moment and try again.                                        |
-| "The institute's storage for images is full."                               | Remove old images, or contact Jantrik.                              |
+| Message                                                            | What to do                                                    |
+| ------------------------------------------------------------------ | ------------------------------------------------------------- |
+| "This file is not a JPEG, PNG or WebP image, or it is damaged."    | Use another image (other formats, such as HEIC, are refused). |
+| "The file is larger than 5 MB."                                    | Choose a smaller one.                                         |
+| "The image has too many pixels (at most 50 megapixels)."           | Choose a smaller one.                                         |
+| "This image could not be made small enough."                       | Choose another image.                                         |
+| "Many images are being prepared right now. Try again in a moment." | Wait a moment and try again.                                  |
+| "The institute's storage for images is full."                      | Remove old images, or contact Jantrik.                        |
 
 ## 7. Appearance
 
@@ -360,14 +360,14 @@ From the menu beside their name:
 
 ### 8.4 Messages
 
-| Message                                                                  | What to do                                                       |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------- |
-| "The person with this number is already on the staff list."             | Find them in the list and change their roles instead.            |
-| "Only an owner can make changes involving owners."                       | Ask the owner.                                                   |
-| "The institute must keep at least one active owner."                     | Make someone else owner first.                                   |
-| "You cannot change your own roles or status."                            | Ask another admin or the owner.                                  |
-| "Only active teachers or admins can be given sections."                  | Give them the teacher role first.                                |
-| "Many staff were added in the last hour. Try again a little later."      | A safety limit (30 an hour). Wait and continue.                  |
+| Message                                                             | What to do                                            |
+| ------------------------------------------------------------------- | ----------------------------------------------------- |
+| "The person with this number is already on the staff list."         | Find them in the list and change their roles instead. |
+| "Only an owner can make changes involving owners."                  | Ask the owner.                                        |
+| "The institute must keep at least one active owner."                | Make someone else owner first.                        |
+| "You cannot change your own roles or status."                       | Ask another admin or the owner.                       |
+| "Only active teachers or admins can be given sections."             | Give them the teacher role first.                     |
+| "Many staff were added in the last hour. Try again a little later." | A safety limit (30 an hour). Wait and continue.       |
 
 ## 9. Students
 
@@ -453,17 +453,17 @@ action that keeps their dues and history (15.4).
 
 ### 9.5 Messages
 
-| Message                                                                           | What to do                                                    |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| "This roll is already taken in the section"                                      | Give another roll, or leave it empty.                         |
-| "This section has no seats left"                                                 | Choose another section, or raise the seats (5.3).             |
-| "Another student has this birth registration number"                             | Probably the same child. Search for them first.               |
-| "This ID already exists"                                                         | Leave the ID empty to make a new one.                         |
-| "The institute has reached the student limit of its plan. Contact Jantrik."     | The owner should contact Jantrik.                             |
-| "Only an owner or admin can admit students."                                      | Ask your institute's admin.                                   |
-| "Make someone else the primary guardian first."                                  | 10.2.                                                         |
-| "A student needs at least one guardian."                                         | Add another guardian before removing this one.                |
-| "This student is deactivated."                                                   | Nothing can be changed on a deactivated student.              |
+| Message                                                                     | What to do                                        |
+| --------------------------------------------------------------------------- | ------------------------------------------------- |
+| "This roll is already taken in the section"                                 | Give another roll, or leave it empty.             |
+| "This section has no seats left"                                            | Choose another section, or raise the seats (5.3). |
+| "Another student has this birth registration number"                        | Probably the same child. Search for them first.   |
+| "This ID already exists"                                                    | Leave the ID empty to make a new one.             |
+| "The institute has reached the student limit of its plan. Contact Jantrik." | The owner should contact Jantrik.                 |
+| "Only an owner or admin can admit students."                                | Ask your institute's admin.                       |
+| "Make someone else the primary guardian first."                             | 10.2.                                             |
+| "A student needs at least one guardian."                                    | Add another guardian before removing this one.    |
+| "This student is deactivated."                                              | Nothing can be changed on a deactivated student.  |
 
 ## 10. Guardians
 
@@ -639,14 +639,14 @@ as the new one. **To check** with the owner how to explain this to institutes.
 
 ### 11.9 Messages
 
-| Message                                                                 | What it means                                                                   |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| "Couldn't submit (CODE). The list is kept on this phone."              | It was not saved yet. It stays on the phone and is sent again later.           |
-| "The student list changed: N new (marked present), M removed."         | Check the names and submit again.                                              |
-| "Attendance can't be taken for a future day."                          | Choose today or a past day.                                                    |
-| "The system is busy right now. Try again in a moment."                 | Wait a few seconds and try again. Nothing was changed.                         |
-| "This text is longer than 3 SMS. Make it shorter." (settings)          | Shorten the absent SMS text.                                                   |
-| "This serial number can't be added." (devices)                         | Check the number. If it is right, contact Jantrik.                             |
+| Message                                                        | What it means                                                        |
+| -------------------------------------------------------------- | -------------------------------------------------------------------- |
+| "Couldn't submit (CODE). The list is kept on this phone."      | It was not saved yet. It stays on the phone and is sent again later. |
+| "The student list changed: N new (marked present), M removed." | Check the names and submit again.                                    |
+| "Attendance can't be taken for a future day."                  | Choose today or a past day.                                          |
+| "The system is busy right now. Try again in a moment."         | Wait a few seconds and try again. Nothing was changed.               |
+| "This text is longer than 3 SMS. Make it shorter." (settings)  | Shorten the absent SMS text.                                         |
+| "This serial number can't be added." (devices)                 | Check the number. If it is right, contact Jantrik.                   |
 
 ## 12. Fees
 
@@ -781,14 +781,14 @@ One reminder per student per overdue period. If they pay before it goes out, it 
 
 ### 12.10 Messages
 
-| Message                                                                                   | What to do                                                                     |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| "These fees changed meanwhile (now X owed). Check the new figures and confirm again."    | Someone else collected or changed something. Read the new total and confirm.  |
-| "The earlier attempt may already have been recorded. Check the payments."                | Look at the student's receipts before collecting again.                       |
-| "Could not reach the server. Pressing again sends the same collection."                  | Press again when the internet is back. It will not be recorded twice.         |
-| "Money was paid on this fee, so it cannot be cancelled. Void that receipt first."        | 12.5.                                                                          |
-| "Fee setup is for the owner and admins."                                                  | Ask your institute's admin to change heads, amounts or concessions.           |
-| "This student already has a concession on this fee for that time."                      | End the old concession first, then add the new one.                           |
+| Message                                                                               | What to do                                                                   |
+| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| "These fees changed meanwhile (now X owed). Check the new figures and confirm again." | Someone else collected or changed something. Read the new total and confirm. |
+| "The earlier attempt may already have been recorded. Check the payments."             | Look at the student's receipts before collecting again.                      |
+| "Could not reach the server. Pressing again sends the same collection."               | Press again when the internet is back. It will not be recorded twice.        |
+| "Money was paid on this fee, so it cannot be cancelled. Void that receipt first."     | 12.5.                                                                        |
+| "Fee setup is for the owner and admins."                                              | Ask your institute's admin to change heads, amounts or concessions.          |
+| "This student already has a concession on this fee for that time."                    | End the old concession first, then add the new one.                          |
 
 ## 13. Exams and results
 
@@ -886,13 +886,13 @@ The text is fixed: GPA and letter (or marks and %) and the class place.
 
 ### 13.9 Messages
 
-| Message                                                                        | What to do                                                    |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| "Some cells are empty. Enter marks or mark absent for everyone."              | Fill every cell, then submit.                                 |
-| "Someone else changed this mark sheet in the meantime."                       | Check the latest marks; choose keep mine or keep theirs.      |
-| "The results are published. Unpublish them first."                            | Correct with a reason instead, then publish again.            |
-| "The results changed in the meantime. Check the latest and publish again."    | Another person published or changed something.               |
-| "This cannot be done while the mark sheet is in its current state."           | For example a locked sheet: use Correct.                      |
+| Message                                                                    | What to do                                               |
+| -------------------------------------------------------------------------- | -------------------------------------------------------- |
+| "Some cells are empty. Enter marks or mark absent for everyone."           | Fill every cell, then submit.                            |
+| "Someone else changed this mark sheet in the meantime."                    | Check the latest marks; choose keep mine or keep theirs. |
+| "The results are published. Unpublish them first."                         | Correct with a reason instead, then publish again.       |
+| "The results changed in the meantime. Check the latest and publish again." | Another person published or changed something.           |
+| "This cannot be done while the mark sheet is in its current state."        | For example a locked sheet: use Correct.                 |
 
 ## 14. SMS: the daily limit
 

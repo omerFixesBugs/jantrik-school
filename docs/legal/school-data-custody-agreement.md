@@ -225,101 +225,101 @@ a known weakness, stated openly.
 
 ### A1. Keeping institutes apart
 
-| Measure                                                                                                                                                                                                                      | Status            |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| Every institute's records carry the institute's ID, and every query is limited to the signed-in person's institute.                                                                                                         | Built             |
-| The database itself also enforces this (PostgreSQL row-level security, forced on every institute table), so a mistake in the application cannot show another institute's rows.                                             | Built             |
-| The application logs in to the database as an ordinary user that cannot switch this protection off; at start-up it refuses a login that could (superuser, bypass of row-level security, replication or role creation).  | Built             |
-| Separate database logins, each with only the rights it needs: the main app, Jantrik's platform tools, the password check, and the attendance-device receiver.                                                               | Built             |
-| The ordinary application login cannot read password hashes; only the sign-in check can.                                                                                                                                    | Merging (PR #16)  |
-| A signed request context, so that even an SQL injection could not pose as another person or institute.                                                                                                                       | Planned (PR #20)  |
-| Today, an SQL injection (if one existed) could still change who the request acts as and so take over an account. No such injection is known.                                                                              | Limit (fixed by PR #20) |
+| Measure                                                                                                                                                                                                                | Status                  |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| Every institute's records carry the institute's ID, and every query is limited to the signed-in person's institute.                                                                                                    | Built                   |
+| The database itself also enforces this (PostgreSQL row-level security, forced on every institute table), so a mistake in the application cannot show another institute's rows.                                         | Built                   |
+| The application logs in to the database as an ordinary user that cannot switch this protection off; at start-up it refuses a login that could (superuser, bypass of row-level security, replication or role creation). | Built                   |
+| Separate database logins, each with only the rights it needs: the main app, Jantrik's platform tools, the password check, and the attendance-device receiver.                                                          | Built                   |
+| The ordinary application login cannot read password hashes; only the sign-in check can.                                                                                                                                | Merging (PR #16)        |
+| A signed request context, so that even an SQL injection could not pose as another person or institute.                                                                                                                 | Planned (PR #20)        |
+| Today, an SQL injection (if one existed) could still change who the request acts as and so take over an account. No such injection is known.                                                                           | Limit (fixed by PR #20) |
 
 ### A2. Who can see what
 
-| Measure                                                                                                                                                  | Status |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| Every page and request checks the person's role and whether the institute has that module.                                                              | Built  |
+| Measure                                                                                                                                                                                                  | Status |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| Every page and request checks the person's role and whether the institute has that module.                                                                                                               | Built  |
 | Teachers see full student details only for their own sections; accountants see guardian phone numbers partly hidden; guardians see only their own children (any other child's link answers "not found"). | Built  |
-| Jantrik's platform staff tools return counts only; the database grants them no access to students', guardians' or messages' details.                    | Built  |
-| Jantrik's platform staff sign in with a password and an authenticator app (with one-time backup codes), never SMS, and their actions are logged.        | Built  |
+| Jantrik's platform staff tools return counts only; the database grants them no access to students', guardians' or messages' details.                                                                     | Built  |
+| Jantrik's platform staff sign in with a password and an authenticator app (with one-time backup codes), never SMS, and their actions are logged.                                                         | Built  |
 
 ### A3. Sign-in
 
-| Measure                                                                                                                                                         | Status         |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| No public sign-up: only people an institute (or Jantrik, for a first owner) added can sign in.                                                                 | Built          |
-| Sign-in codes: 6 digits, valid 5 minutes, 5 tries, single use, stored only as a keyed hash; limits per phone (10 a day) and per address.                       | Built          |
-| Staff passwords: at least 10 characters, not the phone number or the institute's name, not a common password; stored with argon2id; 5 wrong tries per 15 minutes. | Built        |
-| The app never says whether a number or account exists.                                                                                                         | Built          |
-| Sessions: short-lived access tokens kept only in memory; the long-lived token in a secure, script-proof cookie, stored only as a hash and replaced on every use; reuse of an old token ends the session. | Built |
-| Sign-out ends the session at once; setting a password signs out every other device.                                                                           | Built          |
-| A screen showing a person's signed-in devices; password reset by an admin.                                                                                     | Planned        |
+| Measure                                                                                                                                                                                                  | Status  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| No public sign-up: only people an institute (or Jantrik, for a first owner) added can sign in.                                                                                                           | Built   |
+| Sign-in codes: 6 digits, valid 5 minutes, 5 tries, single use, stored only as a keyed hash; limits per phone (10 a day) and per address.                                                                 | Built   |
+| Staff passwords: at least 10 characters, not the phone number or the institute's name, not a common password; stored with argon2id; 5 wrong tries per 15 minutes.                                        | Built   |
+| The app never says whether a number or account exists.                                                                                                                                                   | Built   |
+| Sessions: short-lived access tokens kept only in memory; the long-lived token in a secure, script-proof cookie, stored only as a hash and replaced on every use; reuse of an old token ends the session. | Built   |
+| Sign-out ends the session at once; setting a password signs out every other device.                                                                                                                      | Built   |
+| A screen showing a person's signed-in devices; password reset by an admin.                                                                                                                               | Planned |
 
 ### A4. Network and servers
 
-| Measure                                                                                                                                                                                         | Status                                      |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| The web app, the API and Jantrik's platform area are served only over HTTPS (automatic certificates, HSTS).                                                                                   | Built (deployment guide)                    |
-| The server's firewall opens only SSH, web (80, 443) and the device port (4080); the database and Redis are not reachable from the internet.                                                   | Built (deployment guide; confirm on server) |
-| Secrets (database passwords, signing keys) live only in the server's settings file, never in the code. Authenticator secrets for Jantrik's staff are encrypted (AES-256-GCM).                | Built                                       |
-| Attendance devices connect over plain HTTP, because ZKTeco devices support nothing else. Only a device ID number, a time, in/out and how the person verified are accepted; everything else the device sends is thrown away unread. Devices are identified by serial number, and commands go only to an address the Institute has trusted. | Limit |
-| The device receiver runs as its own program with its own database login that can read no table.                                                                                               | Built                                       |
-| Encryption of the database and backups at rest (beyond what the hosting provider's disks offer).                                                                                              | Planned [to decide]                         |
-| An uptime monitor with alerts.                                                                                                                                                                 | Planned (owner to choose)                   |
+| Measure                                                                                                                                                                                                                                                                                                                                   | Status                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| The web app, the API and Jantrik's platform area are served only over HTTPS (automatic certificates, HSTS).                                                                                                                                                                                                                               | Built (deployment guide)                    |
+| The server's firewall opens only SSH, web (80, 443) and the device port (4080); the database and Redis are not reachable from the internet.                                                                                                                                                                                               | Built (deployment guide; confirm on server) |
+| Secrets (database passwords, signing keys) live only in the server's settings file, never in the code. Authenticator secrets for Jantrik's staff are encrypted (AES-256-GCM).                                                                                                                                                             | Built                                       |
+| Attendance devices connect over plain HTTP, because ZKTeco devices support nothing else. Only a device ID number, a time, in/out and how the person verified are accepted; everything else the device sends is thrown away unread. Devices are identified by serial number, and commands go only to an address the Institute has trusted. | Limit                                       |
+| The device receiver runs as its own program with its own database login that can read no table.                                                                                                                                                                                                                                           | Built                                       |
+| Encryption of the database and backups at rest (beyond what the hosting provider's disks offer).                                                                                                                                                                                                                                          | Planned [to decide]                         |
+| An uptime monitor with alerts.                                                                                                                                                                                                                                                                                                            | Planned (owner to choose)                   |
 
 ### A5. Records and history
 
-| Measure                                                                                                                                                                 | Status |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| An audit log of creating, changing and deleting important records (marks, fees, payments, attendance, staff roles, setup), with who, when, and the old and new values. | Built  |
-| Payments, receipts and marks are never edited or deleted; mistakes are voided or corrected with a reason, which is kept.                                                | Built  |
-| Uploaded images are checked (JPEG, PNG or WebP only), re-made by the server, shrunk, and stripped of hidden details such as location.                                   | Merging (PR #18) |
-| An institute-facing screen to read the full audit log.                                                                                                                   | Planned [to decide] |
+| Measure                                                                                                                                                                | Status              |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| An audit log of creating, changing and deleting important records (marks, fees, payments, attendance, staff roles, setup), with who, when, and the old and new values. | Built               |
+| Payments, receipts and marks are never edited or deleted; mistakes are voided or corrected with a reason, which is kept.                                               | Built               |
+| Uploaded images are checked (JPEG, PNG or WebP only), re-made by the server, shrunk, and stripped of hidden details such as location.                                  | Merging (PR #18)    |
+| An institute-facing screen to read the full audit log.                                                                                                                 | Planned [to decide] |
 
 ### A6. Backups
 
-| Measure                                                                                                                         | Status                         |
-| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| Nightly backup of the whole database (images included), with a checksum, private files, kept 14 days by default.               | Built (deployment guide)       |
-| A restore tool that refuses unsafe restores, and a restore check that compares a restored copy with the live database.         | Built                          |
-| The restore check runs on every code change in CI; on the server the guide says monthly.                                        | Built                          |
-| An off-site copy of every backup.                                                                                               | Planned (owner to choose)      |
-| An alert when the last good backup is older than a day.                                                                         | Built (deployment guide, cron) |
+| Measure                                                                                                                | Status                         |
+| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| Nightly backup of the whole database (images included), with a checksum, private files, kept 14 days by default.       | Built (deployment guide)       |
+| A restore tool that refuses unsafe restores, and a restore check that compares a restored copy with the live database. | Built                          |
+| The restore check runs on every code change in CI; on the server the guide says monthly.                               | Built                          |
+| An off-site copy of every backup.                                                                                      | Planned (owner to choose)      |
+| An alert when the last good backup is older than a day.                                                                | Built (deployment guide, cron) |
 
 ## Annex B: Sub-processors
 
-| Sub-processor                                           | What it does                                                         | Data it handles                                              | Where              | Status                         |
-| ------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------ | ------------------------------ |
-| [Hosting provider]                                      | Runs the servers, disks and network                                  | All Institute Data (stored on its machines)                  | [country/region]   | To decide                      |
-| [SMS provider, a BTRC-licensed A2P aggregator]          | Delivers SMS to mobile networks                                      | Mobile numbers and message texts                             | Bangladesh [to verify] | To decide; required before go-live |
-| [Off-site backup storage]                               | Keeps copies of backups                                              | All Institute Data (inside backup files)                     | [country/region]   | To decide                      |
-| Cloudflare (Turnstile)                                  | "Not a robot" check on the public admission form                     | The visitor's browser signals and internet address; no form content | [to verify]  | After PR #24 is merged         |
-| SSLCommerz                                              | Online fee payments                                                  | Payment details; the payer's name and contact [to verify]    | Bangladesh         | Planned (not live)             |
-| Let's Encrypt                                           | Issues HTTPS certificates                                            | Only the service's domain names; no personal data            | —                  | Not a sub-processor [to verify] |
+| Sub-processor                                  | What it does                                     | Data it handles                                                     | Where                  | Status                             |
+| ---------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------- | ---------------------- | ---------------------------------- |
+| [Hosting provider]                             | Runs the servers, disks and network              | All Institute Data (stored on its machines)                         | [country/region]       | To decide                          |
+| [SMS provider, a BTRC-licensed A2P aggregator] | Delivers SMS to mobile networks                  | Mobile numbers and message texts                                    | Bangladesh [to verify] | To decide; required before go-live |
+| [Off-site backup storage]                      | Keeps copies of backups                          | All Institute Data (inside backup files)                            | [country/region]       | To decide                          |
+| Cloudflare (Turnstile)                         | "Not a robot" check on the public admission form | The visitor's browser signals and internet address; no form content | [to verify]            | After PR #24 is merged             |
+| SSLCommerz                                     | Online fee payments                              | Payment details; the payer's name and contact [to verify]           | Bangladesh             | Planned (not live)                 |
+| Let's Encrypt                                  | Issues HTTPS certificates                        | Only the service's domain names; no personal data                   | —                      | Not a sub-processor [to verify]    |
 
 Jantrik does not use any analytics, advertising, email-marketing or error-tracking service
 today.
 
 ## Annex C: How long data is kept (what the software does today)
 
-| Data                                                                                  | Kept                                                                                                                                                  |
-| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Students, guardians, staff                                                            | During the agreement. "Deactivate" hides a record; nothing is deleted.                                                                               |
-| Attendance registers and records, staff attendance days                               | Not deleted.                                                                                                                                          |
-| Raw device punches                                                                    | The Institute's setting, 730 days by default (30 to 3650); the database never lets the app delete the last 30 days.                                   |
-| Device commands (names and ID numbers sent to devices)                                | Failed, cancelled or replaced ones: deleted 90 days after their last activity. The latest per person and device: kept.                               |
-| Fee dues, payments, receipts, voids                                                   | Not deleted.                                                                                                                                          |
-| Exam marks, results, remarks and their history                                        | Not deleted.                                                                                                                                          |
-| Student import files                                                                  | Uploaded rows cleared when the import ends, or after 7 days unfinished (a daily job). Per-row results (row number, name, the problem) kept.          |
-| SMS log (number, text, status, cost)                                                  | Not deleted.                                                                                                                                          |
-| Audit log                                                                             | Not deleted.                                                                                                                                          |
-| Sign-in codes                                                                         | Hashed, 5 minutes, deleted on use.                                                                                                                    |
-| Sessions (browser description, IP address, times)                                     | Expire after 30 days unused. [to verify: deletion of old rows]                                                                                        |
-| Photos, logo, signature, seal                                                         | Until replaced or removed (then deleted in the same step).                                                                                            |
-| Admission applications (after PRs #23 and #24)                                        | Not deleted. **Planned:** rejected applications' personal data cleared 12 months after the cycle closes (decision S30; not built).                   |
-| Notices and SMS broadcasts (after PRs #25 and #26)                                    | Not deleted; withdrawn notices kept for the record.                                                                                                  |
-| Backups                                                                               | 14 days on the server by default; off-site [to decide].                                                                                              |
+| Data                                                    | Kept                                                                                                                                        |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Students, guardians, staff                              | During the agreement. "Deactivate" hides a record; nothing is deleted.                                                                      |
+| Attendance registers and records, staff attendance days | Not deleted.                                                                                                                                |
+| Raw device punches                                      | The Institute's setting, 730 days by default (30 to 3650); the database never lets the app delete the last 30 days.                         |
+| Device commands (names and ID numbers sent to devices)  | Failed, cancelled or replaced ones: deleted 90 days after their last activity. The latest per person and device: kept.                      |
+| Fee dues, payments, receipts, voids                     | Not deleted.                                                                                                                                |
+| Exam marks, results, remarks and their history          | Not deleted.                                                                                                                                |
+| Student import files                                    | Uploaded rows cleared when the import ends, or after 7 days unfinished (a daily job). Per-row results (row number, name, the problem) kept. |
+| SMS log (number, text, status, cost)                    | Not deleted.                                                                                                                                |
+| Audit log                                               | Not deleted.                                                                                                                                |
+| Sign-in codes                                           | Hashed, 5 minutes, deleted on use.                                                                                                          |
+| Sessions (browser description, IP address, times)       | Expire after 30 days unused. [to verify: deletion of old rows]                                                                              |
+| Photos, logo, signature, seal                           | Until replaced or removed (then deleted in the same step).                                                                                  |
+| Admission applications (after PRs #23 and #24)          | Not deleted. **Planned:** rejected applications' personal data cleared 12 months after the cycle closes (decision S30; not built).          |
+| Notices and SMS broadcasts (after PRs #25 and #26)      | Not deleted; withdrawn notices kept for the record.                                                                                         |
+| Backups                                                 | 14 days on the server by default; off-site [to decide].                                                                                     |
 
 [to verify with the lawyer: which of these "not deleted" periods must get an end date under the
 data protection law, and which records institutes must keep by law.]

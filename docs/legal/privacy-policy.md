@@ -28,11 +28,11 @@
 
 ## 2. Who is responsible for what
 
-| Information                                                                                              | Who decides how it is used ("data fiduciary") | Jantrik's role                                    |
-| -------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------- |
-| Students, guardians and staff, and everything the institute records about them ("Institute Data")      | The institute                                 | Processes it on the institute's instructions      |
-| The institute's account: its name, owner contacts, plan, invoices and payments to Jantrik               | Jantrik                                       | Decides                                           |
-| Sign-in security records (codes sent, sessions, failed attempts) and Jantrik's own staff accounts      | Jantrik                                       | Decides                                           |
+| Information                                                                                       | Who decides how it is used ("data fiduciary") | Jantrik's role                               |
+| ------------------------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------- |
+| Students, guardians and staff, and everything the institute records about them ("Institute Data") | The institute                                 | Processes it on the institute's instructions |
+| The institute's account: its name, owner contacts, plan, invoices and payments to Jantrik         | Jantrik                                       | Decides                                      |
+| Sign-in security records (codes sent, sessions, failed attempts) and Jantrik's own staff accounts | Jantrik                                       | Decides                                      |
 
 The words "data fiduciary" and "data processor" come from Bangladesh's personal data protection
 law. [to verify: the final terms used in the Personal Data Protection Act, 2026, and that this
@@ -149,22 +149,22 @@ near Bangladesh such as Singapore or Mumbai.]
 
 What the software does **today**:
 
-| Information                                                                  | How long                                                                                                                                                             |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Student, guardian and staff records                                          | While the institute uses the service. A student or staff member who is "deactivated" is hidden from lists but **not deleted**.                                        |
-| Attendance, staff attendance, fee payments and receipts, exam marks         | Not deleted automatically.                                                                                                                                           |
-| Raw attendance-device punches                                               | The institute's setting: 730 days by default (between 30 and 3650). Attendance made from them is kept.                                                               |
-| Commands sent to attendance devices (they carry names and ID numbers)       | Failed, cancelled and replaced commands are deleted 90 days after their last activity; the latest one per person and device is kept.                                |
-| Student import files (with phone and birth registration numbers)           | The uploaded rows are cleared when the import finishes or fails, or after 7 days if unfinished. A per-row result (row number, name, the problem) is kept.            |
-| SMS log (number, text, status, cost)                                         | Not deleted automatically.                                                                                                                                           |
-| Audit log (who changed what, old and new values)                            | Not deleted automatically.                                                                                                                                           |
-| Sign-in codes                                                                | Stored only in scrambled (hashed) form, for 5 minutes; deleted once used.                                                                                            |
-| Sign-in sessions                                                             | A session expires after 30 days without use. [to verify: when old session records are deleted.]                                                                     |
-| Attendance and marks drafts on a teacher's phone                             | Kept in that phone's browser until sent (attendance drafts: at most 7 days). They hold names, rolls and IDs, never phone numbers or photos.                           |
-| Photos, logo, signature, seal                                               | Until replaced or removed; then deleted from the database (copies remain in backups until those expire).                                                             |
-| Admission applications (after PRs #23 and #24)                              | Not deleted. **Planned:** the personal data of rejected applications cleared 12 months after the admission cycle closes (decided, not built yet).                    |
-| Backups                                                                      | Nightly, kept 14 days on the server by default; off-site copies [to decide].                                                                                         |
-| When an institute leaves                                                     | [Export window, then deletion: see the Custody Agreement. Not built yet.]                                                                                            |
+| Information                                                           | How long                                                                                                                                                  |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Student, guardian and staff records                                   | While the institute uses the service. A student or staff member who is "deactivated" is hidden from lists but **not deleted**.                            |
+| Attendance, staff attendance, fee payments and receipts, exam marks   | Not deleted automatically.                                                                                                                                |
+| Raw attendance-device punches                                         | The institute's setting: 730 days by default (between 30 and 3650). Attendance made from them is kept.                                                    |
+| Commands sent to attendance devices (they carry names and ID numbers) | Failed, cancelled and replaced commands are deleted 90 days after their last activity; the latest one per person and device is kept.                      |
+| Student import files (with phone and birth registration numbers)      | The uploaded rows are cleared when the import finishes or fails, or after 7 days if unfinished. A per-row result (row number, name, the problem) is kept. |
+| SMS log (number, text, status, cost)                                  | Not deleted automatically.                                                                                                                                |
+| Audit log (who changed what, old and new values)                      | Not deleted automatically.                                                                                                                                |
+| Sign-in codes                                                         | Stored only in scrambled (hashed) form, for 5 minutes; deleted once used.                                                                                 |
+| Sign-in sessions                                                      | A session expires after 30 days without use. [to verify: when old session records are deleted.]                                                           |
+| Attendance and marks drafts on a teacher's phone                      | Kept in that phone's browser until sent (attendance drafts: at most 7 days). They hold names, rolls and IDs, never phone numbers or photos.               |
+| Photos, logo, signature, seal                                         | Until replaced or removed; then deleted from the database (copies remain in backups until those expire).                                                  |
+| Admission applications (after PRs #23 and #24)                        | Not deleted. **Planned:** the personal data of rejected applications cleared 12 months after the admission cycle closes (decided, not built yet).         |
+| Backups                                                               | Nightly, kept 14 days on the server by default; off-site copies [to decide].                                                                              |
+| When an institute leaves                                              | [Export window, then deletion: see the Custody Agreement. Not built yet.]                                                                                 |
 
 [to verify: whether keeping SMS logs, audit logs and attendance with no end date is allowed under
 the Personal Data Protection Act, 2026's rule that data is not kept longer than needed; and what
