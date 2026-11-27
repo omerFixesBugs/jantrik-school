@@ -35,8 +35,9 @@ const GATEWAY_AMOUNT_SQL = '^[0-9]{1,7}([.][0-9]{1,2})?$';
 /**
  * The online payments report (sprint 1 P7b, docs/payments.md → Reports; OWNER, ADMIN,
  * ACCOUNTANT): every payment started in the range, by the day it was started in the institute's
- * timezone and by where it stands now, with the money SSLCommerz validated for them and its
- * charges (amount − store amount, S24). Money items count too (review round 1, hardening e): a
+ * timezone and by where it stands now (each in one status column), with the money SSLCommerz
+ * validated for them and its charges (amount − store amount, S24). Money items count too (review
+ * round 1, hardening e): a
  * second payment (DUPLICATE) on its payment's day, money of no payment of ours (UNMATCHED) on the
  * day it arrived; each payment's money once (its val_id; a repeat record dismissed, or money an
  * intent holds, is not counted again): in received, to check while undecided, refunded outside
@@ -82,8 +83,10 @@ export class OnlinePaymentsReportService {
              count(*) FILTER (WHERE status = 'NEEDS_REVIEW')::bigint AS review,
              sum(validated_amount_paisa - COALESCE(refunded_outside_paisa, 0))
                FILTER (WHERE status = 'NEEDS_REVIEW')::bigint AS review_amount,
-             count(*) FILTER (WHERE status = 'REFUNDED_OUTSIDE' OR refunded_outside_paisa IS NOT NULL)::bigint
-               AS refunded,
+             -- Each payment counts once, in its state now (review round 2, probe D); the amount
+             -- refunded outside also holds the refund part of an applied one, and the refund an
+             -- applied one voided back into review keeps (P7b-x24).
+             count(*) FILTER (WHERE status = 'REFUNDED_OUTSIDE')::bigint AS refunded,
              sum(refunded_outside_paisa)::bigint AS refunded_amount,
              count(*) FILTER (WHERE status = 'DISMISSED')::bigint AS dismissed,
              sum(validated_amount_paisa)::bigint AS received,
