@@ -66,6 +66,7 @@ const KNOWN_ERRORS = [
   'TRX_ID_USED',
   'ALREADY_REFUNDED',
   'HELD_BY_PAYMENT',
+  'PAYMENT_VOIDED',
 ] as const;
 
 function useDecisionError() {
@@ -533,8 +534,11 @@ export function ApplyDialog({
     },
     onError: (e) => {
       if (!(e instanceof ApiError)) return;
-      if (e.code === 'ALREADY_RESOLVED') {
-        toast.error(t('err.ALREADY_RESOLVED'));
+      if (e.code === 'ALREADY_RESOLVED' || e.code === 'PAYMENT_VOIDED') {
+        // Decided elsewhere, or this request's payment voided since: reload the item.
+        toast.error(
+          e.code === 'PAYMENT_VOIDED' ? t('err.PAYMENT_VOIDED') : t('err.ALREADY_RESOLVED'),
+        );
         refresh();
         onClose();
       } else if (e.code === 'DUES_CHANGED') {

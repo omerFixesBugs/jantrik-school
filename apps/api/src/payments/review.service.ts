@@ -573,14 +573,27 @@ export class ReviewService {
     const tx = this.db.tx;
     const intent = await this.lockIntent(intentId);
 
-    // A retry of a request that already succeeded gets the same receipt (under the locks).
+    // A retry of a request that already succeeded gets the same receipt (under the locks), while
+    // that payment stands: voided since (the intent back in review, or applied again by another
+    // request), the retry is a conflict, never the voided receipt (review round 2, probe A).
     const previous = await tx.feePayment.findFirst({
       where: { clientRequestId: input.clientRequestId },
-      select: { id: true, paymentIntentId: true, amountPaisa: true },
+      select: { id: true, paymentIntentId: true, amountPaisa: true, status: true },
     });
     if (previous) {
       if (previous.paymentIntentId !== intent.id || previous.amountPaisa !== input.applyPaisa) {
         throw apiError(422, 'IDEMPOTENCY_MISMATCH', 'This request id was used for another payment');
+      }
+      if (
+        previous.status !== 'ACTIVE' ||
+        intent.status !== 'PAID' ||
+        intent.feePaymentId !== previous.id
+      ) {
+        throw apiError(
+          409,
+          'PAYMENT_VOIDED',
+          'The payment this request recorded was voided: reload the payment and decide again',
+        );
       }
       return { ...(await this.collection.receipt(previous.id)), replayed: true };
     }
