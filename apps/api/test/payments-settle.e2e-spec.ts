@@ -328,6 +328,24 @@ describe('online payments: confirmation and settle', () => {
     expect((await intentRow(h, s.tenantId, pending.intent.id)).status).toBe('REDIRECTED');
   });
 
+  it('liveness: a val_id first answered PENDING is validated again once the gateway lists it VALID', async () => {
+    const { intent } = await readyPayment();
+    const t = await payAtGateway(h, fake, s.tenantId, intent.id, { status: 'PENDING' });
+    // The validation API says the payment is still pending (and the query lists it so).
+    fake.override('validate', { json: { status: 'PENDING', APIConnect: 'DONE' } });
+    await postReturn(h, s.slug, intent.tranId, 'success', { val_id: t.valId }).expect(303);
+    await vi.waitFor(async () => {
+      expect((await eventsOf(intent.id, 'VALIDATE')).map((e) => e.outcome)).toEqual(['PENDING']);
+      expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0);
+    });
+    expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+    // The payment completes at the gateway; the next confirm (a heal, a late IPN) posts it.
+    t.status = 'VALID';
+    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
+    expect(await paymentsOf(intent.id)).toHaveLength(1);
+  });
+
   it('review focus 1: three settle runs at once for one val_id → one payment, one receipt number', async () => {
     const { intent } = await readyPayment();
     const t = await payAtGateway(h, fake, s.tenantId, intent.id);
