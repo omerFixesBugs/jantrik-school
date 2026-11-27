@@ -966,6 +966,184 @@ describe('online payments: the review queue', () => {
     });
   });
 
+  // Review round 1: the cases the reviewer named as untested.
+
+  it('apply and the counter take the same due at once: the due is paid once', async () => {
+    const r = await risky(120000);
+    const [applied, counter] = await Promise.all([
+      apply(r.intent.id, {
+        dueIds: [r.due.id],
+        applyPaisa: 120000,
+        expectedOutstandingPaisa: 120000,
+      }),
+      as('accountant').post('/fees/payments', {
+        studentId: child().id,
+        dueIds: [r.due.id],
+        amountPaisa: 120000,
+        expectedOutstandingPaisa: 120000,
+        clientRequestId: randomUUID(),
+      }),
+    ]);
+    // One wins; the other finds the due paid (both take the student's lock first).
+    const statuses = [applied.status, counter.status];
+    expect(statuses.filter((x) => x === 201)).toHaveLength(1);
+    expect(statuses.filter((x) => x === 404 || x === 409)).toHaveLength(1);
+    const due = (await childFees(h, s.tokens.guardian, child().id)).ledger.dues.find(
+      (d) => d.id === r.due.id,
+    )!;
+    expect(due).toMatchObject({ status: 'PAID', paidPrincipalPaisa: 120000 });
+    expect((await intentRow(h, s.tenantId, r.intent.id)).status).toBe(
+      applied.status === 201 ? 'PAID' : 'NEEDS_REVIEW',
+    );
+  });
+
+  it('a void of an applied payment and a second apply at once: never two live payments', async () => {
+    const r = await risky(120000);
+    const body = { dueIds: [r.due.id], applyPaisa: 120000, expectedOutstandingPaisa: 120000 };
+    const first = (await apply(r.intent.id, body).expect(201)).body as FeeReceipt;
+    const [voided, again] = await Promise.all([
+      as('owner').post(`/fees/payments/${first.id}/void`, { reason: 'wrong due' }),
+      apply(r.intent.id, body),
+    ]);
+    expect(voided.status).toBe(200);
+    expect([201, 409]).toContain(again.status);
+    const payments = await paymentsOf(r.intent.id);
+    const live = payments.filter((p) => p.status === 'ACTIVE');
+    const row = await intentRow(h, s.tenantId, r.intent.id);
+    if (again.status === 201) {
+      expect(live.map((p) => p.id)).toEqual([(again.body as FeeReceipt).id]);
+      expect(row).toMatchObject({ status: 'PAID', feePaymentId: live[0]!.id });
+    } else {
+      expect(again.body.code).toBe('ALREADY_RESOLVED');
+      expect(live).toEqual([]);
+      expect(row).toMatchObject({ status: 'NEEDS_REVIEW', feePaymentId: null });
+    }
+  });
+
+  it('a dismissal and a late payment at once: never dismissed with money', async () => {
+    // Another payment's money sent to this one: in review with no money of its own, checked clean.
+    const mine = await readyPayment(70000);
+    const theirs = await readyPayment(60000, s.students[2]!.id, s.tokens.otherGuardian);
+    const t = await payAtGateway(h, fake, s.tenantId, theirs.intent.id);
+    await settle.settlePaid(
+      s.tenantId,
+      mine.intent.id,
+      mine.intent.payerUserId,
+      await validated(theirs.intent.tranId, t.valId),
+    );
+    await reconcile.run({ tenantId: s.tenantId, intentId: mine.intent.id, step: 'manual' });
+    expect((await staffView(mine.intent.id)).actions.dismissReady).toBe(true);
+    // The payer pays after all, while an admin dismisses it.
+    const late = fake.pay(mine.intent.sessionRef!);
+    const outcome = await validated(mine.intent.tranId, late.valId);
+    const [dismissed] = await Promise.all([
+      as('admin').post(items(`/${mine.intent.id}/dismiss`), { note: 'not a payment of ours' }),
+      settle.settlePaid(s.tenantId, mine.intent.id, mine.intent.payerUserId, outcome),
+    ]);
+    expect([200, 422]).toContain(dismissed.status);
+    if (dismissed.status === 422) expect(dismissed.body.code).toBe('HAS_MONEY');
+    // Either way the money waits for a person, on the intent.
+    expect(await intentRow(h, s.tenantId, mine.intent.id)).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      valId: late.valId,
+      validatedAmountPaisa: 70000,
+    });
+  });
+
+  it('a money item refunded while its twin is dismissed, at once: one refund, the twin a repeat', async () => {
+    const posted = await paidOnline({ amountPaisa: 50000 });
+    const second = fake.pay(posted.intent.sessionRef!);
+    await settle.settlePaid(
+      s.tenantId,
+      posted.intent.id,
+      posted.intent.payerUserId,
+      await validated(posted.intent.tranId, second.valId),
+    );
+    const [item] = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.findMany({
+        where: { valId: second.valId, reviewReason: 'DUPLICATE' },
+      }),
+    );
+    const twin = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.create({
+        data: {
+          tenantId: s.tenantId,
+          intentId: posted.intent.id,
+          kind: 'VALIDATE',
+          outcome: 'VALIDATED',
+          tranId: posted.intent.tranId,
+          valId: second.valId,
+          fields: { amount: '500.00', bank_tran_id: 'BTXTWIN0001' },
+          reviewReason: 'DUPLICATE',
+          receivedAt: new Date(),
+        },
+      }),
+    );
+    const results = await Promise.all([
+      as('owner').post(items(`/signals/${item!.id}/refunded-outside`), { note: NOTE }),
+      as('admin').post(items(`/signals/${twin.id}/dismiss`), { note: 'recorded twice' }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+    const reviews = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentSignalReview.findMany({ where: { eventId: { in: [item!.id, twin.id] } } }),
+    );
+    expect(reviews.map((r) => r.outcome).sort()).toEqual(['DISMISSED', 'REFUNDED_OUTSIDE']);
+  });
+
+  it('apply refused: the bank transaction already a live payment, an amount not reported, a transaction ID not usable', async () => {
+    const bank = `BTXSAME${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const first = await paidOnline({ fields: { bank_tran_id: bank } });
+    expect(first.intent.status).toBe('PAID');
+    const again = await paidOnline({ fields: { bank_tran_id: bank } });
+    expect(again.intent).toMatchObject({ status: 'NEEDS_REVIEW', reviewReasons: ['DUPLICATE'] });
+    const body = (due: { id: string }) => ({
+      dueIds: [due.id],
+      applyPaisa: 120000,
+      expectedOutstandingPaisa: 120000,
+    });
+    expect((await apply(again.intent.id, body(again.due)).expect(409)).body.code).toBe(
+      'TRX_ID_USED',
+    );
+
+    const unknown = await paidOnline({ fields: { amount: '1,200.00' } });
+    expect(unknown.intent).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      validatedAmountPaisa: null,
+    });
+    expect((await apply(unknown.intent.id, body(unknown.due)).expect(422)).body.code).toBe(
+      'AMOUNT_UNKNOWN',
+    );
+    // Refunded outside, its amount unknown.
+    await as('admin')
+      .post(items(`/${unknown.intent.id}/refunded-outside`), { note: NOTE })
+      .expect(200);
+    expect(await intentRow(h, s.tenantId, unknown.intent.id)).toMatchObject({
+      status: 'REFUNDED_OUTSIDE',
+      refundedOutsidePaisa: null,
+    });
+
+    const unusable = await paidOnline({ fields: { bank_tran_id: 'BT 1234 5678' } });
+    expect(unusable.intent).toMatchObject({ status: 'NEEDS_REVIEW', bankTranId: null });
+    expect((await apply(unusable.intent.id, body(unusable.due)).expect(422)).body.code).toBe(
+      'TRX_ID_UNUSABLE',
+    );
+  });
+
+  it("another child's due: 404, nothing recorded", async () => {
+    const r = await risky(120000);
+    const theirs = await extraDue(h, s, s.students[2]!.id, {
+      amountPaisa: 120000,
+      dueDate: s.today,
+    });
+    await apply(r.intent.id, {
+      dueIds: [theirs.id],
+      applyPaisa: 120000,
+      expectedOutstandingPaisa: 120000,
+    }).expect(404);
+    expect(await paymentsOf(r.intent.id)).toEqual([]);
+    expect((await intentRow(h, s.tenantId, r.intent.id)).status).toBe('NEEDS_REVIEW');
+  });
+
   it('a retried apply gets the same receipt; each decision is audited; the guardian sees it', async () => {
     const r = await risky();
     const body = {
