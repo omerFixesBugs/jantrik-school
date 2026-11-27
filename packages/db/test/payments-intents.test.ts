@@ -502,6 +502,31 @@ describe('payment intents, their dues, gateway events and gateway payments', () 
     ).rejects.toThrow(/own live gateway payment/i);
   });
 
+  it('at commit: an intent never lets go of a live gateway payment that names it (P7a2-x25)', async () => {
+    const intent = await newIntent(a);
+    const payment = await pay(a, intent);
+    // The review's probe: the intent sent to review as if voided, its payment left ACTIVE.
+    await expect(
+      sql(
+        a,
+        `UPDATE payment_intents SET status = 'NEEDS_REVIEW', fee_payment_id = NULL, review_reasons = '{VOIDED}', review_since = now() WHERE id = '${intent.id}'`,
+      ),
+    ).rejects.toThrow(/live gateway payment keeps its intent PAID/i);
+    const row = await withTenant(app, a.tenantId, (tx) =>
+      tx.paymentIntent.findUniqueOrThrow({ where: { id: intent.id } }),
+    );
+    expect(row).toMatchObject({ status: 'PAID', feePaymentId: payment.id });
+    // The void itself, in the same transaction: allowed (P7a-G).
+    await withTenant(app, a.tenantId, async (tx) => {
+      await tx.$executeRawUnsafe(
+        `UPDATE fee_payments SET status = 'VOID', voided_at = now(), voided_by_id = '${a.payer}', void_reason = 'paid twice' WHERE id = '${payment.id}'`,
+      );
+      await tx.$executeRawUnsafe(
+        `UPDATE payment_intents SET status = 'NEEDS_REVIEW', fee_payment_id = NULL, review_reasons = '{VOIDED}', review_since = now() WHERE id = '${intent.id}'`,
+      );
+    });
+  });
+
   it('fee_payments: a gateway payment has a gateway method, a TrxID, no sender, and an intent', async () => {
     const intent = await newIntent(a);
     const tryPayment = (over: Record<string, unknown>) =>
