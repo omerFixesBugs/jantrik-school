@@ -116,7 +116,12 @@ ALTER TABLE payment_intents
   -- The last query by our tran_id: a time and a fixed word or code, together.
   ADD CONSTRAINT payment_intents_last_check CHECK (
     (last_checked_at IS NULL) = (last_check_outcome IS NULL)
-    AND (last_check_outcome IS NULL OR last_check_outcome ~ '^[A-Z][A-Z0-9_]{0,39}$'));
+    AND (last_check_outcome IS NULL OR last_check_outcome ~ '^[A-Z][A-Z0-9_]{0,39}$')),
+  -- Validated money of nothing (SSLCommerz's "0.00") is an unknown amount, NULL, as a money
+  -- item's (review round 2, probe F): 0 would be refundable by neither CHECK above (refunded
+  -- records the validated amount; a refund is at least 1 paisa), so it could never be decided.
+  ADD CONSTRAINT payment_intents_validated_amount CHECK (
+    validated_amount_paisa IS NULL OR validated_amount_paisa >= 1);
 
 -- Only a person's decision moves an intent out of NEEDS_REVIEW (the three P7b actions; S23: no
 -- job ever does), and the decision is written exactly then. When the intent comes back to review

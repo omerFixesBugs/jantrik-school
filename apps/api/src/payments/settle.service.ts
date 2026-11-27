@@ -152,16 +152,20 @@ export class SettleService {
         });
 
         const now = this.clock.now();
+        // Nothing (৳0.00) is no amount: unknown, as for money items (review round 2, probe F),
+        // so the money can still be refunded outside; the database refuses 0.
+        const validatedAmountPaisa =
+          paid.amountPaisa !== null && paid.amountPaisa >= 1 ? paid.amountPaisa : null;
         const facts = {
           valId: paid.valId,
           bankTranId: printable(paid.bankTranId, 100),
           instrument: label(paid.instrument, 50),
           method: methodFromInstrument(paid.instrument, paid.cardBrand),
-          validatedAmountPaisa: paid.amountPaisa,
+          validatedAmountPaisa,
           storeAmountPaisa:
             paid.storeAmountPaisa !== null &&
-            paid.amountPaisa !== null &&
-            paid.storeAmountPaisa <= paid.amountPaisa
+            validatedAmountPaisa !== null &&
+            paid.storeAmountPaisa <= validatedAmountPaisa
               ? paid.storeAmountPaisa
               : null,
           validatedCurrency: printable(paid.currencyType, 10),
@@ -190,9 +194,7 @@ export class SettleService {
             newValues: {
               status: 'NEEDS_REVIEW',
               reasons,
-              ...(decision.recordFacts
-                ? { valId: paid.valId, validatedAmountPaisa: paid.amountPaisa }
-                : {}),
+              ...(decision.recordFacts ? { valId: paid.valId, validatedAmountPaisa } : {}),
             },
           });
         } else if (decision.kind === 'POST') {
