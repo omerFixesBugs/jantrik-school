@@ -127,9 +127,17 @@ BEGIN
       RAISE EXCEPTION 'only a person''s decision moves a payment intent out of review'
         USING ERRCODE = 'check_violation';
     END IF;
+    IF NEW.status = 'PAID' AND NEW.fee_payment_id IS NULL THEN
+      RAISE EXCEPTION 'an intent applied from review holds its new payment'
+        USING ERRCODE = 'check_violation';
+    END IF;
     RETURN NEW;
   END IF;
   IF NEW.status = 'NEEDS_REVIEW' AND OLD.status IS DISTINCT FROM 'NEEDS_REVIEW' THEN
+    IF OLD.status = 'PAID' AND NEW.fee_payment_id IS NOT NULL THEN
+      RAISE EXCEPTION 'an intent back in review holds no payment: void it first'
+        USING ERRCODE = 'check_violation';
+    END IF;
     NEW.resolved_by_id := NULL;
     NEW.resolved_at := NULL;
     NEW.resolution_note := NULL;
@@ -153,6 +161,42 @@ REVOKE ALL ON FUNCTION payment_intents_resolution_guard() FROM PUBLIC;
 CREATE TRIGGER payment_intents_resolution_guard
   BEFORE UPDATE ON payment_intents
   FOR EACH ROW EXECUTE FUNCTION payment_intents_resolution_guard();
+
+-- The same match from the intent's side, at commit: a PAID intent changed under its live payment
+-- (whatever the column) is refused, as a payment changed under its intent is (below). Only rows
+-- that are PAID after the update are looked at.
+CREATE FUNCTION payment_intents_payment_match() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM payment_intents i
+    WHERE i.tenant_id = NEW.tenant_id AND i.id = NEW.id AND i.status = 'PAID'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM payment_intents i
+    JOIN fee_payments p ON p.tenant_id = i.tenant_id AND p.id = i.fee_payment_id
+    WHERE i.tenant_id = NEW.tenant_id AND i.id = NEW.id AND p.payment_intent_id = i.id
+      AND i.bank_tran_id = p.trx_id
+      AND CASE
+            WHEN i.applied_paisa IS NULL
+              THEN p.amount_paisa = i.amount_paisa AND p.paid_on = i.priced_on
+            ELSE p.amount_paisa = i.applied_paisa
+              AND p.paid_on BETWEEN i.priced_on AND p.recorded_on
+          END
+  ) THEN
+    RAISE EXCEPTION 'a gateway payment must match its intent: the amount, the TrxID and the day'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NULL;
+END
+$$;
+REVOKE ALL ON FUNCTION payment_intents_payment_match() FROM PUBLIC;
+CREATE CONSTRAINT TRIGGER payment_intents_payment_match
+  AFTER UPDATE ON payment_intents
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW WHEN (NEW.status = 'PAID')
+  EXECUTE FUNCTION payment_intents_payment_match();
 
 -- At commit, a live gateway payment matches its intent: the intent is PAID with it (P7a2), the
 -- TrxID is the intent's bank_tran_id, and the amount and day are what was decided: posted by
@@ -227,7 +271,11 @@ ALTER TABLE payment_signal_reviews
 
 -- At commit: a decision is about a VALIDATE event with a review reason (an item of the queue),
 -- and money is never dismissed (P7b-E): a dismissal is only of a repeat record of money that an
--- intent holds, or that another review event (not itself dismissed) still records.
+-- intent holds, or that another review event (not itself dismissed) still records. Decisions on
+-- the records of one payment (one val_id) are serialised by an advisory lock on it, taken here
+-- and by the API before it inserts (P7b-x: two dismissals of the two records of one payment at
+-- once could otherwise each see the other standing): the second check waits for the first
+-- transaction to end and reads what it committed (READ COMMITTED takes a new snapshot).
 CREATE FUNCTION payment_review_event_check() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp
@@ -242,6 +290,9 @@ BEGIN
   IF v_kind IS DISTINCT FROM 'VALIDATE' OR v_reason IS NULL THEN
     RAISE EXCEPTION 'a signal review needs a VALIDATE event with a review reason'
       USING ERRCODE = 'check_violation';
+  END IF;
+  IF v_val IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('payments-val:' || NEW.tenant_id::text || ':' || v_val, 0));
   END IF;
   IF NEW.outcome = 'DISMISSED' AND NOT (
     v_val IS NOT NULL AND (
