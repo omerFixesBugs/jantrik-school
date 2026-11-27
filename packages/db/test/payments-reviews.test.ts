@@ -722,6 +722,31 @@ describe('review decisions on online payments (P7b)', () => {
     ).toMatch(/already refunded/i);
   });
 
+  it('a live gateway payment is never detached from its intent (review round 1, finding 3; P1-J10)', async () => {
+    // The reviewer's probe, as jantrik_app (an SQL injection inside the institute): an applied
+    // intent moved back to review "voided" while its payment stays live, then refunded outside.
+    const detach = (id: string) =>
+      `UPDATE payment_intents SET status = 'NEEDS_REVIEW', fee_payment_id = NULL,
+         review_reasons = review_reasons || '{VOIDED}', review_since = now() WHERE id = '${id}'`;
+    const intent = await inReview(a);
+    const payment = await apply(a, intent, { amount: 100000 });
+    await expect(sql(a, detach(intent.id))).rejects.toThrow(/live gateway payment|void it first/i);
+    await expect(
+      withTenant(app, a.tenantId, async (tx) => {
+        await tx.$executeRawUnsafe(detach(intent.id));
+        await tx.$executeRawUnsafe(
+          `UPDATE payment_intents SET status = 'REFUNDED_OUTSIDE', ${resolved(a)},
+             refunded_outside_paisa = 100000 WHERE id = '${intent.id}'`,
+        );
+      }),
+    ).rejects.toThrow(/live gateway payment|void it first/i);
+    expect(
+      await withTenant(app, a.tenantId, (tx) =>
+        tx.paymentIntent.findUniqueOrThrow({ where: { id: intent.id } }),
+      ),
+    ).toMatchObject({ status: 'PAID', feePaymentId: payment.id });
+  });
+
   it('payment_signal_reviews and the decisions are history: no UPDATE, no DELETE', async () => {
     const event = await validateEvent(a, {});
     await signalReview(a, event.id);
