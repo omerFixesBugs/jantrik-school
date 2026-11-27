@@ -1464,3 +1464,41 @@ Changed after the review of #26, round 2 (each should-fix with a test seen faili
 - **Recorded only (N-e, N-f):** the edited migration `20261117410100_sms_broadcasts` needs fresh
   databases wherever its earlier version was applied (only scratch and CI here); its new index on
   `sms_logs` is created without `CONCURRENTLY`, fine before launch.
+
+## Test year from the test clock (day run 2026-11-27)
+
+Branch `test/test-year-from-clock`, one PR, test-only. Decided by the agent alone (the owner was
+away); each can be changed in review.
+
+TY-1. **The test year is the test clock's calendar year, taken when the institute is made.** The
+API's `createTenant`/`school` and the db package's `createTenant` give the institute the
+calendar year of today in Asia/Dhaka: the FakeClock's date when the test installed one
+(`createHarness({ clock })`), otherwise `todayIn` (the db tests have no clock). A FakeClock test
+that makes an institute with its clock moved gets that day's year (devices-retention makes its
+institutes with the clock 800 days back). A test with a fixed clock of its own
+(admission-functions' `p_now`) takes its years from that clock. The next, last and other years a
+test creates are counted from the institute's year (a leap year at least two years on, +10, +14),
+so they never meet it. To change: take the year once per harness instead.
+
+TY-2. **Reports that never look back before the year's start get a year that began months ago.**
+The attendance trend and absence streaks stop at the current year's start (product behaviour,
+kept). With a calendar year their tests fail from 1 to about 30 January, so they use
+`school(h, { yearAroundToday: true })`: the year begins on the 1st of the month three months back
+and lasts a year, as `feesSchool`'s always has. To change: move those tests onto a FakeClock.
+
+TY-3. **Dates that depend on neither the year nor today are left as written:** holidays, the
+admission test's date, birth dates, the rows of the db RLS and constraint tests, format checks
+such as `'31/12/2026'`, and years that are never created (2029/2030 in a refused range, 2050 in a
+refused copy).
+
+TY-4. **Not changed: the test phones run out in about May 2028 (F-6).** The counter of unique test
+phones never goes behind a clock that started on 1 November 2026 at one number a second, so the
+clock alone uses up the 49 million numbers around 21 May 2028. From then every test that makes a
+user stops with F-6's message (recreate the test database and move the start date). It is the one
+way left for the suites to fail as dates pass; changing it changes how test phones stay unique,
+so it is left for the owner. Suggested: move `EPOCH_MS` forward with a fresh test database, or
+count from the database's highest test phone instead of the clock.
+
+TY-5. **The date simulation is not part of the repo.** The "as if it were that date" runs (a
+Postgres under libfaketime, Node's `Date` moved by the same offset) used the coordinator's scratch
+tools; the PR says how to run them. Committing them would add tooling to a test-only change.
