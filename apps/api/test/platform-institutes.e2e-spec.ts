@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { findOrCreateUser, withTenant } from '@jantrik/db';
 import {
+  addDays,
   toCsv,
   type AttendanceSettings,
   type AuthResponse,
@@ -18,6 +19,7 @@ import {
   http,
   otpLogin,
   randomPhone,
+  testToday,
   type Harness,
 } from './support/harness.js';
 import { ownerClient, platform, platformAdminCookie } from './support/platform.js';
@@ -39,7 +41,8 @@ describe('platform: institutes', () => {
     modules: ['ATTENDANCE'],
     owner: { phone: randomPhone(), name: 'Owner Typed', nameBn: 'মালিক' },
     plan: { planName: 'Standard', pricing: 'PER_STUDENT', corePaisa: 1000, attendancePaisa: 500 },
-    trialEndsOn: '2026-12-31',
+    // A month from today: the trial has not ended (a fixed day ends it once that day passes).
+    trialEndsOn: addDays(testToday(), 30),
     ...over,
   });
   const create = async (over: Record<string, unknown> = {}) => {
@@ -140,7 +143,7 @@ describe('platform: institutes', () => {
     expect(d).toMatchObject({
       status: 'TRIAL',
       trialEnded: false,
-      subscription: { planName: 'Standard', trialEndsOn: '2026-12-31' },
+      subscription: { planName: 'Standard', trialEndsOn: b.trialEndsOn },
       owners: [{ name: 'Owner Typed', phone: b.owner.phone, status: 'INVITED' }],
       counts: { activeStudents: 0, activeStaff: 0 },
     });
