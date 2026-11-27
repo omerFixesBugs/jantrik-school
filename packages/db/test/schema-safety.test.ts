@@ -87,6 +87,7 @@ describe('schema safety net', () => {
         'payment_intents',
         'payment_intent_dues',
         'payment_gateway_events',
+        'payment_signal_reviews',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
