@@ -341,6 +341,27 @@ describe('online payments: confirmation and settle', () => {
     expect((await intentRow(h, s.tenantId, pending.intent.id)).status).toBe('REDIRECTED');
   });
 
+  it('a query listing a failed and a pending attempt together: the pending one wins, a fail return closes nothing, and "start again" is not offered', async () => {
+    const { intent } = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, intent.id, { status: 'FAILED' });
+    await payAtGateway(h, fake, s.tenantId, intent.id, { status: 'PENDING' });
+    await postReturn(h, s.slug, intent.tranId, 'fail', { status: 'FAILED' }).expect(303);
+    // Recorded in a fixed order, live first.
+    await vi.waitFor(async () =>
+      expect((await eventsOf(intent.id, 'QUERY')).map((e) => e.outcome)).toContain(
+        'PENDING,FAILED',
+      ),
+    );
+    await runConfirm(intent.id);
+    expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+    const page = (
+      await api(h, s.tokens.guardian)
+        .get(fees(`/online-payments/${intent.id}`))
+        .expect(200)
+    ).body as OnlinePaymentView;
+    expect(page).toMatchObject({ state: 'CONFIRMING', noLiveAttempt: false });
+  });
+
   it("UNATTEMPTED or EXPIRED in our query: during the session a fail or cancel signal closes nothing and the payer's genuine payment posts; past the session's lifetime (expires_at) it closes the payment, and a new checkout is allowed (P7a2-x31)", async () => {
     // SSLCommerz's query documents VALID, VALIDATED, PENDING and FAILED only: a session nobody has
     // tried to pay yet (or cancelled before any attempt) may be listed as UNATTEMPTED, one left to
