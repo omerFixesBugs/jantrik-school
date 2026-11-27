@@ -243,6 +243,13 @@ export class GatewayAccountService {
       data.tenantId,
       async () => {
         const now = this.clock.now();
+        // Lock the row first (an UPDATE takes the row lock), so what is read next cannot change
+        // before this commits: an "enable" that committed meanwhile is seen and switched off by a
+        // failed result, and one that comes later waits and then finds no passing test.
+        await this.db.tx.paymentGatewayAccount.updateMany({
+          where: { id: data.accountId },
+          data: { updatedAt: now },
+        });
         const account = await this.db.tx.paymentGatewayAccount.findUnique({
           where: { id: data.accountId },
           select: { id: true, enabled: true, credentialsUpdatedAt: true },
@@ -255,7 +262,8 @@ export class GatewayAccountService {
             lastTestAt: now,
             lastTestResult: result,
             lastTestedById: data.actorUserId,
-            ...(switchOff ? { enabled: false } : {}),
+            // Never on without a passing test (the database CHECK says the same).
+            ...(result !== 'OK' ? { enabled: false } : {}),
             ...(read.failure ? { lastFailureCode: read.failure, lastFailureAt: now } : {}),
           },
         });
