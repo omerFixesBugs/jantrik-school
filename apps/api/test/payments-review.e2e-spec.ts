@@ -658,15 +658,34 @@ describe('online payments: the review queue', () => {
     const posted = await paidOnline({ amountPaisa: 50000 });
     const second = fake.pay(posted.intent.sessionRef!);
     const outcome = await validated(posted.intent.tranId, second.valId);
-    // The same second payment recorded twice (two signals validated it).
+    // Two signals validated the same second payment: one item (review round 1, finding 2).
     await settle.settlePaid(s.tenantId, posted.intent.id, posted.intent.payerUserId, outcome);
     await settle.settlePaid(s.tenantId, posted.intent.id, posted.intent.payerUserId, outcome);
-    const events = await withTenant(h.prisma, s.tenantId, (tx) =>
-      tx.paymentGatewayEvent.findMany({
-        where: { intentId: posted.intent.id, reviewReason: 'DUPLICATE' },
-        orderBy: { receivedAt: 'asc' },
+    const duplicates = () =>
+      withTenant(h.prisma, s.tenantId, (tx) =>
+        tx.paymentGatewayEvent.findMany({
+          where: { intentId: posted.intent.id, reviewReason: 'DUPLICATE' },
+          orderBy: { receivedAt: 'asc' },
+        }),
+      );
+    expect(await duplicates()).toHaveLength(1);
+    // Two records of it all the same (made before that rule, or by two sources): each is an item.
+    await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.create({
+        data: {
+          tenantId: s.tenantId,
+          intentId: posted.intent.id,
+          kind: 'VALIDATE',
+          outcome: 'VALIDATED',
+          tranId: posted.intent.tranId,
+          valId: second.valId,
+          fields: { amount: '500.00', bank_tran_id: 'BTXTWICE001' },
+          reviewReason: 'DUPLICATE',
+          receivedAt: new Date(),
+        },
       }),
     );
+    const events = await duplicates();
     expect(events).toHaveLength(2);
     const signal = (eventId: string, action: string) => items(`/signals/${eventId}/${action}`);
 
@@ -715,6 +734,90 @@ describe('online payments: the review queue', () => {
     expect(queue.signals.some((x) => events.some((e) => e.id === x.eventId))).toBe(false);
     // The posted payment is untouched.
     expect(await paymentsOf(posted.intent.id)).toHaveLength(1);
+  });
+
+  it('one payment is refunded outside once: two settles of one second payment at once, then refund each record (review round 1, finding 2)', async () => {
+    const posted = await paidOnline({ amountPaisa: 50000 });
+    const second = fake.pay(posted.intent.sessionRef!);
+    const outcome = await validated(posted.intent.tranId, second.valId);
+    // An IPN's confirm and "check now" validate the same second payment at once.
+    await Promise.all([
+      settle.settlePaid(s.tenantId, posted.intent.id, posted.intent.payerUserId, outcome),
+      settle.settlePaid(s.tenantId, posted.intent.id, posted.intent.payerUserId, outcome),
+    ]);
+    const records = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.findMany({
+        where: { kind: 'VALIDATE', valId: second.valId },
+        orderBy: { receivedAt: 'asc' },
+      }),
+    );
+    expect(records).toHaveLength(2);
+    const refunds = [];
+    for (const record of records) {
+      refunds.push(
+        await as('admin').post(items(`/signals/${record.id}/refunded-outside`), {
+          note: 'paid twice; refunded through the merchant panel',
+        }),
+      );
+    }
+    expect(refunds.map((r) => r.status).filter((x) => x === 200)).toHaveLength(1);
+    const reviews = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentSignalReview.count({
+        where: { outcome: 'REFUNDED_OUTSIDE', event: { valId: second.valId } },
+      }),
+    );
+    expect(reviews).toBe(1);
+
+    // A second record of money already refunded (however it came to be): refused, 409.
+    const extra = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.create({
+        data: {
+          tenantId: s.tenantId,
+          intentId: posted.intent.id,
+          kind: 'VALIDATE',
+          outcome: 'VALIDATED',
+          tranId: posted.intent.tranId,
+          valId: second.valId,
+          fields: { amount: '500.00', bank_tran_id: 'BTXEXTRA001' },
+          reviewReason: 'DUPLICATE',
+          receivedAt: new Date(),
+        },
+      }),
+    );
+    expect(
+      (
+        await as('admin')
+          .post(items(`/signals/${extra.id}/refunded-outside`), { note: NOTE })
+          .expect(409)
+      ).body.code,
+    ).toBe('ALREADY_REFUNDED');
+    // It is a repeat record of the refunded one: dismissed.
+    await as('admin')
+      .post(items(`/signals/${extra.id}/dismiss`), { note: 'the same payment recorded again' })
+      .expect(200);
+    // Money a payment of ours holds is never refunded as an item either.
+    const held = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.create({
+        data: {
+          tenantId: s.tenantId,
+          intentId: posted.intent.id,
+          kind: 'VALIDATE',
+          outcome: 'VALIDATED',
+          tranId: posted.intent.tranId,
+          valId: posted.intent.valId,
+          fields: { amount: '500.00' },
+          reviewReason: 'DUPLICATE',
+          receivedAt: new Date(),
+        },
+      }),
+    );
+    expect(
+      (
+        await as('admin')
+          .post(items(`/signals/${held.id}/refunded-outside`), { note: NOTE })
+          .expect(409)
+      ).body.code,
+    ).toBe('HELD_BY_PAYMENT');
   });
 
   it('a void of an applied payment sends it back to review (VOIDED); applied again, one live payment', async () => {

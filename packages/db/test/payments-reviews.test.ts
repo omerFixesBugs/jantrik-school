@@ -669,6 +669,59 @@ describe('review decisions on online payments (P7b)', () => {
     expect(dismissed).toBe(1);
   });
 
+  it('money is refunded outside once: never a second record of it, nor money an intent holds (review round 1, finding 2)', async () => {
+    const valId = `VAL${randomUUID().slice(0, 8)}`;
+    const first = await validateEvent(a, { valId });
+    const second = await validateEvent(a, { valId, reason: 'DUPLICATE' });
+    await signalReview(a, first.id);
+    await expect(signalReview(a, second.id)).rejects.toThrow(/already refunded/i);
+    // The second record is a repeat of the refunded one: dismissed.
+    await signalReview(a, second.id, { outcome: 'DISMISSED', amountPaisa: null });
+    // Money an intent holds is decided on the intent (applied or refunded there), never here.
+    const held = await inReview(a);
+    const heldRow = await withTenant(app, a.tenantId, (tx) =>
+      tx.paymentIntent.findUniqueOrThrow({ where: { id: held.id } }),
+    );
+    const repeat = await validateEvent(a, {
+      valId: heldRow.valId!,
+      intentId: held.id,
+      reason: 'DUPLICATE',
+    });
+    await expect(signalReview(a, repeat.id)).rejects.toThrow(/payment's own/i);
+
+    // Two connections refund the two records of one payment at once: one wins.
+    const twice = `VAL${randomUUID().slice(0, 8)}`;
+    const events = [
+      await validateEvent(a, { valId: twice }),
+      await validateEvent(a, { valId: twice }),
+    ];
+    let inserted = 0;
+    let bothInserted!: () => void;
+    const barrier = new Promise<void>((resolve) => (bothInserted = resolve));
+    const refund = (eventId: string) =>
+      withTenant(app, a.tenantId, async (tx) => {
+        await tx.paymentSignalReview.create({
+          data: {
+            tenantId: a.tenantId,
+            eventId,
+            outcome: 'REFUNDED_OUTSIDE',
+            amountPaisa: 100000,
+            note: 'given back by bKash',
+            resolvedById: a.admin,
+            resolvedAt: new Date(),
+          },
+        });
+        if (++inserted === 2) bothInserted();
+        await barrier;
+        await tx.$executeRawUnsafe(`SET CONSTRAINTS payment_signal_reviews_check IMMEDIATE`);
+      });
+    const results = await Promise.allSettled(events.map((e) => refund(e.id)));
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(
+      String((results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason),
+    ).toMatch(/already refunded/i);
+  });
+
   it('payment_signal_reviews and the decisions are history: no UPDATE, no DELETE', async () => {
     const event = await validateEvent(a, {});
     await signalReview(a, event.id);
