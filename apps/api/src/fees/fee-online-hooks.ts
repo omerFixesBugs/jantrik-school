@@ -22,6 +22,8 @@ export interface FeeOnlineHookSet {
    * for reconciliation again (a Redis loss). Outside any transaction; opens its own.
    */
   nightly(tenantId: string): Promise<void>;
+  /** Online payments waiting for a person (P7b): intents in review and money items. */
+  toReviewCount(): Promise<number>;
 }
 
 /**
@@ -61,5 +63,9 @@ export class FeeOnlineHooks {
 
   nightly(tenantId: string): Promise<void> {
     return this.hooks ? this.hooks.nightly(tenantId) : Promise.resolve();
+  }
+
+  toReviewCount(): Promise<number> {
+    return this.hooks ? this.hooks.toReviewCount() : Promise.resolve(0);
   }
 }

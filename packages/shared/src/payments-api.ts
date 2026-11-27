@@ -418,9 +418,13 @@ export const onlinePaymentsReportQuerySchema = z
 export interface OnlinePaymentsReportRow {
   /** The day the payments were started (the institute's timezone). */
   day: IsoDate;
+  /** Every payment started that day, with what was asked. */
   initiated: { count: number; amountPaisa: number };
-  /** PAID now: the payment's amount, the store's share, and SSLCommerz's charges (S24). */
-  paid: { count: number; amountPaisa: number; storeAmountPaisa: number; chargesPaisa: number };
+  /** Still at the gateway (CREATED, REDIRECTED). */
+  open: { count: number };
+  /** PAID now, with the amount of each payment (an applied one: what was applied). */
+  paid: { count: number; amountPaisa: number };
+  /** FAILED or CANCELLED. */
   failed: { count: number };
   expired: { count: number };
   /** In review now, with the money SSLCommerz validated for them. */
@@ -428,6 +432,11 @@ export interface OnlinePaymentsReportRow {
   /** Given back outside the app (whole, or the rest of an applied payment). */
   refundedOutside: { count: number; amountPaisa: number };
   dismissed: { count: number };
+  /**
+   * All the money SSLCommerz validated for them, whatever happened since: the amount, the
+   * store's share and SSLCommerz's charges (amount − store amount, where both are known; S24).
+   */
+  received: { amountPaisa: number; storeAmountPaisa: number; chargesPaisa: number };
 }
 
 export interface OnlinePaymentsReport {

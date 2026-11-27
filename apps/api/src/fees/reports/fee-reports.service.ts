@@ -23,6 +23,7 @@ import { staffNames } from '../../staff/staff.module.js';
 import { Db } from '../../tenancy/db.service.js';
 import { balanceOf } from '../due-balance.js';
 import { FeeDuesService } from '../dues/fee-dues.service.js';
+import { FeeOnlineHooks } from '../fee-online-hooks.js';
 import { FeeStudentsService } from '../fee-students.service.js';
 
 /** The collections report's line for online payments (grouped by collector). */
@@ -55,6 +56,7 @@ export class FeeReportsService {
     private readonly db: Db,
     private readonly dues: FeeDuesService,
     private readonly students: FeeStudentsService,
+    private readonly online: FeeOnlineHooks,
   ) {}
 
   async dueList(q: DueListQuery): Promise<FeeDueList> {
@@ -604,6 +606,7 @@ export class FeeReportsService {
       }),
       tx.feeMobileSubmission.count({ where: { status: 'PENDING' } }),
     ]);
+    const onlineToReview = await this.online.toReviewCount();
     let overdue = 0;
     const students = new Set<string>();
     for (const d of overdueDues) {
@@ -619,6 +622,7 @@ export class FeeReportsService {
       previousMonthToDate: { collectedPaisa: previous.amount },
       overdue: { paisa: overdue, students: students.size },
       pendingSubmissions: pending,
+      onlineToReview,
     };
   }
 }

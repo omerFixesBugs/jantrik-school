@@ -46,6 +46,8 @@ import { PAYMENT_PROVIDER } from './provider.js';
 import { GatewaySignalsController } from './public/gateway-signals.controller.js';
 import { GatewaySignalsService } from './public/gateway-signals.service.js';
 import { ReconcileJobError, ReconcileQueue, ReconcileService } from './reconcile.service.js';
+import { OnlinePaymentsReportController } from './online-report.controller.js';
+import { OnlinePaymentsReportService } from './online-report.service.js';
 import { OnlinePaymentsController } from './review.controller.js';
 import { ReviewService } from './review.service.js';
 import { SettleService } from './settle.service.js';
@@ -155,6 +157,7 @@ export class PaymentsProcessor extends WorkerHost {
   controllers: [
     GatewayAccountController,
     OnlinePaymentsController,
+    OnlinePaymentsReportController,
     GuardianPaymentsController,
     GatewaySignalsController,
   ],
@@ -175,6 +178,7 @@ export class PaymentsProcessor extends WorkerHost {
     ReconcileQueue,
     ReconcileService,
     ReviewService,
+    OnlinePaymentsReportService,
     GatewaySignalsService,
     PaymentsProcessor,
   ],
@@ -193,6 +197,7 @@ export class PaymentsModule implements OnModuleInit {
     private readonly checkout: CheckoutService,
     private readonly settle: SettleService,
     private readonly reconcile: ReconcileService,
+    private readonly review: ReviewService,
   ) {}
 
   /**
@@ -207,6 +212,7 @@ export class PaymentsModule implements OnModuleInit {
       receiptOnline: (intentId) => this.settle.receiptOnline(intentId),
       gatewayVoided: (payment) => this.settle.gatewayVoided(payment),
       nightly: (tenantId) => this.reconcile.requeueTenant(tenantId),
+      toReviewCount: () => this.review.count(),
     });
   }
 }

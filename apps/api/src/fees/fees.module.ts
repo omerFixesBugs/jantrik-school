@@ -128,7 +128,7 @@ class FeeReminderFilterDto extends zodDto(feeReminderFilterSchema) {}
 class SendFeeRemindersDto extends zodDto(sendFeeRemindersSchema) {}
 
 /** A CSV download (attendance's pattern): UTF-8 with BOM, an ASCII filename, never cached. */
-function sendCsv(res: Response, file: { filename: string; csv: string }): string {
+export function sendCsv(res: Response, file: { filename: string; csv: string }): string {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
   res.setHeader('Cache-Control', 'no-store');

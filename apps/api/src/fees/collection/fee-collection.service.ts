@@ -12,6 +12,7 @@ import {
   todayIn,
   type FeeClosing,
   type FeeClosingCollector,
+  type FeeClosingOnline,
   type FeePaymentChannel,
   type FeePaymentMethod,
   type FeeReceipt,
@@ -483,8 +484,9 @@ export class FeeCollectionService implements OnModuleInit {
    * One day per collector and method (docs/fees.md → Daily closing). A payment counts on the day
    * it was recorded; a void is deducted on the day it is made (never on the payment's own day),
    * so a closed day never changes afterwards. An accountant sees only their own closing.
-   * Online payments are listed under no collector (P7a-V: the guardian paid them; P7b adds their
-   * own line).
+   * Online payments are listed under no collector (P7a-V: the guardian paid them) but on a line
+   * of their own, in the whole-institute closing only (P7b-L): counted in collected and net, never
+   * in cash in hand.
    */
   async closing(query: { date?: IsoDate; collectorId?: string }): Promise<FeeClosing> {
     const tx = this.db.tx;
@@ -554,17 +556,64 @@ export class FeeCollectionService implements OnModuleInit {
             : null,
       };
     });
-    const collected = collectors.reduce((s, c) => s + c.collected.amountPaisa, 0);
-    const net = collectors.reduce((s, c) => s + c.net.amountPaisa, 0);
+    const online =
+      admin && !query.collectorId ? await this.onlineClosing(date, ctx.timezone) : null;
+    const collected =
+      collectors.reduce((s, c) => s + c.collected.amountPaisa, 0) + (online?.amountPaisa ?? 0);
+    const net = collectors.reduce((s, c) => s + c.net.amountPaisa, 0) + (online?.netPaisa ?? 0);
     return {
       date,
       collectors,
+      online,
       total: {
         collectedPaisa: collected,
         voidedPaisa: collected - net,
         netPaisa: net,
         cashInHandPaisa: collectors.reduce((s, c) => s + c.cashInHandPaisa, 0),
       },
+    };
+  }
+
+  /**
+   * The closing's online line (P7b-L): gateway payments recorded that day, and voids of gateway
+   * payments made that day (of any day's payment), as for a collector.
+   */
+  private async onlineClosing(date: IsoDate, timezone: string): Promise<FeeClosingOnline> {
+    const tx = this.db.tx;
+    const day = dateToDb(date).getTime();
+    const [recorded, voidedNear] = await Promise.all([
+      tx.feePayment.findMany({
+        where: { recordedOn: dateToDb(date), channel: 'GATEWAY' },
+        orderBy: [{ receiptNo: 'asc' }],
+      }),
+      tx.feePayment.findMany({
+        where: {
+          status: 'VOID',
+          channel: 'GATEWAY',
+          voidedAt: { gte: new Date(day - 86_400_000), lt: new Date(day + 2 * 86_400_000) },
+        },
+      }),
+    ]);
+    const voided = voidedNear.filter((p) => todayIn(timezone, p.voidedAt!) === date);
+    const sum = (rows: { amountPaisa: number }[]) => rows.reduce((s, r) => s + r.amountPaisa, 0);
+    return {
+      count: recorded.length,
+      amountPaisa: sum(recorded),
+      byMethod: METHOD_ORDER.map((method) => ({
+        method,
+        count: recorded.filter((r) => r.method === method).length,
+        amountPaisa:
+          sum(recorded.filter((r) => r.method === method)) -
+          sum(voided.filter((r) => r.method === method)),
+      })).filter((m) => m.count > 0 || m.amountPaisa !== 0),
+      voided: voided.map((r) => ({
+        id: r.id,
+        receiptNumber: receiptNumber(r.receiptYear, r.receiptNo),
+        amountPaisa: r.amountPaisa,
+        reason: r.voidReason!,
+        recordedOn: dateFromDb(r.recordedOn),
+      })),
+      netPaisa: sum(recorded) - sum(voided),
     };
   }
 }

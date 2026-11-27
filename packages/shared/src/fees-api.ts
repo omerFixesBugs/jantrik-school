@@ -576,7 +576,22 @@ export interface FeeClosingCollector {
 export interface FeeClosing {
   date: IsoDate;
   collectors: FeeClosingCollector[];
+  /**
+   * Online payments (SSLCommerz, P7b-L): under no collector, in the whole-institute closing only
+   * (OWNER/ADMIN, no collector chosen); null otherwise. Counted in collected and net, never in
+   * cash in hand.
+   */
+  online: FeeClosingOnline | null;
   total: { collectedPaisa: number; voidedPaisa: number; netPaisa: number; cashInHandPaisa: number };
+}
+
+/** The daily closing's online line: payments recorded that day, voids made that day. */
+export interface FeeClosingOnline {
+  count: number;
+  amountPaisa: number;
+  byMethod: { method: FeePaymentMethod; count: number; amountPaisa: number }[];
+  voided: FeeClosingCollector['voided'];
+  netPaisa: number;
 }
 
 // ─────────────────────────── Manual bKash/Nagad ───────────────────────────
@@ -879,4 +894,6 @@ export interface FeeSummary {
   previousMonthToDate: { collectedPaisa: number };
   overdue: { paisa: number; students: number };
   pendingSubmissions: number;
+  /** Online payments waiting for a person: intents in review and money items (P7b). */
+  onlineToReview: number;
 }
