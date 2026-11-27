@@ -353,41 +353,45 @@ export class ReconcileService implements OnModuleInit {
    * The nightly fee run's visit (P7b-B, FeeOnlineHooks.nightly), in this institute's own context:
    * after a Redis loss, its open payments older than an hour get their latest due step now and the
    * later ones at their times; a payment posted in the last 26 hours whose +25 h query has not run
-   * gets it; an expired one still PENDING at +25 h gets its +7 day query. Job ids make it a no-op
-   * for steps whose jobs still exist.
+   * gets it; an expired one still PENDING or UNKNOWN at +25 h gets its +7 day query. Job ids make
+   * it a no-op for steps whose jobs still exist.
    */
   async requeueTenant(tenantId: string): Promise<void> {
     const now = this.clock.now();
+    const step4 = RECONCILE_DELAYS_MS[3] / 1000;
+    const step5 = RECONCILE_DELAYS_MS[4] / 1000;
+    type Row = { id: string; createdAt: Date; lastCheckedAt: Date | null };
+    // Each list leaves out, in the query itself, what has nothing left to run (review round 1,
+    // hardening f): an open payment past +25 h whose +25 h step ran (never closed when in doubt)
+    // would otherwise fill the batch night after night and crowd out newer ones. Oldest first.
     const rows = await this.jobs.run(tenantId, async () => {
       const tx = this.db.tx;
-      const select = { id: true, createdAt: true, lastCheckedAt: true } as const;
       const [open, paid, pending] = await Promise.all([
-        tx.paymentIntent.findMany({
-          where: {
-            status: { in: [...OPEN] },
-            createdAt: { lt: new Date(now.getTime() - REQUEUE_OPEN_AFTER_MS) },
-          },
-          orderBy: { createdAt: 'asc' },
-          take: BATCH,
-          select,
-        }),
-        tx.paymentIntent.findMany({
-          where: {
-            status: 'PAID',
-            createdAt: { gte: new Date(now.getTime() - REQUEUE_PAID_WITHIN_MS) },
-          },
-          take: BATCH,
-          select,
-        }),
-        tx.paymentIntent.findMany({
-          where: {
-            status: 'EXPIRED',
-            lastCheckOutcome: { in: [...STILL_POSSIBLE] },
-            createdAt: { gte: new Date(now.getTime() - SWEEP_MAX_AGE_MS) },
-          },
-          take: BATCH,
-          select,
-        }),
+        tx.$queryRaw<Row[]>`
+          SELECT id, created_at AS "createdAt", last_checked_at AS "lastCheckedAt"
+          FROM payment_intents
+          WHERE status IN ('CREATED', 'REDIRECTED')
+            AND created_at < ${new Date(now.getTime() - REQUEUE_OPEN_AFTER_MS)}
+            AND (created_at + make_interval(secs => ${step4}::double precision) > ${now}
+                 OR last_checked_at IS NULL
+                 OR last_checked_at < created_at + make_interval(secs => ${step4}::double precision))
+          ORDER BY created_at ASC LIMIT ${BATCH}::integer`,
+        tx.$queryRaw<Row[]>`
+          SELECT id, created_at AS "createdAt", last_checked_at AS "lastCheckedAt"
+          FROM payment_intents
+          WHERE status = 'PAID'
+            AND created_at >= ${new Date(now.getTime() - REQUEUE_PAID_WITHIN_MS)}
+            AND (last_checked_at IS NULL
+                 OR last_checked_at < created_at + make_interval(secs => ${step4}::double precision))
+          ORDER BY created_at ASC LIMIT ${BATCH}::integer`,
+        tx.$queryRaw<Row[]>`
+          SELECT id, created_at AS "createdAt", last_checked_at AS "lastCheckedAt"
+          FROM payment_intents
+          WHERE status = 'EXPIRED' AND last_check_outcome IN ('PENDING', 'UNKNOWN')
+            AND created_at >= ${new Date(now.getTime() - SWEEP_MAX_AGE_MS)}
+            AND (last_checked_at IS NULL
+                 OR last_checked_at < created_at + make_interval(secs => ${step5}::double precision))
+          ORDER BY created_at ASC LIMIT ${BATCH}::integer`,
       ]);
       return { open, paid, pending };
     });
@@ -430,15 +434,28 @@ export class ReconcileService implements OnModuleInit {
   async healOverdue(): Promise<void> {
     const tenantId = this.context.requireTenantId();
     const now = this.clock.now().getTime();
-    const open = await this.db.tx.paymentIntent.findMany({
-      where: {
-        status: { in: [...OPEN] },
-        createdAt: { lt: new Date(now - RECONCILE_DELAYS_MS[0] - HEAL_OVERDUE_MS) },
-      },
-      orderBy: { createdAt: 'asc' },
-      take: BATCH,
-      select: { id: true, createdAt: true, lastCheckedAt: true },
-    });
+    // Only payments whose latest step due (10 minutes ago) has not run, in the query itself, so
+    // those that stay open after every step never crowd out the rest (review round 1, hardening f).
+    const cutoff = new Date(now - HEAL_OVERDUE_MS);
+    const [d1, d2, d3, d4] = RECONCILE_DELAYS_MS.map((ms) => ms / 1000) as [
+      number,
+      number,
+      number,
+      number,
+    ];
+    const open = await this.db.tx.$queryRaw<
+      { id: string; createdAt: Date; lastCheckedAt: Date | null }[]
+    >`
+      SELECT id, created_at AS "createdAt", last_checked_at AS "lastCheckedAt"
+      FROM payment_intents
+      WHERE status IN ('CREATED', 'REDIRECTED')
+        AND created_at < ${new Date(now - RECONCILE_DELAYS_MS[0] - HEAL_OVERDUE_MS)}
+        AND (last_checked_at IS NULL OR last_checked_at < created_at + make_interval(secs =>
+          CASE WHEN created_at + make_interval(secs => ${d4}::double precision) <= ${cutoff} THEN ${d4}::double precision
+               WHEN created_at + make_interval(secs => ${d3}::double precision) <= ${cutoff} THEN ${d3}::double precision
+               WHEN created_at + make_interval(secs => ${d2}::double precision) <= ${cutoff} THEN ${d2}::double precision
+               ELSE ${d1}::double precision END))
+      ORDER BY created_at ASC LIMIT ${BATCH}::integer`;
     const overdue = open.flatMap((intent) => {
       const n = ([4, 3, 2, 1] as const).find(
         (k) => this.queues.dueAt(intent.createdAt, k) <= now - HEAL_OVERDUE_MS,
