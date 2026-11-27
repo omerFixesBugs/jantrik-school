@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { withTenant } from '@jantrik/db';
+import { withTenant, type Prisma } from '@jantrik/db';
 import type { GatewayAccountView, GatewayTestQueued } from '@jantrik/shared';
 import type { Redis } from 'ioredis';
 import { PAYMENTS_CONFIG, type PaymentsConfig } from '../src/payments/payments.config.js';
@@ -22,6 +22,8 @@ const GOOD = { storeId: 'jantrik0001', storePassword: 'Good-Pw-31@ssl' };
 const SENTINEL = 'Sentinel-Pw-QX81zv@ssl';
 const PUBLIC_URL = 'https://api.jantrik.example';
 const ACCOUNT = '/fees/online-payments/account';
+/** Well-formed (the database CHECK) but no key decrypts it. */
+const UNREADABLE = `v1.${'A'.repeat(60)}`;
 
 /** Every string a value holds (Redis keys and values, response bodies). */
 async function redisDump(redis: Redis): Promise<string> {
@@ -242,6 +244,31 @@ describe('gateway account (OWNER)', () => {
     await owner().put({ ...GOOD, storePassword: 'Wrong-Pw-00@ssl' });
     await new Promise((r) => setTimeout(r, 2500));
     expect((await owner().get()).body.lastTest).toBeNull();
+  });
+
+  it('a stale failure goes: new credentials and a passing test clear it (P7a1-x19)', async () => {
+    const school = await feesSchool(h);
+    const o = as(school.tokens.owner);
+    const setRow = (data: Prisma.PaymentGatewayAccountUpdateManyMutationInput) =>
+      withTenant(h.prisma, school.tenantId, (tx) => tx.paymentGatewayAccount.updateMany({ data }));
+    expect((await o.put(GOOD)).status).toBe(200);
+    // Credentials that cannot be decrypted (another key, a damaged row): the failure is shown.
+    await setRow({ credentialsCiphertext: UNREADABLE });
+    let view = await tested(school.tokens.owner);
+    expect(view.lastTest?.result).toBe('ERROR');
+    expect(view.lastFailure?.code).toBe('CREDENTIALS_UNREADABLE');
+    // The owner saves them again: the old failure no longer describes the account.
+    view = (await o.put(GOOD)).body as GatewayAccountView;
+    expect(view.lastFailure).toBeNull();
+    view = await tested(school.tokens.owner);
+    expect(view.lastTest?.result).toBe('OK');
+    expect(view.lastFailure).toBeNull();
+    // A failure a job recorded for the same credentials goes when a test passes.
+    await setRow({ lastFailureCode: 'CREDENTIALS_UNREADABLE', lastFailureAt: new Date() });
+    expect((await o.get()).body.lastFailure?.code).toBe('CREDENTIALS_UNREADABLE');
+    view = await tested(school.tokens.owner);
+    expect(view.lastTest?.result).toBe('OK');
+    expect(view.lastFailure).toBeNull();
   });
 
   it('audit: field names for credentials, each test result, on and off; never a value', async () => {
