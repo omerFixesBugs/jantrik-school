@@ -40,8 +40,13 @@ const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 /** Ours: "JS" + 26 Crockford base32 characters (48 bits of time, then 80 random bits). */
 export const TRAN_ID_PATTERN = /^JS[0-9A-HJKMNP-TV-Z]{26}$/;
 
+/** Web Crypto, in browsers and Node alike (this package's types name neither). */
+const webCrypto = (
+  globalThis as unknown as { crypto: { getRandomValues<T extends Uint8Array>(array: T): T } }
+).crypto;
+
 const defaultRandom = (bytes: number): Uint8Array =>
-  globalThis.crypto.getRandomValues(new Uint8Array(bytes));
+  webCrypto.getRandomValues(new Uint8Array(bytes));
 
 /**
  * A new transaction ID for a gateway session (SSLCommerz `tran_id`, a string of at most 30):
