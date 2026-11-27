@@ -125,15 +125,17 @@ export type AttemptStatus = (typeof ATTEMPT_STATUSES)[number];
 /** An attempt that is paid or may still be: nothing closes a payment while the query lists one. */
 export const LIVE_ATTEMPTS: readonly AttemptStatus[] = ['VALID', 'VALIDATED', 'PENDING'];
 /**
- * An attempt that is over with nothing paid (P7a2-x26, x31): with a failed or cancelled signal,
- * our query listing one of these (and nothing live) closes an open payment.
+ * An attempt that failed or was cancelled (P7a2-x26): with a failed or cancelled signal, our query
+ * listing one of these (and nothing live) closes an open payment.
  */
-export const OVER_ATTEMPTS: readonly AttemptStatus[] = [
-  'FAILED',
-  'CANCELLED',
-  'EXPIRED',
-  'UNATTEMPTED',
-];
+export const OVER_ATTEMPTS: readonly AttemptStatus[] = ['FAILED', 'CANCELLED'];
+/**
+ * A session nobody paid in, as SSLCommerz may list a cancel before any attempt or a timeout
+ * (P7a2-x31). While the session lasts UNATTEMPTED is simply true of a payer still on the gateway's
+ * page, and anyone with the tran_id can make us ask, so these close a payment only past its
+ * lifetime (the intent's expires_at); before that its payer may start again.
+ */
+export const LAPSED_ATTEMPTS: readonly AttemptStatus[] = ['UNATTEMPTED', 'EXPIRED'];
 
 /**
  * Whether a recorded QUERY event's outcome (its statuses in ATTEMPT_STATUSES' order, or NONE)

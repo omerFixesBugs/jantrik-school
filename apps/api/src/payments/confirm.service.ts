@@ -15,6 +15,7 @@ import { queueConfirm } from './confirm-queue.js';
 import { PAYMENTS_QUEUE, type IntentJobData, type UnmatchedJobData } from './payments.constants.js';
 import {
   ATTEMPT_STATUSES,
+  LAPSED_ATTEMPTS,
   LIVE_ATTEMPTS,
   OVER_ATTEMPTS,
   PAYMENT_PROVIDER,
@@ -59,6 +60,8 @@ const isFinalAnswer = (outcome: string | null): boolean =>
 interface IntentFacts {
   id: string;
   tranId: string;
+  /** The session's lifetime (P7a-F, an hour after the checkout). */
+  expiresAt: Date;
   status: string;
   payerUserId: string;
   accountId: string;
@@ -96,7 +99,14 @@ export class ConfirmService {
       const tx = this.db.tx;
       const intent = await tx.paymentIntent.findUnique({
         where: { id: data.intentId },
-        select: { id: true, tranId: true, status: true, payerUserId: true, accountId: true },
+        select: {
+          id: true,
+          tranId: true,
+          status: true,
+          payerUserId: true,
+          accountId: true,
+          expiresAt: true,
+        },
       });
       if (!intent) return null;
       const events = await tx.paymentGatewayEvent.findMany({
@@ -285,13 +295,19 @@ export class ConfirmService {
     const listed = new Set<string>(attempts.map((a) => a.status));
     const live = LIVE_ATTEMPTS.some((status) => listed.has(status));
     // SSLCommerz's query documents VALID, VALIDATED, PENDING and FAILED only; a session cancelled
-    // before any attempt, or left to time out, may be listed as UNATTEMPTED or EXPIRED. Counted
-    // as over only here, from our own query by our tran_id, never from a signal (P7a2-x31).
-    const over = OVER_ATTEMPTS.some((status) => listed.has(status));
+    // before any attempt, or left to time out, may be listed as UNATTEMPTED or EXPIRED. Those are
+    // true of a payer still on the gateway's page too, and a forged return makes us ask: they
+    // count as over only past the session's lifetime (the intent's expires_at), and only from
+    // our own query by our tran_id, never from a signal (P7a2-x31).
+    const lapsed =
+      askedAt.getTime() >= intent.expiresAt.getTime() &&
+      LAPSED_ATTEMPTS.some((status) => listed.has(status));
+    const over = lapsed || OVER_ATTEMPTS.some((status) => listed.has(status));
     if (!live && over && failure === null) {
-      // The session is over with nothing paid, and the gateway itself lists the failed,
-      // cancelled, unattempted or expired attempt: then a failed or cancelled return (the path's
-      // word), or an IPN that said so, closes an open intent. Nothing found closes nothing
+      // The session is over with nothing paid, and the gateway itself lists the failed or
+      // cancelled attempt (or, past the session's lifetime, an unattempted or expired one): then
+      // a failed or cancelled return (the path's word), or an IPN that said so, closes an open
+      // intent. Nothing found closes nothing
       // (P7a2-x26): a return needs only the tran_id, so anyone who has it (even an <img> link)
       // could otherwise close a payment still in progress, and the real payment would then wait
       // for review as a late success. A query alone closes nothing either (P7b expires it).
