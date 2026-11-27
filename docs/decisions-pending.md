@@ -1567,7 +1567,30 @@ No must-fix. Fixed, each with a failing test first:
   version + 1 and checks the version the update stored; reading uses the row's version. A
   ciphertext put back is `CREDENTIALS_UNREADABLE`, never the old store. Choices: the lock is
   `FOR NO KEY UPDATE` rather than `FOR UPDATE` (the lock the update takes anyway; it does not block
-  a foreign key check on the row, which P7a2's rows referencing the account would need); a
+  a foreign key check on the row, as `FOR UPDATE` would); a
   ciphertext saved before this migration (development databases only) names no version, reads as
   unreadable and is saved again; no CHECK ties the version to the ciphertext, so the migration
   needs no backfill on those rows.
+
+Tests added that pass as the code stood (`payments-account.e2e-spec.ts`): an account that is on and
+then fails its test ends up off, audited `{ test, enabled: false }` (P7a1-x5); unreadable
+credentials give `ERROR` and `CREDENTIALS_UNREADABLE` through the job without asking SSLCommerz;
+"turn on" committed while SSLCommerz is asked is switched off by a failed result, and "turn on"
+sent while the result is being recorded waits for the job's row lock and then finds no passing
+test. Recorded, not changed:
+
+- **(a) `enabled` and `last_test_*` are writable by an SQL injection inside the institute** (any
+  role's request, as `jantrik_app`), within the CHECKs (on only with credentials and a last test of
+  `OK`). The same gap as every other table the app writes: P1-J10, role-aware database rules later.
+- **(b) The payer page host check accepts any `*.sslcommerz.com` host** (P7a1-x10, x18). Narrow it
+  to the hosts the owner's sandbox smoke run shows, before any guardian is sent there (P7a2).
+- **(c) Production checks the key only for its length** (at least 32 characters, no example marker,
+  not equal to another secret): nothing measures its strength. Nor does it refuse
+  `NODE_TLS_REJECT_UNAUTHORIZED=0`, which would switch off certificate checks for the calls to
+  SSLCommerz. Both belong to the production environment checks (docs/deploy.md).
+- **(d) With several workers, the test result recorded last wins:** two tests of the same
+  credentials running at once each record theirs, and the later commit stays (each is a real
+  answer from SSLCommerz, and each is audited).
+- **(e) P7a2's `settle` must compare `tran_id`:** the validation answer's `tran_id` must be the
+  payment's own before anything is settled (the client refuses an answer for another `val_id`,
+  P7a1-x8, and returns the answer's `tran_id` for its caller to compare).
