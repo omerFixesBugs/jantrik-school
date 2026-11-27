@@ -1688,3 +1688,100 @@ away), each the safer option:
 - **Recorded only:** a gateway payment's request id is its intent's id, so P7b's "apply again after
   a void" needs a request id of its own. Playwright was not run locally (CI runs it; the
   screenshots are its artifacts). Nothing called SSLCommerz: every test used the fake.
+
+### P7a2 after the review (round 1)
+
+No must-fix. P7a1's review round 2 was merged in first (each credentials ciphertext names its
+trigger-owned version, P7a1-x20): nothing in P7a2 builds an AAD or writes the ciphertext itself
+(every test saves credentials through the API, so through `PaymentCredentialsService`), so
+nothing else changed. Fixed, each with a failing test first, taken alone during the run (owner
+away), each the safer option:
+
+- **P7a2-x23. No per-payment count before a signal is stored.** The first fix of the validation
+  flood gave each payment a signal budget at the signal routes (10 an hour from anyone but
+  SSLCommerz, whatever the address, and 10 of SSLCommerz's own). The automated security review
+  of that fix (medium, denial of service): anyone with the `tran_id` (every guardian of the child;
+  it is in the return URL) could spend the count the payer's own browser return depends on, so the
+  honest payer's return was refused and "paid" waited for the IPN or a query. Replaced: a signal
+  is refused only by the per-address limits (and the per-institute one for unlisted IPNs), as
+  before; the payer's return is stored whatever others sent (a test sends 25 forged returns from
+  25 addresses first). The bound lives where the gateway is asked (x24).
+- **P7a2-x24. `confirm` bounds what signals make it ask SSLCommerz.** While the payment is open, at
+  most **3** new `val_id`s are validated directly **per round** (those SSLCommerz's listed
+  addresses brought first, then the oldest; each `val_id` once), and at most **10 an hour per
+  payment** for the `val_id`s anyone but SSLCommerz brought, another **10** for those its listed
+  addresses brought, so a flood never spends the real IPN's (Redis, counted in the job). The rest
+  are left to the query by `tran_id`, which is never refused and is authoritative: it lists every
+  attempt, so it answers for every signal stored before it was asked (such a `val_id` is
+  validated only if the query lists it as a successful attempt). Once the payment is closed (paid,
+  in review, failed, cancelled, expired), no `val_id` is validated directly: a new one makes the
+  job query, and only a listed one is validated (a second payment: a `DUPLICATE` event). A query
+  is recorded at the time it was asked, so a signal that arrives while SSLCommerz answers is not
+  taken as answered for. The review's probe (40 returns with made-up `val_id`s, 46 validation
+  calls) now makes at most 10 validations of made-up `val_id`s an hour per payment and at most one
+  query per job; the payer's genuine return is recorded and posted (`payments-settle`).
+- **P7a2-x25. An intent never lets go of a live payment** (`payment_intents_paid_check`, at
+  commit): a live gateway payment that names an intent must be the one that intent holds as
+  `PAID`; only the void (in the same transaction) lets it go. Before, an update could move `PAID`
+  to `NEEDS_REVIEW` with `VOIDED` and no payment while the payment stayed `ACTIVE`. Edited in the
+  P7a2 migration itself (the PR is a draft; only scratch and CI databases ran it).
+- **P7a2-x26. A fail or cancel return closes a payment only when the query lists a failed or
+  cancelled attempt** (and no successful or pending one); the signal's word when the query lists
+  it, else the gateway's. Before, a forged return with only the `tran_id` (even by GET: an
+  `<img>` link) closed a payment whose payer was still on the gateway's page whenever the query
+  found nothing yet, and the real payment then waited for review as `LATE_SUCCESS` instead of
+  getting its receipt. "Nothing found" now stays open for P7b's expiry (and the heal keeps asking).
+  The fake SSLCommerz already lists the `CANCELLED` attempt of a session cancelled on its page, so
+  the guardian's cancel still ends in "not paid" (an API test drives the fake's page through to a
+  new checkout).
+- **P7a2-x27. A `PENDING` answer settles nothing:** that `val_id` is validated again, from a later
+  signal or once the query lists it as successful. Every successful attempt the query lists is
+  validated until its money has been seen (an earlier `PENDING` or `INVALID` answer included).
+  Before, a payment first answered `PENDING` was never validated again and never posted.
+- **P7a2-x28. A gateway payment is its intent's money** (`fee_payments_gateway_check`, at commit):
+  a live gateway payment has the intent's `amount_paisa`, its `bank_tran_id` as `trx_id` and its
+  `priced_on` as `paid_on` (the app can change none of the three afterwards, on either row). The
+  review committed a ৳0.01 gateway payment for a ৳1,000 intent. P7b's "apply again" after a void
+  posts the same money (the same `bank_tran_id`, the voided payment no longer live), or changes
+  this rule in its own migration.
+- **P7a2-x29. Playwright, the cancelled payment** (CI: the test hung for 2.5 min, then 8.7 min on
+  its retry, until the job's 20-minute limit): the accountant's password login was followed at
+  once by a navigation, so the login could be cut off and `fees-search` never appeared, and
+  `fill()` had no timeout of its own (the 90 s test plus the OTP cooldown the helper waits out).
+  The retry then found the first attempt's payment still in progress (`child-online-continue`
+  instead of `child-online-open`, with no timeout either). Now the login waits for the dashboard,
+  every action and navigation in the P7a2 block fails within 30 s, and a payment an earlier
+  attempt left at the gateway is continued. Reasoned from the CI log only (Playwright cannot run
+  here: its ports are the developer's).
+
+Tests added that pass as the code stood (`payments-settle.e2e-spec.ts`): the counter taking the
+same due while `settle` posts, at once (one is posted, the other refused or in review, never
+both); one `bank_tran_id` on two payments (the second a `DUPLICATE` review); two dues with only
+the second changed (`DUES_CHANGED`); a due cancelled meanwhile (`DUES_CHANGED`); a perfect
+validation for a payment already in review, through the IPN route (recorded, never posted). The
+three-settles-at-once test now also counts the calls to `recordPayment` (one) and the receipt SMS
+(one): with the student's and the intent's locks removed from `settle` it fails (checked by hand;
+the payment count alone could not tell, as the unique index refuses the extras).
+
+Recorded, review round 1 (not changed):
+
+- **(a) An SQL injection inside the institute** (any role's request, as `jantrik_app`) can write
+  the money facts on an open intent, insert `VALIDATE` events, and choose `priced_on`,
+  `expires_at` and the payer on INSERT. This only ever blocks automatic posting (a review, a
+  `DUES_CHANGED` from a wrong snapshot, a `val_id` written once), never makes `settle` post:
+  `settle` posts only from the validation API's own answer, read under the intent's row lock, and
+  the database ties the payment to the intent (x25, x28). The same gap as every table the app
+  writes: P1-J10 (role-aware database rules later).
+- **(b) Two institutes sharing one SSLCommerz store** see each other's money as `UNMATCHED` (the
+  unmatched check validates the `val_id` with this institute's credentials: the same store says
+  VALID, and no intent of this institute has that `tran_id`). P7b must never apply such money
+  as-is: it may be another institute's.
+- **(c) Queries are not counted per payment:** `confirm` asks the query API at most once per job
+  (signals for one payment queue one job at a time), so a slow, steady flood from many addresses
+  can still make about one query per signal it sends, bounded by the per-address limits. Each
+  query lists only real attempts and posts nothing by itself.
+- **(d) After a real failed attempt**, a forged fail or cancel return can still close a payment
+  whose payer is trying again on the gateway's page (the query then lists `FAILED`); the later
+  success waits for review as `LATE_SUCCESS`. No money risk; matching the return's `val_id` to the
+  listed attempt would close that too, but whether SSLCommerz sends one on a failed return is not
+  documented (the smoke run can show it).

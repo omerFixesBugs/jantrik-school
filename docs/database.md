@@ -821,9 +821,10 @@ to_year_id)` → `enrolments` (two unique indexes on enrolments, supersets of th
     only as it becomes `PAID` and cleared only by `PAID` → `NEEDS_REVIEW` with `VOIDED`.
     `payment_intents_insert_created`: created `CREATED`, empty.
   - Deferred constraint triggers (checked at commit, the rows read again then): a `PAID` intent
-    holds a live `GATEWAY` payment that names it (`payment_intents_paid_check`); an intent's dues
-    add up to its amount (`payment_intent_dues_sum`, also on the intent's own insert, so one with
-    no dues is refused).
+    holds a live `GATEWAY` payment that names it, and a live payment that names an intent is the
+    one that intent holds as `PAID`, so only the void lets it go (`payment_intents_paid_check`,
+    P7a2-x25); an intent's dues add up to its amount (`payment_intent_dues_sum`, also on the
+    intent's own insert, so one with no dues is refused).
 - **`payment_intent_dues`** (P7a2, S I): the dues an intent pays with what each owed on
   `priced_on` (the snapshot); composite keys `(tenant_id, intent_id, student_id)` and
   `(tenant_id, due_id, student_id)`, so only the child's own dues; UNIQUE per intent and due.
@@ -838,8 +839,9 @@ student_id)`), set on a `GATEWAY` payment only (the channel CHECK: a gateway met
   no sender, an intent; the counter's and a manual transfer's never name one); a gateway TrxID is
   `^[A-Za-z0-9._-]{6,80}$` (SSLCommerz's `bank_tran_id`, P7a-I), the manual rule unchanged; one
   live payment per intent (partial unique `fee_payments_live_intent`); a deferred constraint
-  trigger checks at commit that a live gateway payment's intent is `PAID` with it, and that a
-  voided one's intent no longer holds it. Enum values `GATEWAY`, `ROCKET`, `CARD`,
+  trigger checks at commit that a live gateway payment's intent is `PAID` with it and that the
+  payment is that intent's money (its `amount_paisa`, its `bank_tran_id` as `trx_id`, `paid_on`
+  its `priced_on`, P7a2-x28), and that a voided one's intent no longer holds it. Enum values `GATEWAY`, `ROCKET`, `CARD`,
   `OTHER_ONLINE` came in a migration of their own (a new value cannot be used in the transaction
   that adds it).
 - **The signal function and its role** (P7a2, decision P7a-B): `payment_signal_record` is a
