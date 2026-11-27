@@ -29,11 +29,18 @@ const empty = (): Totals => ({
   received: { amountPaisa: 0, storeAmountPaisa: 0, chargesPaisa: 0 },
 });
 
+/** A gateway amount as the API reads it (parseGatewayAmount), in SQL: paisa, or NULL. */
+const GATEWAY_AMOUNT_SQL = '^[0-9]{1,7}([.][0-9]{1,2})?$';
+
 /**
  * The online payments report (sprint 1 P7b, docs/payments.md → Reports; OWNER, ADMIN,
  * ACCOUNTANT): every payment started in the range, by the day it was started in the institute's
  * timezone and by where it stands now, with the money SSLCommerz validated for them and its
- * charges (amount − store amount, S24). Sums are taken in SQL as bigint.
+ * charges (amount − store amount, S24). Money items count too (review round 1, hardening e): a
+ * second payment (DUPLICATE) on its payment's day, money of no payment of ours (UNMATCHED) on the
+ * day it arrived; each payment's money once (its val_id; a repeat record dismissed, or money an
+ * intent holds, is not counted again): in received, to check while undecided, refunded outside
+ * once refunded. Sums are taken in SQL as bigint.
  */
 @Injectable()
 export class OnlinePaymentsReportService {
@@ -85,8 +92,83 @@ export class OnlinePaymentsReportService {
       FROM payment_intents
       WHERE created_at >= ${from} AND created_at < ${to}
       GROUP BY 1 ORDER BY 1`;
+    type ItemRow = {
+      day: string;
+      review: bigint;
+      review_amount: bigint | null;
+      refunded: bigint;
+      refunded_amount: bigint | null;
+      received: bigint | null;
+      store: bigint | null;
+      charges: bigint | null;
+    };
+    const items = await tx.$queryRaw<ItemRow[]>`
+      WITH money AS (
+        SELECT DISTINCT ON (COALESCE(e.val_id, e.id::text))
+               COALESCE(i.created_at, e.received_at) AS at,
+               r.outcome,
+               r.amount_paisa AS refunded,
+               CASE WHEN e.fields->>'amount' ~ ${GATEWAY_AMOUNT_SQL}
+                    THEN round((e.fields->>'amount')::numeric * 100)::bigint END AS amount,
+               CASE WHEN e.fields->>'store_amount' ~ ${GATEWAY_AMOUNT_SQL}
+                    THEN round((e.fields->>'store_amount')::numeric * 100)::bigint END AS store
+        FROM payment_gateway_events e
+        LEFT JOIN payment_intents i ON i.tenant_id = e.tenant_id AND i.id = e.intent_id
+        LEFT JOIN payment_signal_reviews r ON r.tenant_id = e.tenant_id AND r.event_id = e.id
+        WHERE e.kind = 'VALIDATE' AND e.review_reason IS NOT NULL
+          AND (r.outcome IS NULL OR r.outcome = 'REFUNDED_OUTSIDE')
+          AND NOT EXISTS (
+            SELECT 1 FROM payment_intents h WHERE h.tenant_id = e.tenant_id AND h.val_id = e.val_id)
+        ORDER BY COALESCE(e.val_id, e.id::text), (r.outcome IS NOT NULL) DESC, e.received_at
+      ), valid AS (
+        SELECT at, outcome, refunded, amount,
+               CASE WHEN store <= amount THEN store END AS store
+        FROM money WHERE at >= ${from} AND at < ${to}
+      )
+      SELECT to_char(at AT TIME ZONE ${timezone}, 'YYYY-MM-DD') AS day,
+             count(*) FILTER (WHERE outcome IS NULL)::bigint AS review,
+             sum(amount) FILTER (WHERE outcome IS NULL)::bigint AS review_amount,
+             count(*) FILTER (WHERE outcome = 'REFUNDED_OUTSIDE')::bigint AS refunded,
+             sum(refunded) FILTER (WHERE outcome = 'REFUNDED_OUTSIDE')::bigint AS refunded_amount,
+             sum(amount)::bigint AS received,
+             sum(store)::bigint AS store,
+             sum(amount - store)::bigint AS charges
+      FROM valid GROUP BY 1 ORDER BY 1`;
     const n = (v: bigint | null) => Number(v ?? 0n);
-    const out: OnlinePaymentsReportRow[] = rows.map((r) => ({
+    const zero = (day: string): Row => ({
+      day,
+      initiated: 0n,
+      asked: 0n,
+      open: 0n,
+      paid: 0n,
+      paid_amount: 0n,
+      failed: 0n,
+      expired: 0n,
+      review: 0n,
+      review_amount: 0n,
+      refunded: 0n,
+      refunded_amount: 0n,
+      dismissed: 0n,
+      received: 0n,
+      store: 0n,
+      charges: 0n,
+    });
+    const byDay = new Map(rows.map((r) => [r.day, r]));
+    for (const item of items) {
+      const r = byDay.get(item.day) ?? zero(item.day);
+      byDay.set(item.day, {
+        ...r,
+        review: r.review + item.review,
+        review_amount: (r.review_amount ?? 0n) + (item.review_amount ?? 0n),
+        refunded: r.refunded + item.refunded,
+        refunded_amount: (r.refunded_amount ?? 0n) + (item.refunded_amount ?? 0n),
+        received: (r.received ?? 0n) + (item.received ?? 0n),
+        store: (r.store ?? 0n) + (item.store ?? 0n),
+        charges: (r.charges ?? 0n) + (item.charges ?? 0n),
+      });
+    }
+    const merged = [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : 1));
+    const out: OnlinePaymentsReportRow[] = merged.map((r) => ({
       day: r.day,
       initiated: { count: n(r.initiated), amountPaisa: n(r.asked) },
       open: { count: n(r.open) },
