@@ -45,6 +45,7 @@
       "SUCCESS_FOUND": "a payment was found",
       "PENDING": "still in progress",
       "NO_SUCCESS": "no payment",
+      "UNKNOWN": "an attempt in a state SSLCommerz does not document",
       "other": "no answer ({code})"
     }
   },

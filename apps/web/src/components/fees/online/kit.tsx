@@ -85,7 +85,7 @@ export function LastCheck({ check }: { check: { at: string; outcome: string } | 
   const t = useTranslations('fees.online');
   const locale = useLocale() as Locale;
   if (!check) return <span className="text-muted-foreground">{t('never')}</span>;
-  const known = ['SUCCESS_FOUND', 'PENDING', 'NO_SUCCESS'].includes(check.outcome);
+  const known = ['SUCCESS_FOUND', 'PENDING', 'NO_SUCCESS', 'UNKNOWN'].includes(check.outcome);
   return (
     <span>
       {t('lastCheckAt', {
@@ -94,7 +94,9 @@ export function LastCheck({ check }: { check: { at: string; outcome: string } | 
       })}
       {' · '}
       {known
-        ? t(`checkOutcome.${check.outcome as 'SUCCESS_FOUND' | 'PENDING' | 'NO_SUCCESS'}`)
+        ? t(
+            `checkOutcome.${check.outcome as 'SUCCESS_FOUND' | 'PENDING' | 'NO_SUCCESS' | 'UNKNOWN'}`,
+          )
         : t('checkOutcome.other', { code: check.outcome })}
     </span>
   );

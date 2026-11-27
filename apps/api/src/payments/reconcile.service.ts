@@ -75,8 +75,13 @@ export class ReconcileJobError extends Error {
   }
 }
 
-/** What the last query found (payment_intents.last_check_outcome). */
-export type CheckOutcome = 'SUCCESS_FOUND' | 'PENDING' | 'NO_SUCCESS' | string;
+/**
+ * What the last query found (payment_intents.last_check_outcome): UNKNOWN when an attempt is in a
+ * status SSLCommerz does not document (review round 1, hardening d): never taken as "no success".
+ */
+export type CheckOutcome = 'SUCCESS_FOUND' | 'PENDING' | 'NO_SUCCESS' | 'UNKNOWN' | string;
+/** Outcomes that may still become a payment: asked once more at +7 days (P7b-K). */
+const STILL_POSSIBLE: readonly string[] = ['PENDING', 'UNKNOWN'];
 
 const member = (data: ReconcileJobData) => `${data.tenantId}:${data.intentId}:${data.step}`;
 
@@ -252,7 +257,9 @@ export class ReconcileService implements OnModuleInit {
         ? 'SUCCESS_FOUND'
         : found.some((a) => a.status === 'PENDING')
           ? 'PENDING'
-          : 'NO_SUCCESS';
+          : found.every((a) => ENDED.includes(a.status))
+            ? 'NO_SUCCESS'
+            : 'UNKNOWN';
     await this.jobs.run(data.tenantId, async () => {
       const statuses = [...new Set(found.map((a) => a.status))];
       await this.events.record({
@@ -293,7 +300,7 @@ export class ReconcileService implements OnModuleInit {
     }
 
     if (outcome !== 'SUCCESS_FOUND') {
-      const pending = outcome === 'PENDING';
+      const pending = STILL_POSSIBLE.includes(outcome);
       if (data.step === 4) {
         await this.close(data, 'EXPIRED');
         if (pending) {
@@ -375,7 +382,7 @@ export class ReconcileService implements OnModuleInit {
         tx.paymentIntent.findMany({
           where: {
             status: 'EXPIRED',
-            lastCheckOutcome: 'PENDING',
+            lastCheckOutcome: { in: [...STILL_POSSIBLE] },
             createdAt: { gte: new Date(now.getTime() - SWEEP_MAX_AGE_MS) },
           },
           take: BATCH,
