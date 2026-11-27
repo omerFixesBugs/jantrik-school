@@ -1452,3 +1452,67 @@ Changed after the review of #26, round 2 (each should-fix with a test seen faili
 - **Recorded only (N-e, N-f):** the edited migration `20261117410100_sms_broadcasts` needs fresh
   databases wherever its earlier version was applied (only scratch and CI here); its new index on
   `sms_logs` is created without `CONCURRENTLY`, fine before launch.
+
+## Sprint 1, P7a1: gateway accounts (day run 2026-11-27)
+
+Online payments, part 1 ([payments.md](payments.md)): the gateway account table, the credentials
+key, the SSLCommerz client and a fake SSLCommerz, the owner's account API and page, and the two
+owner commands. No money moves yet. Built with the approved plan's recommended defaults for the
+decisions it touches: **P7a-A** (two PRs; this is the first), **P7a-J** (the method mapping),
+**P7a-K** (payer fields in the client's request; filled by P7a2), **P7a-L** (৳10 to ৳5 lakh
+constants), **P7a-M** (on only after a passing test; the test is a query for a transaction that
+never existed; saving switches it off), **P7a-P** (never deleted), **P7a-S** (the base URL override
+outside production only). The rest are P7a2's. Taken alone during the run (owner away), each the
+safer option:
+
+- **P7a1-x1. `SSLCOMMERZ_BASE_URL` only names a fake on this machine:** outside production it must
+  be `http://127.0.0.1:<port>`, `http://localhost:<port>` or `http://[::1]:<port>` (the plan only
+  refused it in production). The API tests point it at `http://127.0.0.1:9`, where nothing listens,
+  unless a test starts the fake, so no test can reach SSLCommerz by accident.
+- **P7a1-x2. The ciphertext is left out of every Prisma read** unless a query names it
+  (`CLIENT_OMIT`, as `users.password_hash`), on top of the plan's code scan: a service that does
+  not name the column never holds it, even with a bare `findFirst()`.
+- **P7a1-x3. Who saved the credentials may be empty when a command loaded them**
+  (`payments:load-sandbox` audits with no person): the CHECK is "credentials, hint and time
+  together; a person only with a time" instead of the plan's "both NULL or both set". Tests alike:
+  a result and its time together, who asked only with a time.
+- **P7a1-x4. Saving credentials clears all three `last_test_*` columns** (the plan named the result
+  only), so the test CHECK holds and an old result never sits next to new credentials.
+- **P7a1-x5. A failed test while the account is on switches it off** (recorded, audited with
+  `enabled: false`). The database requires a passing last test while on; the alternative, keeping
+  the old `OK` and hiding the failure, would show the owner a stale state.
+- **P7a1-x6. The test job records nothing** if the person who asked is no longer the owner
+  (checked before and after the call) or if the credentials were replaced while it ran (the row's
+  `credentials_updated_at` must be the one it read): a result always belongs to what was tested.
+- **P7a1-x7. A malformed save is a 400** (the API's validation pipe, which lists paths and never
+  values), where the plan's table said 422. Store ID: 1 to 50 of `[A-Za-z0-9_-]` (trimmed);
+  password: 1 to 100 printable ASCII characters without spaces (never trimmed).
+- **P7a1-x8. The client never follows a redirect** (a 3xx is `HTTP_STATUS`: it could carry the
+  password elsewhere) and reads at most 256 KB. A session `FAILED` is `AUTH_FAILED` when its reason
+  mentions credentials, else `INVALID_REQUEST`; the free text is dropped. A validation answer for
+  another `val_id` than the one asked is `BAD_RESPONSE`.
+- **P7a1-x9. A JSON number where SSLCommerz documents a string counts as missing:** an amount sent
+  as a number is "not a well-formed amount" (P7a2 will review it as `AMOUNT_MISMATCH`), a numeric
+  `risk_level` is `HIGH`. Nothing is read through a float. The smoke run shows what the sandbox
+  really sends.
+- **P7a1-x10. The payer page check:** https on `sandbox.sslcommerz.com` or another
+  `*.sslcommerz.com` host on port 443 (no login part); with the fake, exactly the fake's origin.
+- **P7a1-x11. The smoke command skips with exit 0** when either sandbox variable is missing (it is
+  not a failure), and refuses production with exit 1. It also asks once with a wrong password, to
+  see SSLCommerz's answer for bad credentials (the test connection's mapping); nothing else.
+- **P7a1-x12. `tsx` joins the API's dev dependencies** (the version the workspace already uses) to
+  run the three scripts (`payments:sandbox-smoke`, `payments:load-sandbox`, `payments:fake`); no
+  new package. The scripts are type-checked and linted with the API.
+- **P7a1-x13. The database-backed credentials tests live in
+  `apps/api/test/payments-credentials.e2e-spec.ts`**, not a `src` spec: the code scan forbids
+  naming the column anywhere under `apps/api/src` but the service.
+- **P7a1-x14. The account row is created on the first save;** reading the page creates nothing
+  (no row: "not set up").
+- **P7a1-x15. The fake for Playwright** listens on `127.0.0.1:4090` with store `jantrikfake01` /
+  `jantrikfake01@ssl`; the suite's API gets `SSLCOMMERZ_BASE_URL` pointing at it and
+  `API_PUBLIC_URL=http://localhost:4000`.
+- **P7a1-x16. Screenshots:** the Playwright spec checks the page's layout and saves bn 1366 and
+  390 px screenshots to its test output (CI artifacts). None were taken locally: this day run does
+  not run a browser locally.
+- **Recorded only:** the IPN address is shown from P7a1, but its route comes with P7a2 (pasting it
+  into the SSLCommerz panel early is harmless). Key rotation is not built (`key_version` 1).

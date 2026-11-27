@@ -779,6 +779,24 @@ to_year_id)` → `enrolments` (two unique indexes on enrolments, supersets of th
 - `sms_purpose` has `BROADCAST` (its own migration). Isolation, grants and CHECKs:
   `packages/db/test/broadcasts-rls.test.ts`.
 
+### Online payments (sprint 1 P7a, docs/payments.md)
+
+- **`payment_gateway_accounts`** (P7a1): an institute's SSLCommerz account, one per provider
+  (UNIQUE `(tenant_id, provider)`, enum `payment_provider`: `SSLCOMMERZ`). Forced RLS. `jantrik_app`:
+  SELECT, INSERT, and UPDATE on the changeable columns only (never the institute, the provider or
+  the mode); no DELETE: an account is switched off, never removed.
+  - CHECKs (null-safe): `mode = 'SANDBOX'`; on only with credentials and a last test of `OK`;
+    the ciphertext's format (`v1.` + base64url, 43 to 2003 characters: a regular expression may
+    repeat at most 255 times, so the length is its own test); the hint (1 to 4 of
+    `[A-Za-z0-9_-]`); credentials with their hint and the time they were saved (a person only
+    with a time: a command that loaded them names nobody); a test with its time and one of the five
+    results; a job failure as a fixed code with its time; `key_version` 1 to 100.
+  - `credentials_ciphertext` is AES-256-GCM bound to the row (the API encrypts it). Every
+    client leaves it out of its reads unless a query names it (`CLIENT_OMIT` in `src/client.ts`,
+    like `users.password_hash`), and only the API's `PaymentCredentialsService` names it (a code
+    scan checks).
+- Tests: `packages/db/test/payments-rls.test.ts`, `payments-secrets.test.ts`.
+
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 
 > **In the API, services never call these.** Every authenticated request already runs inside one

@@ -140,6 +140,12 @@ Audited. Voiding gives no money back by itself: refunds happen outside the app.
 a void is deducted on the day it is made (listed with the payment's own date), so a closed day
 never changes afterwards. Totals: collected, voided, net. An accountant sees only their own.
 
+## Online payments (SSLCommerz)
+
+Built in steps (sprint 1 P7a): so far the owner can save, test and switch on the institute's
+SSLCommerz sandbox store (Setup → Online payments); guardians cannot pay through it yet.
+Everything about it: [payments.md](payments.md).
+
 ## bKash/Nagad without the gateway
 
 1. The OWNER lists the institute's own numbers (personal, merchant or agent).
