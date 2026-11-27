@@ -227,10 +227,16 @@ export class ConfirmService {
       tried.add(attempt.valId);
       failure = (await this.validate(tenantId, intent, creds, attempt.valId)) ?? failure;
     }
-    const live = attempts.some((a) => ['VALID', 'VALIDATED', 'PENDING'].includes(a.status));
-    if (!live && failure === null) {
-      // The session is over with nothing paid: a failed or cancelled return (the path's word), or
-      // an IPN that said so, closes an open intent. A query alone closes nothing (P7b expires it).
+    const listed = new Set<string>(attempts.map((a) => a.status));
+    const live = ['VALID', 'VALIDATED', 'PENDING'].some((status) => listed.has(status));
+    const over = listed.has('FAILED') || listed.has('CANCELLED');
+    if (!live && over && failure === null) {
+      // The session is over with nothing paid, and the gateway itself lists the failed or
+      // cancelled attempt: then a failed or cancelled return (the path's word), or an IPN that
+      // said so, closes an open intent. Nothing found closes nothing (P7a2-x26): a return needs
+      // only the tran_id, so anyone who has it (even an <img> link) could otherwise close a
+      // payment still in progress, and the real payment would then wait for review as a late
+      // success. A query alone closes nothing either (P7b expires it).
       const closing = signals
         .filter(
           (s) =>
@@ -242,15 +248,14 @@ export class ConfirmService {
         )
         .at(-1);
       if (closing) {
-        const cancelled =
+        const said =
           closing.outcome === 'CANCEL' ||
-          (closing.fields as Record<string, unknown> | null)?.['status'] === 'CANCELLED';
-        await this.settle.closeUnpaid(
-          tenantId,
-          intent.id,
-          intent.payerUserId,
-          cancelled ? 'CANCELLED' : 'FAILED',
-        );
+          (closing.fields as Record<string, unknown> | null)?.['status'] === 'CANCELLED'
+            ? 'CANCELLED'
+            : 'FAILED';
+        // The signal's word when the gateway lists it; otherwise the gateway's.
+        const word = listed.has(said) ? said : listed.has('FAILED') ? 'FAILED' : 'CANCELLED';
+        await this.settle.closeUnpaid(tenantId, intent.id, intent.payerUserId, word);
       }
     }
     return failure;
