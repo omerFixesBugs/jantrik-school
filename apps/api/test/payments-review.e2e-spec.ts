@@ -234,6 +234,10 @@ describe('online payments: the review queue', () => {
       decision: null,
     });
     expect(queue.count).toBe(queue.intents.length + queue.signals.length);
+    // The fee tabs' badge asks for the number alone.
+    expect((await as('accountant').get(items('/review/count')).expect(200)).body).toEqual({
+      count: queue.count,
+    });
     // Oldest first.
     const since = queue.intents.map((i) => i.reviewSince!);
     expect([...since].sort()).toEqual(since);
