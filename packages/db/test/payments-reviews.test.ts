@@ -102,7 +102,7 @@ describe('review decisions on online payments (P7b)', () => {
   /** An intent waiting for review: with its validated money (`amount`), or without any. */
   const inReview = async (
     s: School,
-    opts: { amount?: number | null; money?: boolean; reasons?: string } = {},
+    opts: { amount?: number | null; money?: boolean; reasons?: string; currency?: string } = {},
   ) => {
     const intent = await newIntent(s);
     const trx = bankTranId();
@@ -110,7 +110,7 @@ describe('review decisions on online payments (P7b)', () => {
       opts.money === false
         ? ''
         : `, val_id = 'VAL${randomUUID().slice(0, 8)}', bank_tran_id = '${trx}',
-           instrument = 'BKASH-BKash', method = 'BKASH', validated_currency = 'BDT', risk = 'HIGH',
+           instrument = 'BKASH-BKash', method = 'BKASH', validated_currency = '${opts.currency ?? 'BDT'}', risk = 'HIGH',
            validated_amount_paisa = ${opts.amount === undefined ? 100000 : (opts.amount ?? 'NULL')}`;
     await sql(
       s,
@@ -811,6 +811,17 @@ describe('review decisions on online payments (P7b)', () => {
     await signalReview(a, (await validateEvent(a, { amount: '1000.001' })).id, {
       amountPaisa: null,
     });
+  });
+
+  it('money in another currency is never applied: the database refuses it too (review round 1, hardening c)', async () => {
+    const foreign = await inReview(a, { currency: 'USD', reasons: '{CURRENCY_MISMATCH}' });
+    await expect(apply(a, foreign, { amount: 100000 })).rejects.toThrow(/match its intent/i);
+    // Refunded outside: the only way out (P7b-G).
+    await sql(
+      a,
+      `UPDATE payment_intents SET status = 'REFUNDED_OUTSIDE', ${resolved(a)},
+         refunded_outside_paisa = 100000 WHERE id = '${foreign.id}'`,
+    );
   });
 
   it('payment_signal_reviews and the decisions are history: no UPDATE, no DELETE', async () => {
