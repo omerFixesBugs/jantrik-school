@@ -113,7 +113,15 @@ async function onlinePaymentsOn(): Promise<string> {
 }
 
 test.describe('online payments: a guardian pays (P7a2)', () => {
-  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  // Every action and navigation fails within 30 s rather than waiting out the whole test (an
+  // element that never appears, a login cut off by the next navigation).
+  test.use({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    actionTimeout: 30_000,
+    navigationTimeout: 30_000,
+  });
 
   test('bn: two dues, the total in Bangla digits, paid on the gateway, back to "paid" and the receipt', async ({
     page,
@@ -184,23 +192,48 @@ test.describe('online payments: a guardian pays (P7a2)', () => {
     const owner = await onlinePaymentsOn();
     try {
       await otpLoginWithBanglaDigits(page, DEMO.shaplaGuardian);
+      await expect(page).toHaveURL(/\/dashboard$/, { timeout: 30_000 });
       const card = page.getByTestId('children').locator('li').filter({ hasText: CHILD });
       await card.getByTestId('child-fees-open').click();
-      await page.getByTestId('child-online-open').click();
-      await page.getByTestId('online-continue').click();
-      await expect(page).toHaveURL(/127\.0\.0\.1:4090\/pay\//, { timeout: 20_000 });
+      // A payment an earlier attempt of this test left at the gateway (a retry) is continued:
+      // its page sends the payer straight back to the gateway, as a new one would.
+      const open = page.getByTestId('child-online-open');
+      const leftOver = page.getByTestId('child-online-continue');
+      await expect(open.or(leftOver)).toBeVisible({ timeout: 30_000 });
+      if (await leftOver.isVisible()) {
+        await leftOver.click();
+      } else {
+        await open.click();
+        await page.getByTestId('online-continue').click();
+      }
+      await expect(page).toHaveURL(/127\.0\.0\.1:4090\/pay\//, { timeout: 30_000 });
 
-      // While the guardian is on the gateway, the accountant's counter shows the badge.
+      // While the guardian is on the gateway, the accountant's counter shows the badge. The
+      // login must finish before the next navigation, or it is cut off and /fees never opens.
       const counter = await browser.newPage({ baseURL });
-      await passwordLogin(counter, ACCOUNTANT);
-      await counter.goto('/fees');
-      await counter.getByTestId('fees-search').fill(CHILD);
-      await counter.locator(`[data-testid="fees-hit"][data-code="${CHILD}"]`).click();
-      await expect(counter.getByTestId('fees-due-online-pending').first()).toBeVisible();
-      await counter.screenshot({ path: test.info().outputPath('counter-online-pending-1366.png') });
-      await counter.close();
+      try {
+        await passwordLogin(counter, ACCOUNTANT);
+        await expect(counter).toHaveURL(/\/dashboard$/, { timeout: 30_000 });
+        await counter.goto('/fees');
+        await counter.getByTestId('fees-search').fill(CHILD, { timeout: 30_000 });
+        await counter
+          .locator(`[data-testid="fees-hit"][data-code="${CHILD}"]`)
+          .click({ timeout: 30_000 });
+        await expect(counter.getByTestId('fees-due-online-pending').first()).toBeVisible({
+          timeout: 30_000,
+        });
+        await counter.screenshot({
+          path: test.info().outputPath('counter-online-pending-1366.png'),
+        });
+      } finally {
+        await counter.close();
+      }
 
+      // Cancel on the gateway: the fake lists a CANCELLED attempt, so the return closes it.
       await page.getByRole('button', { name: 'Cancel' }).click();
+      await expect(page).toHaveURL(/\/children\/[^/]+\/fees\/pay\/[^/?]+\?from=gateway$/, {
+        timeout: 30_000,
+      });
       await expect(page.getByTestId('online-payment-state')).toHaveAttribute(
         'data-state',
         'NOT_PAID',
@@ -208,7 +241,7 @@ test.describe('online payments: a guardian pays (P7a2)', () => {
       );
       await page.screenshot({ path: test.info().outputPath('online-not-paid-bn-390.png') });
       await page.getByTestId('online-start-again').click();
-      await expect(page.getByTestId('online-pay-sheet')).toBeVisible();
+      await expect(page.getByTestId('online-pay-sheet')).toBeVisible({ timeout: 30_000 });
     } finally {
       await api(owner, `${ACCOUNT}/disable`, { method: 'POST' });
     }
