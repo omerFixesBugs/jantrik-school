@@ -34,6 +34,7 @@ import { SMS_PROVIDER, type MemorySmsProvider } from '../../src/sms/sms.provider
 import { TenantAccessService } from '../../src/tenancy/tenant-access.service.js';
 import { Clock } from '../../src/common/clock.js';
 import { PAYMENTS_CONFIG, type PaymentsConfig } from '../../src/payments/payments.config.js';
+import { PAYMENTS_QUEUE } from '../../src/payments/payments.constants.js';
 import { TestController } from './test.controller.js';
 import { phoneSource } from './test-phones.js';
 
@@ -82,6 +83,9 @@ export async function createHarness(
   const devicesQueue = app.get<Queue>(getQueueToken(DEVICES_QUEUE));
   await devicesQueue.removeJobScheduler(DEVICES_TICK_JOB);
   await devicesQueue.removeJobScheduler(EXPIRE_PUNCHES_JOB);
+  // Reconciliation steps are delayed by minutes to days: none of one test file may run in a later
+  // one (against another fake SSLCommerz), so they are dropped when the file closes its app.
+  const paymentsQueue = app.get<Queue>(getQueueToken(PAYMENTS_QUEUE));
   const prisma = createPrismaClient(process.env['DATABASE_URL']!);
   return {
     app,
@@ -90,6 +94,7 @@ export async function createHarness(
     sms: app.get<MemorySmsProvider>(SMS_PROVIDER),
     access: app.get(TenantAccessService),
     async close() {
+      await paymentsQueue.drain(true);
       await app.close();
       await prisma.$disconnect();
     },

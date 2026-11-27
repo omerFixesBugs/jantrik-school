@@ -754,12 +754,13 @@ describe('online payments: confirmation and settle', () => {
 
   it('heal on read: an open payment whose signals were all lost is asked about from its page', async () => {
     const due = await extraDue(h, s, child().id, { amountPaisa: 60000, dueDate: s.today });
+    // Two minutes old: past the heal's minute, before reconciliation's first query (+5 min, P7b).
     const intent = await earlierIntent({
       dueId: due.id,
       principal: 60000,
       fine: 0,
       pricedOn: s.today,
-      ageMs: 5 * 60_000,
+      ageMs: 2 * 60_000,
     });
     fake.pay(intent.sessionRef!);
     // No return, no IPN: reading the page asks the gateway (a query, then the validation).

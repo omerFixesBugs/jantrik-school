@@ -34,14 +34,17 @@ import {
   CHECKOUT_INIT_JOB,
   CONFIRM_JOB,
   PAYMENTS_QUEUE,
+  RECONCILE_JOB,
   UNMATCHED_CHECK_JOB,
   type AccountTestJobData,
   type IntentJobData,
+  type ReconcileJobData,
   type UnmatchedJobData,
 } from './payments.constants.js';
 import { PAYMENT_PROVIDER } from './provider.js';
 import { GatewaySignalsController } from './public/gateway-signals.controller.js';
 import { GatewaySignalsService } from './public/gateway-signals.service.js';
+import { ReconcileJobError, ReconcileQueue, ReconcileService } from './reconcile.service.js';
 import { SettleService } from './settle.service.js';
 import { SslcommerzProvider } from './sslcommerz/sslcommerz.provider.js';
 
@@ -90,7 +93,7 @@ export class GatewayAccountController {
 /**
  * The payments queue's jobs (data: ids only). A failure is logged by job name and error name
  * only: a gateway's answer, a URL or a credential never reaches a log line or a failed job. Only
- * `confirm` fails its job (a fixed code, PaymentJobError), so BullMQ retries it.
+ * `confirm` and `reconcile` fail their job (a fixed code), so BullMQ retries them.
  */
 @Processor(PAYMENTS_QUEUE)
 export class PaymentsProcessor extends WorkerHost {
@@ -100,6 +103,7 @@ export class PaymentsProcessor extends WorkerHost {
     private readonly accounts: GatewayAccountService,
     private readonly checkout: CheckoutService,
     private readonly confirm: ConfirmService,
+    private readonly reconcile: ReconcileService,
   ) {
     super();
   }
@@ -119,12 +123,21 @@ export class PaymentsProcessor extends WorkerHost {
         case UNMATCHED_CHECK_JOB:
           await this.confirm.unmatchedCheck(job.data as UnmatchedJobData);
           break;
+        case RECONCILE_JOB:
+          await this.reconcile.run(job.data as ReconcileJobData);
+          break;
       }
     } catch (error) {
       this.logger.error(`Payments job ${job.name} failed: ${(error as Error).name}`);
       if (job.name === CONFIRM_JOB) {
         // Retried with a fixed code only (never the error itself: it could carry an answer).
         throw error instanceof PaymentJobError ? error : new Error('CONFIRM_FAILED');
+      }
+      if (job.name === RECONCILE_JOB) {
+        // Retried (3 attempts); after the last one the step stays listed for the sweep.
+        throw error instanceof PaymentJobError || error instanceof ReconcileJobError
+          ? error
+          : new Error('RECONCILE_FAILED');
       }
     }
   }
@@ -147,6 +160,8 @@ export class PaymentsProcessor extends WorkerHost {
     CheckoutService,
     SettleService,
     ConfirmService,
+    ReconcileQueue,
+    ReconcileService,
     GatewaySignalsService,
     PaymentsProcessor,
   ],

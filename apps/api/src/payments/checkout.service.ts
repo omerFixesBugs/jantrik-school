@@ -39,6 +39,7 @@ import {
   type IntentJobData,
 } from './payments.constants.js';
 import { PAYMENT_PROVIDER, type CheckoutRequest, type PaymentProvider } from './provider.js';
+import { ReconcileQueue } from './reconcile.service.js';
 
 const PROVIDER = 'SSLCOMMERZ' as const;
 const ENTITY = 'payment_intent';
@@ -104,6 +105,7 @@ export class CheckoutService {
     @Inject(PAYMENTS_CONFIG) private readonly config: PaymentsConfig,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     @InjectQueue(PAYMENTS_QUEUE) private readonly queue: Queue,
+    private readonly reconcileQueue: ReconcileQueue,
   ) {}
 
   /** The institute's account, when online payments are on and the server has its addresses. */
@@ -402,6 +404,7 @@ export class CheckoutService {
           studentId: true,
           payerUserId: true,
           accountId: true,
+          createdAt: true,
           account: { select: { enabled: true } },
         },
       });
@@ -463,7 +466,7 @@ export class CheckoutService {
     }
     const failure = read.failure ?? (result.kind === 'ERROR' ? result.code : null);
 
-    await this.jobs.run(data.tenantId, async () => {
+    const redirected = await this.jobs.run(data.tenantId, async () => {
       const tx = this.db.tx;
       const now = this.clock.now();
       await lockTenantFees(tx, 'shared');
@@ -503,6 +506,16 @@ export class CheckoutService {
           newValues: failure ? { status: 'FAILED', initError: failure } : { status: 'REDIRECTED' },
         });
       }
+      return count === 1 && result.kind === 'OK' && !failure;
     });
+    if (redirected) {
+      // Reconciliation (P7b): SSLCommerz is asked about it at +5 min, +30 min, +2 h and +25 h.
+      // A Redis failure here is healed by the nightly run and the pages (heal on read).
+      await this.reconcileQueue
+        .scheduleSession(data.tenantId, read.intent.id, read.intent.createdAt)
+        .catch((error: unknown) =>
+          this.logger.warn(`Could not schedule reconciliation: ${(error as Error).name}`),
+        );
+    }
   }
 }

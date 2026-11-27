@@ -37,7 +37,8 @@ export class PaymentJobError extends Error {
 const isErrorCode = (outcome: string | null): boolean =>
   outcome !== null && (PROVIDER_ERROR_CODES as readonly string[]).includes(outcome);
 
-interface IntentFacts {
+/** What validating a payment needs of its intent (also reconciliation, P7b). */
+export interface IntentFacts {
   id: string;
   tranId: string;
   status: string;
@@ -158,8 +159,11 @@ export class ConfirmService {
     }
   }
 
-  /** One validation call and what follows from it; the error code when the call failed. */
-  private async validate(
+  /**
+   * One validation call and what follows from it (settle); the error code when the call failed.
+   * Reconciliation (P7b) validates what the query by tran_id lists through this, too.
+   */
+  async validate(
     tenantId: string,
     intent: IntentFacts,
     creds: SslcommerzCredentials,
