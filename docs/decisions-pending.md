@@ -2054,18 +2054,34 @@ failing test first, taken alone during the run (owner away), each the safer opti
   query ran, an expired one whose +7 day query ran; the heal reads only payments whose latest due
   step has not run. Before, 500 payments that stay open (never closed when in doubt) filled the
   batch every night and crowded out newer ones.
-- **P7b-x33. The browser test has its own child and guardian** (CI, run 46019544785: the spec
-  failed after 12.9 s, its retry after 1.4 min, and P7a2's happy path after it took 8.1 min and
-  failed). Replayed through the API on the e2e seed, every step works; the failure was in the
-  browser, right after the admin's page opened: `passwordLogin` returns at once and the next
-  `goto` cut the login off (the race of P7a2-x29), then a 10 s wait. The retry waited out the
-  guardian's OTP cooldown and failed the same way. Sharing Tahmid (`SHS-2026-0002`) with
-  payments.spec also took one of his three owed dues per attempt and the father's OTP budget,
-  which that spec needs. Now: Rakib (`SHS-2026-0104`, `DEMO.rakibGuardian`, no other spec signs
-  in as his father), the dashboard awaited after each staff login, the items picked by their
-  intent id, the money applied to a month ahead, a payment left at the gateway continued, every
-  action, navigation and wait bounded at 30 s; an API test replays the flow. Playwright was not
-  run locally (its ports are the developer's).
+- **P7b-x33. The browser test has its own child and guardian, and signs each person in once**
+  (CI, run 46019544785: the spec failed after 12.9 s, its retry after 1.4 min, and P7a2's happy
+  path after it took 8.1 min and failed). Replayed through the API on the e2e seed, every step
+  works. The cause, as P7a2-x33 found: the demo phones' sign-in codes, 5 per 15 minutes, counted
+  even when the 1-minute cooldown refuses one; both specs signed the same guardian in, so the
+  later sign-ins waited out the window. Two more risks of this spec, fixed with it: a staff
+  `passwordLogin` followed at once by a `goto` can be cut off (the race of P7a2-x29), and sharing
+  Tahmid (`SHS-2026-0002`) took one of his three owed dues per attempt, where payments.spec needs
+  two. Now:
+  - its own child, Rakib (`SHS-2026-0104`, `DEMO.rakibGuardian`: no other spec signs in as his
+    father), the money applied to a month ahead (his own dues stay), the items picked by their
+    intent id, a payment left at the gateway continued;
+  - one sign-in per person for the file, in `beforeAll`, on pages its two tests share (serial),
+    each staff sign-in awaited on the dashboard; the counter's calls use the accountant page's
+    own token. Across both payment specs no phone signs in more than 4 times (the owner 4, by
+    password; the admin 2; the accountant 2; Rakib's father once);
+  - `afterAll` gives up any payment left in progress with the guardian page's token;
+  - every action, navigation and wait bounded at 30 s; an API test replays the flow. Playwright
+    was not run locally (its ports are the developer's).
+- **P7b-x34. P7a2's round 2, merged: reconciliation follows x30 to x32.** The `val_id`s it
+  validates come from its own query, so they are trusted (x30: only forgeable signals leave a
+  payment open). Its closes use the same statuses: FAILED or CANCELLED, or UNATTEMPTED or EXPIRED,
+  which steps 1–3 count only past `expires_at` (as x31), and step 4 still expires whatever x31
+  leaves open. Its `QUERY` event lists the statuses in P7a2's fixed order (the payment page reads
+  the latest query, x31). Its query takes `confirm`'s 10 s slot (`pay-query:<intent>`, x32) when
+  it is free, so a `confirm` right after waits as after its own query; reconciliation itself never
+  waits for it: its schedule bounds it (four steps, +7 days, "check now" once a minute per
+  payment, the heal once a minute per institute).
 
 Recorded, review round 1 (not changed):
 

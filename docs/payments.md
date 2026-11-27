@@ -313,8 +313,11 @@ fixed schedule, so a lost IPN and a closed browser tab still end in a receipt or
 query answer never posts by itself (P7b-A): every successful attempt it lists whose `val_id` has
 not been decided yet (no `VALIDATE` event saying `VALID` or `VALIDATED`; one that said
 `PENDING` is asked again) goes through the validation API and `settle`
-(`ConfirmService.validate`), exactly as an IPN does: one decision path for every signal. At most
-3 new `val_id`s per step (`confirm`'s own bound per round, P7b-x23).
+(`ConfirmService.validate`, trusted: our own query listed it, P7a2-x30), exactly as an IPN does:
+one decision path for every signal. At most 3 new `val_id`s per step (`confirm`'s own bound per
+round, P7b-x23). Its query takes `confirm`'s 10 s slot for the payment when free
+(`pay-query:<intent>`, P7a2-x32), so a `confirm` right after waits; it never waits for the slot
+itself (its schedule bounds it, P7b-x34).
 
 | Step     | When (after the intent was created) | Runs for                                                        | Besides asking                                                                                                                            |
 | -------- | ----------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -598,8 +601,10 @@ Nothing in CI or in any local test calls SSLCommerz, the sandbox included.
   (review focus 6, money items), `apps/web/e2e/payments-review.spec.ts` (paid at the counter while
   paying online, applied ahead; a risky payment; the accountant's view; the closing's online line;
   its own child and guardian, Rakib `SHS-2026-0104` and `DEMO.rakibGuardian`, so it never uses
-  Tahmid's dues or his father's OTP budget, which payments.spec needs; P7b-x33). The fake's payer
-  page has a **Risky** button (paid, reported with `risk_level` 1).
+  Tahmid's dues, which payments.spec needs; each person signed in once for the file on shared
+  pages, serially, as payments.spec does, so no demo phone signs in more than 4 times in 15
+  minutes across both; P7b-x33). The fake's payer page has a **Risky** button (paid, reported
+  with `risk_level` 1).
 - **Playwright** also gives the API `WEB_PUBLIC_URL=http://localhost:3000`, so the fake's
   payer page brings the browser back to the web app, and the fake posts its IPN to the API. The
   P7a2 block signs the demo guardian in once for both its tests (each phone has 5 codes in 15
