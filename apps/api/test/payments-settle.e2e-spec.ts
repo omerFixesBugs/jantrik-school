@@ -1427,6 +1427,51 @@ describe('online payments: confirmation and settle', () => {
     }
   });
 
+  it("a guardian's reads with a payment open ask SSLCommerz nothing and wait for nothing (the dashboard, the calendar, the fees page, the payment's page): the heal is only queued", async () => {
+    const due = await extraDue(h, s, child().id, { amountPaisa: 60000, dueDate: s.today });
+    const intent = await earlierIntent({
+      dueId: due.id,
+      principal: 60000,
+      fine: 0,
+      pricedOn: s.today,
+      ageMs: 5 * 60_000,
+    });
+    const queue = h.app.get<Queue>(getQueueToken(PAYMENTS_QUEUE));
+    // No job runs meanwhile, so any call to SSLCommerz would be a request's own.
+    await queue.pause();
+    // Redis slow to take the heal's job: a read must not wait for it either.
+    const add = queue.add.bind(queue);
+    const slowAdd = vi
+      .spyOn(queue, 'add')
+      .mockImplementation(async (...args: Parameters<Queue['add']>) => {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        return add(...args);
+      });
+    const before = fake.requests.length;
+    try {
+      for (const path of [
+        '/me/children',
+        `/me/children/${child().id}/attendance`,
+        fees(''),
+        fees(`/online-payments/${intent.id}`),
+      ]) {
+        const started = Date.now();
+        await api(h, s.tokens.guardian).get(path).expect(200);
+        expect(Date.now() - started, path).toBeLessThan(1500);
+      }
+      expect(fake.requests.length).toBe(before);
+      // The heal was queued all the same, after the answer.
+      await vi.waitFor(
+        async () => expect(await queue.getJob(confirmJobId(intent.id))).toBeTruthy(),
+        { timeout: 10_000, interval: 100 },
+      );
+      expect(fake.requests.length).toBe(before);
+    } finally {
+      slowAdd.mockRestore();
+      await queue.resume();
+    }
+  });
+
   it('heal on read: an open payment whose signals were all lost is asked about from its page', async () => {
     const due = await extraDue(h, s, child().id, { amountPaisa: 60000, dueDate: s.today });
     const intent = await earlierIntent({
