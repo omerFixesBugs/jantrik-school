@@ -1350,4 +1350,25 @@ describe('online payments: the review queue', () => {
       .post(items(`/${mine.intent.id}/dismiss`), { note: 'its money was refunded as an item' })
       .expect(200);
   });
+
+  it('apply after the counter took the due: 409, the due was just collected (review round 2, note 7)', async () => {
+    const r = await risky(120000);
+    await as('accountant')
+      .post('/fees/payments', {
+        studentId: child().id,
+        dueIds: [r.due.id],
+        amountPaisa: 120000,
+        expectedOutstandingPaisa: 120000,
+        clientRequestId: randomUUID(),
+      })
+      .expect(201);
+    const lost = await apply(r.intent.id, {
+      dueIds: [r.due.id],
+      applyPaisa: 120000,
+      expectedOutstandingPaisa: 120000,
+    }).expect(409);
+    expect(lost.body).toMatchObject({ code: 'DUE_COLLECTED', dueIds: [r.due.id] });
+    expect(await paymentsOf(r.intent.id)).toEqual([]);
+    expect((await intentRow(h, s.tenantId, r.intent.id)).status).toBe('NEEDS_REVIEW');
+  });
 });
