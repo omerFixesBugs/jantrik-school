@@ -464,7 +464,10 @@ ALTER TABLE fee_payments ADD CONSTRAINT fee_payments_trx_id CHECK (
   OR (channel = 'GATEWAY' AND trx_id ~ '^[A-Za-z0-9._-]{6,80}$'));
 
 -- At commit, the mirror of payment_intents_paid_check: a live gateway payment's intent is PAID
--- and holds it; a voided one's intent no longer does (the void moved it to review, P7a-G).
+-- and holds it, and the payment is that intent's money: its amount, the bank's transaction ID the
+-- validation reported, paid on the checkout day (P7a2-x28; the app cannot change any of the
+-- three on either row afterwards); a voided one's intent no longer holds it (the void moved it to
+-- review, P7a-G).
 CREATE FUNCTION fee_payments_gateway_check() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp
@@ -472,11 +475,15 @@ AS $$
 DECLARE
   v_status text;
   v_intent uuid;
+  v_amount integer;
+  v_trx text;
+  v_paid_on date;
 BEGIN
   IF NEW.channel <> 'GATEWAY' THEN
     RETURN NULL;
   END IF;
-  SELECT status::text, payment_intent_id INTO v_status, v_intent
+  SELECT status::text, payment_intent_id, amount_paisa, trx_id, paid_on
+    INTO v_status, v_intent, v_amount, v_trx, v_paid_on
     FROM fee_payments WHERE tenant_id = NEW.tenant_id AND id = NEW.id;
   IF v_status = 'ACTIVE' AND NOT EXISTS (
     SELECT 1 FROM payment_intents i
@@ -484,6 +491,14 @@ BEGIN
       AND i.fee_payment_id = NEW.id
   ) THEN
     RAISE EXCEPTION 'a gateway payment needs its intent PAID with it'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF v_status = 'ACTIVE' AND NOT EXISTS (
+    SELECT 1 FROM payment_intents i
+    WHERE i.tenant_id = NEW.tenant_id AND i.id = v_intent
+      AND i.amount_paisa = v_amount AND i.bank_tran_id = v_trx AND i.priced_on = v_paid_on
+  ) THEN
+    RAISE EXCEPTION 'a gateway payment must be its intent''s money (amount, bank transaction ID, checkout day)'
       USING ERRCODE = 'check_violation';
   END IF;
   IF v_status = 'VOID' AND EXISTS (
