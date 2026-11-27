@@ -1545,3 +1545,97 @@ credentials_updated_at`): with several servers, clock differences could refuse a
   quotes part of the body back to its sender (Nest's body parser). Not logged, and the web app
   never sends malformed JSON, but a global filter with a fixed message would be cleaner; a
   follow-up of its own.
+
+## Sprint 1, P7a2: checkout to receipt (day run 2026-11-27)
+
+Online payments, part 2 ([payments.md](payments.md)): guardians pay chosen dues in full through
+SSLCommerz's page (the fake in every test), the return and the IPN reach the database through one
+definer function under the new NOLOGIN role `jantrik_payments`, every payment is confirmed with
+SSLCommerz's validation API, and one decision table posts it or sends it to review. Stacked on
+P7a1. Built with the approved plan's recommended defaults for every decision it touches: **P7a-B**
+(the role and the definer function), **P7a-C** (documented addresses recorded and given a large
+rate budget, never enforced), **P7a-D** (`verify_sign` not checked), **P7a-E** (paid on the
+checkout day), **P7a-F** (one payment in progress per child for 60 minutes), **P7a-G** (voidable;
+the intent back to review with `VOIDED`; one live payment per intent), **P7a-H** (another
+`tran_id`'s `val_id` sends the named intent to review with no money on it), **P7a-I** (the
+`bank_tran_id` as the TrxID with its own format), **P7a-J** (the method mapping), **P7a-K** (the
+payer's fields), **P7a-L** (৳10 to ৳5 lakh), **P7a-N** (returns by POST or GET), **P7a-O** and
+**P7a-R** (validated money posted whatever happened after the checkout), **P7a-Q** (no retry of a
+failed session), **P7a-T** (P7b's statuses created now), **P7a-U** (the same receipt SMS),
+**P7a-V** (no collector in the daily closing). S22 and S23 hold as approved: anything risky or
+mismatched waits for review and is never posted automatically. Taken alone during the run (owner
+away), each the safer option:
+
+- **P7a2-x1. An amount (or any unknown key) in the checkout body is a 400**, the API's
+  validation pipe (as P7a1-x7), where the plan's test said 422. Nothing from the body is used but
+  the due ids, the amount the guardian was shown and the request id.
+- **P7a2-x2. The money facts come only with their `val_id`, and once it is set none of them
+  changes** (a CHECK and the guard trigger), stronger than the plan's "each written once": a fact
+  missing from one validation can never be filled in from another.
+- **P7a2-x3. A voided gateway payment cannot stay on its intent:** the gateway payment's deferred
+  check also runs on the void (the plan had it on insert only), so a void that skipped the hook is
+  refused by the database rather than leaving a `PAID` intent without a live payment.
+- **P7a2-x4. The payer page CHECK allows plain http only on `127.0.0.1`/`localhost`** (the fake
+  SSLCommerz of the tests and Playwright, refused in production by `SSLCOMMERZ_BASE_URL`'s rule);
+  the API's host check is unchanged.
+- **P7a2-x5. The fee module reads nothing of the payments tables:** the payments module registers
+  `FeeOnlineHooks` at start (the counter's pending dues, the guardian's `online`, a gateway
+  receipt's online part, the void). Without the module nobody can pay online and a gateway payment
+  cannot be voided. FeesModule now also exports `FeeDuesService` and `FeeMobileService` (the
+  guardian check).
+- **P7a2-x6. What SSLCommerz is sent about the payer is ASCII:** the guardian's English name as the
+  institute recorded it (else "Guardian"), the phone in local form, `noreply@jantrik.com.bd`, the
+  institute's English address (else `N/A`), city and postcode `N/A`, country Bangladesh. A Bangla
+  name is not sent (as "School fees" is sent in English, P7a1).
+- **P7a2-x7. An IPN's status stays in its fields** (its `outcome` column is empty), an IPN
+  without a well-formed `tran_id` is malformed (200 OK, nothing stored), and a RETURN row always
+  names an intent (a CHECK).
+- **P7a2-x8. The way back from the gateway is marked** (`?from=gateway` on the 303): the page then
+  never sends the guardian to the gateway again, even when the return was over its limit and the
+  payment still looks READY; it shows "confirming" and asks again.
+- **P7a2-x9. `confirm` asks the query API** when there is nothing left to validate and the intent
+  is still open (also after a made-up `val_id`), or when a signal without a `val_id` arrived after
+  the last query (a late payment); once per job, up to three rounds for signals that arrive while
+  it runs. The plan said "when there is none"; this also closes a failed return that carried a
+  `val_id` of a failed attempt.
+- **P7a2-x10. An unmatched IPN whose validated `tran_id` is one of ours** queues that intent's
+  `confirm` instead of being marked `UNMATCHED` (the money is then posted or reviewed through its
+  own intent).
+- **P7a2-x11. A `tran_id` mismatch whose `tran_id` is no intent of this institute** also marks the
+  VALIDATE event `UNMATCHED` (P7b's queue sees money with no intent), besides the named intent's
+  `TRAN_ID_MISMATCH`.
+- **P7a2-x12. A review also records the mismatches found** (an intent already in review, or a late
+  success, gets e.g. `AMOUNT_MISMATCH` next to `LATE_SUCCESS`), so the person reviewing sees them.
+- **P7a2-x13. A strange fact is stored as nothing, never fails the job:** a `store_amount` above the
+  amount, a `currency_type` over 10 characters, a `bank_tran_id` over 100 characters or with spaces
+  leave that column empty on the intent (and keep the reason it was not posted); the event keeps
+  the reported value (at most 100 printable characters).
+- **P7a2-x14. The init job fails an intent whose account was switched off meanwhile**
+  (`ONLINE_PAYMENTS_OFF`, no call to the gateway, not recorded as the account's failure).
+- **P7a2-x15. Online payments in the collections report** (by collector) are one "Online
+  (SSLCommerz)" line, so the rows still add up to the total and no guardian appears as a
+  collector; the CSV by method names every method (P7a-V carried over to the report).
+- **P7a2-x16. Signal bodies are read by the module's own reader** (a flat form of at most 16 KB,
+  read before the app's parsers); JSON, a larger body or a nested form is malformed.
+- **P7a2-x17. The listed sources** are the five addresses SSLCommerz's docs have named (sandbox
+  `103.26.139.87`, live `103.26.139.81`, `103.132.153.81`, the older sandbox `144.76.92.216`,
+  `144.76.92.241`): a listed one only gets the larger budget.
+- **P7a2-x18. The heal** also asks about a `CREATED` intent more than a minute old (nothing to
+  validate: a query finds nothing and changes nothing), once a minute per payment.
+- **P7a2-x19. `create-roles.sh` now checks `jantrik_admission` too** (it created the role but its
+  checks did not list it), with `jantrik_payments`; `restore.sh` requires both.
+- **P7a2-x20. Another guardian of the child cannot abandon a payment** (404; the plan said "the
+  payer only"); they see it, without its gateway page.
+- **P7a2-x21. The payer page must be `https://sandbox.sslcommerz.com` itself** (the review of
+  P7a1, P7a1-x18): no other `*.sslcommerz.com` host is accepted now that guardians are sent there.
+  If the owner's sandbox smoke run shows the payer page on another host, that host is added by
+  name; until then such a session fails (`BAD_RESPONSE`) and nobody is sent anywhere.
+- **P7a2-x22. `jantrik_payments` may run `app_verified_context()`:** every table's
+  `tenant_isolation` policy applies to it, and an INSERT checks both permissive policies (a SELECT
+  under `USING (true)` drops the other), so the role must be able to evaluate the verified context.
+  It returns the caller's own: in the function's empty context, none. Granted by the function's
+  owner (`SET ROLE jantrik_auth`), in the access migration; pinned in the role's privilege
+  snapshot.
+- **Recorded only:** a gateway payment's request id is its intent's id, so P7b's "apply again after
+  a void" needs a request id of its own. Playwright was not run locally (CI runs it; the
+  screenshots are its artifacts). Nothing called SSLCommerz: every test used the fake.

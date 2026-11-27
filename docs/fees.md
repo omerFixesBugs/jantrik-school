@@ -19,7 +19,7 @@ always comes from the server. The bKash gateway (tokenized checkout) is not buil
 | ADMIN                        | setup (heads, amounts, terms, concessions, families, settings), cancel a due, waive a fine, recalculate, void a payment, reminders, see the numbers (read only) |
 | ACCOUNTANT                   | the counter (find a student, ledger, collect cash), receipts, daily closing (their own), verify/reject bKash/Nagad transfers, reports                           |
 | TEACHER (without ACCOUNTANT) | no fee route at all (403)                                                                                                                                       |
-| GUARDIAN                     | their own children's fees (`/me/children/:id/fees`, 404 for any other child): dues, receipts, "I paid by bKash/Nagad"                                           |
+| GUARDIAN                     | their own children's fees (`/me/children/:id/fees`, 404 for any other child): dues, receipts, paying online, "I paid by bKash/Nagad"                            |
 
 One person may hold TEACHER and ACCOUNTANT together (a class teacher who collects fees): fee
 access comes from ACCOUNTANT only, teaching rights stay those of a teacher. The staff page has a
@@ -108,8 +108,8 @@ what they owe (partial payments allowed). Principal is paid oldest due first, th
 
 - The counter sends what it showed as owed; if it moved meanwhile: 409 `DUES_CHANGED`.
 - `clientRequestId` is new for every attempt; a retried request returns the same receipt.
-- Locks, always in this order: the tenant's fee lock (shared), the student's, a TrxID's, the
-  receipt counter row, the SMS lock (`fee-locks.ts`).
+- Locks, always in this order: the tenant's fee lock (shared), the student's (then an online
+  payment intent's row), a TrxID's, the receipt counter row, the SMS lock (`fee-locks.ts`).
 - The cached totals on a due (paid principal and fine, the day the principal was cleared, waived
   fine) are re-derived from the allocations of live payments and the waivers, never incremented.
   A deferred database trigger checks every allocation at commit: never to a void payment or a
@@ -139,12 +139,32 @@ Audited. Voiding gives no money back by itself: refunds happen outside the app.
 `GET /fees/closing?date`: per collector and method. A payment counts on the day it was recorded;
 a void is deducted on the day it is made (listed with the payment's own date), so a closed day
 never changes afterwards. Totals: collected, voided, net. An accountant sees only their own.
+Online payments are under no collector (the guardian paid them; P7a-V).
 
 ## Online payments (SSLCommerz)
 
-Built in steps (sprint 1 P7a): so far the owner can save, test and switch on the institute's
-SSLCommerz sandbox store (Setup → Online payments); guardians cannot pay through it yet.
-Everything about it: [payments.md](payments.md).
+Sprint 1 P7a, sandbox only. The owner saves, tests and switches on the institute's SSLCommerz
+store (Setup → Online payments); guardians then pay chosen dues of their child online, in full
+(S22): the request names dues, never an amount; the server computes what they owe today (fines
+included) and keeps what each owed (the snapshot). A payment is posted only after SSLCommerz's own
+validation API confirmed our transaction ID, BDT and the exact amount, at low risk, and the dues
+still owe exactly the snapshot; anything else waits for review with the money recorded and no
+receipt (S23). Everything about it: [payments.md](payments.md).
+
+- **Channel `GATEWAY`** (S21): methods `BKASH`, `NAGAD`, `ROCKET`, `CARD` or `OTHER_ONLINE` (from
+  SSLCommerz's card type), the TrxID is SSLCommerz's `bank_tran_id` (its own format, P7a-I), no
+  sender, and the payment names its intent (one live payment per intent). `recordPayment` takes it
+  from the payments module only, in a job acting as the guardian who paid.
+- **Paid on the checkout day** (P7a-E): the fines were counted to that day, so a payment that
+  crosses midnight is not refused; recorded on the day it arrives (its receipt number's year).
+- **Receipts:** "অনলাইনে (SSLCommerz) · <method>", the bank's and our transaction IDs, "paid
+  online" instead of a collector; the same receipt SMS (P7a-U).
+- **The counter** sees a due being paid online (`onlinePending`, a badge) and still takes cash;
+  the online money then waits for review (`DUES_CHANGED`), never on a due, never twice.
+- **Voids:** voiding an online payment sends its online payment back to review (`VOIDED`, P7a-G).
+- **Daily closing:** online payments are under no collector (P7a-V); the collections report by
+  collector shows them as one "Online (SSLCommerz)" line.
+- **Locks:** step 2a, the intent's row, after the student's lock (`fee-locks.ts`).
 
 ## bKash/Nagad without the gateway
 

@@ -68,9 +68,13 @@ sudo ufw enable
 ```
 
 Online payments (SSLCommerz, [payments.md](payments.md)) need nothing more: SSLCommerz posts its
-payment notifications (IPN) to `https://<API_DOMAIN>/public/payments/sslcommerz/<slug>/ipn` on 443. If a firewall in front of the server limits 443 by address, allow SSLCommerz's documented
-addresses (sandbox `103.26.139.87`; live `103.26.139.81` and `103.132.153.81`; they have
-changed between versions of SSLCommerz's documentation), and let the server reach
+payment notifications (IPN) to `https://<API_DOMAIN>/public/payments/sslcommerz/<slug>/ipn` and
+sends the payer's browser back to `https://<API_DOMAIN>/public/payments/sslcommerz/<slug>/return/...`,
+both on 443. Each institute's owner pastes its IPN address (shown on Setup → Online payments) into
+the store's SSLCommerz panel as well. If a firewall in front of the server limits 443 by address,
+allow SSLCommerz's documented addresses (sandbox `103.26.139.87`; live `103.26.139.81` and
+`103.132.153.81`; they have changed between versions of SSLCommerz's documentation, so the API
+does not refuse others, it only gives them a smaller rate budget), and let the server reach
 `sandbox.sslcommerz.com` on 443.
 
 Docker publishes container ports past `ufw`. That is why the compose file publishes only 80, 443
@@ -222,9 +226,10 @@ the script on its first start (an empty volume) with the passwords from the sett
   security applies to it), `jantrik_app` (the API), `jantrik_platform_app` (the API's platform
   module), `jantrik_ingest_app` (the receiver), `jantrik_login_app` (the password login only:
   the one role that may look up a password hash), and the function owners `jantrik_auth`,
-  `jantrik_search`, `jantrik_platform`, `jantrik_ingest` (no login; the owner may `SET ROLE` to
-  them but never inherits them), exactly as `docker/postgres/init/01-roles.sh` does for
-  development ([database.md](database.md) → Database roles);
+  `jantrik_search`, `jantrik_platform`, `jantrik_ingest`, `jantrik_admission` and
+  `jantrik_payments` (no login; the owner may `SET ROLE` to them but never inherits them), exactly
+  as `docker/postgres/init/01-roles.sh` does for development ([database.md](database.md) →
+  Database roles);
 - creates the production database only (`POSTGRES_DB_NAME`, default `jantrik`), owned by
   `jantrik_owner`, with the schema set up as in development, temporary tables taken away from the
   runtime logins and the time zone UTC
@@ -342,6 +347,14 @@ one of the user's own keys (gone after 5 s) and asks Redis's ACL (`ACL DRYRUN`) 
 it never runs a destructive command. CI runs the same check on the production compose file.
 
 ## 11. Upgrades
+
+**Upgrading to guardians paying online (sprint 1 P7a2) needs a new role first:** run
+`deploy/postgres/create-roles.sh` again after the checkout and before `migrate` (it creates
+`jantrik_payments`, the owner of the gateway signals' one function; the migration stops with a
+clear message until the role exists). By hand on an existing Postgres, as the superuser:
+`CREATE ROLE jantrik_payments NOLOGIN NOSUPERUSER NOBYPASSRLS; GRANT jantrik_payments TO
+jantrik_owner WITH INHERIT FALSE, SET TRUE;`. No new line in the settings file: it uses
+`API_PUBLIC_URL` (P7a1) and `WEB_PUBLIC_URL` (P3b).
 
 **Upgrading to online payments (sprint 1 P7a1) needs one new line** in the settings file:
 `PAYMENT_CREDENTIALS_KEY` (`openssl rand -base64 48 | tr -d '\n'`, different from the other
