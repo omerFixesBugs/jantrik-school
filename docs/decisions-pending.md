@@ -1002,6 +1002,18 @@ Changed after the review of #26, round 2 (each should-fix with a test seen faili
   the job's outcomes leave `SCHEDULED`. The approach of P1-J8k (`student_imports.created_by_id`):
   no new role, no `.env` line, no API change. Like P1-J8k, a context with no person (only the
   worker and server code sign one) is not checked.
+  - **Review round 2 (must-fix, fixed with a two-connection test):** the targets check locks the
+    broadcast `FOR SHARE` by its id, so a target change racing the scheduling transaction waits
+    for it and is then refused, instead of changing the audience of a broadcast its scheduler
+    already confirmed. An API test now has a second admin cancel, edit and send a broadcast the
+    first admin scheduled.
+  - **Recorded (review round 2):** the platform routes (`InstituteProvisioning.inTenant`) and the
+    fallback of `TenantAccessService.inTenant` run as `jantrik_app` with an institute and no
+    person, so an injection there would not be checked by these triggers (P1-J8k has the same
+    gap; none of those paths builds SQL from request input). The job also reads the audience at
+    send time (enrolments, guardian phones, the current year, memberships), which `jantrik_app`
+    can write: an injection could redirect a scheduled text to other phones within the 10 %
+    cost check (S19 resolves the audience at send time; P1-J10).
   - **Only with #20:** before P1-J8, an injection can still set `app.user_id` itself, so the
     triggers are a barrier only once #20 is merged. The merge order already puts #20 first; #26
     must not go to production before #20.
