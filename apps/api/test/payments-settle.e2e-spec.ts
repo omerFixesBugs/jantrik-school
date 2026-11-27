@@ -16,7 +16,7 @@ import { PAYMENT_PROVIDER, type PaymentProvider } from '../src/payments/provider
 import { SettleService, type PaidOutcome } from '../src/payments/settle.service.js';
 import { startFakeSslcommerz, type FakeSslcommerz } from './support/fake-sslcommerz.js';
 import { ownerClient, platform, platformAdminCookie } from './support/platform.js';
-import { createHarness, type Harness } from './support/harness.js';
+import { createHarness, http, type Harness } from './support/harness.js';
 import {
   api,
   childFees,
@@ -306,8 +306,9 @@ describe('online payments: confirmation and settle', () => {
     expect((await paymentsOf(intent.id)).filter((p) => p.status === 'ACTIVE')).toHaveLength(0);
   });
 
-  it('fail and cancel returns: a query finding nothing paid closes it; PENDING changes nothing', async () => {
+  it('fail and cancel returns: closed once the query lists the failed or cancelled attempt; PENDING changes nothing', async () => {
     const failed = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, failed.intent.id, { status: 'FAILED' });
     await postReturn(h, s.slug, failed.intent.tranId, 'fail', { status: 'FAILED' }).expect(303);
     await waitStatus(h, s.tenantId, failed.intent.id, 'FAILED');
 
@@ -326,6 +327,59 @@ describe('online payments: confirmation and settle', () => {
     );
     await confirm.run({ tenantId: s.tenantId, intentId: pending.intent.id });
     expect((await intentRow(h, s.tenantId, pending.intent.id)).status).toBe('REDIRECTED');
+  });
+
+  it('a forged fail or cancel return (the tran_id only, even by GET) closes nothing while the gateway lists no attempt; the real payment then posts', async () => {
+    const { intent } = await readyPayment();
+    // An <img> link on any page the guardian opens: GET, the tran_id from the return URL only.
+    await http(h)
+      .get(`/public/payments/sslcommerz/${s.slug}/return/${intent.tranId}/cancel`)
+      .set('X-Forwarded-For', '10.9.8.31')
+      .expect(303);
+    await postReturn(h, s.slug, intent.tranId, 'fail', { status: 'FAILED' }, '10.9.8.32').expect(
+      303,
+    );
+    await vi.waitFor(async () =>
+      expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0),
+    );
+    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+    // The guardian, still on the gateway's page, pays: a receipt, not a LATE_SUCCESS review.
+    const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+    await postIpn(h, s.slug, ipnFields(t)).expect(200);
+    const paid = await waitStatus(h, s.tenantId, intent.id, 'PAID');
+    expect(paid.reviewReasons).toEqual([]);
+    expect(await paymentsOf(intent.id)).toHaveLength(1);
+  });
+
+  it("cancelled on the fake's payer page: the browser's return closes it CANCELLED, NOT_PAID, and a new checkout is allowed", async () => {
+    const { intent, due } = await readyPayment();
+    // The payer presses Cancel on the gateway's page (the fake: a CANCELLED attempt the query
+    // lists), which sends the browser back to our cancel address with the attempt's fields.
+    const res = await fetch(`${fake.url}/pay/${intent.sessionRef}/cancel`, { method: 'POST' });
+    const html = (await res.text()).replace(/&#(\d+);/g, (_m, c: string) =>
+      String.fromCharCode(Number(c)),
+    );
+    const action = /<form method="post" action="([^"]+)">/.exec(html)![1]!;
+    expect(action).toBe(
+      `${PUBLIC_API}/public/payments/sslcommerz/${s.slug}/return/${intent.tranId}/cancel`,
+    );
+    const fields = Object.fromEntries(
+      [...html.matchAll(/name="([^"]+)" value="([^"]*)"/g)].map((m) => [m[1]!, m[2]!]),
+    );
+    expect(fields['status']).toBe('CANCELLED');
+    await postReturn(h, s.slug, intent.tranId, 'cancel', fields).expect(303);
+    await waitStatus(h, s.tenantId, intent.id, 'CANCELLED');
+    const page = (await api(h, s.tokens.guardian).get(fees(`/online-payments/${intent.id}`)))
+      .body as OnlinePaymentView;
+    expect(page.state).toBe('NOT_PAID');
+    expect(await paymentsOf(intent.id)).toEqual([]);
+    // "Start again": the same due may be paid online at once.
+    const again = await startPayment(h, s.tokens.guardian, child().id, {
+      dueIds: [due.id],
+      expected: 120000,
+    });
+    expect(again.state).toBe('READY');
   });
 
   it('liveness: a val_id first answered PENDING is validated again once the gateway lists it VALID', async () => {
