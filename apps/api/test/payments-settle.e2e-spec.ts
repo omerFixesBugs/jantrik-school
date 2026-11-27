@@ -330,6 +330,112 @@ describe('online payments: confirmation and settle', () => {
     expect((await intentRow(h, s.tenantId, pending.intent.id)).status).toBe('REDIRECTED');
   });
 
+  it('a cancel or fail the query lists as UNATTEMPTED or EXPIRED closes the payment; the signal alone never does (P7a2-x31)', async () => {
+    // SSLCommerz's query documents VALID, VALIDATED, PENDING and FAILED only: a session cancelled
+    // before any attempt may be listed as UNATTEMPTED, one left to time out as EXPIRED.
+    const unattempted = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, unattempted.intent.id, { status: 'UNATTEMPTED' });
+    await postReturn(h, s.slug, unattempted.intent.tranId, 'cancel', {
+      status: 'CANCELLED',
+    }).expect(303);
+    await waitStatus(h, s.tenantId, unattempted.intent.id, 'CANCELLED');
+
+    const expired = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, expired.intent.id, { status: 'EXPIRED' });
+    await postReturn(h, s.slug, expired.intent.tranId, 'fail', { status: 'FAILED' }).expect(303);
+    await waitStatus(h, s.tenantId, expired.intent.id, 'FAILED');
+
+    // SSLCommerz's IPN saying EXPIRED, the query agreeing: closed as not paid.
+    const byIpn = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, byIpn.intent.id, { status: 'EXPIRED' });
+    await postIpn(h, s.slug, { tran_id: byIpn.intent.tranId, status: 'EXPIRED' }).expect(200);
+    await waitStatus(h, s.tenantId, byIpn.intent.id, 'FAILED');
+    // The guardian may start again at once.
+    const again = await startPayment(h, s.tokens.guardian, child().id, {
+      dueIds: [unattempted.due.id],
+      expected: 120000,
+    });
+    expect(again.state).toBe('READY');
+    await api(h, s.tokens.guardian)
+      .post(fees(`/online-payments/${again.id}/abandon`))
+      .expect(200);
+
+    // A signal alone, the gateway listing nothing for the session: nothing closes.
+    const alone = await readyPayment();
+    await postIpn(h, s.slug, { tran_id: alone.intent.tranId, status: 'UNATTEMPTED' }).expect(200);
+    await postReturn(h, s.slug, alone.intent.tranId, 'cancel', { status: 'EXPIRED' }).expect(303);
+    await vi.waitFor(async () =>
+      expect((await eventsOf(alone.intent.id, 'QUERY')).length).toBeGreaterThan(0),
+    );
+    await confirm.run({ tenantId: s.tenantId, intentId: alone.intent.id });
+    expect((await intentRow(h, s.tenantId, alone.intent.id)).status).toBe('REDIRECTED');
+  });
+
+  it('back from the gateway with nothing found: "confirming" offers "start again" once a query after the last signal listed no paid or pending attempt (P7a2-x31)', async () => {
+    const view = (intentId: string) =>
+      api(h, s.tokens.guardian)
+        .get(fees(`/online-payments/${intentId}`))
+        .expect(200)
+        .then((r) => r.body as OnlinePaymentView);
+    const { intent, due } = await readyPayment();
+    // At the gateway, nothing asked yet.
+    expect(await view(intent.id)).toMatchObject({ state: 'READY', noLiveAttempt: false });
+
+    // The guardian cancels; the gateway lists no attempt for the session (nothing closes it).
+    await postReturn(h, s.slug, intent.tranId, 'cancel', { status: 'CANCELLED' }).expect(303);
+    await vi.waitFor(async () =>
+      expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0),
+    );
+    expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+    expect(await view(intent.id)).toMatchObject({ state: 'CONFIRMING', noLiveAttempt: true });
+
+    // A signal after that query: not answered for yet, so not offered until the next query.
+    await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.create({
+        data: {
+          tenantId: s.tenantId,
+          intentId: intent.id,
+          kind: 'RETURN',
+          outcome: 'CANCEL',
+          tranId: intent.tranId,
+          fields: {},
+          sourceListed: false,
+          receivedAt: new Date(),
+        },
+      }),
+    );
+    expect(await view(intent.id)).toMatchObject({ state: 'CONFIRMING', noLiveAttempt: false });
+    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    expect(await view(intent.id)).toMatchObject({ noLiveAttempt: true });
+
+    // "Start again": given up, and a new checkout for the same due at once.
+    await api(h, s.tokens.guardian)
+      .post(fees(`/online-payments/${intent.id}/abandon`))
+      .expect(200);
+    const again = await startPayment(h, s.tokens.guardian, child().id, {
+      dueIds: [due.id],
+      expected: 120000,
+    });
+    expect(again.state).toBe('READY');
+    await api(h, s.tokens.guardian)
+      .post(fees(`/online-payments/${again.id}/abandon`))
+      .expect(200);
+
+    // A pending attempt listed: still being paid, never offered.
+    const pending = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, pending.intent.id, { status: 'PENDING' });
+    await postReturn(h, s.slug, pending.intent.tranId, 'cancel', { status: 'CANCELLED' }).expect(
+      303,
+    );
+    await vi.waitFor(async () =>
+      expect((await eventsOf(pending.intent.id, 'QUERY')).length).toBeGreaterThan(0),
+    );
+    expect(await view(pending.intent.id)).toMatchObject({
+      state: 'CONFIRMING',
+      noLiveAttempt: false,
+    });
+  });
+
   it('a forged fail or cancel return (the tran_id only, even by GET) closes nothing while the gateway lists no attempt; the real payment then posts', async () => {
     const { intent } = await readyPayment();
     // An <img> link on any page the guardian opens: GET, the tran_id from the return URL only.
