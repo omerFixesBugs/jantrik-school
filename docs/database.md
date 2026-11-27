@@ -868,7 +868,9 @@ student_id)`), set on a `GATEWAY` payment only (the channel CHECK: a gateway met
     money** (`val_id IS NULL`; money is never dismissed, P7b-E); applied ≥ 1 and applied +
     refunded outside = the validated amount; a refund outside only on a `PAID` (applied) or
     `REFUNDED_OUTSIDE` intent, or on one back in review below its validated amount (kept from a
-    voided apply, P7b-x24); a refund reference only with a refund.
+    voided apply, P7b-x24); a refund reference only with a refund; a validated amount unknown
+    (NULL) or at least 1 paisa (`payment_intents_validated_amount`: SSLCommerz's `0.00` is
+    recorded as unknown, which can be refunded outside; P7b-x35).
   - Trigger `payment_intents_resolution_guard` (BEFORE UPDATE, invoker, pinned `search_path`,
     beside P7a2's `payment_intents_guard`, which runs first): only a person's decision moves an
     intent out of `NEEDS_REVIEW` (S23: no job ever does), and the decision is written exactly then;
@@ -901,6 +903,11 @@ student_id)`), set on a `GATEWAY` payment only (the channel CHECK: a gateway met
     the same one before it inserts, and before it gives a new `VALIDATE` event a review reason), so
     two decisions on the records of one payment cannot both pass (the second waits and reads the
     first's commit).
+  - **The same "refunded once" from the intent's side** (P7b-x39): the deferred constraint
+    trigger `payment_intents_refunded_item_check` (on an update of `val_id` or `status`, when the
+    intent holds a `val_id`) refuses at commit an intent holding money that a money item recorded
+    as refunded outside, under the same advisory lock, so a refund of the item and an intent
+    taking that money at once never both pass.
 - Tests: `packages/db/test/payments-rls.test.ts`, `payments-secrets.test.ts`,
   `payments-intents.test.ts`, `payments-function.test.ts`, `payments-reviews.test.ts` (P7b),
   `schema-safety.test.ts`.

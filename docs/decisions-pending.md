@@ -2104,3 +2104,73 @@ Recorded, review round 1 (not changed):
 - **(c) The loser of apply against the counter gets 404** (`openDues` finds the due paid), not
   409 `DUES_CHANGED`; the page reloads the item either way. A clearer answer is a fee-module change
   for later.
+
+### P7b after the review (round 2)
+
+The security review's second round (fresh) found no must-fix. Fixed, each with a failing test
+first (the reviewer's probes A to F as tests), taken alone during the run (owner away), each the
+safer option:
+
+- **P7b-x35. ৳0.00 validated is an unknown amount** (should-fix 1, probe F). SSLCommerz answering
+  VALID with `amount` "0.00" left an intent in review that could never leave it: refunded outside
+  answered 500 (the CHECK that a refund records the validated amount wanted 0, the one that a
+  refund is at least 1 paisa refused it), dismiss `HAS_MONEY`, apply `AMOUNT_EXCEEDS_MONEY`. Now
+  `settle` records a non-positive validated amount as NULL (and the store amount with it), as
+  hardening b does for money items, and the database refuses 0
+  (`payment_intents_validated_amount`). Such money follows P7b-x3: refunded outside with no amount,
+  never applied (`AMOUNT_UNKNOWN`) or dismissed. It is still `AMOUNT_MISMATCH`.
+- **P7b-x36. The nightly run lists posted payments of the last 72 hours** whose +25 h query has
+  not run (was 26; should-fix 2, probe C). The run may come up to 24 hours after a Redis loss, so a
+  payment whose +25 h step fell due in between is up to 49 hours old then, and a second payment
+  whose IPN was also lost was never seen. 72 hours also covers a missed night; the
+  `last_checked_at` filter keeps the list to payments never asked at +25 h.
+- **P7b-x37. A listed success whose money is accounted for elsewhere is not this payment's**
+  (should-fix 3, probe B). When SSLCommerz lists a payment under our `tran_id` and its validation
+  names another, the intent goes to review (`TRAN_ID_MISMATCH`, no money) and the money becomes a
+  money item; every later check found it again (`SUCCESS_FOUND`), so the dismissal stayed
+  `CHECK_FIRST` while refund and apply said `NO_MONEY`. A check now leaves out of its outcome every
+  listed success whose `val_id` a money item records (a `VALIDATE` event with a review reason) or
+  another intent holds; the item stays in the queue until a person decides it. "Another intent
+  holds it" was added to the reviewer's rule: that money is decided on that intent. Validations
+  are unchanged and the `QUERY` event still lists every status. An open payment whose query lists
+  only such a success is now expired at +25 h (or closed by steps 1–3 when a failed or cancelled
+  attempt is listed too) instead of staying open: its money is recorded and decided elsewhere.
+- **P7b-x38. Apply replays a request only while its payment stands** (note A, probe A): a retried
+  `clientRequestId` after a void answered 201 with the voided receipt (`replayed`, status `VOID`)
+  while nothing was applied. Now only a payment still `ACTIVE`, with the intent `PAID` with it, is
+  replayed; otherwise 409 `PAYMENT_VOIDED` (before or after the money is applied again with a new
+  request). The dialog says so, reloads and closes.
+- **P7b-x39. Money refunded outside as an item is never an intent's too** (note E, probe E): the
+  rule "refunded once per `val_id`" was checked only from the item's side. P7b's migration adds
+  `payment_intents_refunded_item_check` (deferred, on an update of `val_id` or `status`, under the
+  money's advisory lock): an intent holding a `val_id` that an item recorded as refunded outside is
+  refused at commit; undecided or dismissed records do not block. `settle` (P7a2's code, changed
+  here only for this) reads the same under that lock for an intent holding no money: such money
+  sends the intent to review as `DUPLICATE` (and `LATE_SUCCESS` if it had closed) without being
+  recorded on it, and is never posted; with x37 a check then finds nothing of its own and the
+  intent can be dismissed. No new review reason (no enum migration): `DUPLICATE` reads "money for
+  this payment arrived twice".
+- **P7b-x40. The report counts each payment once, where it stands now** (note D, probe D):
+  "refunded outside" counts payments refunded outside only; a payment applied with a refund part
+  is paid, one voided back with its refund kept is in review. The amount refunded outside still
+  includes both refunds. For payments the status columns add up to started again (P7b-x16);
+  money items (x31) add to in review and refunded outside.
+- **P7b-x41. Apply that loses to the counter answers 409 `DUE_COLLECTED { dueIds }`** (note 7):
+  "this due was just collected; reload". The test showed the loser's answer was 409 `DUES_CHANGED
+{ outstandingPaisa: 0 }`, not the 404 recorded in round 1's note (c): a paid due stays `OPEN`
+  owing nothing, and the page then offered "confirm again". Now apply refuses any chosen due (or
+  period ahead) that owes nothing on the payment day; the dialog says so and loads the dues again.
+  The counter's own loser still answers `DUES_CHANGED` (a fee-module answer, unchanged).
+
+Recorded, review round 2 (not changed):
+
+- **(a) The check that first finds such a payment still says `SUCCESS_FOUND`** (x37): the
+  outcome is taken when the query is answered, before its validations record the item; the next
+  check ("check now", or the next step) says `NO_SUCCESS`.
+- **(b) A money item reported at ৳0.00** shows ৳0 on its card and is refunded with no amount
+  (hardening b, unchanged); only an intent's validated amount is NULL in the row (x35).
+- **(c) Round 1's note (c) is superseded by x41.** The concurrent apply-and-counter test still
+  accepts either side winning; the loser answers 409.
+- **(d) Playwright was not run locally** (its ports are the developer's). The web changes are
+  the two new error messages and the apply dialog's handling of them; web lint, typecheck and
+  build pass. Nothing called SSLCommerz: every test used the fake.
