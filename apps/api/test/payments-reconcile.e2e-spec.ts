@@ -1,5 +1,6 @@
 import { getQueueToken } from '@nestjs/bullmq';
 import { withTenant } from '@jantrik/db';
+import { newTranId } from '@jantrik/shared';
 import type { Queue } from 'bullmq';
 import { ConfirmService } from '../src/payments/confirm.service.js';
 import {
@@ -535,5 +536,70 @@ describe('online payments: reconciliation', () => {
     await reconcile.requeueTenant(s.tenantId);
     expect((await members()).filter((m) => m.includes(intent.id))).toEqual([member(intent.id, 5)]);
     await loseJobs(intent.id);
+  });
+
+  it('payments that stay open after +25 h never crowd out one with a step to run: the nightly run and the heal (review round 1, hardening f)', async () => {
+    const fresh = (await readyPayment()).intent;
+    // 500 payments of a day before, still open with every step run (SSLCommerz listed a success
+    // its validation API never confirmed: never closed when in doubt), older than the fresh one.
+    const due = await extraDue(h, s, child().id, { amountPaisa: 50000, dueDate: s.today });
+    const createdAt = new Date(clock.now().getTime() - 30 * HOUR);
+    const stale = Array.from({ length: 500 }, () => ({
+      id: randomUUID(),
+      tenantId: s.tenantId,
+      accountId: fresh.accountId,
+      studentId: child().id,
+      payerUserId: fresh.payerUserId,
+      amountPaisa: 50000,
+      pricedOn: fresh.pricedOn,
+      tranId: newTranId(createdAt),
+      clientRequestId: randomUUID(),
+      createdAt,
+      expiresAt: new Date(createdAt.getTime() + HOUR),
+    }));
+    await withTenant(h.prisma, s.tenantId, async (tx) => {
+      await tx.paymentIntent.createMany({ data: stale });
+      await tx.paymentIntentDue.createMany({
+        data: stale.map((i) => ({
+          tenantId: s.tenantId,
+          intentId: i.id,
+          studentId: child().id,
+          dueId: due.id,
+          plannedPrincipalPaisa: 50000,
+          plannedFinePaisa: 0,
+        })),
+      });
+      await tx.paymentIntent.updateMany({
+        where: { id: { in: stale.map((i) => i.id) } },
+        data: {
+          lastCheckedAt: new Date(createdAt.getTime() + 26 * HOUR),
+          lastCheckOutcome: 'SUCCESS_FOUND',
+        },
+      });
+    });
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    await loseJobs(fresh.id);
+    clock.advance(3 * HOUR);
+    // The nightly run: the fresh one's latest step now, the later one at its time.
+    await reconcile.requeueTenant(s.tenantId);
+    expect((await members()).filter((m) => m.includes(fresh.id))).toEqual([
+      member(fresh.id, 3),
+      member(fresh.id, 4),
+    ]);
+    expect((await members()).some((m) => stale.some((i) => m.includes(i.id)))).toBe(false);
+    await vi.waitFor(
+      async () =>
+        expect((await intentRow(h, s.tenantId, fresh.id)).lastCheckedAt).toEqual(clock.now()),
+      { timeout: 15_000, interval: 100 },
+    );
+    // The heal (the review page), with its +25 h step overdue and lost.
+    await loseJobs(fresh.id);
+    clock.advance(23 * HOUR);
+    await h.redis.del(`rl:pay-review-heal:${s.tenantId}`);
+    await h.app.get(TenantJobRunner).run(s.tenantId, () => reconcile.healOverdue());
+    await vi.waitFor(
+      async () => expect((await intentRow(h, s.tenantId, fresh.id)).status).toBe('EXPIRED'),
+      { timeout: 15_000, interval: 100 },
+    );
   });
 });
