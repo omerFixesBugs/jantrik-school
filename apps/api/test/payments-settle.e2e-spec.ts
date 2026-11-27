@@ -619,6 +619,43 @@ describe('online payments: confirmation and settle', () => {
       expect(await paymentsOf(intent.id)).toHaveLength(1);
     });
 
+    /** Signals as payment_signal_record stores them (no confirm job queued), in this order. */
+    const storeSignals = (
+      intent: { id: string; tranId: string },
+      signals: { valId: string; listed: boolean }[],
+    ) =>
+      withTenant(h.prisma, s.tenantId, (tx) =>
+        tx.paymentGatewayEvent.createMany({
+          data: signals.map(({ valId, listed }, i) => ({
+            tenantId: s.tenantId,
+            intentId: intent.id,
+            kind: listed ? ('IPN' as const) : ('RETURN' as const),
+            outcome: listed ? null : 'SUCCESS',
+            tranId: intent.tranId,
+            valId,
+            fields: {},
+            sourceListed: listed,
+            receivedAt: new Date(Date.now() - signals.length + i),
+          })),
+        }),
+      );
+
+    it("the real IPN's val_id keeps SSLCommerz's own budget when the payer's return carries it too: validated at once, no query, after a flood spent the other budget", async () => {
+      const { intent } = await readyPayment();
+      // Ten made-up val_ids from other addresses were validated earlier this hour.
+      await h.redis.set(`rl:pay-val-other:${intent.id}`, 10, 'EX', 3600);
+      const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+      await storeSignals(intent, [
+        { valId: t.valId, listed: true },
+        { valId: t.valId, listed: false },
+      ]);
+      const asked = queries(intent.tranId);
+      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
+      expect(validations([t.valId])).toBe(1);
+      expect(queries(intent.tranId)).toBe(asked);
+    });
+
     it('a closed payment: new val_ids are not validated unless the query lists them', async () => {
       const { intent } = await readyPayment();
       const t = await payAtGateway(h, fake, s.tenantId, intent.id);
