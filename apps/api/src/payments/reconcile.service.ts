@@ -48,13 +48,10 @@ const OPEN: readonly PaymentIntentStatus[] = ['CREATED', 'REDIRECTED'];
 const FINAL: readonly PaymentIntentStatus[] = ['PAID', 'REFUNDED_OUTSIDE', 'DISMISSED'];
 const SUCCESS: readonly AttemptStatus[] = ['VALID', 'VALIDATED'];
 /**
- * Attempts that are over with nothing paid (an undocumented status is never taken as one):
- * failed or cancelled, or unattempted or expired (P7a2-x31: these only count past the session's
- * lifetime, which steps 1–3 require for a close anyway, and step 4 is past it).
+ * Attempts that ended with nothing paid (an undocumented status is never taken as one): a check
+ * that lists only these found no success (a dismissal may go ahead).
  */
 const ENDED: readonly AttemptStatus[] = [...OVER_ATTEMPTS, ...LAPSED_ATTEMPTS];
-/** confirm's query slot for a payment (P7a2-x32), and how long a query holds it. */
-const QUERY_SLOT_SEC = 10;
 /**
  * New validation IDs validated per step at most, confirm's own bound per round (P7a2-x24); the
  * next step takes the rest.
@@ -257,16 +254,10 @@ export class ReconcileService implements OnModuleInit {
     // Outside any transaction: every attempt SSLCommerz knows for our tran_id. Recorded as asked
     // now, as confirm records its own (P7a2-x24): a signal that arrives while the gateway answers
     // is not one this query answered for, so confirm still takes it.
+    // Its own schedule bounds it (four steps, +7 days, "check now" once a minute per payment, the
+    // heal once a minute per institute): neither waiting for confirm's query slot nor taking it
+    // (P7a2-x32 bounds what signals make confirm ask).
     const askedAt = this.clock.now();
-    // The query takes confirm's slot for this payment when it is free (P7a2-x32), so a confirm
-    // right after waits its 10 s as after its own query; it never waits for it itself: its own
-    // schedule bounds it (four steps, +7 days, "check now" once a minute, the heal once a minute
-    // per institute).
-    await this.limiter.tryConsume({
-      key: `pay-query:${intent.id}`,
-      limit: 1,
-      windowSec: QUERY_SLOT_SEC,
-    });
     const attempts = await this.provider.query(creds, intent.tranId);
     const found = Array.isArray(attempts) ? attempts : [];
     const outcome: CheckOutcome = !Array.isArray(attempts)
@@ -335,15 +326,15 @@ export class ReconcileService implements OnModuleInit {
       } else if (
         data.step !== 5 &&
         !pending &&
-        found.length > 0 &&
-        found.every((a) => ENDED.includes(a.status)) &&
+        outcome === 'NO_SUCCESS' &&
+        found.some((a) => OVER_ATTEMPTS.includes(a.status)) &&
         this.clock.now() > intent.expiresAt
       ) {
-        // The payer had the whole hour to try again; every attempt ended with nothing paid.
-        await this.close(
-          data,
-          found.every((a) => a.status === 'CANCELLED') ? 'CANCELLED' : 'FAILED',
-        );
+        // The payer had the whole hour to try again; every attempt ended unpaid and the gateway
+        // lists a failed or cancelled one (as confirm closes, P7a2-x26). A session listed only as
+        // UNATTEMPTED or EXPIRED waits for a fail or cancel signal (confirm closes it then, in
+        // the signal's word, P7a2-x31) or for step 4's expiry.
+        await this.close(data, found.some((a) => a.status === 'FAILED') ? 'FAILED' : 'CANCELLED');
       }
     }
     await this.queues.done(data);

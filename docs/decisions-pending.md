@@ -2073,15 +2073,21 @@ failing test first, taken alone during the run (owner away), each the safer opti
   - `afterAll` gives up any payment left in progress with the guardian page's token;
   - every action, navigation and wait bounded at 30 s; an API test replays the flow. Playwright
     was not run locally (its ports are the developer's).
-- **P7b-x34. P7a2's round 2, merged: reconciliation follows x30 to x32.** The `val_id`s it
-  validates come from its own query, so they are trusted (x30: only forgeable signals leave a
-  payment open). Its closes use the same statuses: FAILED or CANCELLED, or UNATTEMPTED or EXPIRED,
-  which steps 1–3 count only past `expires_at` (as x31), and step 4 still expires whatever x31
-  leaves open. Its `QUERY` event lists the statuses in P7a2's fixed order (the payment page reads
-  the latest query, x31). Its query takes `confirm`'s 10 s slot (`pay-query:<intent>`, x32) when
-  it is free, so a `confirm` right after waits as after its own query; reconciliation itself never
-  waits for it: its schedule bounds it (four steps, +7 days, "check now" once a minute per
-  payment, the heal once a minute per institute).
+- **P7b-x34. P7a2's round 2, merged: reconciliation follows x26 and x30 to x32.**
+  - The `val_id`s it validates come from its own query, so they are trusted (x30: only forgeable
+    signals leave a payment open).
+  - Steps 1–3 close an open payment past its hour only when every listed attempt ended unpaid
+    and one is FAILED or CANCELLED (`FAILED`, else `CANCELLED`), as `confirm` closes (x26). A
+    session listed only as UNATTEMPTED or EXPIRED is left to a fail or cancel signal (`confirm`
+    closes it past `expires_at`, in the signal's word, x31) or to step 4's expiry. Before (P7b-x11)
+    they closed it too, as `FAILED`, and P7a2's x31 test caught the race: an intent initialised an
+    hour after its creation runs steps 1 and 2 at once, and they closed it before the payer's
+    cancel return could.
+  - Its `QUERY` event lists the statuses in P7a2's fixed order (the payment page reads the latest
+    query, x31).
+  - Its queries neither wait for nor take `confirm`'s 10 s slot (x32): its schedule bounds them
+    (four steps, +7 days, "check now" once a minute per payment, the heal once a minute per
+    institute), and a `confirm` is never held back by a scheduled query.
 
 Recorded, review round 1 (not changed):
 
@@ -2093,10 +2099,8 @@ Recorded, review round 1 (not changed):
   `AMOUNT_UNKNOWN` (then refunded with no amount) and `TRX_ID_UNUSABLE`; another child's due
   (404, nothing recorded). The report with an apply that has a refund part, and with refunded
   items, is tested with x24 and x31.
-- **(b) Steps 1–3 still close on EXPIRED or UNATTEMPTED attempts after the hour** (P7b-x11),
-  while `confirm` closes a signal's payment only when the query lists FAILED or CANCELLED
-  (P7a2-x26): that rule is against forged returns while the payer may still pay; reconciliation
-  closes only a payment past its hour whose every listed attempt ended unpaid.
+- **(b) Steps 1–3 and `confirm` close on the same statuses** since P7a2's round 2 (P7b-x34):
+  nothing is left of the difference this note recorded in round 1.
 - **(c) The loser of apply against the counter gets 404** (`openDues` finds the due paid), not
   409 `DUES_CHANGED`; the page reloads the item either way. A clearer answer is a fee-module change
   for later.

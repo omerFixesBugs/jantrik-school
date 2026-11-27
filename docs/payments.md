@@ -315,16 +315,17 @@ not been decided yet (no `VALIDATE` event saying `VALID` or `VALIDATED`; one tha
 `PENDING` is asked again) goes through the validation API and `settle`
 (`ConfirmService.validate`, trusted: our own query listed it, P7a2-x30), exactly as an IPN does:
 one decision path for every signal. At most 3 new `val_id`s per step (`confirm`'s own bound per
-round, P7b-x23). Its query takes `confirm`'s 10 s slot for the payment when free
-(`pay-query:<intent>`, P7a2-x32), so a `confirm` right after waits; it never waits for the slot
-itself (its schedule bounds it, P7b-x34).
+round, P7b-x23). Its queries are bounded by its schedule and neither wait for nor take
+`confirm`'s 10 s slot (`pay-query:<intent>`, P7a2-x32; P7b-x34). A session listed only as
+UNATTEMPTED or EXPIRED is not closed by steps 1–3: a fail or cancel signal closes it through
+`confirm` past its `expires_at` (P7a2-x31), else step 4 expires it.
 
-| Step     | When (after the intent was created) | Runs for                                                        | Besides asking                                                                                                                            |
-| -------- | ----------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| 1, 2, 3  | +5 min, +30 min, +2 h               | every intent not `PAID`, refunded or dismissed                  | an open intent past its hour whose listed attempts all ended unpaid (FAILED, CANCELLED, EXPIRED, UNATTEMPTED) → `FAILED` (or `CANCELLED`) |
-| 4        | +25 h                               | every intent (P7b-J: a second payment, a success after a close) | an intent still open → `EXPIRED`, PENDING included (audited, no person); one PENDING or UNKNOWN then is asked once more at +7 days        |
-| 5        | +7 days                             | an intent PENDING or UNKNOWN at +25 h (P7b-K, P7b-x30)          | nothing: a success found goes to review as `LATE_SUCCESS`                                                                                 |
-| `manual` | "Check with SSLCommerz" (staff)     | any intent                                                      | as steps 1–3                                                                                                                              |
+| Step     | When (after the intent was created) | Runs for                                                        | Besides asking                                                                                                                       |
+| -------- | ----------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 1, 2, 3  | +5 min, +30 min, +2 h               | every intent not `PAID`, refunded or dismissed                  | an open intent past its hour whose listed attempts all ended unpaid, one FAILED or CANCELLED → `FAILED` (`CANCELLED` if none failed) |
+| 4        | +25 h                               | every intent (P7b-J: a second payment, a success after a close) | an intent still open → `EXPIRED`, PENDING included (audited, no person); one PENDING or UNKNOWN then is asked once more at +7 days   |
+| 5        | +7 days                             | an intent PENDING or UNKNOWN at +25 h (P7b-K, P7b-x30)          | nothing: a success found goes to review as `LATE_SUCCESS`                                                                            |
+| `manual` | "Check with SSLCommerz" (staff)     | any intent                                                      | as steps 1–3                                                                                                                         |
 
 - **Each step** (`reconcile` job `{ tenantId, intentId, step }`, job id `rec-<intentId>-<step>`, 3
   attempts from a minute apart): a short transaction reads the intent and its credentials; the
