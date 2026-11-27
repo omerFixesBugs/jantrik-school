@@ -14,6 +14,9 @@ import { PaymentEventsService } from './payment-events.service.js';
 import { queueConfirm } from './confirm-queue.js';
 import { PAYMENTS_QUEUE, type IntentJobData, type UnmatchedJobData } from './payments.constants.js';
 import {
+  ATTEMPT_STATUSES,
+  LIVE_ATTEMPTS,
+  OVER_ATTEMPTS,
   PAYMENT_PROVIDER,
   PROVIDER_ERROR_CODES,
   type PaymentProvider,
@@ -253,9 +256,13 @@ export class ConfirmService {
       this.events.record({
         intentId: intent.id,
         kind: 'QUERY',
+        // In ATTEMPT_STATUSES' order, so a paid or pending attempt is never cut off at 40
+        // characters (the payment's page reads it: queryFoundNothingLive).
         outcome: Array.isArray(attempts)
           ? statuses.length > 0
-            ? [...new Set(statuses)].join(',').slice(0, 40)
+            ? ATTEMPT_STATUSES.filter((s) => statuses.includes(s))
+                .join(',')
+                .slice(0, 40)
             : 'NONE'
           : attempts.code,
         tranId: intent.tranId,
@@ -276,15 +283,18 @@ export class ConfirmService {
       failure = (await this.validate(tenantId, intent, creds, attempt.valId)) ?? failure;
     }
     const listed = new Set<string>(attempts.map((a) => a.status));
-    const live = ['VALID', 'VALIDATED', 'PENDING'].some((status) => listed.has(status));
-    const over = listed.has('FAILED') || listed.has('CANCELLED');
+    const live = LIVE_ATTEMPTS.some((status) => listed.has(status));
+    // SSLCommerz's query documents VALID, VALIDATED, PENDING and FAILED only; a session cancelled
+    // before any attempt, or left to time out, may be listed as UNATTEMPTED or EXPIRED. Counted
+    // as over only here, from our own query by our tran_id, never from a signal (P7a2-x31).
+    const over = OVER_ATTEMPTS.some((status) => listed.has(status));
     if (!live && over && failure === null) {
-      // The session is over with nothing paid, and the gateway itself lists the failed or
-      // cancelled attempt: then a failed or cancelled return (the path's word), or an IPN that
-      // said so, closes an open intent. Nothing found closes nothing (P7a2-x26): a return needs
-      // only the tran_id, so anyone who has it (even an <img> link) could otherwise close a
-      // payment still in progress, and the real payment would then wait for review as a late
-      // success. A query alone closes nothing either (P7b expires it).
+      // The session is over with nothing paid, and the gateway itself lists the failed,
+      // cancelled, unattempted or expired attempt: then a failed or cancelled return (the path's
+      // word), or an IPN that said so, closes an open intent. Nothing found closes nothing
+      // (P7a2-x26): a return needs only the tran_id, so anyone who has it (even an <img> link)
+      // could otherwise close a payment still in progress, and the real payment would then wait
+      // for review as a late success. A query alone closes nothing either (P7b expires it).
       const closing = signals
         .filter(
           (s) =>
@@ -301,8 +311,15 @@ export class ConfirmService {
           (closing.fields as Record<string, unknown> | null)?.['status'] === 'CANCELLED'
             ? 'CANCELLED'
             : 'FAILED';
-        // The signal's word when the gateway lists it; otherwise the gateway's.
-        const word = listed.has(said) ? said : listed.has('FAILED') ? 'FAILED' : 'CANCELLED';
+        // The signal's word when the gateway lists it; otherwise the gateway's (FAILED, then
+        // CANCELLED); for an attempt listed only as UNATTEMPTED or EXPIRED, the signal's.
+        const word = listed.has(said)
+          ? said
+          : listed.has('FAILED')
+            ? 'FAILED'
+            : listed.has('CANCELLED')
+              ? 'CANCELLED'
+              : said;
         await this.settle.closeUnpaid(tenantId, intent.id, intent.payerUserId, word);
       }
     }

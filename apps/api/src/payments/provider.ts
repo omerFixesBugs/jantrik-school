@@ -122,6 +122,29 @@ export const ATTEMPT_STATUSES = [
 ] as const;
 export type AttemptStatus = (typeof ATTEMPT_STATUSES)[number];
 
+/** An attempt that is paid or may still be: nothing closes a payment while the query lists one. */
+export const LIVE_ATTEMPTS: readonly AttemptStatus[] = ['VALID', 'VALIDATED', 'PENDING'];
+/**
+ * An attempt that is over with nothing paid (P7a2-x26, x31): with a failed or cancelled signal,
+ * our query listing one of these (and nothing live) closes an open payment.
+ */
+export const OVER_ATTEMPTS: readonly AttemptStatus[] = [
+  'FAILED',
+  'CANCELLED',
+  'EXPIRED',
+  'UNATTEMPTED',
+];
+
+/**
+ * Whether a recorded QUERY event's outcome (its statuses in ATTEMPT_STATUSES' order, or NONE)
+ * lists no paid or pending attempt (P7a2-x31).
+ */
+export function queryFoundNothingLive(outcome: string | null): boolean {
+  if (outcome === null) return false;
+  const listed = outcome.split(',');
+  return !LIVE_ATTEMPTS.some((status) => listed.includes(status));
+}
+
 /** One attempt the Transaction Query API lists for a transaction ID. */
 export interface ProviderAttempt extends PaymentFacts {
   status: AttemptStatus;
