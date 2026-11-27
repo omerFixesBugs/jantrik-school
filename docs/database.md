@@ -35,11 +35,12 @@ the template.
 | `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)            | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                                                                                           |
 | `jantrik_ingest`       | Owner of the `ingest_*` functions (the ZKTeco device receiver) | Same rules as `jantrik_auth`, with `TO jantrik_ingest` policies on the device tables and by column on tenants, modules and attendance settings. See "Devices (step 11)" below.                                                                                                                                                                 |
 | `jantrik_ingest_app`   | The device receiver (`DATABASE_INGEST_URL`)                    | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the four `ingest_*` functions (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants. Its statements stop after 5 s (`statement_timeout`, decision #79): set on the role and sent by the receiver's pool. |
+| `jantrik_login_app`    | The password login (`DATABASE_LOGIN_URL`, P1-J)                | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on `auth_find_user_for_password_login`, the one way to a password hash (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants. Used by `AuthService.loginWithPassword` only (`LoginPrismaService`).          |
 
 **Every running service checks its login at start-up** (`readLoginPrivileges` in
 [`packages/db/src/login-privileges.ts`](../packages/db/src/login-privileges.ts)): the API and the
-worker (`jantrik_app`), the platform module (`jantrik_platform_app`) and the receiver
-(`jantrik_ingest_app`) refuse to start when their login is a superuser, has BYPASSRLS, or can
+worker (`jantrik_app`), the platform module (`jantrik_platform_app`), the password login
+(`jantrik_login_app`) and the receiver (`jantrik_ingest_app`) refuse to start when their login is a superuser, has BYPASSRLS, or can
 become (`pg_has_role(…, 'MEMBER')`) a role that is either, or `pg_read_all_data`,
 `pg_write_all_data` or one of the server file and program roles. The check fails closed: while the
 database does not answer, it is asked again for about 3 minutes, then the service exits.
@@ -66,6 +67,7 @@ docker compose exec postgres psql -U postgres \
   -c "GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
   -c "CREATE ROLE jantrik_ingest_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'ingest_dev_password'" \
   -c "ALTER ROLE jantrik_ingest_app SET statement_timeout = '5s'" \
+  -c "CREATE ROLE jantrik_login_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'login_dev_password'" \
   -c "CREATE DATABASE jantrik_e2e OWNER jantrik_owner"
 # A volume that already granted jantrik_app to jantrik_platform_app (early step 8): take it back.
 docker compose exec postgres psql -U postgres -c "REVOKE jantrik_app FROM jantrik_platform_app"
@@ -161,12 +163,35 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
     tenant A must not edit them.
   - **Only some columns (sprint 1 P1-B):** `jantrik_app` may update `locale`, `color_scheme`,
     `name_bn`, `password_hash`, `password_changed_at` and `updated_at`, and nothing else. The
-    login identifiers (`phone`, `email`) and the global `name` are out of the app's reach, so no
-    app code (or injection) can change how a person signs in. Tests that need another column set
+    login identifiers (`phone`, `email`) and the global `name` are out of the app's reach: no app
+    code (or injection) can change the phone or email a person signs in with. The password hash is
+    not: an injection can set `app.user_id` to anyone with `set_config` and then write their
+    `password_hash` (or create a session for them), which RLS allows for "your own row"
+    (P1-J8 in decisions-pending). Tests that need another column set
     it through the owner role, as that user.
   - **`password_changed_at`:** when the person last set their password themselves (null: never,
     or only by the seed). Written only by `PasswordSettingsService`, with `password_hash`
     ([auth.md](auth.md) → Setting a password).
+  - **`password_hash` is not readable by the app (P1-J).** `jantrik_app` has SELECT on every
+    other column, granted column by column (a table-level SELECT would cover the hash again), and
+    UPDATE on it (setting a password). Only the password login's own login (`jantrik_login_app`)
+    may look a hash up, through `auth_find_user_for_password_login`.
+    - **A new `users` column needs its own `GRANT SELECT (column) ON users TO jantrik_app`.**
+      Without it the app cannot read the column, and whole-row reads (the refresh, `/me`) fail;
+      `schema-safety.test.ts` fails first: it checks that `jantrik_app` may read every column but
+      the hash.
+    - `schema-safety.test.ts` also checks that no login but the owner may read the hash, pins by
+      name every definer function a runtime login may run whose owner can read it, and refuses
+      any function that returns the hash or a whole users row other than the password lookup.
+    - Every Prisma client omits `passwordHash` (`createPrismaClient`, `CLIENT_OMIT` in
+      `packages/db/src/client.ts`), so whole-row reads and updates never name the column. The
+      package's `PrismaClient` type is that client's, so a read without `select` has no
+      `passwordHash` and `new PrismaClient` from the package does not type-check. Two things are
+      **not** stopped by TypeScript, only by the database: an explicit
+      `select: { passwordHash: true }`, and the generated class, which the package's
+      `export *` still exports at runtime.
+    - A test that needs the hash reads it through the owner, in the user's context, with `select`
+      or `omit: { passwordHash: false }`.
   - **No INSERT or DELETE for the app.** Create people with `findOrCreateUser(tx, phone, name)`,
     which needs a tenant context. It returns only the id, so a person from another tenant stays
     hidden until they get a membership here.
@@ -176,7 +201,14 @@ references such as `sections.shift_id`. A row can only point at rows of its own 
   - Each is owned by `jantrik_auth`, pins `search_path = pg_catalog, public, pg_temp` (`pg_temp`
     last, so a temporary table cannot stand in for a real one), and is executable only by
     `jantrik_app`.
-  - `auth_find_user_for_login(phone, email)`
+  - `auth_find_user_for_login(phone, email)`: the user's id, name and locale, no password data
+    (P1-J)
+  - `auth_find_user_for_password_login(phone, email)`: the same plus `password_hash`. **The one
+    exception to "executable only by `jantrik_app`":** only `jantrik_login_app` may run it, and
+    `jantrik_app` may not (P1-J, [auth.md](auth.md) → The API never reads a hash in a request)
+  - `auth_my_password_is_set()`: whether the current user (`app.user_id`) has a password
+    (`GET /me/password`). A request can set `app.user_id` to any id, so this tells an injection
+    whether a given person has a password: yes or no, nothing more
   - `auth_list_my_memberships()`: uses `app.user_id`, with no user parameter. It also returns
     `invited_at`, so the login flow can show pending invitations.
   - `auth_resolve_tenant(slug)`

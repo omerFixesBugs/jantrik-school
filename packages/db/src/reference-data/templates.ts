@@ -4,11 +4,10 @@ import type {
   GpaRounding,
   Locale,
   PassRule,
-  Prisma,
-  PrismaClient,
   RoundingMode,
   ThemePreset,
 } from '../generated/prisma/client.js';
+import type { PrismaClient, TransactionClient } from '../client.js';
 
 // Global reference data: institute types and the templates copied into each new tenant.
 // Adding an institute type (QAWMI, ALIYA, ENGLISH_MEDIUM, TECHNICAL, ...) means adding an entry
@@ -344,7 +343,7 @@ export async function seedTemplates(client: PrismaClient): Promise<void> {
   );
 }
 
-async function upsertTemplates(owner: Prisma.TransactionClient): Promise<void> {
+async function upsertTemplates(owner: TransactionClient): Promise<void> {
   const schemeIds = new Map<string, string>();
   for (const def of GRADING_SCHEMES) {
     const schemeData = {
@@ -442,7 +441,7 @@ async function upsertTemplates(owner: Prisma.TransactionClient): Promise<void> {
 
 /** A template subject's exam parts and combined pass marks, exactly as defined (stale ones go). */
 async function upsertMarks(
-  owner: Prisma.TransactionClient,
+  owner: TransactionClient,
   templateSubjectId: string,
   sub: SubjectDef,
 ): Promise<void> {
