@@ -67,6 +67,7 @@ const KNOWN_ERRORS = [
   'ALREADY_REFUNDED',
   'HELD_BY_PAYMENT',
   'PAYMENT_VOIDED',
+  'DUE_COLLECTED',
 ] as const;
 
 function useDecisionError() {
@@ -545,6 +546,12 @@ export function ApplyDialog({
         // What they owe on the payment day (its fines): the admin confirms again with it.
         const outstanding = (e.body as { outstandingPaisa?: number } | undefined)?.outstandingPaisa;
         if (typeof outstanding === 'number') setServerOwed(outstanding);
+      } else if (e.code === 'DUE_COLLECTED') {
+        // Collected meanwhile (at the counter): the dues again as they are now, ticked afresh.
+        void ledger.refetch();
+        setPicked(null);
+        setServerOwed(null);
+        setAmount(null);
       }
     },
   });

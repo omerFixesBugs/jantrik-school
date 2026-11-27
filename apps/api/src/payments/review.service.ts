@@ -623,6 +623,20 @@ export class ReviewService {
     const advanceIds = await this.dues.ensureAdvance(intent.studentId, input.advance, ctx);
     const rows = await this.collection.openDues(intent.studentId, [...input.dueIds, ...advanceIds]);
     const paidOn = await this.gatewayDay(intent, ctx.timezone, ctx.today);
+    // A chosen due that owes nothing now was just collected (the counter, under the same student
+    // lock, went first; a paid due stays OPEN): say so, rather than "these dues changed"
+    // (review round 2, note 7).
+    const collected = rows
+      .filter((d) => this.collection.owedOn(d, paidOn).total === 0)
+      .map((d) => d.id);
+    if (collected.length > 0) {
+      throw apiError(
+        409,
+        'DUE_COLLECTED',
+        'This due was just collected and owes nothing now: reload and choose again',
+        { dueIds: collected },
+      );
+    }
     const outstanding = this.collection.outstanding(rows, paidOn);
     if (outstanding !== input.expectedOutstandingPaisa) {
       throw apiError(409, 'DUES_CHANGED', 'These dues changed: check the amount again', {

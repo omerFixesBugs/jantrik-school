@@ -143,7 +143,8 @@
       "TRX_ID_USED": "This bank transaction is already recorded as a payment.",
       "ALREADY_REFUNDED": "This money is already recorded as refunded: dismiss this record as a repeat.",
       "HELD_BY_PAYMENT": "This money belongs to an online payment: decide it on that payment.",
-      "PAYMENT_VOIDED": "The payment this request recorded was voided since: reload and decide again."
+      "PAYMENT_VOIDED": "The payment this request recorded was voided since: reload and decide again.",
+      "DUE_COLLECTED": "A ticked due was just collected and owes nothing now: the dues are shown again as they are; choose again."
     }
   }
 }
