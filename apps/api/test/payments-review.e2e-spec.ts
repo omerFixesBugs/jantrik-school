@@ -309,7 +309,7 @@ describe('online payments: the review queue', () => {
       money: { amountPaisa: 100000 },
     });
     // The due it was for is paid now (then: ৳1 000; now: nothing).
-    expect(item.dues[0]).toMatchObject({ principalPaisa: 100000, now: { status: 'PAID' } });
+    expect(item.dues[0]).toMatchObject({ principalPaisa: 100000, now: { totalPaisa: 0 } });
 
     const ledger = (await as('admin').get(`/fees/students/${child().id}/ledger`).expect(200))
       .body as FeeLedger;

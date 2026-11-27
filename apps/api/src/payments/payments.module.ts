@@ -46,6 +46,8 @@ import { PAYMENT_PROVIDER } from './provider.js';
 import { GatewaySignalsController } from './public/gateway-signals.controller.js';
 import { GatewaySignalsService } from './public/gateway-signals.service.js';
 import { ReconcileJobError, ReconcileQueue, ReconcileService } from './reconcile.service.js';
+import { OnlinePaymentsController } from './review.controller.js';
+import { ReviewService } from './review.service.js';
 import { SettleService } from './settle.service.js';
 import { SslcommerzProvider } from './sslcommerz/sslcommerz.provider.js';
 
@@ -149,7 +151,13 @@ export class PaymentsProcessor extends WorkerHost {
 
 @Module({
   imports: [BullModule.registerQueue({ name: PAYMENTS_QUEUE }), FeesModule],
-  controllers: [GatewayAccountController, GuardianPaymentsController, GatewaySignalsController],
+  // The account's controller first: its fixed paths win over OnlinePaymentsController's :id.
+  controllers: [
+    GatewayAccountController,
+    OnlinePaymentsController,
+    GuardianPaymentsController,
+    GatewaySignalsController,
+  ],
   providers: [
     {
       provide: PAYMENTS_CONFIG,
@@ -166,6 +174,7 @@ export class PaymentsProcessor extends WorkerHost {
     ConfirmService,
     ReconcileQueue,
     ReconcileService,
+    ReviewService,
     GatewaySignalsService,
     PaymentsProcessor,
   ],
