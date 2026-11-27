@@ -139,7 +139,11 @@ Audited. Voiding gives no money back by itself: refunds happen outside the app.
 `GET /fees/closing?date`: per collector and method. A payment counts on the day it was recorded;
 a void is deducted on the day it is made (listed with the payment's own date), so a closed day
 never changes afterwards. Totals: collected, voided, net. An accountant sees only their own.
-Online payments are under no collector (the guardian paid them; P7a-V).
+Online payments are under no collector (the guardian paid them; P7a-V) but on a line of their
+own, "Online (SSLCommerz)" (`online`: count, by method, voids made that day, net), in the
+whole-institute closing only (OWNER/ADMIN, no collector chosen; P7b-L). It counts in collected and
+net, never in cash in hand (the money went to the SSLCommerz account); an accountant's own
+closing, or one collector's, has none.
 
 ## Online payments (SSLCommerz)
 
@@ -162,8 +166,20 @@ receipt (S23). Everything about it: [payments.md](payments.md).
 - **The counter** sees a due being paid online (`onlinePending`, a badge) and still takes cash;
   the online money then waits for review (`DUES_CHANGED`), never on a due, never twice.
 - **Voids:** voiding an online payment sends its online payment back to review (`VOIDED`, P7a-G).
-- **Daily closing:** online payments are under no collector (P7a-V); the collections report by
-  collector shows them as one "Online (SSLCommerz)" line.
+- **Daily closing:** online payments are under no collector (P7a-V) and have their own line in the
+  whole-institute closing (P7b-L, above); the collections report by collector shows them as one
+  "Online (SSLCommerz)" line.
+- **Reconciliation (P7b):** SSLCommerz is asked about every online payment by our transaction ID
+  at +5 min, +30 min, +2 h and +25 h, so a lost notification still ends in a receipt or in review;
+  what never completed expires at +25 h.
+- **Who resolves (P7b-D):** an online payment SSLCommerz confirmed but that did not match waits in
+  the review queue (Fees → Online payments → to check). The OWNER or an ADMIN applies the money to
+  chosen dues of the child (a gateway payment, dated the day SSLCommerz took the money, P7b-F),
+  records it as refunded outside the app, or dismisses what holds no money; an ACCOUNTANT sees the
+  queue and may ask SSLCommerz again. Money is never dismissed and never applied twice.
+- **Reports:** the online payments report (Reports → Online payments: by the day each was
+  started and where it stands now, with SSLCommerz's charges, S24; CSV and print) and the
+  dashboard's "to check" count, which includes the queue (P7b-M).
 - **Locks:** step 2a, the intent's row, after the student's lock (`fee-locks.ts`).
 
 ## bKash/Nagad without the gateway

@@ -1639,3 +1639,106 @@ away), each the safer option:
 - **Recorded only:** a gateway payment's request id is its intent's id, so P7b's "apply again after
   a void" needs a request id of its own. Playwright was not run locally (CI runs it; the
   screenshots are its artifacts). Nothing called SSLCommerz: every test used the fake.
+
+## Sprint 1, P7b: reconciliation and review queue (day run 2026-11-27)
+
+Online payments, part 3 ([payments.md](payments.md)): SSLCommerz is asked about every online
+payment by our `tran_id` at +5 min, +30 min, +2 h and +25 h (and once more at +7 days for one still
+pending), healed after a Redis loss by a sweep, the nightly fee run and heal on read; the review
+queue where an OWNER or ADMIN applies the money to chosen dues, records it as refunded outside the
+app, or dismisses what holds no money; online money in the daily closing, a report and the
+dashboard. Stacked on P7a2. S22 and S23 hold as approved: nothing in P7b posts money without a
+person deciding, except a reconciliation that finds a payment passing every check, exactly as an
+IPN would (through `confirm` and `settle`). Built with the plan's recommended default for every one
+of **P7b-A to P7b-O**: A (a query answer only finds `val_id`s; the validation API decides), B (the
+sweep, the nightly per-institute re-queue, heal on read), C (`payment_signal_reviews`), D (OWNER
+and ADMIN decide; ACCOUNTANT reads and checks), E (money ends only applied or refunded outside; a
+remainder recorded as refunded in the same action; dismiss only without money, after a fresh
+check), F (the receipt dated the day SSLCommerz took the money), G (`CURRENCY_MISMATCH` refunded
+only), H (money items never applied), I (refunds outside the app), J (posted payments asked only at
++25 h), K (`EXPIRED` at +25 h, one more query at +7 days), L (the online line in the
+whole-institute closing only), M (the dashboard count and a tab badge, no SMS), N (no undo of
+"refunded outside"), O (events kept for ever). Taken alone during the run (owner away), each the
+safer option:
+
+- **P7b-x1. Only a person's decision moves an intent out of review, in the database**
+  (`payment_intents_resolution_guard`): the plan had the decision columns written only in that
+  move; the trigger also refuses the move without a decision, so no job can ever post or close an
+  item in review (S23).
+- **P7b-x2. Back in review, the decision is cleared from the row by the same trigger** (a void of
+  an applied payment, a success after a dismissal); P7a's `settle` and void hook are unchanged, and
+  the audit log keeps the earlier decision.
+- **P7b-x3. "Money" is a validated `val_id`:** money whose amount SSLCommerz did not report as a
+  well-formed amount (P7a2-x13) can be refunded outside (its amount stays unknown, NULL) but never
+  applied (422 `AMOUNT_UNKNOWN`) or dismissed. Apply is also refused when the `bank_tran_id` is not
+  a usable TrxID (422 `TRX_ID_UNUSABLE`), or when that bank transaction is already a live payment
+  (409 `TRX_ID_USED`, so a duplicate is never posted twice), or when it is more than the money (422
+  `AMOUNT_EXCEEDS_MONEY`).
+- **P7b-x4. A money item (UNMATCHED or DUPLICATE) is dismissed only as a repeat record** of money
+  held elsewhere (an intent holds the same `val_id`, or another item records it and was not itself
+  dismissed), else 422 `HAS_MONEY`; the plan's table offered "dismiss" for every money item, but
+  each one is validated money and P7b-E says money is never dismissed. A deferred trigger checks the
+  same at commit. With one SSLCommerz store shared by two institutes, each would see the other's
+  money as UNMATCHED: here it can only be recorded as refunded outside (never applied, P7b-H).
+- **P7b-x5. Every decision needs a note** (3 to 500 characters), apply included, and there is one
+  note per decision: apply's `refundOutside` carries only the reference, and the note also says how
+  the rest was given back (the plan had a second note for the refund).
+- **P7b-x6. A live gateway payment and its `PAID` intent are matched in the database** (TrxID,
+  amount, day), at commit and from both sides: `fee_payments_gateway_check` is redefined in P7b's
+  migration (with the P7a2 review's match as the coordinator described it: settle's payments carry
+  the intent's amount on its checkout day) and adds applied payments (the applied amount, on a day
+  from the checkout day to the day recorded); `payment_intents_payment_match` checks the same when
+  an intent changes. **Merge point:** P7a2's own fix to that function lands in its migration
+  `20261117510100`; P7b's `20261117520000` redefines it afterwards, so the merge must keep the
+  stricter union of both (P7b's applied branch included).
+- **P7b-x7. Security review of P7b, finding 1 (write skew):** two dismissals of the two records of
+  one payment at once could each see the other standing. The commit-time check now takes an
+  advisory lock on `(institute, val_id)` before it reads, and the API takes the same lock before it
+  inserts; a two-connection test shows one wins.
+- **P7b-x8. Security review of P7b, finding 2 (the match from the intent's side):** the deferred
+  `payment_intents_payment_match` (above), and the guard requires `PAID` → `NEEDS_REVIEW` to drop
+  the payment and `NEEDS_REVIEW` → `PAID` to bring a new one (the CHECKs already implied both; the
+  trigger says so first).
+- **P7b-x9. Reconciliation's due times are counted from the intent's creation** (the plan said
+  "after init"; the init job follows within seconds), so the sweep, the nightly run and the heal
+  compute the same times from the row.
+- **P7b-x10. Reconciliation validates only what the query lists** as VALID or VALIDATED whose
+  `val_id` is not decided (a `VALIDATE` event saying VALID or VALIDATED; one that said PENDING is
+  asked again), at most 5 per step; `val_id`s from signals stay `confirm`'s (with its own budget,
+  P7a2's review), so nobody's made-up `val_id` costs a validation call here.
+- **P7b-x11. Steps 1–3 close an open intent past its hour only when every attempt the query lists
+  ended unpaid in a documented status** (FAILED, CANCELLED, EXPIRED, UNATTEMPTED; CANCELLED when
+  each was cancelled); no attempt at all, a PENDING one or an undocumented status waits for +25 h.
+  This matches the P7a2 review's rule for `confirm`.
+- **P7b-x12. A close by reconciliation is audited with no person** (`{ status, by: 'RECONCILE',
+step }`), as the nightly dues run is.
+- **P7b-x13. "Check now" over its once-a-minute budget answers 429** (the plan said 202); the page
+  says it was asked less than a minute ago. The answer arrives on `lastCheck`.
+- **P7b-x14. The nightly re-queue runs for every institute the fee run visits, before its FEES
+  check**: validated money is posted even with fees switched off (P7a-O).
+- **P7b-x15. A count route for the fee tabs' badge**, `GET /fees/online-payments/review/count`
+  (not in the plan), so every fee page does not load the whole queue.
+- **P7b-x16. The report's charges cover all the money SSLCommerz validated for the day's
+  payments** (`received`: amount, the store's share, charges), whatever happened since: SSLCommerz
+  keeps its charge when a payment is later voided or refunded. The row also counts open and
+  dismissed payments, so the columns add up to the started ones.
+- **P7b-x17. The payment day when SSLCommerz sent no `tran_date`:** the day its validation was
+  recorded; any day is kept between the checkout day and today (P7b-F).
+- **P7b-x18. The closing's `online` is present for every whole-institute closing** (zeros on a
+  quiet day); the page shows the card only when something happened.
+- **P7b-x19. HTTP codes:** apply answers 201 with the receipt (as the counter); refunded outside
+  and dismiss answer 200 with the item.
+- **P7b-x20. Tests and the fake:** the fake SSLCommerz's payer page gains a **Risky** button
+  (paid, reported with `risk_level` 1) for the browser test; the API test harness drops the payments
+  queue's delayed jobs when a test file closes its app and removes the sweep's scheduler (tests call
+  it); P7a2's heal-on-read test uses an intent 2 minutes old (it was 5, when reconciliation's first
+  query now runs); a P7a2 database test's "applied again" now writes a decision; the closing test
+  voids on the same day (a voided payment's void is never changed).
+- **P7b-x21. P7a files edited** (small): `confirm.service.ts` (`validate` public for
+  reconciliation), `checkout.service.ts` (the schedule once the session is made),
+  `fee-online-hooks.ts` (the nightly re-queue and the dashboard count), `fee-dues.processor.ts`,
+  `fee-collection.service.ts` (the online line), `fee-reports.service.ts` (`onlineToReview`), and the
+  tests above. No P7a1 or P7a2 migration was edited; `PaymentCredentialsService` and
+  `secrets.ts` were not touched.
+- **Recorded only:** Playwright was not run locally (CI runs it; the screenshots are its
+  artifacts). Nothing called SSLCommerz: every test used the fake.

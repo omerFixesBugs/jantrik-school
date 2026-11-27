@@ -846,8 +846,41 @@ student_id)`), set on a `GATEWAY` payment only (the channel CHECK: a gateway met
   running as `jantrik_app` can do with it:** store a signal for any institute's slug (which the
   public route already allows) and learn whether a `tran_id` names an intent there and that
   intent's child id; nothing it stores is trusted (only SSLCommerz's validation API decides).
+- **The review decisions** (P7b, migration `20261117520000_payment_reviews`):
+  - `payment_intents` gains a person's decision: `resolved_by_id` (→ `users`), `resolved_at`,
+    `resolution_note` (3 to 500), `applied_paisa`, `refunded_outside_paisa`, `refund_reference`
+    (`^[A-Za-z0-9._/-]{1,100}$`), and the last check by `tran_id` (`last_checked_at`,
+    `last_check_outcome`: an upper-case word or code, both or neither). `jantrik_app` may UPDATE
+    these columns. CHECKs (null-safe; PostgreSQL tests them in the order of their names):
+    who, when and why together, only on a decided intent (`PAID` by a decision exactly when it has
+    an applied amount; `REFUNDED_OUTSIDE` and `DISMISSED` always decided); refunded outside: the
+    whole validated money (`refunded_outside_paisa IS NOT DISTINCT FROM validated_amount_paisa`: an
+    amount that was not well-formed stays unknown) and nothing applied; **dismissed: no validated
+    money** (`val_id IS NULL`; money is never dismissed, P7b-E); applied ≥ 1 and applied +
+    refunded outside = the validated amount; a refund reference only with a refund.
+  - Trigger `payment_intents_resolution_guard` (BEFORE UPDATE, invoker, pinned `search_path`,
+    beside P7a2's `payment_intents_guard`, which runs first): only a person's decision moves an
+    intent out of `NEEDS_REVIEW` (S23: no job ever does), and the decision is written exactly then;
+    `NEEDS_REVIEW` → `PAID` brings a payment, `PAID` → `NEEDS_REVIEW` drops it; when an intent
+    comes back to review (a void, a success after a dismissal) its decision is cleared from the row
+    (the audit log keeps it).
+  - **A live gateway payment matches its `PAID` intent**, at commit and from both sides
+    (`fee_payments_gateway_check`, redefined here, and `payment_intents_payment_match`): the TrxID
+    is the intent's `bank_tran_id`; posted by `settle`, the intent's amount on its checkout day;
+    applied from review, the applied amount on a day from the checkout day to the day recorded.
+  - **`payment_signal_reviews`** (P7b-C; S I for `jantrik_app`, no UPDATE or DELETE: history):
+    the one final decision on a money item (UNIQUE `(tenant_id, event_id)`, composite key to
+    `payment_gateway_events`): `REFUNDED_OUTSIDE` (with the event's amount when well-formed, an
+    optional reference) or `DISMISSED`; a note (3 to 500); who and when. Forced RLS,
+    `tenant_isolation`, index `(tenant_id, resolved_at)`. A deferred constraint trigger
+    (`payment_review_event_check`) checks at commit that the event is a `VALIDATE` with a review
+    reason and that a dismissal is only of a repeat record (an intent holds the same `val_id`, or
+    another review event records it and was not itself dismissed). It first takes an advisory lock
+    on `(tenant, val_id)` (the API takes the same one before it inserts), so two dismissals of the
+    two records of one payment cannot both pass (the second waits and reads the first's commit).
 - Tests: `packages/db/test/payments-rls.test.ts`, `payments-secrets.test.ts`,
-  `payments-intents.test.ts`, `payments-function.test.ts`, `schema-safety.test.ts`.
+  `payments-intents.test.ts`, `payments-function.test.ts`, `payments-reviews.test.ts` (P7b),
+  `schema-safety.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 

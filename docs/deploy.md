@@ -75,7 +75,9 @@ the store's SSLCommerz panel as well. If a firewall in front of the server limit
 allow SSLCommerz's documented addresses (sandbox `103.26.139.87`; live `103.26.139.81` and
 `103.132.153.81`; they have changed between versions of SSLCommerz's documentation, so the API
 does not refuse others, it only gives them a smaller rate budget), and let the server reach
-`sandbox.sslcommerz.com` on 443.
+`sandbox.sslcommerz.com` on 443. The worker asks SSLCommerz about every payment on its own
+(reconciliation, P7b: at +5 min, +30 min, +2 h and +25 h, and a sweep every 10 minutes), so it
+needs that outbound access and `PAYMENT_CREDENTIALS_KEY` as the API does.
 
 Docker publishes container ports past `ufw`. That is why the compose file publishes only 80, 443
 and 4080 to the world, binds the API and the web app to `127.0.0.1`, and publishes Postgres and

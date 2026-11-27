@@ -63,6 +63,21 @@ lastTest}`; the audit stores field names only. A "test connection" job. A code-s
   sentinel credentials never appear in any response, log, `audit_logs`, `sms_logs`, Redis (incl.
   failed BullMQ jobs) or validation error.
 
+### After SSLCommerz (sprint 1 P7): bKash as a second `PaymentProvider`
+
+Online payments through SSLCommerz shipped in sprint 1 P7 ([payments.md](payments.md)), with the
+intents, the decision table, reconciliation and the review queue this plan foresaw. bKash's
+tokenized checkout becomes **a second `PaymentProvider`** behind the same intents, `settle` and
+review queue: its own credentials on `payment_gateway_accounts` (provider `BKASH_TOKENIZED`, an
+enum value of its own migration), the token cache above, and its own reconciliation of `execute`
+(query the payment, then execute a verified one) in place of SSLCommerz's transaction query.
+
+Later items from P7b (decisions P7b-A to P7b-O): live mode; SSLCommerz's refund API (it needs a
+registered public IP and live mode, P7b-I); applying unmatched or duplicate money to a child an
+admin picks (P7b-H); a per-institute notification of new review items (an SMS to the owner costs
+the institute's cap, P7b-M); an OWNER-only reopen of a "refunded outside" with a reason (P7b-N);
+pruning old gateway events (P7b-O keeps them for ever).
+
 ## Module keys for the sprint 1 features (before the first paid invoice)
 
 Agreed with the owner on 2026-11-14 (decision S3 of [plans/sprint-1.md](plans/sprint-1.md)).

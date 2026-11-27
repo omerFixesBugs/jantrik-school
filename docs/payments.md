@@ -3,24 +3,29 @@
 Sprint 1 P7a: a guardian pays chosen dues in full through SSLCommerz's hosted page (bKash, Nagad,
 Rocket, cards), sandbox only this sprint. This page covers **P7a1: the gateway account and the
 client** and **P7a2: checkout to receipt** (the guardian's checkout, the payer's return and the
-IPN, confirmation with SSLCommerz, the decision that posts or holds the money, the receipt).
-Reconciliation and the review queue (P7b) are added here when they land. The owner's decisions:
-S21 to S24 (approved), P7a-A to P7a-V ([decisions-pending.md](decisions-pending.md) → Sprint 1,
-P7a1 and P7a2). Fees in general: [fees.md](fees.md).
+IPN, confirmation with SSLCommerz, the decision that posts or holds the money, the receipt) and
+**P7b: reconciliation and the review queue** (SSLCommerz asked about every payment on a fixed
+schedule, the queue where a person applies, refunds or dismisses, and online money in the
+reports). The owner's decisions: S21 to S24 (approved), P7a-A to P7a-V and P7b-A to P7b-O
+([decisions-pending.md](decisions-pending.md) → Sprint 1, P7a1, P7a2 and P7b). Fees in general:
+[fees.md](fees.md).
 
 **The owner's rule (S23):** anything SSLCommerz flags as risky, or any mismatch in amount,
 currency or transaction ID, goes to review and is never posted automatically. In P7a such an
-online payment waits in `NEEDS_REVIEW` with its reasons and the money recorded, with no receipt;
-P7b brings the screen where a person deals with it.
+online payment waits in `NEEDS_REVIEW` with its reasons and the money recorded, with no receipt,
+until a person decides (the review queue, below). Nothing in P7b posts money without a person
+deciding, except a reconciliation that finds a payment passing every check, exactly as an IPN
+would (through `confirm` and `settle`); the database itself refuses any move out of review that
+is not a person's decision.
 
 ## Who does what
 
-| Who               | What                                                                                                                                                                                                                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OWNER             | Saves the store ID and password (write-only), tests the connection, turns online payments on and off, copies the IPN address into the SSLCommerz panel                                                                                                                                            |
-| ADMIN, ACCOUNTANT | Nothing in the settings: the page and its API are the owner's alone (where money goes). The admin sees no "Online payments" tab; the page says who sets it up. At the counter they see a due being paid online (a badge) and still take cash; OWNER/ADMIN may void an online payment as any other |
-| GUARDIAN          | Pays chosen dues of their own child in full, online (P7a2); sees the payment's state and the receipt                                                                                                                                                                                              |
-| Everyone else     | Nothing                                                                                                                                                                                                                                                                                           |
+| Who               | What                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OWNER             | Saves the store ID and password (write-only), tests the connection, turns online payments on and off, copies the IPN address into the SSLCommerz panel                                                                                                                                                                                                                                                                        |
+| ADMIN, ACCOUNTANT | Nothing in the settings: the page and its API are the owner's alone (where money goes). The admin sees no "Online payments" tab; the page says who sets it up. At the counter they see a due being paid online (a badge) and still take cash; OWNER/ADMIN may void an online payment as any other. The online payments list and the review queue: both read them and may ask SSLCommerz again; OWNER and ADMIN decide (P7b-D) |
+| GUARDIAN          | Pays chosen dues of their own child in full, online (P7a2); sees the payment's state and the receipt                                                                                                                                                                                                                                                                                                                          |
+| Everyone else     | Nothing                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 The account's routes are `@RequireModule('FEES')` and `@Roles('OWNER')`, the guardian's
 `@RequireModule('FEES')` and `@Roles('GUARDIAN')`: with the fee module off they answer 403, like
@@ -229,18 +234,165 @@ more.
 - **The receipt** of a gateway payment: "অনলাইনে (SSLCommerz) · <method>", the bank transaction
   ID and our `tran_id` (ASCII), and "Paid online" instead of a collector (no signature line).
   `FeeReceipt` has `channel: 'GATEWAY'` and `online: { tranId, bankTranId, instrument }`.
-- **The daily closing** lists online payments under no collector (P7a-V; P7b adds their own
-  line). The collections report by collector shows them as one "Online (SSLCommerz)" line.
+- **The daily closing** lists online payments under no collector (P7a-V) and on their own line
+  in the whole-institute closing (P7b-L, below). The collections report by collector shows them as
+  one "Online (SSLCommerz)" line.
 - **A void** of a gateway payment (OWNER/ADMIN, the usual route) sends its intent back to
-  `NEEDS_REVIEW` with `VOIDED` and without its payment, in the same transaction (P7a-G); P7b applies
-  it again or marks it refunded. The database refuses a void that leaves the intent holding it.
+  `NEEDS_REVIEW` with `VOIDED` and without its payment, in the same transaction (P7a-G); a person
+  applies it again or records it as refunded (the review queue). The database refuses a void that
+  leaves the intent holding it.
 - **The counter** sees `onlinePending` on a due an open payment names (an "online payment in
   progress" badge) and still takes cash: the online money then waits for review as
   `DUES_CHANGED`, never on a due, never twice (review focus 2). Online first: the counter's stale
   amount is a 409 `DUES_CHANGED`.
 - The fee module reads nothing of the payments tables: the payments module registers
   `FeeOnlineHooks` at start (the pending dues, the guardian's `online`, the receipt's online part,
-  the void).
+  the void, the nightly re-queue and the dashboard's count, P7b).
+
+## Reconciliation (P7b)
+
+SSLCommerz is asked about every online payment by our `tran_id` (the transaction query API) on a
+fixed schedule, so a lost IPN and a closed browser tab still end in a receipt or in review. A
+query answer never posts by itself (P7b-A): every successful attempt it lists whose `val_id` has
+not been decided yet (no `VALIDATE` event saying `VALID` or `VALIDATED`; one that said
+`PENDING` is asked again) goes through the validation API and `settle`
+(`ConfirmService.validate`), exactly as an IPN does: one decision path for every signal. At most
+5 new `val_id`s per step.
+
+| Step     | When (after the intent was created) | Runs for                                                        | Besides asking                                                                                                                            |
+| -------- | ----------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 1, 2, 3  | +5 min, +30 min, +2 h               | every intent not `PAID`, refunded or dismissed                  | an open intent past its hour whose listed attempts all ended unpaid (FAILED, CANCELLED, EXPIRED, UNATTEMPTED) → `FAILED` (or `CANCELLED`) |
+| 4        | +25 h                               | every intent (P7b-J: a second payment, a success after a close) | an intent still open → `EXPIRED`, PENDING included (audited, no person); one PENDING then is asked once more at +7 days                   |
+| 5        | +7 days                             | an intent PENDING at +25 h (P7b-K)                              | nothing: a success found goes to review as `LATE_SUCCESS`                                                                                 |
+| `manual` | "Check with SSLCommerz" (staff)     | any intent                                                      | as steps 1–3                                                                                                                              |
+
+- **Each step** (`reconcile` job `{ tenantId, intentId, step }`, job id `rec-<intentId>-<step>`, 3
+  attempts from a minute apart): a short transaction reads the intent and its credentials; the
+  query runs outside any transaction; a `QUERY` event and the intent's `last_checked_at` and
+  `last_check_outcome` (`SUCCESS_FOUND`, `PENDING`, `NO_SUCCESS`, or the provider's error code)
+  are written; then the validations. Nothing is closed when in doubt: no attempt at all, a
+  `PENDING` one or a status SSLCommerz does not document changes nothing before +25 h.
+- **An intent in review** is only asked about: `settle` records what it finds (a second payment is
+  a `DUPLICATE` item) and never moves it out of review (S23).
+- **A gateway error** (or unreadable credentials) fails the step with a fixed code; BullMQ retries
+  it; after the last attempt the step stays listed for the sweep.
+- **The schedule:** once the session is made (`REDIRECTED`), the init job lists steps 1–4 in the
+  Redis sorted set `payments:open` (`<tenantId>:<intentId>:<step>`, scored by when each is due)
+  and adds their delayed jobs. A step's member is removed only when the step is done. A session
+  that failed gets none.
+
+### Healing after a Redis loss (P7b-B)
+
+- **`payments-sweep`** (every 10 minutes, one scheduler for all instances): every listed step
+  overdue by more than 2 minutes is added again with its own job id (nothing while that job
+  exists); a step listed more than 8 days ago is dropped. It reads Redis only.
+- **The nightly fee run** (00:30 Asia/Dhaka) visits each institute in `fees:tenants` and, in that
+  institute's own context, lists again its open intents older than an hour (the latest due step now,
+  the later ones at their times), the intents posted in the last 26 hours whose +25 h query has not
+  run, and the expired ones still PENDING at +25 h (their +7 day query). No query ever runs across
+  institutes. It runs before the fee module check: validated money is posted even with fees off.
+- **Heal on read:** the guardian's payment page (P7a2) and the review queue (an open intent whose
+  latest due step is more than 10 minutes overdue and has not run is asked about now, at most once
+  a minute per institute).
+
+## The review queue (P7b)
+
+`/fees/online-payments/review` (Fees → Online payments → to check): **intents** in `NEEDS_REVIEW`
+and **money items** (`VALIDATE` events marked `UNMATCHED` or `DUPLICATE` with no decision yet),
+oldest first. Each shows why in plain words, the money SSLCommerz confirmed (amount, method, the
+bank's transaction ID, when, the store's share, the risk), the child, the guardian who paid, the
+dues with what they owed then and owe now, and when SSLCommerz was last asked. Unmatched IPNs that
+SSLCommerz said were not this store's payments are not items: a collapsed "checked, not a
+payment" section lists them for 30 days.
+
+| Route                                                          | Who                      | Does                                                                                                           |
+| -------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `GET /fees/online-payments?status&from&to&q&page`              | OWNER, ADMIN, ACCOUNTANT | intents, newest first, 50 a page; `q`: our `tran_id`, the `bank_tran_id` or the student ID                     |
+| `GET /fees/online-payments/:id`                                | OWNER, ADMIN, ACCOUNTANT | one intent with its dues, its events (whitelisted fields) and its decision                                     |
+| `POST /fees/online-payments/:id/check`                         | OWNER, ADMIN, ACCOUNTANT | 202 `{ requestedAt }`: a `manual` step (once a minute per intent, else 429); the answer arrives on `lastCheck` |
+| `GET /fees/online-payments/review`, `…/review/count`           | OWNER, ADMIN, ACCOUNTANT | the queue (heals overdue checks); the number alone (the fee tabs' badge)                                       |
+| `POST /fees/online-payments/:id/apply`                         | OWNER, ADMIN             | below; 201 with the receipt                                                                                    |
+| `POST /fees/online-payments/:id/refunded-outside`              | OWNER, ADMIN             | below                                                                                                          |
+| `POST /fees/online-payments/:id/dismiss`                       | OWNER, ADMIN             | below                                                                                                          |
+| `POST /fees/online-payments/signals/:eventId/refunded-outside` | OWNER, ADMIN             | a money item                                                                                                   |
+| `POST /fees/online-payments/signals/:eventId/dismiss`          | OWNER, ADMIN             | a money item, as a repeat record only                                                                          |
+| `GET /fees/reports/online-payments`, `…/csv`                   | OWNER, ADMIN, ACCOUNTANT | the report (below)                                                                                             |
+
+All `@RequireModule('FEES')`; another institute's id is a 404 (RLS). Every decision needs a note
+(3 to 500 characters), runs in the request transaction under the tenant's fee lock (shared), the
+student's lock and the intent's row lock (a money item: its intent's when it has one, then the
+advisory lock on its `val_id`), re-checks the state on the locked row (409 `ALREADY_RESOLVED`
+for the second of two people) and is audited with the old and new state, the amounts, the dues and
+the note (`payment_intent` UPDATE; `payment_signal_review` CREATE; applying also `fee_payment`
+CREATE through `recordPayment`).
+
+- **Apply** (intents with validated money in taka): `{ dueIds, advance, applyPaisa,
+expectedOutstandingPaisa, refundOutside?: { reference }, note, clientRequestId }`. The chosen dues
+  of the intent's child (and periods paid ahead, as at the counter); one gateway payment through
+  `recordPayment` with the intent's method, its `bank_tran_id` as the TrxID, **paid on the day
+  SSLCommerz took the money** (its `tran_date` in the institute's timezone, else the day its
+  validation was recorded, never before the checkout day nor after today; P7b-F), recorded today,
+  the admin as the actor; the intent `PAID` with `applied_paisa`. Less than the money only with
+  `refundOutside`: the rest is recorded as given back outside the app in the same action (P7b-E).
+  Errors: 409 `ALREADY_RESOLVED`, `DUES_CHANGED { outstandingPaisa }` (what the chosen dues owe on
+  the payment day differs from what was shown), `TRX_ID_USED` (that bank transaction is already a
+  live payment); 422 `NO_MONEY`, `CURRENCY_NOT_APPLICABLE` (P7b-G), `AMOUNT_UNKNOWN`,
+  `TRX_ID_UNUSABLE`, `AMOUNT_EXCEEDS_MONEY`, `AMOUNT_EXCEEDS_DUE`, `REMAINDER_NEEDS_REFUND
+{ remainderPaisa }`, `IDEMPOTENCY_MISMATCH`; a retried `clientRequestId` → the same receipt.
+- **Refunded outside** (intents with validated money; money items): `{ note, reference? }`, the
+  whole money given back outside the app (SSLCommerz's merchant panel or by hand; the refund API is
+  not used, P7b-I). Final: no undo in the app (P7b-N). 422 `NO_MONEY`.
+- **Dismiss**: an intent **without** validated money (its own: a `TRAN_ID_MISMATCH` carries
+  another payment's money elsewhere) and only after a check in the last 15 minutes found no
+  success (409 `CHECK_FIRST`, 422 `HAS_MONEY`); its dues are free again and a success that still
+  arrives brings it back as `LATE_SUCCESS`. A money item only as a **repeat record** of money held
+  elsewhere: an intent holds the same `val_id`, or another item records it and was not itself
+  dismissed (422 `HAS_MONEY`). Money is never dismissed (P7b-E).
+- **Money items are never applied** to dues (P7b-H): unmatched money did not come through our
+  checkout (no snapshot, no payer; two institutes sharing one store would even see each other's
+  money as unmatched), and money paid twice is normally given back.
+- **A void of an applied payment** sends the intent back to review (`VOIDED`); the decision is
+  cleared from the row (the audit log keeps it) and it may be applied again: one live payment.
+- **What the guardian sees** (P7a's view): `PAID` with the receipt after an apply, `REFUNDED` after
+  a refund outside, `NOT_PAID` after a dismissal. Never the reasons.
+- **The database:** only a person's decision moves an intent out of review, and the decision is
+  written exactly then (`payment_intents_resolution_guard`); a refunded intent records the whole
+  validated amount, applied + refunded outside is the validated amount, a dismissed one holds no
+  money (CHECKs); a live gateway payment and its `PAID` intent agree on the amount, the TrxID and
+  the day, checked at commit from both sides; `payment_signal_reviews` holds one final decision
+  per item, history only. Details: [database.md](database.md) → Online payments.
+
+### The web pages
+
+- **`/fees/online-payments`** (a fees tab "অনলাইন পেমেন্ট", OWNER, ADMIN, ACCOUNTANT; the tab shows
+  how many items wait): filters (state, dates), search, the list (state, child, amount in Bangla
+  digits, our `tran_id` in ASCII, when) and "Check with SSLCommerz" on an open or reviewed one.
+- **`/fees/online-payments/review`**: the items as cards; **Apply** (the child's open dues and
+  periods ahead as the counter picks them, the amount to apply, the rest with its refund
+  reference, the note), **Refunded outside** and **Dismiss** dialogs with a required note
+  (Dismiss enabled only after a fresh check found nothing). An accountant sees the cards without
+  the buttons.
+
+## Reports (P7b)
+
+- **The online payments report** (`GET /fees/reports/online-payments?from&to`, Reports → Online
+  payments, OWNER/ADMIN/ACCOUNTANT; at most a year): per day each payment was started, in the
+  institute's timezone: started (count, amount asked), open, paid now (count, amount of each
+  payment: an applied one's applied amount), failed or cancelled, expired, in review (count, money
+  validated), refunded outside (count, amount, whole or the rest of an applied one), dismissed, and
+  all the money SSLCommerz validated for them with the store's share and **SSLCommerz's charges**
+  (amount − store amount where both are known; S24), whatever happened since. `…/csv`: a BOM,
+  ASCII digits, bn or en headers, formula-safe cells.
+- **The daily closing** (P7b-L): `FeeClosing.online` (count, amount, by method, voids made that day,
+  net) for gateway payments recorded that day and gateway voids made that day, in the
+  whole-institute closing only (OWNER/ADMIN, no collector chosen), counted in collected and net,
+  never in cash in hand. An accountant's own closing has none.
+- **The dashboard** (P7b-M): `FeeSummary.onlineToReview` (intents in review and money items); the
+  "to check" tile sums it with the bKash/Nagad transfers waiting and links to the larger part. No
+  SMS.
+- The online report counts by the day a payment was **started**; the closing and the collections
+  report by the day a payment was **recorded**. They agree for a day whose payments were started,
+  decided and recorded that day (review focus 6, `payments-reports.e2e-spec.ts`).
 
 ## Locks and idempotency
 
@@ -251,6 +403,12 @@ more.
   unless the call failed); the decision table under the row lock; `fee_payments_live_intent` (one
   live payment per intent) and `fee_payments_live_trx` in the database; the payment's request id is
   the intent's id; the receipt SMS's dedupe key.
+- **The review queue (P7b)** takes the same locks (tenant shared → student → intent row), so a
+  decision, a late signal's `settle`, the counter and a void queue up on the student; decisions
+  on a money item then take an advisory lock on its `val_id` (`payment-locks.ts`), which the
+  database's commit-time check takes again. An applied payment's request id is the admin's
+  `clientRequestId` (a retry gets the same receipt), so applying again after a void makes a new
+  payment.
 
 ## Credentials at rest
 
@@ -339,8 +497,26 @@ Nothing in CI or in any local test calls SSLCommerz, the sandbox included.
   `payments-settle.e2e-spec.ts` (review focus 1 to 8), `apps/api/src/payments/credentials-scan.spec.ts`,
   `settle-decision.spec.ts`, `public/no-tenant-access.spec.ts`, `apps/web/e2e/payments.spec.ts`
   (the owner's setup; a guardian paying and cancelling on the fake's page; the counter's badge).
+- P7b: `packages/db/test/payments-reviews.test.ts` (the decision columns, the guard, money never
+  dismissed, two connections dismissing at once, the payment and intent matched from both sides),
+  `apps/api/test/payments-reconcile.e2e-spec.ts` (the schedule, every step, expiry, a late success,
+  the sweep, the nightly re-queue, heal on read; steps run directly with a fake clock),
+  `payments-review.e2e-spec.ts` (the queue, every action, two people at once, a late signal,
+  audit) and `payments-reports.e2e-spec.ts` (review focus 6), `apps/web/e2e/payments-review.spec.ts`
+  (paid at the counter while paying online, applied ahead; a risky payment; the accountant's view;
+  the closing's online line). The fake's payer page has a **Risky** button (paid, reported with
+  `risk_level` 1).
 - **Playwright** also gives the API `WEB_PUBLIC_URL=http://localhost:3000`, so the fake's
   payer page brings the browser back to the web app, and the fake posts its IPN to the API.
+
+## The owner's sandbox steps (P7b)
+
+With the sandbox store on (above) and `API_PUBLIC_URL` reachable by SSLCommerz (a tunnel in
+development), pay a due as a guardian with the sandbox's test card, then: close the browser tab
+before it returns and wait for the +5 minute query (the payment is posted by reconciliation);
+pay a due while the accountant takes it in cash (it waits in the review queue as "paid another
+way": apply it to the next month); look at the day's closing (the online line) and Reports →
+Online payments (SSLCommerz's charges). Nothing in CI or in a local test calls SSLCommerz.
 
 ## Commands (the owner's)
 
