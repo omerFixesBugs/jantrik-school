@@ -161,6 +161,13 @@ export function DueCard({
         ) : due.overdue ? (
           <StatusPill kind="overdue">{t('ledger.overduePill')}</StatusPill>
         ) : null}
+        {/* A guardian is paying it online right now (P7a2): cash is still taken; the online
+            money then waits for the school's review instead of being posted twice. */}
+        {owing && due.onlinePending && (
+          <span data-testid="fees-due-online-pending">
+            <Pill tone="info">{t('ledger.onlinePending')}</Pill>
+          </span>
+        )}
       </span>
     </>
   );

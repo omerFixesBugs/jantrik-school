@@ -114,6 +114,8 @@ export default defineConfig({
         // and a public address so an institute can turn online payments on.
         SSLCOMMERZ_BASE_URL: FAKE_SSLCOMMERZ_URL,
         API_PUBLIC_URL: 'http://localhost:4000',
+        // Where the payer's browser comes back to from the gateway (P7a2).
+        WEB_PUBLIC_URL: 'http://localhost:3000',
       },
     },
     {

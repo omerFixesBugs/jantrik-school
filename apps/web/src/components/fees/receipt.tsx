@@ -18,16 +18,20 @@ export type ReceiptPaper = 'a5' | '80';
  * only this (`.print-area`) on its own page size: A5, or 80 mm thermal paper (named @page rules
  * in globals.css, so the A4 register stays as it is). Black on white, no colour needed: a void
  * receipt says VOID in words, with the reason. Amounts in Bangla digits in bn; the receipt
- * number, student ID and TrxID always ASCII (identifiers).
+ * number, student ID and TrxID always ASCII (identifiers). An online payment (channel GATEWAY,
+ * sprint 1 P7a2) says so, with the bank's and our transaction IDs, and "paid online" instead of a
+ * collector's name.
  */
 export function Receipt({ receipt, paper = 'a5' }: { receipt: FeeReceipt; paper?: ReceiptPaper }) {
   const t = useTranslations('fees.common.receipt');
   const tMethod = useTranslations('fees.common.method');
+  const tChannel = useTranslations('fees.common.channel');
   const locale = useLocale() as 'bn' | 'en';
   const period = usePeriodLabel();
   const isVoid = receipt.status === 'VOID';
   const fine = receipt.lines.reduce((s, l) => s + l.finePaisa, 0);
   const narrow = paper === '80';
+  const online = receipt.channel === 'GATEWAY' ? receipt.online : null;
   return (
     <article
       className={cn(
@@ -153,13 +157,32 @@ export function Receipt({ receipt, paper = 'a5' }: { receipt: FeeReceipt; paper?
       <dl className="grid gap-y-1">
         <div className="flex flex-wrap gap-x-1">
           <dt className="shrink-0">{t('method')}:</dt>
-          <dd>{tMethod(receipt.method)}</dd>
+          <dd data-testid="receipt-method">
+            {online
+              ? `${tChannel('GATEWAY')} · ${tMethod(receipt.method)}`
+              : tMethod(receipt.method)}
+          </dd>
         </div>
-        {receipt.trxId && (
-          <div className="flex flex-wrap gap-x-1">
-            <dt className="shrink-0">{t('trxId')}:</dt>
-            <dd className="font-mono">{receipt.trxId}</dd>
-          </div>
+        {online ? (
+          <>
+            <div className="flex flex-wrap gap-x-1">
+              <dt className="shrink-0">{t('gateway.bankTranId')}:</dt>
+              <dd className="font-mono break-all" data-testid="receipt-bank-tran-id">
+                {online.bankTranId}
+              </dd>
+            </div>
+            <div className="flex flex-wrap gap-x-1">
+              <dt className="shrink-0">{t('gateway.tranId')}:</dt>
+              <dd className="font-mono break-all">{online.tranId}</dd>
+            </div>
+          </>
+        ) : (
+          receipt.trxId && (
+            <div className="flex flex-wrap gap-x-1">
+              <dt className="shrink-0">{t('trxId')}:</dt>
+              <dd className="font-mono">{receipt.trxId}</dd>
+            </div>
+          )
         )}
         {receipt.senderPhone && (
           <div className="flex flex-wrap gap-x-1">
@@ -171,7 +194,8 @@ export function Receipt({ receipt, paper = 'a5' }: { receipt: FeeReceipt; paper?
             </dd>
           </div>
         )}
-        {receipt.collectedBy && (
+        {online && <p data-testid="receipt-paid-online">{t('gateway.paidOnline')}</p>}
+        {!online && receipt.collectedBy && (
           <div className="flex flex-wrap gap-x-1">
             <dt className="shrink-0">{t('collectedBy')}:</dt>
             <dd>
@@ -199,7 +223,7 @@ export function Receipt({ receipt, paper = 'a5' }: { receipt: FeeReceipt; paper?
       {receipt.institute.receiptNote && (
         <p className="text-center">{receipt.institute.receiptNote}</p>
       )}
-      {!narrow && (
+      {!narrow && !online && (
         <p className="mt-6 self-end border-t border-black px-6 pt-1 text-center">
           {t('signature')}
         </p>
