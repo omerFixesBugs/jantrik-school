@@ -24,6 +24,8 @@ import {
   type FeeFrequency,
   type FeeHeadKind,
   type FeeMobileMethod,
+  type FeePaymentChannel,
+  type FeePaymentMethod,
 } from './fees.js';
 
 const nameSchema = z.string().trim().min(1).max(100);
@@ -407,6 +409,11 @@ export interface FeeDueView {
   cancelReason: string | null;
   /** Past its due date with something still owed. */
   overdue: boolean;
+  /**
+   * An online payment that names this due is in progress (open, not expired): the counter shows
+   * it and still takes cash; the online money then waits for review (P7a2, review focus 2).
+   */
+  onlinePending: boolean;
 }
 
 /** A period not generated yet that can be paid ahead (current year only). */
@@ -447,9 +454,6 @@ export interface FeeLedger {
 }
 
 // ─────────────────────────── Collection, receipts, void, closing ───────────────────────────
-
-export const FEE_PAYMENT_METHODS = ['CASH', 'BKASH', 'NAGAD'] as const;
-export type FeePaymentMethod = (typeof FEE_PAYMENT_METHODS)[number];
 
 /** POST /fees/payments (OWNER/ADMIN/ACCOUNTANT): cash at the counter for one student. */
 export const collectFeeSchema = z
@@ -501,8 +505,14 @@ export interface FeeReceipt {
     by: { id: string; name: string; nameBn: string | null };
   } | null;
   method: FeePaymentMethod;
-  channel: 'COUNTER' | 'MOBILE_MANUAL';
+  channel: FeePaymentChannel;
+  /** COUNTER: none; MOBILE_MANUAL: the guardian's TrxID; GATEWAY: the gateway's bank_tran_id. */
   trxId: string | null;
+  /**
+   * A gateway payment (channel GATEWAY): our transaction ID, the gateway's own, and the instrument
+   * as the gateway named it (e.g. "BKASH-BKash"). All ASCII identifiers.
+   */
+  online: { tranId: string; bankTranId: string; instrument: string | null } | null;
   /** The sender's number, masked. */
   senderPhone: string | null;
   amountPaisa: number;
@@ -516,6 +526,7 @@ export interface FeeReceipt {
     roll: number | null;
   };
   lines: FeeReceiptLine[];
+  /** Who took the cash or checked the transfer; null for an online payment (paid online). */
   collectedBy: { id: string; name: string; nameBn: string | null } | null;
   /** The student's balance today (not at the time of the receipt). */
   balanceTodayPaisa: number;
@@ -673,6 +684,17 @@ export interface FeeSubmissionView {
   createdAt: string;
 }
 
+/** Online payment for a guardian (P7a2): whether it is on, and the child's payment in progress. */
+export interface FeeGuardianOnline {
+  /** The institute's SSLCommerz account is on and the server has its public addresses. */
+  available: boolean;
+  /**
+   * The child's online payment started less than an hour ago and not finished: another checkout
+   * waits for it. `mine`: this guardian started it (no name of whoever else did).
+   */
+  inProgress: { intentId: string; mine: boolean; createdAt: string } | null;
+}
+
 /** GET /me/children/:id/fees: a guardian's view of one child's fees. */
 export interface FeeGuardianView {
   today: IsoDate;
@@ -680,6 +702,7 @@ export interface FeeGuardianView {
   submissions: FeeSubmissionView[];
   /** Where to send money: the institute's active numbers. */
   accounts: Pick<FeeMobileAccountView, 'id' | 'method' | 'phone' | 'kind' | 'label'>[];
+  online: FeeGuardianOnline;
 }
 
 // ─────────────────────────── Reports, reminders, dashboard ───────────────────────────

@@ -615,6 +615,7 @@ model User {
 
   paymentAccountsCredentialsUpdated PaymentGatewayAccount[] @relation("PaymentAccountCredentialsUpdatedBy")
   paymentAccountsTested             PaymentGatewayAccount[] @relation("PaymentAccountTestedBy")
+  paymentIntentsPaid                PaymentIntent[]         @relation("PaymentIntentPayer")
 
   @@map("users")
 }
@@ -732,6 +733,9 @@ model Tenant {
   smsBroadcastTargets SmsBroadcastTarget[]
 
   paymentGatewayAccounts PaymentGatewayAccount[]
+  paymentIntents         PaymentIntent[]
+  paymentIntentDues      PaymentIntentDue[]
+  paymentGatewayEvents   PaymentGatewayEvent[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -1114,6 +1118,8 @@ model Student {
   feePaymentAllocations   FeePaymentAllocation[]
   feeMobileSubmissions    FeeMobileSubmission[]
   feeMobileSubmissionDues FeeMobileSubmissionDue[]
+  paymentIntents          PaymentIntent[]
+  paymentIntentDues       PaymentIntentDue[]
   examCandidates          ExamCandidate[]
   devicePeople            DevicePerson[]
   admissionApplication    AdmissionApplication?
@@ -2618,6 +2624,7 @@ model FeeDue {
   fineWaivers  FeeFineWaiver[]
   allocations  FeePaymentAllocation[]
   submissions  FeeMobileSubmissionDue[]
+  intentDues   PaymentIntentDue[]
 
   @@unique([tenantId, id])
   /// Composite target for rows that must name the due's own student (allocations, waivers).
@@ -2655,6 +2662,10 @@ enum FeePaymentMethod {
   CASH
   BKASH
   NAGAD
+  /// Online only (SSLCommerz, S21): Rocket, a card, any other instrument the gateway reports.
+  ROCKET
+  CARD
+  OTHER_ONLINE
 
   @@map("fee_payment_method")
 }
@@ -2664,6 +2675,8 @@ enum FeePaymentChannel {
   COUNTER
   /// A bKash/Nagad transfer to the institute's own number, verified by staff.
   MOBILE_MANUAL
+  /// Paid online through the institute's gateway account (SSLCommerz), confirmed by its API.
+  GATEWAY
 
   @@map("fee_payment_channel")
 }
@@ -2715,6 +2728,8 @@ model FeePayment {
   /// The client's id for this attempt: a retried request returns the same receipt.
   clientRequestId String            @map("client_request_id") @db.Uuid
   status          FeePaymentStatus  @default(ACTIVE)
+  /// GATEWAY only: the online payment it records (exactly one live payment per intent).
+  paymentIntentId String?           @map("payment_intent_id") @db.Uuid
   voidedAt        DateTime?         @map("voided_at") @db.Timestamptz(3)
   voidedById      String?           @map("voided_by_id") @db.Uuid
   voidReason      String?           @map("void_reason")
@@ -2727,6 +2742,9 @@ model FeePayment {
   voidedBy    User?                  @relation("FeePaymentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   allocations FeePaymentAllocation[]
   submissions FeeMobileSubmission[]
+  /// Same student: an online payment only ever pays its own child's dues.
+  paymentIntent  PaymentIntent?  @relation("FeePaymentIntent", fields: [tenantId, paymentIntentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  intentsHolding PaymentIntent[] @relation("PaymentIntentFeePayment")
 
   @@unique([tenantId, id])
   @@unique([tenantId, id, studentId])
@@ -2734,6 +2752,8 @@ model FeePayment {
   @@unique([tenantId, clientRequestId])
   /// A bKash/Nagad transaction ID pays once per method (again only after that payment is void).
   @@unique([tenantId, method, trxId], map: "fee_payments_live_trx", where: raw("status = 'ACTIVE' AND trx_id IS NOT NULL"))
+  /// One live payment per online payment intent (a voided one may be applied again, P7a-G).
+  @@unique([tenantId, paymentIntentId], map: "fee_payments_live_intent", where: raw("status = 'ACTIVE' AND payment_intent_id IS NOT NULL"))
   @@index([tenantId, studentId])
   @@index([tenantId, recordedOn])
   @@map("fee_payments")
@@ -3947,8 +3967,184 @@ model PaymentGatewayAccount {
   tenant               Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   credentialsUpdatedBy User?  @relation("PaymentAccountCredentialsUpdatedBy", fields: [credentialsUpdatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   lastTestedBy         User?  @relation("PaymentAccountTestedBy", fields: [lastTestedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  intents              PaymentIntent[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, provider])
   @@map("payment_gateway_accounts")
+}
+
+/// What an online payment attempt is (docs/payments.md → States). REFUNDED_OUTSIDE and DISMISSED
+/// are P7b's review outcomes, created now (P7a-T); nothing in P7a writes them.
+enum PaymentIntentStatus {
+  CREATED
+  REDIRECTED
+  PAID
+  FAILED
+  CANCELLED
+  EXPIRED
+  NEEDS_REVIEW
+  REFUNDED_OUTSIDE
+  DISMISSED
+
+  @@map("payment_intent_status")
+}
+
+/// Why an intent or a gateway event waits for a person (S23). VOIDED: an admin voided the
+/// posted payment (P7a-G).
+enum PaymentReviewReason {
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  TRAN_ID_MISMATCH
+  HIGH_RISK
+  DUES_CHANGED
+  LATE_SUCCESS
+  DUPLICATE
+  UNMATCHED
+  VOIDED
+
+  @@map("payment_review_reason")
+}
+
+/// INIT: the session; RETURN: the payer's browser; IPN: the gateway's notification; VALIDATE and
+/// QUERY: our own questions to the gateway.
+enum PaymentEventKind {
+  INIT
+  RETURN
+  IPN
+  VALIDATE
+  QUERY
+
+  @@map("payment_event_kind")
+}
+
+/// One online payment attempt by a guardian for chosen dues of one child, paid in full (S22). The
+/// amount, our tran_id and the dues are fixed when it is created (grants by column); the money the
+/// gateway reports is written once (trigger payment_intents_guard). PAID exactly when it holds a
+/// live GATEWAY payment that names it (deferred triggers). Never deleted.
+model PaymentIntent {
+  id                   String                @id @default(uuid(7)) @db.Uuid
+  tenantId             String                @map("tenant_id") @db.Uuid
+  accountId            String                @map("account_id") @db.Uuid
+  studentId            String                @map("student_id") @db.Uuid
+  /// The guardian who started it (a global user, like a payment's collector).
+  payerUserId          String                @map("payer_user_id") @db.Uuid
+  /// ৳10 to ৳5 lakh (SSLCommerz's range, P7a-L).
+  amountPaisa          Int                   @map("amount_paisa")
+  currency             String                @default("BDT")
+  /// The institute's day the amount was computed: the payment's paid_on (P7a-E).
+  pricedOn             DateTime              @map("priced_on") @db.Date
+  /// Ours: "JS" + 26 Crockford base32 characters (newTranId).
+  tranId               String                @map("tran_id")
+  clientRequestId      String                @map("client_request_id") @db.Uuid
+  status               PaymentIntentStatus   @default(CREATED)
+  /// SSLCommerz's sessionkey.
+  sessionRef           String?               @map("session_ref")
+  /// SSLCommerz's GatewayPageURL (its host checked by the client).
+  checkoutUrl          String?               @map("checkout_url")
+  /// A fixed code when the session could not be made.
+  initError            String?               @map("init_error")
+  /// The validated payment's facts, as the gateway's validation API reported them; written once.
+  valId                String?               @map("val_id")
+  bankTranId           String?               @map("bank_tran_id")
+  /// SSLCommerz card_type (e.g. "BKASH-BKash").
+  instrument           String?
+  method               FeePaymentMethod?
+  validatedAmountPaisa Int?                  @map("validated_amount_paisa")
+  storeAmountPaisa     Int?                  @map("store_amount_paisa")
+  /// currency_type as returned.
+  validatedCurrency    String?               @map("validated_currency")
+  /// LOW only for risk_level "0"; anything else HIGH.
+  risk                 String?
+  /// tran_date, read as Asia/Dhaka; shown only.
+  gatewayPaidAt        DateTime?             @map("gateway_paid_at") @db.Timestamptz(3)
+  feePaymentId         String?               @map("fee_payment_id") @db.Uuid
+  /// Until then it blocks another checkout for the child (P7a-F).
+  expiresAt            DateTime              @map("expires_at") @db.Timestamptz(3)
+  reviewReasons        PaymentReviewReason[] @default([]) @map("review_reasons")
+  reviewSince          DateTime?             @map("review_since") @db.Timestamptz(3)
+  /// When it left CREATED/REDIRECTED.
+  closedAt             DateTime?             @map("closed_at") @db.Timestamptz(3)
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  account    PaymentGatewayAccount @relation(fields: [tenantId, accountId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  student    Student               @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  payer      User                  @relation("PaymentIntentPayer", fields: [payerUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Same student as the intent's.
+  feePayment FeePayment?           @relation("PaymentIntentFeePayment", fields: [tenantId, feePaymentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  dues       PaymentIntentDue[]
+  events     PaymentGatewayEvent[]
+  payments   FeePayment[]          @relation("FeePaymentIntent")
+
+  @@unique([tenantId, id])
+  /// Composite target for rows that must name the intent's own student (its dues, its payment).
+  @@unique([tenantId, id, studentId])
+  @@unique([tenantId, tranId])
+  @@unique([tenantId, clientRequestId])
+  @@unique([tenantId, feePaymentId])
+  @@index([tenantId, studentId, status])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, payerUserId, createdAt])
+  @@map("payment_intents")
+}
+
+/// A due an intent pays, with the principal and fine it owed on the intent's priced_on (the
+/// snapshot the payment is checked against). An intent's rows add up to its amount (deferred
+/// trigger). Append-only.
+model PaymentIntentDue {
+  id                    String   @id @default(uuid(7)) @db.Uuid
+  tenantId              String   @map("tenant_id") @db.Uuid
+  intentId              String   @map("intent_id") @db.Uuid
+  studentId             String   @map("student_id") @db.Uuid
+  dueId                 String   @map("due_id") @db.Uuid
+  plannedPrincipalPaisa Int      @map("planned_principal_paisa")
+  plannedFinePaisa      Int      @map("planned_fine_paisa")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Intent and due share the student: the child's own dues only.
+  intent  PaymentIntent @relation(fields: [tenantId, intentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  due     FeeDue        @relation(fields: [tenantId, dueId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  student Student       @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, intentId, dueId])
+  @@index([tenantId, dueId])
+  @@map("payment_intent_dues")
+}
+
+/// Everything the gateway told us or we asked it, append-only (no UPDATE or DELETE for anyone).
+/// RETURN and IPN rows are written by payment_signal_record (owner jantrik_payments) before any
+/// context; the API writes INIT, VALIDATE and QUERY rows. fields: whitelisted strings only.
+model PaymentGatewayEvent {
+  id           String               @id @default(uuid(7)) @db.Uuid
+  tenantId     String               @map("tenant_id") @db.Uuid
+  /// NULL: it matched no intent of this institute.
+  intentId     String?              @map("intent_id") @db.Uuid
+  kind         PaymentEventKind
+  /// RETURN: SUCCESS/FAIL/CANCEL (from the path, a hint only); INIT/VALIDATE/QUERY: the gateway's
+  /// status or our error code.
+  outcome      String?
+  tranId       String?              @map("tran_id")
+  valId        String?              @map("val_id")
+  fields       Json                 @default("{}")
+  /// RETURN/IPN: whether the sender's address is one SSLCommerz documents (P7a-C).
+  sourceListed Boolean?             @map("source_listed")
+  /// VALIDATE only: money with no intent to hold it (UNMATCHED) or a second payment (DUPLICATE).
+  reviewReason PaymentReviewReason? @map("review_reason")
+  receivedAt   DateTime             @map("received_at") @db.Timestamptz(3)
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  intent PaymentIntent? @relation(fields: [tenantId, intentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, intentId, receivedAt])
+  @@index([tenantId, tranId])
+  @@index([tenantId, receivedAt], map: "payment_gateway_events_review", where: raw("review_reason IS NOT NULL"))
+  @@map("payment_gateway_events")
 }

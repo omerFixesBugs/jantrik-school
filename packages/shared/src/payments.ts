@@ -135,3 +135,59 @@ const BANK_TRAN_ID = /^[A-Za-z0-9._-]{6,80}$/;
 export function isWellFormedBankTranId(value: string | null | undefined): boolean {
   return typeof value === 'string' && BANK_TRAN_ID.test(value);
 }
+
+// ───────────────────────────── Signals (P7a2) ─────────────────────────────
+
+/**
+ * The only fields of a gateway signal (the payer's return, the IPN) or of a validation answer
+ * that are ever stored (`payment_gateway_events.fields`; the table's CHECK says the same). Never
+ * `card_no` (even masked), `verify_sign`, `verify_key`, `value_*`, `cus_*`, `store_id` or a
+ * password. `val_id` and `tran_id` have columns of their own.
+ */
+export const SIGNAL_FIELDS = [
+  'status',
+  'tran_date',
+  'amount',
+  'store_amount',
+  'currency',
+  'currency_type',
+  'currency_amount',
+  'bank_tran_id',
+  'card_type',
+  'card_brand',
+  'risk_level',
+  'risk_title',
+  'error',
+] as const;
+export type SignalField = (typeof SIGNAL_FIELDS)[number];
+
+/** A stored value: printable ASCII, at most 100 characters (SSLCommerz's are short). */
+const SIGNAL_VALUE = /^[\x20-\x7e]{0,100}$/;
+
+/**
+ * The whitelisted fields of a parsed form or answer, each kept only when it is a short printable
+ * string. Anything else is dropped, never trusted: the gateway's validation API decides.
+ */
+export function signalFields(input: unknown): Partial<Record<SignalField, string>> {
+  const out: Partial<Record<SignalField, string>> = {};
+  if (typeof input !== 'object' || input === null) return out;
+  for (const key of SIGNAL_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+    const value = (input as Record<string, unknown>)[key];
+    if (typeof value === 'string' && SIGNAL_VALUE.test(value)) out[key] = value;
+  }
+  return out;
+}
+
+const GATEWAY_REF = /^[A-Za-z0-9_.-]{1,50}$/;
+
+/**
+ * A gateway reference we store or send back to the gateway: a `val_id`, or a `tran_id` as a
+ * signal carried it (ours or anyone's). 1 to 50 letters, digits, dots, underscores or dashes.
+ */
+export function isGatewayRef(value: unknown): value is string {
+  return typeof value === 'string' && GATEWAY_REF.test(value);
+}
+
+/** How long a new intent blocks another checkout for the same child (P7a-F). */
+export const ONLINE_INTENT_MINUTES = 60;

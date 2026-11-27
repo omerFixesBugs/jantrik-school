@@ -59,3 +59,121 @@ export interface GatewayAccountView {
 export interface GatewayTestQueued {
   requestedAt: string;
 }
+
+// ───────────────────────────── Checkout to receipt (P7a2) ─────────────────────────────
+
+/** An online payment attempt (`payment_intents.status`; docs/payments.md → States). */
+export const PAYMENT_INTENT_STATUSES = [
+  'CREATED',
+  'REDIRECTED',
+  'PAID',
+  'FAILED',
+  'CANCELLED',
+  'EXPIRED',
+  'NEEDS_REVIEW',
+  /** P7b's outcomes of a review (created now, written by nothing in P7a). */
+  'REFUNDED_OUTSIDE',
+  'DISMISSED',
+] as const;
+export type PaymentIntentStatus = (typeof PAYMENT_INTENT_STATUSES)[number];
+
+/** Why an intent (or a gateway event) waits for a person (S23); never shown to guardians. */
+export const PAYMENT_REVIEW_REASONS = [
+  'AMOUNT_MISMATCH',
+  'CURRENCY_MISMATCH',
+  'TRAN_ID_MISMATCH',
+  'HIGH_RISK',
+  'DUES_CHANGED',
+  'LATE_SUCCESS',
+  'DUPLICATE',
+  'UNMATCHED',
+  /** A posted gateway payment was voided by an admin (P7a-G). */
+  'VOIDED',
+] as const;
+export type PaymentReviewReason = (typeof PAYMENT_REVIEW_REASONS)[number];
+
+/**
+ * What a guardian may know of an online payment: PREPARING (the session is being made), READY
+ * (go to the gateway), CONFIRMING (back from the gateway, asking it), PAID, CHECKING (the school
+ * checks it: do not pay again), NOT_PAID, EXPIRED, REFUNDED.
+ */
+export const ONLINE_PAYMENT_STATES = [
+  'PREPARING',
+  'READY',
+  'CONFIRMING',
+  'PAID',
+  'CHECKING',
+  'NOT_PAID',
+  'EXPIRED',
+  'REFUNDED',
+] as const;
+export type OnlinePaymentState = (typeof ONLINE_PAYMENT_STATES)[number];
+
+/** The guardian's state of an intent; `signalled`: a return or IPN has arrived for it. */
+export function onlinePaymentState(
+  status: PaymentIntentStatus,
+  signalled: boolean,
+): OnlinePaymentState {
+  switch (status) {
+    case 'CREATED':
+      return 'PREPARING';
+    case 'REDIRECTED':
+      return signalled ? 'CONFIRMING' : 'READY';
+    case 'PAID':
+      return 'PAID';
+    case 'NEEDS_REVIEW':
+      return 'CHECKING';
+    case 'FAILED':
+    case 'CANCELLED':
+    case 'DISMISSED':
+      return 'NOT_PAID';
+    case 'EXPIRED':
+      return 'EXPIRED';
+    case 'REFUNDED_OUTSIDE':
+      return 'REFUNDED';
+  }
+}
+
+/**
+ * POST /me/children/:id/fees/online-payments (S22): the dues to pay in full, never an amount. The
+ * server computes it; `expectedAmountPaisa` is what the guardian was shown (409 DUES_CHANGED with
+ * the real amount when it moved). `clientRequestId` is new for every attempt (a retry returns the
+ * same payment).
+ */
+export const startOnlinePaymentSchema = z.strictObject({
+  dueIds: z
+    .array(z.uuid())
+    .min(1)
+    .max(24)
+    .refine((ids) => new Set(ids).size === ids.length, { message: 'Each due once' }),
+  expectedAmountPaisa: z.number().int().min(0).max(1_000_000_000),
+  clientRequestId: z.uuid(),
+});
+export type StartOnlinePaymentInput = z.input<typeof startOnlinePaymentSchema>;
+
+/** One due an online payment pays, with what it owed when the amount was set (the snapshot). */
+export interface OnlinePaymentDue {
+  id: string;
+  head: { nameBn: string; nameEn: string };
+  periodKey: string;
+  term: { nameBn: string; nameEn: string } | null;
+  principalPaisa: number;
+  finePaisa: number;
+}
+
+/** GET /me/children/:id/fees/online-payments/:intentId (and the checkout's answer). */
+export interface OnlinePaymentView {
+  id: string;
+  state: OnlinePaymentState;
+  amountPaisa: number;
+  dues: OnlinePaymentDue[];
+  createdAt: string;
+  /** Our transaction ID (ASCII), as the gateway shows it. */
+  tranId: string;
+  /** The gateway's payment page: only for the guardian who started it, while it is READY. */
+  checkoutUrl?: string;
+  /** PAID: the receipt. */
+  receipt?: { id: string; receiptNumber: string };
+  /** The one who started it is the caller. */
+  mine: boolean;
+}
