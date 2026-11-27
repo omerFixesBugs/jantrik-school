@@ -674,3 +674,122 @@ P1-J8. **Follow-up for the owner (not built, and not new): an SQL injection can 
 P1-J9. **Follow-up for the owner (not built): email login lookups are case-insensitive but not indexed.** Both login lookups compare `lower(u.email) = lower(p_email)`; `users_email_key` is case-sensitive, so that comparison scans the table (an unknown email takes longer as the table grows) and two emails differing only in case can coexist. The fix: check for such duplicates first, then a unique index on `lower(email)` (and drop the old one). Not in this PR, because existing data could hold duplicates.
 
 P1-K. **Fixed from the review** (each with a test that failed first): a code is single use even when two requests race with it (login codes too); the phone rule ignores every punctuation mark and symbol between the digits; the other sessions are revoked in one statement; the common-password list is read at start-up; password login accepts up to 512 code points (a 128-character password typed decomposed); the wrong-code message asks to check the code before sending a new one. Kept as they are: the staff check after a correct password costs one extra query (it only confirms a password the caller already has); the login page's hint sits under the password tab, which guardians do not use.
+
+## Sprint 1, P2: institute profile, files, photos (2026-11-16)
+
+Plan: [plans/sprint-1-p2-files.md](plans/sprint-1-p2-files.md), written and built during the unattended day run of 2026-11-16 (the owner asked for it while away). The PR is the approval step. Each decision below is the safe default; all are reversible.
+
+F1. **Who sees what.** A student's photo is part of the full record, as on the student's page today (the basic view for a teacher of another section already left it out): OWNER and ADMIN for every student, a TEACHER for the students of their current sections, a guardian for their own children only (`GET /me/children/:id/photo`). Anyone else gets 404, as for a student that does not exist. The logo: every member, guardians too. The head's signature and the seal: OWNER and ADMIN only (they could be misused on forged papers; P8/P9 widen this for printing). The profile fields: OWNER and ADMIN.
+
+F2. **Lists keep initials.** The student list, the cards view and other lists do not load photos: fifty photos of up to 200 KB would not fit the 3 s budget on slow 4G. Photos show on the student's page and side peek, the guardian's child card and the report card. A small thumbnail kind for lists is a follow-up.
+
+F3. **`photoId` replaces `photoUrl`** in every API type (student list, profile, guardian children, report cards, admit cards): the stored file's id or null. The web fetches the image with the bearer token from the entity route and caches it by that id.
+
+F4. **EIIN is exactly 6 digits** (BANBEIS), optional. One CHECK to widen if an institute has another form.
+
+F5. **The institute's phone** may be a mobile (stored as E.164) or a landline (5–15 digits, optional `+`).
+
+F6. **An image uploaded before the first save** creates the profile with the registered name (`tenants.name`) in its script (Bangla or English), so the "one name" rule holds.
+
+F7. **Formats.** JPEG, PNG and WebP only, by content. HEIC is refused (iPhones send JPEG to the browser's file picker; sharp's prebuilt build cannot decode HEVC). A transparent photo is flattened on white. Truncated files are refused; other decoder warnings are tolerated (some phone JPEGs have harmless ones).
+
+F8. **60 uploads per person per 10 minutes** (`file-upload:<userId>`), on top of the general limits: each upload costs CPU.
+
+F9. **A deactivated student's photo** can be viewed by OWNER/ADMIN but not changed (409 `DEACTIVATED`, like other student writes).
+
+F10. **Replacing an image deletes the old file** in the same transaction; there is no image history. The audit row keeps the old and the new file id.
+
+F11. **The per-institute total is counted, not recomputed**, under the institute's advisory lock; tests check it equals the sum of the files after puts, replaces, deletes and two uploads at once.
+
+F12. **No institute header or logo on the report card yet.** The profile and images exist for P3 (the admission slip), P8 and P9 (documents); the report card gains only the student photo, as the sprint plan says.
+
+Changed after the review (each code fix with a test that failed first; R3 is checked by Playwright
+in CI; R9 and R10 are docs and tests only; details in the plan → "Changed after the review"):
+
+- **R1. Uploads no longer run inside the request transaction** (must-fix). `TenantContextInterceptor`
+  (a global interceptor) opened the 15 s transaction and took a pool connection before multer read
+  the body: a 2–5 MB photo on slow 4G took longer than 15 s (a 500 every time), and ten slow
+  uploads could hold all 10 connections (every other institute failing). The two upload routes
+  are now `@OwnTransaction()`: the body is read, the upload limit applied and the image decoded
+  with no connection; then `RequestTransaction.run` (the interceptor's own logic, moved into a
+  service) opens the same tenant transaction for the short store. The image queue is bounded (8
+  waiting; more get 503 `IMAGE_BUSY`), and the browser shrinks a chosen image to 1600 px on the
+  long side (JPEG 0.85 for photos, PNG for the others) before sending, so a phone sends about
+  300 KB. Test: while a slow body arrives, no session of the app login is idle in a transaction.
+- **R2. The code scan also catches Prisma relation fields** (`photoFile`, `logoFile`,
+  `signatureFile`, `sealFile`, `storedFiles`, `storedFileUsage`, `storedFilesCreated`, the
+  `profile*` back-relations).
+- **R3. The guardian's report card shows the photo** through `/me/children/:id/photo`
+  (`ReportCardsPrint as="guardian"`); Playwright checks it in the exams spec.
+- **R4. The web address's scheme is stored in lower case** (`HTTPS://x` → `https://x`), as the
+  database CHECK is case-sensitive; it was a 500.
+- **R5. The image queue hands a freed slot straight to the next waiter**, so it can never run
+  three at once.
+- **R6. A file reference is tied to its kind in the database.** `stored_files` has
+  `UNIQUE (tenant_id, id, kind)`; `students.photo_file_kind` (always `STUDENT_PHOTO`) and
+  `institute_profiles.logo_file_kind`, `head_signature_file_kind`, `seal_file_kind` (always
+  `LOGO`, `SIGNATURE`, `SEAL`, by CHECK) are part of each foreign key, so a photo column can only
+  hold a photo, a logo column a logo, and so on.
+- **R7. Replacing an image near the cap is allowed** when the total would not grow: `put` takes the
+  id it replaces (read under the file lock) and counts it.
+- **R8. The first image and the first save cannot collide:** the row an image creates is inserted
+  with `ON CONFLICT DO NOTHING`.
+- **R9.** F1 above now says what the code does (a teacher sees photos of their own sections only).
+- **R10.** The database tests name the rule that refuses each write; a PNG `eXIf` GPS case was
+  added to the image tests.
+
+- **For the owner (backlog): the CSV imports read their uploads inside the request transaction
+  too** (student import up to 5 MB, device people up to 1 MB). Smaller and rarer than photos, so
+  not changed here; they can move to `@OwnTransaction()` the same way.
+
+Changed after the review, round 2 (each code fix with a test that failed first):
+
+- **R11. Uploads in flight are bounded.** With R1 nothing limited how many upload bodies could be
+  in memory. `UploadGuard` (before multer) allows 16 per process and 2 per person, refuses more at
+  once with 503 `IMAGE_BUSY`, gives the slot back when the response closes (sent, failed or
+  dropped by the client), and drops a body not received within 60 s.
+- **R12. `RequestTransaction.run` refuses to nest** inside a request transaction (it would replace
+  the outer one in the request context). The interceptor itself uses an unchecked entry (`around`): it is the outermost transaction, and a request made from inside a running job (as some tests do) inherits that job\'s request context.
+- **R13. The upload's transaction re-checks the session and the route's roles** (OWNER/ADMIN),
+  read in the transaction, besides the institute's status and the membership: an admin
+  downgraded, or a session revoked, while the body arrives stores nothing (403 / 401).
+- **R14. The target is checked before decoding:** a student photo for an unknown or deactivated
+  student, or any upload in a suspended institute or by someone who lost the role, is refused
+  before the image is decoded or the upload quota is used.
+- **R15. sharp's own 10 s timeout** on the decode and each encode → 422 `IMAGE_TIMEOUT`.
+- **R16. A replacement no bigger than the old file is never refused**, even when the total is over
+  a lowered cap; `FileStore.put`'s contract says the caller deletes the replaced file in the same
+  transaction.
+- **R17. A profile save takes the file lock before reading the row**, so a first save racing a
+  first image is audited as an UPDATE (one CREATE per institute).
+- **R18. The browser asks for the EXIF orientation explicitly** (`imageOrientation:
+'from-image'`); an engine without it sends the original, which the server turns upright.
+- **Tests:** a deterministic database test of the ON CONFLICT path (an insert held uncommitted);
+  the slow-body check sampled every 100 ms, for the logo route too; suspended institute and
+  disabled member → 403 with nothing stored; the signature column's wrong kind; the exams spec
+  removes the demo child's photo in an `afterEach`.
+- **Migrations edited in place:** both migrations of this PR changed after it was first pushed
+  (R6). Nothing outside this run's scratch databases applied them; any database that did needs
+  a fresh one (or a reset) before applying the final versions.
+
+Changed after the review, round 3 (each code fix with a test that failed first):
+
+- **R19. No upload slot leaks when the client leaves early** (must-fix). If the socket closed while
+  the global guards awaited Redis, the response's one 'close' event was already past when
+  `UploadGuard` listened for it, so the slot was never given back. A client already gone (the
+  test on-finished uses: the request or response destroyed, the answer sent, or the socket no
+  longer writable) now gets no slot, and every slot is given back after 5 minutes at the latest
+  (a backstop).
+- **R20. The revoked-session check runs before the transaction**, with Redis's 2 s deadline (503
+  `SERVICE_UNAVAILABLE`), so a slow Redis never holds a pooled connection; the roles are still
+  read in the transaction.
+- **R21. A browser that predates `imageOrientation`** (a TypeError) decodes without it when the
+  photo needs no turning (no EXIF orientation, or 1; a small JPEG reader checks), and sends the
+  original otherwise (the server turns it upright).
+- **R22.** The timeout test uses sharp 0.35.5's real message (`timeout: N% complete`).
+
+Also decided while building:
+
+- The migrations were written by hand (no development database is used in this run) and checked with `prisma migrate diff` against a scratch database: empty.
+- `sharp` 0.35.5 was already in the lockfile through Next.js; the API now depends on it directly (S8).
+- Encoding effort is moderate (PNG palette effort 4, WebP effort 4): the worst case (pure noise) stays well under the request's 15 s; a test pins it under 8 s per image on this PC.

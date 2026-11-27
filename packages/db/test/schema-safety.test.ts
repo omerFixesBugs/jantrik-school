@@ -68,6 +68,9 @@ describe('schema safety net', () => {
         'device_punches',
         'device_source_ips',
         'staff_attendance_days',
+        'stored_files',
+        'stored_file_usage',
+        'institute_profiles',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
