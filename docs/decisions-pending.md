@@ -988,6 +988,16 @@ Changed after the review of #26, round 2 (each should-fix with a test seen faili
   minutes later, outside quiet hours (N-c).** Stopping a sent broadcast is a follow-up (P6-L).
 - **P6-b20. Fee reminders and exam result SMS get the bulk priority too (N-d):** they still queue
   one by one with the same rules; only their place behind single SMS changes.
+- **P6-b21. The send job's person cannot be chosen by the app login (found by the merge check
+  with P1-J8, fixed at the rebase, 2026-11-27).** The job signs its context as
+  `sms_broadcasts.scheduled_by_id` and checks that person's roles; `jantrik_app` could write that
+  column, so an SQL injection in one person's request could have a broadcast sent as another admin
+  of the institute. Now a trigger (migration `20261117410200`) lets a request set it only to its
+  own signed person or clear it; a write that leaves it unchanged (another admin cancelling or
+  editing) is allowed. The approach of P1-J8k (`student_imports.created_by_id`): no new role, no
+  `.env` line, no API change. Like P1-J8k, a context with no person (only the worker and server
+  code sign one) is not checked. Not changed: `cancelled_by_id` is still written by the app; it
+  only records who cancelled, no job acts as that person (P1-J10).
 - **Recorded only (N-e, N-f):** the edited migration `20261117410100_sms_broadcasts` needs fresh
   databases wherever its earlier version was applied (only scratch and CI here); its new index on
   `sms_logs` is created without `CONCURRENTLY`, fine before launch.

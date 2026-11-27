@@ -130,7 +130,8 @@ paisa), today's cap left, `fits`, whether it is quiet hours now and the next all
   (queue `notices`, job id `broadcast-<id>`, delayed to the time) and a member
   `<tenantId>|<broadcastId>` scored by the time in the Redis sorted set `notices:due`. Job data is
   ids only.
-- **The job** (acting as the admin who scheduled it): locks the broadcast; stops unless
+- **The job** (acting as the admin who scheduled it, `scheduled_by_id`, which the database lets a
+  request set only to its own signed person, P6-b21): locks the broadcast; stops unless
   `SCHEDULED`; cancels it (`ACTOR_NOT_ADMIN`, nothing sent) when that admin is no longer OWNER or
   ADMIN; waits (the same job is delayed) when it runs early or inside quiet hours (a job due at
   23:30 sends at 08:00); resolves the audience; and queues every SMS in **one transaction** with
