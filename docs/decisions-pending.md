@@ -1516,3 +1516,20 @@ safer option:
   not run a browser locally.
 - **Recorded only:** the IPN address is shown from P7a1, but its route comes with P7a2 (pasting it
   into the SSLCommerz panel early is harmless). Key rotation is not built (`key_version` 1).
+
+### P7a1 after the review (round 1)
+
+No must-fix. Fixed: the test job locks the account row before it decides, and a result that is
+not `OK` always sets the account off (an "enable" committed while a test ran could otherwise stay
+on next to a stale passing test); the code scan also reads `apps/api/scripts` and fails on the
+table's name in raw SQL. Recorded, not changed:
+
+- **P7a1-x17. No database rule ties a passing test to the current credentials** (`last_test_at >=
+credentials_updated_at`): with several servers, clock differences could refuse a valid "turn
+  on". The service's guard (a test of replaced credentials records nothing) stays.
+- **P7a1-x18. The payer page host check stays `*.sslcommerz.com`** in sandbox mode (P7a1-x10);
+  narrow it to the hosts the owner's smoke run shows, if wanted.
+- **P7a1-L1 (an older problem, every route):** a malformed JSON body gets a 400 whose message
+  quotes part of the body back to its sender (Nest's body parser). Not logged, and the web app
+  never sends malformed JSON, but a global filter with a fixed message would be cleaner; a
+  follow-up of its own.
