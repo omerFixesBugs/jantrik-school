@@ -4,7 +4,7 @@ import type { Locale } from './config';
  * Fee screens keep their messages in messages/fees/<area>.<locale>.json (one file per area, so
  * areas are edited independently); they are merged into the `fees` namespace.
  */
-const FEE_AREAS = ['common', 'counter', 'setup', 'reports', 'guardian'] as const;
+const FEE_AREAS = ['common', 'counter', 'setup', 'reports', 'guardian', 'online'] as const;
 
 /** Exam screens likewise: messages/exams/<area>.<locale>.json, merged into `exams`. */
 const EXAM_AREAS = ['common', 'marks', 'setup', 'results', 'guardian'] as const;

@@ -864,16 +864,38 @@ function FeesTile({ className }: { className?: string }) {
   );
 }
 
-/** bKash/Nagad payments waiting to be checked: the guardians are waiting for their receipts. */
+/**
+ * Payments waiting for a person ("to check"): bKash/Nagad transfers to verify and online payments
+ * in review (P7b-M); the guardians are waiting for their receipts. One tile for both, linking to
+ * the larger part.
+ */
 function PendingFeeSubmissions() {
   const t = useTranslations('dashboard');
   const locale = useLocale() as Locale;
   const summary = useFeeSummary();
   const pending = summary.data?.pendingSubmissions ?? 0;
-  if (pending === 0) return null;
+  const online = summary.data?.onlineToReview ?? 0;
+  const total = pending + online;
+  if (total === 0) return null;
+  const onlineFirst = online > pending;
+  const title =
+    online === 0
+      ? t('feesPendingTitle', { count: formatCount(pending, locale), n: pending })
+      : pending === 0
+        ? t('feesOnlineTitle', { count: formatCount(online, locale), n: online })
+        : t('feesCheckTitle', { count: formatCount(total, locale), n: total });
+  const text =
+    online === 0
+      ? t('feesPendingText')
+      : pending === 0
+        ? t('feesOnlineText')
+        : t('feesCheckText', {
+            transfers: formatCount(pending, locale),
+            online: formatCount(online, locale),
+          });
   return (
     <Link
-      href="/fees/submissions"
+      href={onlineFirst ? '/fees/online-payments/review' : '/fees/submissions'}
       data-slot="card"
       data-testid="attention-fee-submissions"
       className="bg-card rounded-card shadow-card lift focus-visible:ring-ring flex min-h-(--control-h) items-center gap-3 border px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
@@ -882,10 +904,8 @@ function PendingFeeSubmissions() {
         <SmartphoneIcon aria-hidden className="size-4.5" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="font-medium">
-          {t('feesPendingTitle', { count: formatCount(pending, locale), n: pending })}
-        </span>
-        <span className="text-muted-foreground text-sm">{t('feesPendingText')}</span>
+        <span className="font-medium">{title}</span>
+        <span className="text-muted-foreground text-sm">{text}</span>
       </span>
       <span className="text-link hidden shrink-0 text-sm font-medium sm:inline">
         {t('feesPendingOpen')}

@@ -3,10 +3,12 @@
     "tabs": {
       "counter": "Collect",
       "submissions": "bKash/Nagad",
+      "online": "Online payments",
       "closing": "Daily closing",
       "reports": "Reports",
       "reminders": "Reminders",
-      "setup": "Setup"
+      "setup": "Setup",
+      "onlineWaiting": "to check:"
     },
     "method": {
       "CASH": "Cash",

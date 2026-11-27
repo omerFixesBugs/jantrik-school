@@ -45,6 +45,12 @@ export class OnlinePaymentsController {
     return this.review.queue();
   }
 
+  /** The fee tabs' badge: how many items wait (no heal, nothing else). */
+  @Get('review/count')
+  async count(): Promise<{ count: number }> {
+    return { count: await this.review.count() };
+  }
+
   @Post('signals/:eventId/refunded-outside')
   @Roles('OWNER', 'ADMIN')
   @HttpCode(200)

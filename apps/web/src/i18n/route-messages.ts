@@ -87,6 +87,8 @@ export const ROUTE_MESSAGES = {
   feeLedger: ['dashboard'],
   feeSetup: ['fees.setup'],
   feeReports: ['fees.reports'],
+  /** Online payments for staff and their review queue (sprint 1 P7b). */
+  feeOnline: ['fees.online', 'fees.review'],
 
   exams: [
     'exams.common',

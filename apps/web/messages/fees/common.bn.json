@@ -3,10 +3,12 @@
     "tabs": {
       "counter": "আদায়",
       "submissions": "বিকাশ/নগদ যাচাই",
+      "online": "অনলাইন পেমেন্ট",
       "closing": "দিনের হিসাব",
       "reports": "রিপোর্ট",
       "reminders": "রিমাইন্ডার",
-      "setup": "সেটআপ"
+      "setup": "সেটআপ",
+      "onlineWaiting": "যাচাই বাকি:"
     },
     "method": {
       "CASH": "নগদ",

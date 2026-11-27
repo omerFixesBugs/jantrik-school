@@ -6,6 +6,7 @@ import {
   formatTaka,
   type FeeClosing,
   type FeeClosingCollector,
+  type FeeClosingOnline,
 } from '@jantrik/shared';
 import { useLocale, useTranslations } from 'next-intl';
 import Link from 'next/link';
@@ -141,6 +142,108 @@ export function ClosingCollectorCard({ entry }: { entry: FeeClosingCollector }) 
           <h4 className="text-sm font-medium">{t('voidedList')}</h4>
           <ul className="flex flex-col gap-1.5" data-testid="fees-closing-voided">
             {entry.voided.map((v) => (
+              <li key={v.id}>
+                <Link
+                  href={`/fees/receipts/${v.id}`}
+                  className="hover:bg-muted focus-visible:ring-ring flex items-start justify-between gap-3 rounded-xl border px-3 py-2 outline-none focus-visible:ring-2"
+                >
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-sm">
+                      <span className="font-mono font-medium" dir="ltr">
+                        {v.receiptNumber}
+                      </span>{' '}
+                      <span className="text-muted-foreground">
+                        · {t('voidedOf', { date: formatDate(v.recordedOn, locale) })}
+                      </span>
+                    </span>
+                    <span className="text-muted-foreground text-sm">{v.reason}</span>
+                  </span>
+                  <span className="font-numeric shrink-0 text-sm font-semibold">
+                    − {taka(v.amountPaisa)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Online payments (SSLCommerz) of the day, under no collector (P7b-L): what was recorded, the
+ * voids made that day, by method, and what was kept. Never cash in hand: the money went to the
+ * institute's SSLCommerz account.
+ */
+export function ClosingOnlineCard({ online }: { online: FeeClosingOnline }) {
+  const t = useTranslations('fees.counter.closing');
+  const tMethod = useTranslations('fees.common.method');
+  const locale = useLocale() as Locale;
+  const taka = (paisa: number) => formatTaka(paisa, locale);
+  const voided = online.voided.reduce((sum, v) => sum + v.amountPaisa, 0);
+  return (
+    <section
+      data-slot="card"
+      aria-labelledby="closing-online"
+      data-testid="fees-closing-online"
+      className="bg-card rounded-card shadow-card flex min-w-0 break-inside-avoid flex-col gap-4 border p-(--panel-p) print:shadow-none"
+    >
+      <div className="flex flex-col gap-0.5">
+        <h3 id="closing-online" className="text-base font-semibold">
+          {t('online')}
+        </h3>
+        <p className="text-muted-foreground text-sm">{t('onlineHint')}</p>
+      </div>
+      <dl className="flex flex-wrap gap-x-6 gap-y-3">
+        <Figure
+          term={t('collected')}
+          value={taka(online.amountPaisa)}
+          note={t('receiptCount', { count: formatCount(online.count, locale), n: online.count })}
+        />
+        <Figure term={t('voided')} value={voided > 0 ? `− ${taka(voided)}` : '—'} />
+        <Figure
+          term={t('net')}
+          value={taka(online.netPaisa)}
+          note={t('onlineNetHint')}
+          strong
+          testId="fees-closing-online-net"
+        />
+      </dl>
+      {online.byMethod.length > 0 && (
+        <table className="w-full text-sm">
+          <caption className="mb-1 text-start text-sm font-medium">{t('byMethod')}</caption>
+          <thead>
+            <tr className="text-muted-foreground border-b">
+              <th scope="col" className="py-1.5 text-start font-medium">
+                {t('method')}
+              </th>
+              <th scope="col" className="num py-1.5 font-medium">
+                {t('count')}
+              </th>
+              <th scope="col" className="num py-1.5 font-medium">
+                {t('amount')}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {online.byMethod.map((m) => (
+              <tr key={m.method} className="border-b last:border-b-0">
+                <th scope="row" className="py-1.5 text-start font-normal">
+                  {tMethod(m.method)}
+                </th>
+                <td className="num py-1.5">{formatCount(m.count, locale)}</td>
+                <td className="num py-1.5">{taka(m.amountPaisa)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {online.voided.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <h4 className="text-sm font-medium">{t('voidedList')}</h4>
+          <ul className="flex flex-col gap-1.5">
+            {online.voided.map((v) => (
               <li key={v.id}>
                 <Link
                   href={`/fees/receipts/${v.id}`}

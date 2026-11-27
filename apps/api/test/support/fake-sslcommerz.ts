@@ -262,9 +262,12 @@ export async function startFakeSslcommerz(
     });
   };
 
-  /** The payer page and its three buttons. */
+  /**
+   * The payer page and its buttons: Pay, Fail, Cancel, and Risky (paid, but reported with
+   * risk_level 1: the review queue's browser test, P7b).
+   */
   const page = async (path: string, method: string, res: ServerResponse) => {
-    const m = /^\/pay\/([A-Za-z0-9]+)(?:\/(pay|fail|cancel))?$/.exec(path);
+    const m = /^\/pay\/([A-Za-z0-9]+)(?:\/(pay|fail|cancel|risky))?$/.exec(path);
     const s = m ? sessions.get(m[1]!) : undefined;
     if (!m || !s) {
       res.writeHead(404).end('no such session');
@@ -275,7 +278,7 @@ export async function startFakeSslcommerz(
       res.end(`<!doctype html><html lang="en"><head><title>Fake SSLCommerz</title></head><body>
 <h1>Fake SSLCommerz (sandbox stand-in)</h1>
 <p>Amount: <span id="amount">${escapeHtml(s.fields['total_amount'] ?? '')}</span> BDT</p>
-${['pay', 'fail', 'cancel']
+${['pay', 'fail', 'cancel', 'risky']
   .map(
     (a) =>
       `<form method="post" action="/pay/${s.sessionkey}/${a}"><button type="submit">${a[0]!.toUpperCase()}${a.slice(1)}</button></form>`,
@@ -284,20 +287,23 @@ ${['pay', 'fail', 'cancel']
 </body></html>`);
       return;
     }
-    const status = m[2] === 'pay' ? 'VALID' : m[2] === 'fail' ? 'FAILED' : 'CANCELLED';
-    const t = fake.pay(s.sessionkey, { status });
+    const paid = m[2] === 'pay' || m[2] === 'risky';
+    const status = paid ? 'VALID' : m[2] === 'fail' ? 'FAILED' : 'CANCELLED';
+    const t = fake.pay(s.sessionkey, {
+      status,
+      ...(m[2] === 'risky' ? { fields: { risk_level: '1', risk_title: 'Risky' } } : {}),
+    });
     const ipnFields = {
       ...reported(t),
       store_id: s.storeId,
       verify_sign: id(''),
       verify_key: 'amount,bank_tran_id,card_type,currency,status,tran_id,val_id',
     };
-    const target =
-      m[2] === 'pay'
-        ? s.fields['success_url']
-        : m[2] === 'fail'
-          ? s.fields['fail_url']
-          : s.fields['cancel_url'];
+    const target = paid
+      ? s.fields['success_url']
+      : m[2] === 'fail'
+        ? s.fields['fail_url']
+        : s.fields['cancel_url'];
     if (fake.sendIpn && s.fields['ipn_url']) {
       const body = new URLSearchParams(
         Object.entries(ipnFields).filter((e): e is [string, string] => e[1] !== undefined),
