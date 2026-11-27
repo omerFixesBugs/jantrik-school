@@ -62,9 +62,7 @@ const STATUSES = [
 ] as const satisfies readonly PaymentIntentStatus[];
 
 const asStatus = (v: string | null): PaymentIntentStatus | null =>
-  v !== null && (STATUSES as readonly string[]).includes(v)
-    ? (v as PaymentIntentStatus)
-    : null;
+  v !== null && (STATUSES as readonly string[]).includes(v) ? (v as PaymentIntentStatus) : null;
 
 /**
  * Every online payment guardians started (docs/payments.md → The review queue), newest first, 50
