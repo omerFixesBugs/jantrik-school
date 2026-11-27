@@ -382,6 +382,78 @@ describe('online payments: confirmation and settle', () => {
     expect(again.state).toBe('READY');
   });
 
+  describe('the validation flood (P7a2-x24): made-up val_ids on a known tran_id', () => {
+    /**
+     * Returns stored as payment_signal_record stores them, in this order, with no confirm job
+     * queued: the test runs confirm itself.
+     */
+    const storeReturns = (intent: { id: string; tranId: string }, valIds: string[]) =>
+      withTenant(h.prisma, s.tenantId, (tx) =>
+        tx.paymentGatewayEvent.createMany({
+          data: valIds.map((valId, i) => ({
+            tenantId: s.tenantId,
+            intentId: intent.id,
+            kind: 'RETURN' as const,
+            outcome: 'SUCCESS',
+            tranId: intent.tranId,
+            valId,
+            fields: {},
+            sourceListed: false,
+            receivedAt: new Date(Date.now() - 1000 + i),
+          })),
+        }),
+      );
+    const madeUp = (n: number) => {
+      const tag = randomUUID().replace(/-/g, '').slice(0, 10);
+      return Array.from({ length: n }, (_, i) => `VALFLOOD${tag}${i}`);
+    };
+    const validations = (valIds: string[]) =>
+      fake.requests.filter((r) => r.api === 'validate' && valIds.includes(r.fields['val_id']!))
+        .length;
+    const queries = (tranId: string) =>
+      fake.requests.filter((r) => r.api === 'query' && r.fields['tran_id'] === tranId).length;
+
+    it('an open payment: 3 validated in a round, then the query by tran_id decides; it covers the rest for good', async () => {
+      const { intent } = await readyPayment();
+      const flood = madeUp(8);
+      await storeReturns(intent, flood);
+      const asked = queries(intent.tranId);
+      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      expect(validations(flood)).toBe(3);
+      expect(queries(intent.tranId)).toBe(asked + 1);
+      // The query answered for every signal stored before it: none of them is validated again.
+      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      expect(validations(flood)).toBe(3);
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+      // The real payment still posts: the query lists it.
+      await payAtGateway(h, fake, s.tenantId, intent.id);
+      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
+      expect(validations(flood)).toBe(3);
+    });
+
+    it('a closed payment: new val_ids are not validated unless the query lists them', async () => {
+      const { intent } = await readyPayment();
+      const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+      await postIpn(h, s.slug, ipnFields(t)).expect(200);
+      await waitStatus(h, s.tenantId, intent.id, 'PAID');
+      const flood = madeUp(5);
+      await storeReturns(intent, flood);
+      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      expect(validations(flood)).toBe(0);
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
+      expect(await paymentsOf(intent.id)).toHaveLength(1);
+      // A real second payment of the same tran_id is listed by the query: validated, DUPLICATE.
+      const again = await payAtGateway(h, fake, s.tenantId, intent.id);
+      await storeReturns(intent, [again.valId]);
+      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      const dup = (await eventsOf(intent.id, 'VALIDATE')).find((e) => e.valId === again.valId);
+      expect(dup).toMatchObject({ reviewReason: 'DUPLICATE' });
+      expect(validations(flood)).toBe(0);
+      expect(await paymentsOf(intent.id)).toHaveLength(1);
+    });
+  });
+
   it('liveness: a val_id first answered PENDING is validated again once the gateway lists it VALID', async () => {
     const { intent } = await readyPayment();
     const t = await payAtGateway(h, fake, s.tenantId, intent.id, { status: 'PENDING' });
