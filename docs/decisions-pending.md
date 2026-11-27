@@ -992,12 +992,25 @@ Changed after the review of #26, round 2 (each should-fix with a test seen faili
   with P1-J8, fixed at the rebase, 2026-11-27).** The job signs its context as
   `sms_broadcasts.scheduled_by_id` and checks that person's roles; `jantrik_app` could write that
   column, so an SQL injection in one person's request could have a broadcast sent as another admin
-  of the institute. Now a trigger (migration `20261117410200`) lets a request set it only to its
-  own signed person or clear it; a write that leaves it unchanged (another admin cancelling or
-  editing) is allowed. The approach of P1-J8k (`student_imports.created_by_id`): no new role, no
-  `.env` line, no API change. Like P1-J8k, a context with no person (only the worker and server
-  code sign one) is not checked. Not changed: `cancelled_by_id` is still written by the app; it
-  only records who cancelled, no job acts as that person (P1-J10).
+  of the institute. Now two triggers (migration `20261117410200`) hold, for a request (a signed
+  person): a row it leaves `SCHEDULED` is scheduled by that person; it sets the scheduler only to
+  itself or clears it; it changes a `SCHEDULED` broadcast's targets only if it scheduled it. So an
+  injection can neither name someone else nor edit, retarget or bring back (UPDATE, or INSERT … ON
+  CONFLICT) a broadcast another person scheduled (the review's round 1 found the first trigger
+  covered only writes of the column itself). Every app path already works this way: scheduling and
+  send now set the caller; editing goes back to `DRAFT` before the targets change; cancelling and
+  the job's outcomes leave `SCHEDULED`. The approach of P1-J8k (`student_imports.created_by_id`):
+  no new role, no `.env` line, no API change. Like P1-J8k, a context with no person (only the
+  worker and server code sign one) is not checked.
+  - **Only with #20:** before P1-J8, an injection can still set `app.user_id` itself, so the
+    triggers are a barrier only once #20 is merged. The merge order already puts #20 first; #26
+    must not go to production before #20.
+  - **Recorded, not changed (P1-J10):** `cancelled_by_id`, `created_by_id` and the Redis due set
+    give no such power (nothing acts as those people; only the API writes Redis). Inside its own
+    institute, `jantrik_app` can still insert `memberships`, `audit_logs` and `sms_logs`, so this
+    protects whom the job acts as, not SMS sending as such. P1-J8k has the same editing gap: a
+    colleague can still change the rows, mapping and status of an import that runs as its uploader
+    (already recorded under P1-J8q).
 - **Recorded only (N-e, N-f):** the edited migration `20261117410100_sms_broadcasts` needs fresh
   databases wherever its earlier version was applied (only scratch and CI here); its new index on
   `sms_logs` is created without `CONCURRENTLY`, fine before launch.

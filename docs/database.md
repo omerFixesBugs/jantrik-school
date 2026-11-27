@@ -593,8 +593,10 @@ RESTRICT`) and unique. The kind column is fixed by a CHECK (`students.photo_file
   DELETE** (money history). CHECKs: scheduled ⇒ time and who; sent ⇒ when, count and day;
   cancelled ⇒ when and a reason (`BY_ADMIN`, `ACTOR_NOT_ADMIN`); failed ⇒ the failure; counts
   ≥ 0; 1–3 segments. **`scheduled_by_id` is the send job's person** (it signs its context as
-  them), so a trigger (`sms_broadcasts_scheduler`, P6-b21) lets a request set it only to its own
-  signed person or clear it; writes that leave it as it is stay allowed. The same rule as
+  them), so two triggers (`sms_broadcasts_scheduler`, `sms_broadcast_targets_scheduler`, P6-b21)
+  hold for a request: a row it leaves `SCHEDULED` is scheduled by its own signed person, it sets
+  the scheduler only to itself or clears it, and it changes a `SCHEDULED` broadcast's targets only
+  if it scheduled it. A context with no person (the worker) is not checked. The same rule as
   `student_imports.created_by_id` (P1-J8k).
 - **`sms_broadcast_targets`** (tenant table): as `notice_targets`, for a broadcast's guardians.
 - `sms_purpose` has `BROADCAST` (its own migration). Isolation, grants and CHECKs:
