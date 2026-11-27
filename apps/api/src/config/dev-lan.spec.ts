@@ -17,6 +17,7 @@ const prodRest = {
   PLATFORM_ORIGINS: 'https://platform.example.com',
   TURNSTILE_SECRET_KEY: '0x4AAAAAAAexampleRealSecretKeyXYZ',
   WEB_PUBLIC_URL: 'https://app.example.com',
+  PAYMENT_CREDENTIALS_KEY: 'p'.repeat(40),
 };
 
 describe('env: loosened settings never leave development', () => {

@@ -27,6 +27,7 @@ const api = {
   JWT_ACCESS_SECRET: 'q7Hk'.repeat(10),
   OTP_PEPPER: 'w3Zp'.repeat(10),
   PLATFORM_TOTP_KEY: 'e5Rt'.repeat(10),
+  PAYMENT_CREDENTIALS_KEY: 'n8Wq'.repeat(10),
   TURNSTILE_SECRET_KEY: '0x4AAAAAAAexampleRealSecretKeyXYZ',
   WEB_PUBLIC_URL: 'https://app.jantrik.com.bd',
   SMS_PROVIDER: 'none',
@@ -362,6 +363,98 @@ describe('production env: the API and the worker', () => {
     expect(apiError({ ...api, PLATFORM_TOTP_KEY: undefined })).toMatch(/PLATFORM_TOTP_KEY/);
     for (const INGEST_PUBLIC_HOST of [undefined, 'localhost', '0.0.0.0']) {
       expect(apiError({ ...api, INGEST_PUBLIC_HOST })).toMatch(/INGEST_PUBLIC_HOST/);
+    }
+  });
+});
+
+describe('production env: online payments (sprint 1 P7a)', () => {
+  it('requires PAYMENT_CREDENTIALS_KEY in production: at least 32 characters', () => {
+    expect(apiError({ ...api, PAYMENT_CREDENTIALS_KEY: undefined })).toContain(
+      'PAYMENT_CREDENTIALS_KEY is required in production',
+    );
+    expect(apiError({ ...api, PAYMENT_CREDENTIALS_KEY: 'k'.repeat(31) })).toMatch(
+      /PAYMENT_CREDENTIALS_KEY must be at least 32 characters/,
+    );
+    expect(apiError({ ...api, PAYMENT_CREDENTIALS_KEY: 'k'.repeat(32) })).toBe('');
+  });
+
+  it('refuses an example key and one equal to another secret', () => {
+    for (const value of [
+      'CHANGE_ME_openssl_rand_base64_48',
+      envFile('deploy/.env.prod.example')['PAYMENT_CREDENTIALS_KEY']!,
+    ]) {
+      expect(apiError({ ...api, PAYMENT_CREDENTIALS_KEY: value })).toContain(
+        'PAYMENT_CREDENTIALS_KEY is an example value',
+      );
+    }
+    for (const other of ['JWT_ACCESS_SECRET', 'OTP_PEPPER', 'PLATFORM_TOTP_KEY'] as const) {
+      expect(apiError({ ...api, PAYMENT_CREDENTIALS_KEY: api[other] })).toContain(
+        `PAYMENT_CREDENTIALS_KEY must differ from ${other}`,
+      );
+    }
+  });
+
+  it('refuses the sandbox store variables and the base URL override in production', () => {
+    for (const key of ['SSLCOMMERZ_SANDBOX_STORE_ID', 'SSLCOMMERZ_SANDBOX_STORE_PASSWORD']) {
+      expect(apiError({ ...api, [key]: 'teststore0001' })).toContain(
+        `${key} must not be set in production`,
+      );
+    }
+    expect(apiError({ ...api, SSLCOMMERZ_BASE_URL: 'http://127.0.0.1:4090' })).toMatch(
+      /SSLCOMMERZ_BASE_URL is for development and tests only/,
+    );
+  });
+
+  it('allows API_PUBLIC_URL only as an https address that is not local, in production', () => {
+    for (const url of [
+      'http://api.example.com',
+      'https://localhost:4000',
+      'https://127.0.0.1',
+      'https://api.jantrik.com.bd/api',
+      'https://user:pw@api.jantrik.com.bd',
+      'not a url',
+    ]) {
+      expect(apiError({ ...api, API_PUBLIC_URL: url }), url).toMatch(/API_PUBLIC_URL/);
+    }
+    expect(apiError({ ...api, API_PUBLIC_URL: 'https://api.jantrik.com.bd' })).toBe('');
+    // Optional: turning an institute's account on needs it (the account API answers 422).
+    expect(apiError({ ...api, API_PUBLIC_URL: undefined })).toBe('');
+    // Normalised (a trailing slash, the host's case): the base of the return and IPN addresses.
+    expect(
+      envSchema.parse({ ...api, API_PUBLIC_URL: 'https://API.jantrik.com.bd/' }).API_PUBLIC_URL,
+    ).toBe('https://api.jantrik.com.bd');
+  });
+
+  it('never gives the key to the device receiver', () => {
+    expect(API_ONLY_SECRETS).toContain('PAYMENT_CREDENTIALS_KEY');
+    expect(receiverError({ ...receiver, PAYMENT_CREDENTIALS_KEY: 'n8Wq'.repeat(10) })).toContain(
+      'PAYMENT_CREDENTIALS_KEY must not be given to the device receiver in production',
+    );
+  });
+
+  it('development and tests need no key; the override only names a fake on this machine', () => {
+    const dev = {
+      DATABASE_URL: 'postgresql://jantrik_app:x@localhost:5432/jantrik',
+      DATABASE_PLATFORM_URL: 'postgresql://jantrik_platform_app:x@localhost:5432/jantrik',
+      DATABASE_LOGIN_URL: 'postgresql://jantrik_login_app:x@localhost:5432/jantrik',
+      DATABASE_INGEST_URL: 'postgresql://jantrik_ingest_app:x@localhost:5432/jantrik',
+      JWT_ACCESS_SECRET: 'x'.repeat(40),
+      OTP_PEPPER: 'y'.repeat(40),
+    };
+    for (const NODE_ENV of ['development', 'test']) {
+      expect(apiError({ ...dev, NODE_ENV })).toBe('');
+      expect(envSchema.parse({ ...dev, NODE_ENV }).PAYMENT_CREDENTIALS_KEY).toBeUndefined();
+      for (const url of ['http://127.0.0.1:4090', 'http://localhost:51234']) {
+        expect(apiError({ ...dev, NODE_ENV, SSLCOMMERZ_BASE_URL: url }), url).toBe('');
+      }
+      for (const url of ['https://sandbox.sslcommerz.com', 'http://10.0.0.5:4090', 'nope']) {
+        expect(apiError({ ...dev, NODE_ENV, SSLCOMMERZ_BASE_URL: url }), url).toMatch(
+          /SSLCOMMERZ_BASE_URL/,
+        );
+      }
+      // The owner's own sandbox store, for the two owner commands.
+      expect(apiError({ ...dev, NODE_ENV, SSLCOMMERZ_SANDBOX_STORE_ID: 'teststore0001' })).toBe('');
+      expect(apiError({ ...dev, NODE_ENV, API_PUBLIC_URL: 'http://localhost:4000' })).toBe('');
     }
   });
 });

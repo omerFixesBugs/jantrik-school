@@ -166,6 +166,15 @@ export const DATABASE_ADMIN_SECRETS = [
  */
 export const API_PRODUCTION_REQUIRED = ['REDIS_URL', 'TRUST_PROXY', 'PLATFORM_ORIGINS'] as const;
 
+/**
+ * The owner's own SSLCommerz sandbox store (sprint 1 P7a): read by the two development commands
+ * only (payments:sandbox-smoke, payments:load-sandbox), never by a server.
+ */
+export const SANDBOX_STORE_VARIABLES = [
+  'SSLCOMMERZ_SANDBOX_STORE_ID',
+  'SSLCOMMERZ_SANDBOX_STORE_PASSWORD',
+] as const;
+
 /** The API's (and the worker's) production rules on what its environment holds (raw). */
 export function apiEnvironmentProblems(config: Record<string, unknown>): EnvProblem[] {
   return [
@@ -175,6 +184,12 @@ export function apiEnvironmentProblems(config: Record<string, unknown>): EnvProb
       DATABASE_ADMIN_SECRETS,
       (key) =>
         `${key} must not be given to the API or the worker in production (only Postgres and the migrate step use it)`,
+    ),
+    ...givenInProduction(
+      config,
+      SANDBOX_STORE_VARIABLES,
+      (key) =>
+        `${key} must not be set in production (the sandbox store is for the development commands only)`,
     ),
   ];
 }
@@ -192,6 +207,9 @@ export interface ApiProductionEnv {
   JWT_ACCESS_SECRET: string;
   OTP_PEPPER: string;
   PLATFORM_TOTP_KEY?: string | undefined;
+  PAYMENT_CREDENTIALS_KEY?: string | undefined;
+  /** Normalised by env.ts (an origin when it is one). */
+  API_PUBLIC_URL?: string | undefined;
   DATABASE_URL: string;
   DATABASE_PLATFORM_URL: string;
   DATABASE_LOGIN_URL: string;
@@ -201,7 +219,12 @@ export interface ApiProductionEnv {
 /** SMS providers for development and tests only (console prints codes, the others keep them). */
 const DEV_SMS_PROVIDERS = ['console', 'memory', 'outbox'];
 
-const SECRETS = ['JWT_ACCESS_SECRET', 'OTP_PEPPER', 'PLATFORM_TOTP_KEY'] as const;
+const SECRETS = [
+  'JWT_ACCESS_SECRET',
+  'OTP_PEPPER',
+  'PLATFORM_TOTP_KEY',
+  'PAYMENT_CREDENTIALS_KEY',
+] as const;
 
 /**
  * The API's (and the worker's) production rules. COOKIE_SECURE, DEV_LAN, JANTRIK_TEST_TODAY,
@@ -259,6 +282,16 @@ export function apiProductionProblems(env: ApiProductionEnv): EnvProblem[] {
       );
     }
   }
+  if (env.API_PUBLIC_URL !== undefined) {
+    // SSLCommerz posts the payer's browser and its notifications here (sprint 1 P7a).
+    const why = unsafeOrigin(env.API_PUBLIC_URL);
+    if (why) {
+      add(
+        'API_PUBLIC_URL',
+        `API_PUBLIC_URL must be the API's own https address (https://api.<domain>); it is ${why}`,
+      );
+    }
+  }
   const secrets = SECRETS.filter((key) => env[key] !== undefined);
   for (const key of secrets) {
     if (isPlaceholderSecret(env[key]!)) {
@@ -305,6 +338,7 @@ export const API_ONLY_SECRETS = [
   'JWT_ACCESS_SECRET',
   'OTP_PEPPER',
   'PLATFORM_TOTP_KEY',
+  'PAYMENT_CREDENTIALS_KEY',
 ] as const;
 
 /**
