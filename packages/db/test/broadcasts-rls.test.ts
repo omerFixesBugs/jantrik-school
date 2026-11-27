@@ -123,7 +123,7 @@ describe('broadcasts RLS', () => {
     );
   });
 
-  it("cannot make the send job act as a colleague (sms_broadcasts.scheduled_by_id, P6-b21)", async () => {
+  it('cannot make the send job act as a colleague (sms_broadcasts.scheduled_by_id, P6-b21)', async () => {
     // The send job signs its context as the broadcast's scheduler, read from this column (and
     // checks that person's roles), so the app login must not be able to put anyone else there.
     const colleague = await newUser(a);
