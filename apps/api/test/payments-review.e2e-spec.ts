@@ -1287,4 +1287,30 @@ describe('online payments: the review queue', () => {
       .post(items(`/signals/${item!.id}/refunded-outside`), { note: NOTE })
       .expect(200);
   });
+
+  it('a retried apply after its payment was voided: 409, never the voided receipt (review round 2, probe A)', async () => {
+    const r = await risky();
+    const body = {
+      dueIds: [r.due.id],
+      applyPaisa: 120000,
+      expectedOutstandingPaisa: 120000,
+      clientRequestId: randomUUID(),
+    };
+    const first = (await apply(r.intent.id, body).expect(201)).body as FeeReceipt;
+    await as('admin').post(`/fees/payments/${first.id}/void`, { reason: 'wrong due' }).expect(200);
+    // The same request again (a retry after a lost answer): its payment no longer stands.
+    expect((await apply(r.intent.id, body).expect(409)).body.code).toBe('PAYMENT_VOIDED');
+    expect(await intentRow(h, s.tenantId, r.intent.id)).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      feePaymentId: null,
+    });
+    // Applied again with a new request; the old one retried still gets 409, nothing changes.
+    const again = (await apply(r.intent.id, { ...body, clientRequestId: randomUUID() }).expect(201))
+      .body as FeeReceipt;
+    expect((await apply(r.intent.id, body).expect(409)).body.code).toBe('PAYMENT_VOIDED');
+    expect((await paymentsOf(r.intent.id)).map((p) => [p.id, p.status])).toEqual([
+      [first.id, 'VOID'],
+      [again.id, 'ACTIVE'],
+    ]);
+  });
 });
