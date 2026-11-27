@@ -165,6 +165,39 @@ describe('decideSettlement', () => {
     });
   });
 
+  it('money for another tran_id whose val_id only signals anyone can send brought (P7a2-x30): the event only, the intent left as it is', () => {
+    const other = paid({ tranId: OTHER_TRAN });
+    for (const status of ['CREATED', 'REDIRECTED', 'NEEDS_REVIEW', 'CANCELLED'] as const) {
+      // No intent of the institute has that tran_id: UNMATCHED, for P7b's queue.
+      expect(
+        decideSettlement(intent(status), other, { duesChanged: false, forgeable: true }),
+        status,
+      ).toEqual({ kind: 'EVENT_ONLY', eventReason: 'UNMATCHED' });
+      // Another intent's money: posted through that intent's own signals.
+      expect(
+        decideSettlement(intent(status), other, {
+          duesChanged: false,
+          otherIntent: true,
+          forgeable: true,
+        }),
+        status,
+      ).toEqual({ kind: 'EVENT_ONLY', eventReason: null });
+    }
+    // Brought by SSLCommerz's listed address or listed by our query: P7a-H as before.
+    expect(
+      decideSettlement(intent('REDIRECTED'), other, { duesChanged: false, forgeable: false }),
+    ).toEqual({
+      kind: 'REVIEW',
+      recordFacts: false,
+      addReasons: ['TRAN_ID_MISMATCH'],
+      eventReason: 'UNMATCHED',
+    });
+    // Our own tran_id: the validation answer decides, whoever brought the val_id.
+    expect(
+      decideSettlement(intent('REDIRECTED'), paid(), { duesChanged: false, forgeable: true }),
+    ).toEqual({ kind: 'POST' });
+  });
+
   it('after a unique violation (the bank_tran_id already on a live payment): review as DUPLICATE', () => {
     expect(
       decideSettlement(intent('REDIRECTED'), paid(), { duesChanged: false, duplicate: true }),

@@ -838,10 +838,11 @@ describe('online payments: confirmation and settle', () => {
 
   it('a payment already in review gets a perfect validation, end to end: the money recorded, never posted', async () => {
     const { intent } = await readyPayment();
-    // Another tran_id's val_id first: in review (TRAN_ID_MISMATCH) with no money on it.
+    // Another tran_id's val_id first, from SSLCommerz's listed address: in review
+    // (TRAN_ID_MISMATCH) with no money on it.
     const stray = await payAtGateway(h, fake, s.tenantId, intent.id);
     stray.tranId = newTranId();
-    await postReturn(h, s.slug, intent.tranId, 'success', { val_id: stray.valId }).expect(303);
+    await postIpn(h, s.slug, { tran_id: intent.tranId, val_id: stray.valId }).expect(200);
     await waitStatus(h, s.tenantId, intent.id, 'NEEDS_REVIEW');
     const smsBefore = (await receiptSms()).length;
     // Then the payment itself, perfect in every way, through the IPN route.
@@ -903,11 +904,11 @@ describe('online payments: confirmation and settle', () => {
       expect((await receiptSms()).length).toBe(smsBefore);
     });
 
-    it('another tran_id in the validation answer → TRAN_ID_MISMATCH, no money recorded on it', async () => {
+    it("another tran_id in the validation answer, the val_id from SSLCommerz's listed address → TRAN_ID_MISMATCH, no money recorded on it (P7a-H)", async () => {
       const { intent } = await readyPayment();
       const t = await payAtGateway(h, fake, s.tenantId, intent.id);
       t.tranId = newTranId();
-      await postReturn(h, s.slug, intent.tranId, 'success', { val_id: t.valId }).expect(303);
+      await postIpn(h, s.slug, { tran_id: intent.tranId, val_id: t.valId }).expect(200);
       const row = await waitStatus(h, s.tenantId, intent.id, 'NEEDS_REVIEW');
       expect(row).toMatchObject({
         reviewReasons: ['TRAN_ID_MISMATCH'],
@@ -938,6 +939,110 @@ describe('online payments: confirmation and settle', () => {
     });
   });
 
+  describe("another payment's val_id under this tran_id (P7a-H, narrowed by P7a2-x30)", () => {
+    /** A real payment of this store whose tran_id is no intent of the institute's. */
+    const strayPayment = async (intentId: string) => {
+      const stray = await payAtGateway(h, fake, s.tenantId, intentId);
+      stray.tranId = newTranId();
+      return stray;
+    };
+
+    it("the reviewer's probe P5: a forged return (GET, any address) leaves the payment open with an UNMATCHED event for P7b; the payer's genuine payment still posts", async () => {
+      const { intent } = await readyPayment();
+      const stray = await strayPayment(intent.id);
+      // Anyone with the tran_id (every guardian of the child) and a real val_id of this store.
+      await http(h)
+        .get(
+          `/public/payments/sslcommerz/${s.slug}/return/${intent.tranId}/success?val_id=${stray.valId}`,
+        )
+        .set('X-Forwarded-For', randomIp())
+        .expect(303);
+      await vi.waitFor(async () => {
+        const v = (await eventsOf(intent.id, 'VALIDATE')).find((e) => e.valId === stray.valId);
+        expect(v).toMatchObject({
+          outcome: 'VALID',
+          reviewReason: 'UNMATCHED',
+          tranId: stray.tranId,
+        });
+      });
+      await vi.waitFor(async () =>
+        expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0),
+      );
+      expect(await intentRow(h, s.tenantId, intent.id)).toMatchObject({
+        status: 'REDIRECTED',
+        reviewReasons: [],
+        valId: null,
+        validatedAmountPaisa: null,
+      });
+      // The payer pays on the gateway's page; their own return is validated and posted.
+      const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+      await postReturn(h, s.slug, intent.tranId, 'success', ipnFields(t), randomIp()).expect(303);
+      const paid = await waitStatus(h, s.tenantId, intent.id, 'PAID');
+      expect(paid).toMatchObject({ valId: t.valId, reviewReasons: [] });
+      expect(await paymentsOf(intent.id)).toHaveLength(1);
+    });
+
+    it('an IPN from an address SSLCommerz does not list is as forgeable: the payment stays open', async () => {
+      const { intent } = await readyPayment();
+      const stray = await strayPayment(intent.id);
+      await postIpn(h, s.slug, { tran_id: intent.tranId, val_id: stray.valId }, randomIp()).expect(
+        200,
+      );
+      await vi.waitFor(async () => {
+        const v = (await eventsOf(intent.id, 'VALIDATE')).find((e) => e.valId === stray.valId);
+        expect(v).toMatchObject({ reviewReason: 'UNMATCHED' });
+      });
+      await vi.waitFor(async () =>
+        expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0),
+      );
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+    });
+
+    it("the same val_id also brought by SSLCommerz's listed address, or listed by our own query: review (P7a-H kept)", async () => {
+      // A forged return and the listed IPN with the same val_id, in one round: review.
+      const both = await readyPayment();
+      const stray = await strayPayment(both.intent.id);
+      await withTenant(h.prisma, s.tenantId, (tx) =>
+        tx.paymentGatewayEvent.createMany({
+          data: [false, true].map((listed) => ({
+            tenantId: s.tenantId,
+            intentId: both.intent.id,
+            kind: listed ? ('IPN' as const) : ('RETURN' as const),
+            outcome: listed ? null : 'SUCCESS',
+            tranId: both.intent.tranId,
+            valId: stray.valId,
+            fields: {},
+            sourceListed: listed,
+            receivedAt: new Date(),
+          })),
+        }),
+      );
+      await confirm.run({ tenantId: s.tenantId, intentId: both.intent.id });
+      expect(await intentRow(h, s.tenantId, both.intent.id)).toMatchObject({
+        status: 'NEEDS_REVIEW',
+        reviewReasons: ['TRAN_ID_MISMATCH'],
+        valId: null,
+      });
+
+      // An attempt our query lists under our tran_id, whose validation names another: review.
+      const listed = await readyPayment();
+      const t = await payAtGateway(h, fake, s.tenantId, listed.intent.id);
+      fake.override('validate', {
+        json: {
+          ...t.fields,
+          status: 'VALID',
+          APIConnect: 'DONE',
+          tran_id: newTranId(),
+          val_id: t.valId,
+        },
+      });
+      await postReturn(h, s.slug, listed.intent.tranId, 'cancel', {}, randomIp()).expect(303);
+      const review = await waitStatus(h, s.tenantId, listed.intent.id, 'NEEDS_REVIEW');
+      expect(review).toMatchObject({ reviewReasons: ['TRAN_ID_MISMATCH'], valId: null });
+      expect(await paymentsOf(listed.intent.id)).toEqual([]);
+    });
+  });
+
   it('review focus 4: a made-up val_id posts nothing; another intent’s val_id is a TRAN_ID_MISMATCH here and posts there', async () => {
     const first = await readyPayment();
     await postReturn(h, s.slug, first.intent.tranId, 'success', { val_id: 'VALMADEUP0001' }).expect(
@@ -954,11 +1059,12 @@ describe('online payments: confirmation and settle', () => {
       .post(fees(`/online-payments/${first.intent.id}/abandon`))
       .expect(200);
 
-    // The third child's payment, paid; its val_id replayed on the first child's return.
+    // The third child's payment, paid; its val_id replayed under the first child's tran_id, from
+    // SSLCommerz's listed address (a forged return alone leaves it open: P7a2-x30).
     const other = await readyPayment(120000, s.students[2]!.id, s.tokens.otherGuardian);
     const mine = await readyPayment();
     const t = await payAtGateway(h, fake, s.tenantId, other.intent.id);
-    await postReturn(h, s.slug, mine.intent.tranId, 'success', { val_id: t.valId }).expect(303);
+    await postIpn(h, s.slug, { tran_id: mine.intent.tranId, val_id: t.valId }).expect(200);
     const review = await waitStatus(h, s.tenantId, mine.intent.id, 'NEEDS_REVIEW');
     expect(review).toMatchObject({ reviewReasons: ['TRAN_ID_MISMATCH'], valId: null });
     expect(await paymentsOf(mine.intent.id)).toEqual([]);
