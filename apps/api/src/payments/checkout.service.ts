@@ -299,7 +299,7 @@ export class CheckoutService {
       open &&
       this.clock.now().getTime() - row.createdAt.getTime() > HEAL_AFTER_MS
     ) {
-      // Heal on read: a lost signal or job is asked about again, at most once a minute.
+      // Heal on read: a lost signal or job is asked about again, at most once a minute, by a job.
       const allowed = await this.limiter.tryConsume({
         key: `pay-heal:${row.id}`,
         limit: 1,
@@ -307,11 +307,13 @@ export class CheckoutService {
       });
       if (allowed) {
         const data: IntentJobData = { tenantId: row.tenantId, intentId: row.id };
-        await this.context.afterCommit(() =>
-          queueConfirm(this.queue, data).catch((error: unknown) =>
+        // Queued once the read commits, and the read does not wait for it: a guardian's read
+        // never waits on the queue, let alone on SSLCommerz (only the job asks it).
+        await this.context.afterCommit(() => {
+          void queueConfirm(this.queue, data).catch((error: unknown) =>
             this.logger.warn(`Could not queue a heal: ${(error as Error).name}`),
-          ),
-        );
+          );
+        });
       }
     }
     return this.toView(row, this.context.requirePrincipal().userId);
