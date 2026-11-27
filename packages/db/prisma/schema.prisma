@@ -616,6 +616,8 @@ model User {
   paymentAccountsCredentialsUpdated PaymentGatewayAccount[] @relation("PaymentAccountCredentialsUpdatedBy")
   paymentAccountsTested             PaymentGatewayAccount[] @relation("PaymentAccountTestedBy")
   paymentIntentsPaid                PaymentIntent[]         @relation("PaymentIntentPayer")
+  paymentIntentsResolved            PaymentIntent[]         @relation("PaymentIntentResolvedBy")
+  paymentSignalReviews              PaymentSignalReview[]   @relation("PaymentSignalReviewResolvedBy")
 
   @@map("users")
 }
@@ -736,6 +738,7 @@ model Tenant {
   paymentIntents         PaymentIntent[]
   paymentIntentDues      PaymentIntentDue[]
   paymentGatewayEvents   PaymentGatewayEvent[]
+  paymentSignalReviews   PaymentSignalReview[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -2736,15 +2739,15 @@ model FeePayment {
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant      Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  student     Student                @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
-  collectedBy User                   @relation("FeePaymentCollectedBy", fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  voidedBy    User?                  @relation("FeePaymentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  allocations FeePaymentAllocation[]
-  submissions FeeMobileSubmission[]
+  tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  student        Student                @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  collectedBy    User                   @relation("FeePaymentCollectedBy", fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  voidedBy       User?                  @relation("FeePaymentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  allocations    FeePaymentAllocation[]
+  submissions    FeeMobileSubmission[]
   /// Same student: an online payment only ever pays its own child's dues.
-  paymentIntent  PaymentIntent?  @relation("FeePaymentIntent", fields: [tenantId, paymentIntentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
-  intentsHolding PaymentIntent[] @relation("PaymentIntentFeePayment")
+  paymentIntent  PaymentIntent?         @relation("FeePaymentIntent", fields: [tenantId, paymentIntentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  intentsHolding PaymentIntent[]        @relation("PaymentIntentFeePayment")
 
   @@unique([tenantId, id])
   @@unique([tenantId, id, studentId])
@@ -3964,9 +3967,9 @@ model PaymentGatewayAccount {
   createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant               Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  credentialsUpdatedBy User?  @relation("PaymentAccountCredentialsUpdatedBy", fields: [credentialsUpdatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  lastTestedBy         User?  @relation("PaymentAccountTestedBy", fields: [lastTestedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tenant               Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  credentialsUpdatedBy User?           @relation("PaymentAccountCredentialsUpdatedBy", fields: [credentialsUpdatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lastTestedBy         User?           @relation("PaymentAccountTestedBy", fields: [lastTestedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   intents              PaymentIntent[]
 
   @@unique([tenantId, id])
@@ -4065,6 +4068,23 @@ model PaymentIntent {
   reviewSince          DateTime?             @map("review_since") @db.Timestamptz(3)
   /// When it left CREATED/REDIRECTED.
   closedAt             DateTime?             @map("closed_at") @db.Timestamptz(3)
+  /// P7b: a person's decision on it in review (apply, refunded outside, dismiss): who, when and
+  /// why. Written only as it leaves NEEDS_REVIEW; cleared when it comes back (the audit log keeps
+  /// the earlier one). Trigger payment_intents_resolution_guard.
+  resolvedById         String?               @map("resolved_by_id") @db.Uuid
+  resolvedAt           DateTime?             @map("resolved_at") @db.Timestamptz(3)
+  /// 3 to 500 characters.
+  resolutionNote       String?               @map("resolution_note")
+  /// Applied: the amount of its payment; applied + refunded outside = the validated amount.
+  appliedPaisa         Int?                  @map("applied_paisa")
+  /// The part (or all) of the validated money recorded as given back outside the app.
+  refundedOutsidePaisa Int?                  @map("refunded_outside_paisa")
+  /// What the institute's own records call that refund (ASCII letters, digits, -_./).
+  refundReference      String?               @map("refund_reference")
+  /// The last time SSLCommerz was asked about it by our tran_id (reconciliation, "check now").
+  lastCheckedAt        DateTime?             @map("last_checked_at") @db.Timestamptz(3)
+  /// SUCCESS_FOUND, PENDING, NO_SUCCESS or the provider's error code.
+  lastCheckOutcome     String?               @map("last_check_outcome")
   createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -4072,6 +4092,7 @@ model PaymentIntent {
   account    PaymentGatewayAccount @relation(fields: [tenantId, accountId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   student    Student               @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
   payer      User                  @relation("PaymentIntentPayer", fields: [payerUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  resolvedBy User?                 @relation("PaymentIntentResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// Same student as the intent's.
   feePayment FeePayment?           @relation("PaymentIntentFeePayment", fields: [tenantId, feePaymentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
   dues       PaymentIntentDue[]
@@ -4139,12 +4160,45 @@ model PaymentGatewayEvent {
   createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  intent PaymentIntent? @relation(fields: [tenantId, intentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  tenant Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  intent PaymentIntent?       @relation(fields: [tenantId, intentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// P7b: the one final decision on a review event (UNMATCHED or DUPLICATE money).
+  review PaymentSignalReview?
 
   @@unique([tenantId, id])
   @@index([tenantId, intentId, receivedAt])
   @@index([tenantId, tranId])
   @@index([tenantId, receivedAt], map: "payment_gateway_events_review", where: raw("review_reason IS NOT NULL"))
   @@map("payment_gateway_events")
+}
+
+/// P7b (decision P7b-C): the one final decision on money no intent holds or that came twice (a
+/// VALIDATE event with a review reason): refunded outside the app, or dismissed as a repeat
+/// record of money held elsewhere (deferred trigger). Append-only: SELECT and INSERT only.
+model PaymentSignalReview {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  eventId         String   @map("event_id") @db.Uuid
+  /// REFUNDED_OUTSIDE or DISMISSED (a CHECK).
+  outcome         String
+  /// REFUNDED_OUTSIDE: the event's validated amount (NULL when the gateway's amount was not a
+  /// well-formed amount).
+  amountPaisa     Int?     @map("amount_paisa")
+  refundReference String?  @map("refund_reference")
+  /// 3 to 500 characters.
+  note            String
+  resolvedById    String   @map("resolved_by_id") @db.Uuid
+  resolvedAt      DateTime @map("resolved_at") @db.Timestamptz(3)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  event      PaymentGatewayEvent @relation(fields: [tenantId, eventId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  resolvedBy User                @relation("PaymentSignalReviewResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  /// One decision per item, final.
+  @@unique([tenantId, eventId])
+  @@index([tenantId, resolvedAt])
+  @@map("payment_signal_reviews")
 }

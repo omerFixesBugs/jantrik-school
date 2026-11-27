@@ -580,11 +580,14 @@ describe('payment intents, their dues, gateway events and gateway payments', () 
         `UPDATE payment_intents SET status = 'NEEDS_REVIEW', fee_payment_id = NULL, review_reasons = '{VOIDED}', review_since = now() WHERE id = '${intent.id}'`,
       );
     });
-    // Applied again from review (P7b's action): one live, one void.
+    // Applied again from review (P7b's action, a person's decision with the applied amount and
+    // the intent's bank_tran_id): one live, one void.
     await withTenant(app, a.tenantId, async (tx) => {
-      const again = await gatewayPayment(tx, a, intent);
+      const again = await gatewayPayment(tx, a, intent, { trxId: first.trxId });
       await tx.$executeRawUnsafe(
-        `UPDATE payment_intents SET status = 'PAID', fee_payment_id = '${again.id}' WHERE id = '${intent.id}'`,
+        `UPDATE payment_intents SET status = 'PAID', fee_payment_id = '${again.id}',
+           resolved_by_id = '${a.payer}', resolved_at = now(), resolution_note = 'applied again',
+           applied_paisa = ${intent.amountPaisa} WHERE id = '${intent.id}'`,
       );
     });
   });
