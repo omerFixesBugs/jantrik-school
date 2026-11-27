@@ -322,8 +322,11 @@ CREATE TRIGGER payment_intents_insert_created
   BEFORE INSERT ON payment_intents
   FOR EACH ROW EXECUTE FUNCTION payment_intents_insert_created();
 
--- At commit: a PAID intent's payment is live, a gateway payment, and names this intent. Read
--- again then (a deferred trigger gets the row as it was when it fired).
+-- At commit: a PAID intent's payment is live, a gateway payment, and names this intent; and a
+-- live payment that names this intent is the one it holds as PAID, so an intent never lets go of
+-- its payment without the void (P7a2-x25: the guard alone let an update move PAID to review
+-- "voided" while the payment stayed ACTIVE). Read again then (a deferred trigger gets the row as
+-- it was when it fired).
 CREATE FUNCTION payment_intents_paid_check() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp
@@ -340,6 +343,14 @@ BEGIN
       AND p.channel = 'GATEWAY' AND p.payment_intent_id = NEW.id
   ) THEN
     RAISE EXCEPTION 'a PAID payment intent needs its own live gateway payment'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM fee_payments p
+    WHERE p.tenant_id = NEW.tenant_id AND p.payment_intent_id = NEW.id AND p.status = 'ACTIVE'
+      AND (v_status IS DISTINCT FROM 'PAID' OR v_payment IS DISTINCT FROM p.id)
+  ) THEN
+    RAISE EXCEPTION 'a live gateway payment keeps its intent PAID with it (void it first)'
       USING ERRCODE = 'check_violation';
   END IF;
   RETURN NULL;
