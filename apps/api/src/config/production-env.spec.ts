@@ -548,6 +548,9 @@ describe('production env: development and tests are not affected', () => {
       CORS_ORIGINS: 'http://localhost:3000',
       JWT_ACCESS_SECRET: 'ci-only-access-secret-0123456789abcdefghijkl',
       OTP_PEPPER: 'ci-only-otp-pepper-0123456789abcdefghijklmno',
+      // The fake SSLCommerz and the API's own address (online payments).
+      SSLCOMMERZ_BASE_URL: 'http://127.0.0.1:4090',
+      API_PUBLIC_URL: 'http://localhost:4000',
     };
     expect(apiError(e2e)).toBe('');
     // The API tests (apps/api/vitest.config.ts): TRUST_PROXY=true, memory SMS.

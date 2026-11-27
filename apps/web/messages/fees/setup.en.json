@@ -9,6 +9,7 @@
       "concessions": "Concessions",
       "siblings": "Siblings",
       "numbers": "bKash/Nagad numbers",
+      "online": "Online payments",
       "collectors": "Fee collectors"
     },
     "managersOnlyTitle": "Fee setup is for the owner and admins",
@@ -431,6 +432,73 @@
       "activateBody": "Guardians can send money to this number again.",
       "deactivated": "Number turned off",
       "activated": "Number turned on again"
+    },
+    "online": {
+      "title": "Online payments (SSLCommerz)",
+      "hint": "Guardians pay chosen dues in full through SSLCommerz: bKash, Nagad, Rocket and cards. This is SSLCommerz’s test system (sandbox): no real money moves yet.",
+      "ownerOnly": "Only the owner sets up online payments (where money goes).",
+      "sandbox": "Sandbox",
+      "statusLabel": "Status",
+      "status": {
+        "notSetUp": "Not set up",
+        "off": "Set up, off",
+        "on": "On"
+      },
+      "storeLabel": "Store ID",
+      "noStore": "Not saved yet",
+      "lastTestLabel": "Last connection test",
+      "testing": "Testing…",
+      "neverTested": "Not tested yet",
+      "result": {
+        "OK": "Connected",
+        "BAD_CREDENTIALS": "Store ID or password refused",
+        "STORE_INACTIVE": "Store not active",
+        "UNREACHABLE": "SSLCommerz could not be reached",
+        "ERROR": "SSLCommerz gave an unexpected answer"
+      },
+      "resultHelp": {
+        "BAD_CREDENTIALS": "SSLCommerz did not accept this store ID and password. Check them in the email from SSLCommerz and save them again.",
+        "STORE_INACTIVE": "SSLCommerz says this store is not active. Ask SSLCommerz to activate it, then test again.",
+        "UNREACHABLE": "SSLCommerz did not answer within 30 seconds. Try again in a few minutes.",
+        "ERROR": "SSLCommerz answered something the app did not expect. Try again later; if it keeps happening, tell Jantrik support."
+      },
+      "lastFailureLabel": "Last problem",
+      "failure": {
+        "CREDENTIALS_UNREADABLE": "The saved store ID and password can no longer be read: save them again.",
+        "AUTH_FAILED": "SSLCommerz refused the store ID or password.",
+        "STORE_INACTIVE": "SSLCommerz says the store is not active.",
+        "OTHER": "A payment could not reach SSLCommerz."
+      },
+      "test": "Test connection",
+      "turnOn": "Turn on",
+      "turnOff": "Turn off",
+      "turnOnNeedsTest": "Test the connection first: online payments can be turned on only after it passes.",
+      "testSlow": "The test is taking long. Check the result again in a minute.",
+      "turnedOn": "Online payments are on",
+      "turnedOff": "Online payments are off",
+      "credentialsTitle": "Store ID and password",
+      "replaceTitle": "Replace the store ID and password",
+      "credentialsHint": "From the email SSLCommerz sent when the sandbox store was made. They are stored encrypted and never shown again, not even to you.",
+      "storeId": "Store ID",
+      "storePassword": "Store password",
+      "replaceTurnsOff": "Saving new ones turns online payments off until the connection is tested again.",
+      "save": "Save",
+      "saved": "Saved. Now test the connection.",
+      "ipnTitle": "IPN address",
+      "ipnHint": "Paste this into your SSLCommerz panel as the IPN listener, so SSLCommerz tells the school about each payment.",
+      "copy": "Copy",
+      "copied": "Address copied",
+      "copyFailed": "Could not copy: select the address and copy it yourself.",
+      "ipnMissing": "The server has no public address yet (API_PUBLIC_URL). Online payments cannot be turned on until it has one.",
+      "sandboxNote": "Every payment is checked with SSLCommerz before a receipt is made; anything doubtful waits for you.",
+      "errors": {
+        "testRequired": "Test the connection first; it must pass.",
+        "noPublicAddress": "The server has no public address yet (API_PUBLIC_URL): online payments cannot be turned on.",
+        "credentialsRequired": "Save the store ID and password first.",
+        "checkForm": "Check the store ID and password.",
+        "storeId": "Letters, digits, _ or - only (no spaces).",
+        "storePassword": "1 to 100 characters, no spaces."
+      }
     },
     "collectors": {
       "title": "Fee collectors",
