@@ -325,4 +325,59 @@ describe('online payments in the reports, the daily closing and the dashboard', 
     expect(after.refundedOutside.count - before.refundedOutside.count).toBe(2);
     expect(after.refundedOutside.amountPaisa - before.refundedOutside.amountPaisa).toBe(45000);
   });
+
+  it('each payment counts once, in its state now: applied with a refund part, then voided back with the refund kept (review round 2, probe D)', async () => {
+    const total = async () =>
+      (
+        (
+          await as('accountant')
+            .get(`/fees/reports/online-payments?from=${s.today}&to=${s.today}`)
+            .expect(200)
+        ).body as OnlinePaymentsReport
+      ).total;
+    const states = (t: OnlinePaymentsReport['total']) =>
+      t.open.count +
+      t.paid.count +
+      t.failed.count +
+      t.expired.count +
+      t.review.count +
+      t.refundedOutside.count +
+      t.dismissed.count;
+    const before = await total();
+    // ৳1 200 in review: ৳800 applied, ৳400 given back outside the app.
+    const risky = await paidOnline(120000, { risk_level: '1' });
+    const small = await extraDue(h, s, child().id, { amountPaisa: 80000, dueDate: s.today });
+    const receipt = (
+      await as('admin')
+        .post(`/fees/online-payments/${risky.intent.id}/apply`, {
+          dueIds: [small.id],
+          applyPaisa: 80000,
+          expectedOutstandingPaisa: 80000,
+          refundOutside: { reference: 'BK-RF-D1' },
+          note: 'the guardian confirmed it by phone',
+          clientRequestId: randomUUID(),
+        })
+        .expect(201)
+    ).body as FeeReceipt;
+    const applied = await total();
+    expect(applied.initiated.count - before.initiated.count).toBe(1);
+    expect(states(applied) - states(before)).toBe(1);
+    expect(applied.paid.count - before.paid.count).toBe(1);
+    expect(applied.paid.amountPaisa - before.paid.amountPaisa).toBe(80000);
+    expect(applied.refundedOutside.count - before.refundedOutside.count).toBe(0);
+    expect(applied.refundedOutside.amountPaisa - before.refundedOutside.amountPaisa).toBe(40000);
+    expect(applied.received.amountPaisa - before.received.amountPaisa).toBe(120000);
+
+    // Voided: back in review once, with ৳800 left to decide; the ৳400 refund stays counted.
+    await as('admin')
+      .post(`/fees/payments/${receipt.id}/void`, { reason: 'wrong due' })
+      .expect(200);
+    const voided = await total();
+    expect(states(voided) - states(before)).toBe(1);
+    expect(voided.review.count - before.review.count).toBe(1);
+    expect(voided.review.amountPaisa - before.review.amountPaisa).toBe(80000);
+    expect(voided.paid.count - before.paid.count).toBe(0);
+    expect(voided.refundedOutside.count - before.refundedOutside.count).toBe(0);
+    expect(voided.refundedOutside.amountPaisa - before.refundedOutside.amountPaisa).toBe(40000);
+  });
 });
