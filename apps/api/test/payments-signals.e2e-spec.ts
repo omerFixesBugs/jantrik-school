@@ -235,30 +235,36 @@ describe('online payments: the public signal routes', () => {
     expect(await events({ kind: 'RETURN' })).toHaveLength(before);
   });
 
-  it("one payment's budget (P7a2-x23): 10 signals an hour from anyone but SSLCommerz, whatever the address; SSLCommerz has 10 of its own", async () => {
-    // The reviewer's probe: anyone with the tran_id (it is in the return URL) sends returns with
-    // made-up val_ids from many addresses, each to be validated with the institute's credentials.
+  it("a flood of returns from other addresses never keeps the payer's own signals out (P7a2-x23): no per-payment count before storing", async () => {
+    // Anyone with the tran_id (every guardian of the child; it is in the return URL) sends
+    // returns with made-up val_ids from many addresses. The bound lives in confirm, where the
+    // gateway is asked (payments-settle); a signal is never refused on a count others can spend.
     // The worker is paused here: the payment stays CREATED, which is enough to name it.
     const view = await startPayment(h, s.tokens.guardian, s.students[1]!.id, { wait: false });
-    const sent: string[] = [];
     for (let i = 0; i < 25; i++) {
       const valId = `VALFLOOD${String(i).padStart(4, '0')}`;
       const res = await postReturn(h, s.slug, view.tranId, 'success', { val_id: valId }, randomIp());
       expect(res.status).toBe(303);
-      sent.push(res.headers['location'] as string);
+      expect(res.headers['location']).toContain(`/fees/pay/${view.id}`);
     }
-    const stored = await events({ intentId: view.id, kind: 'RETURN' });
-    expect(stored).toHaveLength(10);
-    // Over it: still a 303, to the children (nothing recorded; the payment's page heals).
-    expect(sent.at(-1)).toBe(`${PUBLIC_WEB}/children`);
-    // An IPN from an unlisted address counts against the same budget: 429, nothing stored.
+    // The payer's own browser, from an address of its own: recorded and sent to the payment.
+    const genuine = await postReturn(
+      h,
+      s.slug,
+      view.tranId,
+      'success',
+      { val_id: 'VALGENUINE0001' },
+      randomIp(),
+    );
+    expect(genuine.headers['location']).toContain(`/fees/pay/${view.id}`);
     expect(
-      (await postIpn(h, s.slug, { tran_id: view.tranId, status: 'VALID' }, randomIp())).status,
-    ).toBe(429);
-    // SSLCommerz's own notifications have a budget of their own: the flood never blocks them.
+      (await events({ intentId: view.id, kind: 'RETURN', valId: 'VALGENUINE0001' })).length,
+    ).toBe(1);
+    // SSLCommerz's notification: stored too.
     expect(
       (await postIpn(h, s.slug, { tran_id: view.tranId, status: 'VALID' }, SSLCOMMERZ_IP)).status,
     ).toBe(200);
+    expect(await events({ intentId: view.id, kind: 'RETURN' })).toHaveLength(26);
     expect(await events({ intentId: view.id, kind: 'IPN' })).toHaveLength(1);
   });
 

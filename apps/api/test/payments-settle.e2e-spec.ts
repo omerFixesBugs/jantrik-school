@@ -16,7 +16,7 @@ import { PAYMENT_PROVIDER, type PaymentProvider } from '../src/payments/provider
 import { SettleService, type PaidOutcome } from '../src/payments/settle.service.js';
 import { startFakeSslcommerz, type FakeSslcommerz } from './support/fake-sslcommerz.js';
 import { ownerClient, platform, platformAdminCookie } from './support/platform.js';
-import { createHarness, http, type Harness } from './support/harness.js';
+import { createHarness, http, randomIp, type Harness } from './support/harness.js';
 import {
   api,
   childFees,
@@ -430,6 +430,24 @@ describe('online payments: confirmation and settle', () => {
       await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
       expect(validations(flood)).toBe(3);
+    });
+
+    it("the reviewer's probe: 40 forged returns from many addresses, then the guardian's genuine return: recorded and posted, the made-up val_ids validated at most 10 times", async () => {
+      const { intent } = await readyPayment();
+      const flood = madeUp(40);
+      for (const valId of flood) {
+        await postReturn(h, s.slug, intent.tranId, 'success', { val_id: valId }, randomIp()).expect(
+          303,
+        );
+      }
+      const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+      await postReturn(h, s.slug, intent.tranId, 'success', ipnFields(t), randomIp()).expect(303);
+      expect((await eventsOf(intent.id, 'RETURN')).filter((e) => e.valId === t.valId)).toHaveLength(
+        1,
+      );
+      await waitStatus(h, s.tenantId, intent.id, 'PAID');
+      expect(validations(flood)).toBeLessThanOrEqual(10);
+      expect(await paymentsOf(intent.id)).toHaveLength(1);
     });
 
     it('a closed payment: new val_ids are not validated unless the query lists them', async () => {
