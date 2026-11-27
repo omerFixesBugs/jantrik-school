@@ -49,8 +49,9 @@ export async function feesSchool(
   const yearEnd = addDays(`${addMonths(current, 9)}-01`, -1);
   const admittedLongAgo = dateToDb(addDays(yearStart, -400));
   const ids = await withTenant(h.prisma, tenantId, async (tx) => {
+    const thisYear = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
     const year = await tx.academicYear.update({
-      where: { tenantId_name: { tenantId, name: '2026' } },
+      where: { id: thisYear.id },
       data: { startDate: dateToDb(yearStart), endDate: dateToDb(yearEnd) },
     });
     const class6 = await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_6' } });

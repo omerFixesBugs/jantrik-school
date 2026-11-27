@@ -23,7 +23,7 @@ describe('promotion: numbering the rolls', () => {
   const preview = async () =>
     (
       await api(s.tokens.admin)
-        .get(`/promotions/rolls?toYearId=${s.y2027}&classLevelId=${s.classes[7]}`)
+        .get(`/promotions/rolls?toYearId=${s.nextYear}&classLevelId=${s.classes[7]}`)
         .expect(200)
     ).body as RollsPreview;
   const admit = async (name: string, roll: number | null) =>
@@ -36,9 +36,9 @@ describe('promotion: numbering the rolls', () => {
               { phone: randomPhone(), nameBn: 'অভিভাবক', relation: 'MOTHER', isPrimary: true },
             ],
             enrolment: {
-              academicYearId: s.y2027,
+              academicYearId: s.nextYear,
               classLevelId: s.classes[7],
-              sectionId: s.sections[2027][7].ka,
+              sectionId: s.sections.nextYear[7].ka,
               roll,
             },
           })
@@ -57,12 +57,20 @@ describe('promotion: numbering the rolls', () => {
     const admin = api(s.tokens.admin);
     const six = (
       await admin
-        .post('/promotions', { fromYearId: s.y2026, toYearId: s.y2027, classLevelId: s.classes[6] })
+        .post('/promotions', {
+          fromYearId: s.thisYear,
+          toYearId: s.nextYear,
+          classLevelId: s.classes[6],
+        })
         .expect(201)
     ).body as PromotionRunDetail;
     const seven = (
       await admin
-        .post('/promotions', { fromYearId: s.y2026, toYearId: s.y2027, classLevelId: s.classes[7] })
+        .post('/promotions', {
+          fromYearId: s.thisYear,
+          toYearId: s.nextYear,
+          classLevelId: s.classes[7],
+        })
         .expect(201)
     ).body as PromotionRunDetail;
     // Class 7's two students repeat (into 7 ক).
@@ -72,7 +80,7 @@ describe('promotion: numbering the rolls', () => {
           id: r.id,
           decision: 'REPEAT',
           targetClassLevelId: s.classes[7],
-          targetSectionId: s.sections[2027][7].ka,
+          targetSectionId: s.sections.nextYear[7].ka,
         })),
       })
       .expect(200);
@@ -96,7 +104,7 @@ describe('promotion: numbering the rolls', () => {
   it('proposes promoted (merit), then repeaters (Bangla name), then new admits, skipping the hand-set 3', async () => {
     const p = await preview();
     expect(p.strategies).toEqual({ PROMOTED: 'MERIT', REPEATER: 'NAME_BN', NEW: 'NAME_BN' });
-    const ka = p.sections.find((x) => x.section.id === s.sections[2027][7].ka)!;
+    const ka = p.sections.find((x) => x.section.id === s.sections.nextYear[7].ka)!;
     const proposed = Object.fromEntries(
       ka.rows.map((r) => [r.studentId, { group: r.group, roll: r.roll, proposed: r.proposed }]),
     );
@@ -108,22 +116,22 @@ describe('promotion: numbering the rolls', () => {
     expect(proposed[ritu!.id]).toEqual({ group: 'REPEATER', roll: null, proposed: 4 });
     expect(proposed[khadija!.id]).toEqual({ group: 'REPEATER', roll: null, proposed: 5 });
     expect(proposed[admitWithout]).toEqual({ group: 'NEW', roll: null, proposed: 6 });
-    const kha = p.sections.find((x) => x.section.id === s.sections[2027][7].kha)!;
+    const kha = p.sections.find((x) => x.section.id === s.sections.nextYear[7].kha)!;
     expect(kha.rows.map((r) => r.proposed)).toEqual([1]);
   });
 
   it('a MANUAL duplicate is refused, a taken number answers ROLL_TAKEN, a stale preview PREVIEW_CHANGED', async () => {
     const p = await preview();
-    const ka = p.sections.find((x) => x.section.id === s.sections[2027][7].ka)!;
+    const ka = p.sections.find((x) => x.section.id === s.sections.nextYear[7].ka)!;
     const open = ka.rows.filter((r) => r.roll === null);
     const body = (
       rolls: { enrolmentId: string; roll: number | string }[],
       version = p.version,
     ) => ({
-      toYearId: s.y2027,
+      toYearId: s.nextYear,
       classLevelId: s.classes[7],
       version,
-      sections: [{ sectionId: s.sections[2027][7].ka, rolls }],
+      sections: [{ sectionId: s.sections.nextYear[7].ka, rolls }],
     });
     await api(s.tokens.admin)
       .put(
@@ -162,7 +170,7 @@ describe('promotion: numbering the rolls', () => {
     const saved = (
       await api(s.tokens.admin)
         .put('/promotions/rolls', {
-          toYearId: s.y2027,
+          toYearId: s.nextYear,
           classLevelId: s.classes[7],
           version: p.version,
           sections,
@@ -173,8 +181,8 @@ describe('promotion: numbering the rolls', () => {
     const rolls = await withTenant(h.prisma, s.tenantId, (tx) =>
       tx.enrolment.findMany({
         where: {
-          academicYearId: s.y2027,
-          sectionId: s.sections[2027][7].ka,
+          academicYearId: s.nextYear,
+          sectionId: s.sections.nextYear[7].ka,
           student: { deletedAt: null },
         },
         select: { studentId: true, roll: true },
@@ -189,16 +197,16 @@ describe('promotion: numbering the rolls', () => {
       tx.auditLog.findMany({ where: { entity: 'class_level', entityId: s.classes[7] } }),
     );
     expect(audit).toHaveLength(1);
-    expect(audit[0]!.newValues).toMatchObject({ step: 'number_rolls', toYearId: s.y2027 });
+    expect(audit[0]!.newValues).toMatchObject({ step: 'number_rolls', toYearId: s.nextYear });
   });
 
   it('teachers cannot; another institute sees nothing of it', async () => {
     await api(s.tokens.teacher)
-      .get(`/promotions/rolls?toYearId=${s.y2027}&classLevelId=${s.classes[7]}`)
+      .get(`/promotions/rolls?toYearId=${s.nextYear}&classLevelId=${s.classes[7]}`)
       .expect(403);
     const other = await promotionSchool(h);
     await api(other.tokens.admin)
-      .get(`/promotions/rolls?toYearId=${s.y2027}&classLevelId=${s.classes[7]}`)
+      .get(`/promotions/rolls?toYearId=${s.nextYear}&classLevelId=${s.classes[7]}`)
       .expect(404);
   });
 });

@@ -82,8 +82,8 @@ describe('exams: what each person sees', () => {
           kind: 'HALF_YEARLY',
           nameBn: 'অর্ধবার্ষিক',
           nameEn: 'Half-yearly',
-          startsOn: '2026-06-01',
-          endsOn: '2026-06-15',
+          startsOn: `${s.year}-06-01`,
+          endsOn: `${s.year}-06-15`,
           resultMode: 'GPA',
         })
         .expect(201)

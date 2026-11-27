@@ -66,8 +66,8 @@ describe('results: publish, tabulation, report cards, remarks', () => {
           kind: 'HALF_YEARLY',
           nameBn: 'অর্ধবার্ষিক',
           nameEn: 'Half-yearly',
-          startsOn: '2026-06-01',
-          endsOn: '2026-06-15',
+          startsOn: `${s.year}-06-01`,
+          endsOn: `${s.year}-06-15`,
           resultMode: 'GPA',
         })
         .expect(201)
@@ -86,7 +86,7 @@ describe('results: publish, tabulation, report cards, remarks', () => {
       .set(bearer(s.tokens.admin))
       .send({
         sectionId: s.sections.six,
-        date: '2026-06-10',
+        date: `${s.year}-06-10`,
         baseVersion: 0,
         submissionId: randomUUID(),
         records: s.students.six.map((st, i) => ({
@@ -367,8 +367,8 @@ describe('results: publish, tabulation, report cards, remarks', () => {
           kind: 'MODEL_TEST',
           nameBn: 'মডেল টেস্ট',
           nameEn: 'Model test',
-          startsOn: '2026-07-01',
-          endsOn: '2026-07-01',
+          startsOn: `${t.year}-07-01`,
+          endsOn: `${t.year}-07-01`,
           resultMode: 'MARKS',
         })
         .expect(201)
@@ -446,8 +446,8 @@ describe('results: publish, tabulation, report cards, remarks', () => {
           kind: 'ANNUAL',
           nameBn: 'বার্ষিক',
           nameEn: 'Annual',
-          startsOn: '2026-11-01',
-          endsOn: '2026-11-20',
+          startsOn: `${t.year}-11-01`,
+          endsOn: `${t.year}-11-20`,
           resultMode: 'GPA',
         })
         .expect(201)

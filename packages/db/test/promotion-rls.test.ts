@@ -1,35 +1,31 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findOrCreateUser, withTenant, type PrismaClient } from '../src/index.js';
-import { appClient, createTenant, randomPhone } from './helpers.js';
+import { appClient, createTenant, randomPhone, yearRange } from './helpers.js';
 
 type Tx = Parameters<Parameters<typeof withTenant>[2]>[0];
 
 /**
- * A school with 2026 (current) and 2027, class 6 and 7 sections in both years, a student in
- * class 6 ক of 2026, an exam of 2026 and one of 2027, and a draft run of class 6 → 2027.
+ * A school with this year (the test year, current) and the next, class 6 and 7 sections in both
+ * years, a student in class 6 ক of this year, an exam of each year, and a draft run of class 6
+ * into the next year.
  */
 async function school(app: PrismaClient) {
   const tenant = await createTenant(app);
   const tenantId = tenant.id;
   return withTenant(app, tenantId, async (tx) => {
-    const y2026 = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
-    const y2027 = await tx.academicYear.create({
-      data: {
-        tenantId,
-        name: '2027',
-        startDate: new Date('2027-01-01'),
-        endDate: new Date('2027-12-31'),
-      },
+    const thisYear = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
+    const nextYear = await tx.academicYear.create({
+      data: { tenantId, ...yearRange(thisYear.startDate.getUTCFullYear() + 1) },
     });
     const c6 = await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_6' } });
     const c7 = await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_7' } });
     const section = (academicYearId: string, classLevelId: string, name = 'ক') =>
       tx.section.create({ data: { tenantId, academicYearId, classLevelId, name } });
-    const six26 = await section(y2026.id, c6.id);
-    const seven27 = await section(y2027.id, c7.id);
-    const six27 = await section(y2027.id, c6.id);
-    const seven26 = await section(y2026.id, c7.id);
+    const sixThisYear = await section(thisYear.id, c6.id);
+    const sevenNextYear = await section(nextYear.id, c7.id);
+    const sixNextYear = await section(nextYear.id, c6.id);
+    const sevenThisYear = await section(thisYear.id, c7.id);
     const adminId = await findOrCreateUser(tx, randomPhone(), 'Admin');
     await tx.membership.create({ data: { tenantId, userId: adminId, role: 'ADMIN' } });
     const student = await tx.student.create({
@@ -39,9 +35,9 @@ async function school(app: PrismaClient) {
       data: {
         tenantId,
         studentId: student.id,
-        academicYearId: y2026.id,
+        academicYearId: thisYear.id,
         classLevelId: c6.id,
-        sectionId: six26.id,
+        sectionId: sixThisYear.id,
         roll: 1,
       },
     });
@@ -61,13 +57,13 @@ async function school(app: PrismaClient) {
           status: 'OPEN',
         },
       });
-    const exam26 = await exam(y2026.id);
-    const exam27 = await exam(y2027.id);
+    const examThisYear = await exam(thisYear.id);
+    const examNextYear = await exam(nextYear.id);
     const run = await tx.promotionRun.create({
       data: {
         tenantId,
-        fromYearId: y2026.id,
-        toYearId: y2027.id,
+        fromYearId: thisYear.id,
+        toYearId: nextYear.id,
         classLevelId: c6.id,
         rollStrategy: 'NAME_BN',
         createdById: adminId,
@@ -75,19 +71,19 @@ async function school(app: PrismaClient) {
     });
     return {
       tenantId,
-      y2026: y2026.id,
-      y2027: y2027.id,
+      thisYear: thisYear.id,
+      nextYear: nextYear.id,
       c6: c6.id,
       c7: c7.id,
-      six26: six26.id,
-      six27: six27.id,
-      seven26: seven26.id,
-      seven27: seven27.id,
+      sixThisYear: sixThisYear.id,
+      sixNextYear: sixNextYear.id,
+      sevenThisYear: sevenThisYear.id,
+      sevenNextYear: sevenNextYear.id,
       adminId,
       studentId: student.id,
       enrolmentId: enrolment.id,
-      exam26: exam26.id,
-      exam27: exam27.id,
+      examThisYear: examThisYear.id,
+      examNextYear: examNextYear.id,
       runId: run.id,
     };
   });
@@ -98,14 +94,14 @@ type School = Awaited<ReturnType<typeof school>>;
 const promoteRow = (s: School, extra: Record<string, unknown> = {}) => ({
   tenantId: s.tenantId,
   runId: s.runId,
-  toYearId: s.y2027,
+  toYearId: s.nextYear,
   studentId: s.studentId,
   fromEnrolmentId: s.enrolmentId,
-  fromSectionId: s.six26,
+  fromSectionId: s.sixThisYear,
   fromRoll: 1,
   decision: 'PROMOTE' as const,
   targetClassLevelId: s.c7,
-  targetSectionId: s.seven27,
+  targetSectionId: s.sevenNextYear,
   ...extra,
 });
 
@@ -158,7 +154,7 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
     );
     expect(otherStudent?.message).toMatch(/foreign key/i);
     const otherSection = await failure(app, a.tenantId, (tx) =>
-      tx.promotionRunStudent.create({ data: promoteRow(a, { targetSectionId: b.seven27 }) }),
+      tx.promotionRunStudent.create({ data: promoteRow(a, { targetSectionId: b.sevenNextYear }) }),
     );
     expect(otherSection?.message).toMatch(/foreign key/i);
     const otherRun = await failure(app, a.tenantId, (tx) =>
@@ -169,17 +165,17 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
 
   it('refuses a target section of another year or another class', async () => {
     const otherYear = await failure(app, a.tenantId, (tx) =>
-      tx.promotionRunStudent.create({ data: promoteRow(a, { targetSectionId: a.seven26 }) }),
+      tx.promotionRunStudent.create({ data: promoteRow(a, { targetSectionId: a.sevenThisYear }) }),
     );
     expect(otherYear?.message).toMatch(/foreign key/i);
     const otherClass = await failure(app, a.tenantId, (tx) =>
-      tx.promotionRunStudent.create({ data: promoteRow(a, { targetSectionId: a.six27 }) }),
+      tx.promotionRunStudent.create({ data: promoteRow(a, { targetSectionId: a.sixNextYear }) }),
     );
     expect(otherClass?.message).toMatch(/foreign key/i);
     // A row whose to-year is not its run's.
     const otherToYear = await failure(app, a.tenantId, (tx) =>
       tx.promotionRunStudent.create({
-        data: promoteRow(a, { toYearId: a.y2026, targetSectionId: null }),
+        data: promoteRow(a, { toYearId: a.thisYear, targetSectionId: null }),
       }),
     );
     expect(otherToYear?.message).toMatch(/foreign key/i);
@@ -190,11 +186,11 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
       tx.promotionRun.create({
         data: {
           tenantId: a.tenantId,
-          fromYearId: a.y2026,
-          toYearId: a.y2027,
+          fromYearId: a.thisYear,
+          toYearId: a.nextYear,
           classLevelId: a.c7,
           rollStrategy: 'MERIT',
-          meritExamId: a.exam27,
+          meritExamId: a.examNextYear,
           createdById: a.adminId,
         },
       }),
@@ -205,11 +201,11 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
       tx.promotionRun.create({
         data: {
           tenantId: a.tenantId,
-          fromYearId: a.y2026,
-          toYearId: a.y2027,
+          fromYearId: a.thisYear,
+          toYearId: a.nextYear,
           classLevelId: a.c7,
           rollStrategy: 'MERIT',
-          meritExamId: a.exam26,
+          meritExamId: a.examThisYear,
           createdById: a.adminId,
         },
         select: { id: true },
@@ -221,8 +217,8 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
   it('checks the run: years differ, MERIT needs an exam, applied and started fields', async () => {
     const base = {
       tenantId: a.tenantId,
-      fromYearId: a.y2026,
-      toYearId: a.y2027,
+      fromYearId: a.thisYear,
+      toYearId: a.nextYear,
       createdById: a.adminId,
       rollStrategy: 'NAME_BN' as const,
     };
@@ -230,7 +226,7 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
       tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_8' } }),
     );
     for (const data of [
-      { ...base, classLevelId: c8.id, toYearId: a.y2026 },
+      { ...base, classLevelId: c8.id, toYearId: a.thisYear },
       { ...base, classLevelId: c8.id, rollStrategy: 'MERIT' as const },
       { ...base, classLevelId: c8.id, status: 'APPLIED' as const },
       { ...base, classLevelId: c8.id, status: 'APPLYING' as const },
@@ -307,7 +303,7 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
     const edited = await withTenant(app, a.tenantId, (tx) =>
       tx.promotionRunStudent.updateMany({
         where: { id: row.id },
-        data: { decision: 'REPEAT', targetClassLevelId: a.c6, targetSectionId: a.six27 },
+        data: { decision: 'REPEAT', targetClassLevelId: a.c6, targetSectionId: a.sixNextYear },
       }),
     );
     expect(edited.count).toBe(1);
@@ -317,9 +313,9 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
         data: {
           tenantId: a.tenantId,
           studentId: a.studentId,
-          academicYearId: a.y2027,
+          academicYearId: a.nextYear,
           classLevelId: a.c6,
-          sectionId: a.six27,
+          sectionId: a.sixNextYear,
         },
         select: { id: true },
       }),
@@ -336,7 +332,7 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
       updated: (
         await tx.promotionRunStudent.updateMany({
           where: { id: row.id },
-          data: { decision: 'PROMOTE', targetClassLevelId: a.c7, targetSectionId: a.seven27 },
+          data: { decision: 'PROMOTE', targetClassLevelId: a.c7, targetSectionId: a.sevenNextYear },
         })
       ).count,
       deleted: (await tx.promotionRunStudent.deleteMany({ where: { id: row.id } })).count,
@@ -360,8 +356,8 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
       tx.promotionRun.create({
         data: {
           tenantId: a.tenantId,
-          fromYearId: a.y2026,
-          toYearId: a.y2027,
+          fromYearId: a.thisYear,
+          toYearId: a.nextYear,
           classLevelId: (await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_10' } })).id,
           rollStrategy: 'NAME_BN',
           createdById: a.adminId,
@@ -386,7 +382,7 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
         data: {
           tenantId: a.tenantId,
           studentId: st.id,
-          academicYearId: a.y2026,
+          academicYearId: a.thisYear,
           classLevelId: a.c6,
         },
       });
@@ -396,8 +392,8 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
       tx.promotionRun.create({
         data: {
           tenantId: a.tenantId,
-          fromYearId: a.y2026,
-          toYearId: a.y2027,
+          fromYearId: a.thisYear,
+          toYearId: a.nextYear,
           classLevelId: (await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_9' } })).id,
           rollStrategy: 'NAME_BN',
           createdById: a.adminId,
@@ -451,8 +447,8 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
       tx.promotionRun.create({
         data: {
           tenantId: b.tenantId,
-          fromYearId: b.y2026,
-          toYearId: b.y2027,
+          fromYearId: b.thisYear,
+          toYearId: b.nextYear,
           classLevelId: b.c6,
           rollStrategy: 'KEEP',
           createdById: b.adminId,
@@ -460,7 +456,7 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
       }),
     );
     expect(dupRun?.message).toMatch(/unique constraint/i);
-    // A second run (class 7 → 2027) cannot take b's student into 2027 again.
+    // A second run (class 7 → next year) cannot take b's student into next year again.
     await withTenant(app, b.tenantId, async (tx) => {
       await tx.promotionRunStudent.create({ data: promoteRow(b) });
     });
@@ -468,8 +464,8 @@ describe('promotion tables: RLS, composite targets, pending-only edits (P5)', ()
       tx.promotionRun.create({
         data: {
           tenantId: b.tenantId,
-          fromYearId: b.y2026,
-          toYearId: b.y2027,
+          fromYearId: b.thisYear,
+          toYearId: b.nextYear,
           classLevelId: b.c7,
           rollStrategy: 'KEEP',
           createdById: b.adminId,

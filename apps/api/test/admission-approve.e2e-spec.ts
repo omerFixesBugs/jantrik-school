@@ -175,7 +175,7 @@ describe('admission (staff): approval', () => {
 
   it("the wrong year's section is refused by admit() (nothing written)", async () => {
     const a = await staffApplication(h, s, class6, { nameEn: 'Wrong Section' });
-    const res = await approve(a.id, { sectionId: s.section2026 });
+    const res = await approve(a.id, { sectionId: s.sectionThisYear });
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('SECTION_MISMATCH');
     expect(await studentsNamed('Wrong Section')).toBe(0);
@@ -333,7 +333,7 @@ describe('admission (staff): approval', () => {
       const wrong = await api(h, t.tokens.admin).post(
         `/admission/cycle-classes/${cc}/bulk-approve`,
         {
-          sectionId: t.section2026,
+          sectionId: t.sectionThisYear,
         },
       );
       expect(wrong.status).toBe(422);

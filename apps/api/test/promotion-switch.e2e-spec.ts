@@ -14,12 +14,16 @@ describe('promotion: the switch check', () => {
     put: (path: string, body: object) => http(h).put(path).set(bearer(token)).send(body),
   });
   const switchCheck = async () =>
-    (await api(s.tokens.admin).get(`/promotions/switch-check?toYearId=${s.y2027}`).expect(200))
+    (await api(s.tokens.admin).get(`/promotions/switch-check?toYearId=${s.nextYear}`).expect(200))
       .body as SwitchCheck;
   const createRun = async (n: 6 | 7 | 10) =>
     (
       await api(s.tokens.admin)
-        .post('/promotions', { fromYearId: s.y2026, toYearId: s.y2027, classLevelId: s.classes[n] })
+        .post('/promotions', {
+          fromYearId: s.thisYear,
+          toYearId: s.nextYear,
+          classLevelId: s.classes[n],
+        })
         .expect(201)
     ).body as PromotionRunDetail;
   const applyAndWait = async (runId: string) => {
@@ -47,8 +51,8 @@ describe('promotion: the switch check', () => {
     const six = await createRun(6);
     const first = await switchCheck();
     expect(first).toMatchObject({
-      toYear: { id: s.y2027, isCurrent: false },
-      fromYear: { id: s.y2026 },
+      toYear: { id: s.nextYear, isCurrent: false },
+      fromYear: { id: s.thisYear },
       clean: false,
       notCarriedOver: 8,
       withoutRoll: 0,
@@ -77,17 +81,17 @@ describe('promotion: the switch check', () => {
         await publishedAnnual(
           tx,
           s.tenantId,
-          s.y2026,
+          s.thisYear,
           s.classes[n],
           list.map((st, i) => ({
             student: st,
-            sectionId: s.sections[2026][n].ka,
+            sectionId: s.sections.thisYear[n].ka,
             passed: true,
             place: i + 1,
           })),
         );
     });
-    const runs = (await admin.get(`/promotions?toYearId=${s.y2027}`).expect(200)).body as {
+    const runs = (await admin.get(`/promotions?toYearId=${s.nextYear}`).expect(200)).body as {
       runs: { id: string }[];
     };
     for (const r of runs.runs) await applyAndWait(r.id);
@@ -104,7 +108,7 @@ describe('promotion: the switch check', () => {
     for (const n of [6, 7, 8] as const) {
       const p = (
         await admin
-          .get(`/promotions/rolls?toYearId=${s.y2027}&classLevelId=${s.classes[n]}`)
+          .get(`/promotions/rolls?toYearId=${s.nextYear}&classLevelId=${s.classes[n]}`)
           .expect(200)
       ).body as {
         version: string;
@@ -124,7 +128,7 @@ describe('promotion: the switch check', () => {
       if (sections.length === 0) continue;
       await admin
         .put('/promotions/rolls', {
-          toYearId: s.y2027,
+          toYearId: s.nextYear,
           classLevelId: s.classes[n],
           version: p.version,
           sections,
@@ -137,12 +141,12 @@ describe('promotion: the switch check', () => {
     const current = await withTenant(h.prisma, s.tenantId, (tx) =>
       tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } }),
     );
-    expect(current.id).toBe(s.y2026);
-    await admin.post(`/setup/academic-years/${s.y2027}/current`).expect(200);
+    expect(current.id).toBe(s.thisYear);
+    await admin.post(`/setup/academic-years/${s.nextYear}/current`).expect(200);
     expect((await switchCheck()).toYear.isCurrent).toBe(true);
   });
 
   it('teachers cannot read it', async () => {
-    await api(s.tokens.teacher).get(`/promotions/switch-check?toYearId=${s.y2027}`).expect(403);
+    await api(s.tokens.teacher).get(`/promotions/switch-check?toYearId=${s.nextYear}`).expect(403);
   });
 });

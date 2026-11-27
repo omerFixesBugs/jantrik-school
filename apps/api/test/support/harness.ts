@@ -13,7 +13,7 @@ import {
   type Role,
   type TenantStatus,
 } from '@jantrik/db';
-import type { AuthResponse } from '@jantrik/shared';
+import { todayIn, type AuthResponse, type IsoDate } from '@jantrik/shared';
 import { hash } from '@node-rs/argon2';
 import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
@@ -43,6 +43,8 @@ export interface Harness {
   redis: Redis;
   sms: MemorySmsProvider;
   access: TenantAccessService;
+  /** The FakeClock the test installed (`createHarness({ clock })`), if any. */
+  clock?: Clock;
   close(): Promise<void>;
 }
 
@@ -71,6 +73,7 @@ export async function createHarness(opts: { clock?: Clock } = {}): Promise<Harne
     redis: app.get<Redis>(REDIS),
     sms: app.get<MemorySmsProvider>(SMS_PROVIDER),
     access: app.get(TenantAccessService),
+    ...(opts.clock ? { clock: opts.clock } : {}),
     async close() {
       await app.close();
       await prisma.$disconnect();
@@ -97,8 +100,28 @@ export const randomIp = (): string => {
 
 export const http = (h: Harness) => request(h.app.getHttpServer());
 
+/**
+ * Today in Asia/Dhaka by the test clock: the FakeClock's date when the test installed one,
+ * otherwise the real date (`todayIn`). The test institutes' year is this date's calendar year, so
+ * tests take their dates from it (or from today) and never hard-code a year that will pass.
+ */
+export function testToday(h: Partial<Pick<Harness, 'clock'>> = {}): IsoDate {
+  return h.clock ? todayIn('Asia/Dhaka', h.clock.now()) : todayIn('Asia/Dhaka');
+}
+
+/** The calendar year of `testToday`: every test institute's current academic year. */
+export const testYear = (h: Partial<Pick<Harness, 'clock'>> = {}): number =>
+  Number(testToday(h).slice(0, 4));
+
+/** A calendar year as an academic year: named after it, 1 January to 31 December. */
+export const yearRange = (year: number) => ({
+  name: String(year),
+  startDate: new Date(`${year}-01-01`),
+  endDate: new Date(`${year}-12-31`),
+});
+
 export async function createTenant(
-  h: Pick<Harness, 'prisma'>,
+  h: Pick<Harness, 'prisma'> & Partial<Pick<Harness, 'clock'>>,
   opts: { status?: TenantStatus; modules?: ('ATTENDANCE' | 'FEES' | 'EXAMS')[] } = {},
 ) {
   return provisionTenant(h.prisma, {
@@ -107,11 +130,7 @@ export async function createTenant(
     instituteTypeKey: 'NCTB_SCHOOL_BN',
     status: opts.status ?? 'ACTIVE',
     modules: opts.modules ?? [],
-    academicYear: {
-      name: '2026',
-      startDate: new Date('2026-01-01'),
-      endDate: new Date('2026-12-31'),
-    },
+    academicYear: yearRange(testYear(h)),
   });
 }
 

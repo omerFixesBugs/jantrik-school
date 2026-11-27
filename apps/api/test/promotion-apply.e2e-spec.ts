@@ -20,7 +20,11 @@ describe('promotion apply', () => {
   const createRun = async (s: PromotionSchool, n: 6 | 7 | 10) =>
     (
       await api(s.tokens.admin)
-        .post('/promotions', { fromYearId: s.y2026, toYearId: s.y2027, classLevelId: s.classes[n] })
+        .post('/promotions', {
+          fromYearId: s.thisYear,
+          toYearId: s.nextYear,
+          classLevelId: s.classes[n],
+        })
         .expect(201)
     ).body as PromotionRunDetail;
   const check = async (s: PromotionSchool, runId: string) =>
@@ -32,10 +36,10 @@ describe('promotion apply', () => {
     api(s.tokens.admin)
       .post(`/promotions/${runId}/apply`, { version: (await check(s, runId)).version })
       .expect(expectStatus);
-  const enrolments2027 = (s: PromotionSchool) =>
+  const nextYearEnrolments = (s: PromotionSchool) =>
     withTenant(h.prisma, s.tenantId, (tx) =>
       tx.enrolment.findMany({
-        where: { academicYearId: s.y2027 },
+        where: { academicYearId: s.nextYear },
         select: { id: true, studentId: true, classLevelId: true, sectionId: true, roll: true },
       }),
     );
@@ -71,21 +75,21 @@ describe('promotion apply', () => {
       },
       { timeout: 20_000, interval: 200 },
     );
-    const enrolled = await enrolments2027(s);
+    const enrolled = await nextYearEnrolments(s);
     expect(enrolled).toHaveLength(4);
     expect(enrolled.every((e) => e.roll === null)).toBe(true);
     const of = (id: string) => enrolled.find((e) => e.studentId === id)!;
     const [passed, failed, absent] = s.students.six;
     expect(of(passed!.id)).toMatchObject({
       classLevelId: s.classes[7],
-      sectionId: s.sections[2027][7].ka,
+      sectionId: s.sections.nextYear[7].ka,
     });
     expect(of(failed!.id)).toMatchObject({
       classLevelId: s.classes[6],
-      sectionId: s.sections[2027][6].ka,
+      sectionId: s.sections.nextYear[6].ka,
     });
     expect(of(absent!.id).classLevelId).toBe(s.classes[7]);
-    expect(of(s.students.sixB[0]!.id).sectionId).toBe(s.sections[2027][7].kha);
+    expect(of(s.students.sixB[0]!.id).sectionId).toBe(s.sections.nextYear[7].kha);
 
     const applied = await run(s, six.id);
     expect(applied.rows.every((r) => r.applyOutcome === 'ENROLLED' && r.toEnrolmentId)).toBe(true);
@@ -98,10 +102,10 @@ describe('promotion apply', () => {
       }),
     );
     expect(graduates).toEqual([
-      { status: 'GRADUATED', leftOn: new Date('2026-12-31'), deletedAt: null },
-      { status: 'GRADUATED', leftOn: new Date('2026-12-31'), deletedAt: null },
+      { status: 'GRADUATED', leftOn: new Date(`${s.year}-12-31`), deletedAt: null },
+      { status: 'GRADUATED', leftOn: new Date(`${s.year}-12-31`), deletedAt: null },
     ]);
-    // Their 2026 rolls stay (history).
+    // Their rolls of this year stay (history).
     const tenRolls = await withTenant(h.prisma, s.tenantId, (tx) =>
       tx.enrolment.findMany({
         where: { studentId: { in: s.students.ten.map((t) => t.id) } },
@@ -115,7 +119,7 @@ describe('promotion apply', () => {
       }),
     );
     expect(studentAudit).toBe(2);
-    expect((await currentYear(s)).id).toBe(s.y2026);
+    expect((await currentYear(s)).id).toBe(s.thisYear);
   });
 
   describe('with the queue paused (the test drives the job)', () => {
@@ -152,7 +156,7 @@ describe('promotion apply', () => {
       }
       const finished = await run(s, six.id);
       expect(finished).toMatchObject({ status: 'APPLIED', lastError: null });
-      const enrolled = await enrolments2027(s);
+      const enrolled = await nextYearEnrolments(s);
       expect(enrolled).toHaveLength(finished.rows.length);
       expect(new Set(enrolled.map((e) => e.studentId)).size).toBe(enrolled.length);
       expect(finished.rows.every((r) => r.applyOutcome === 'ENROLLED')).toBe(true);
@@ -181,7 +185,7 @@ describe('promotion apply', () => {
       await startApply(s, six.id);
       const apply = h.app.get(PromotionApplyService);
       const jobs = h.app.get(TenantJobRunner);
-      const section = s.sections[2027][7].ka;
+      const section = s.sections.nextYear[7].ka;
       const opts = { actorUserId: s.userIds.admin };
       const [x, y] = await Promise.all([
         jobs.run(s.tenantId, () => apply.applySection(six.id, section), opts),
@@ -189,10 +193,10 @@ describe('promotion apply', () => {
       ]);
       expect(x.enrolled + y.enrolled).toBe(2);
       expect(Math.min(x.enrolled, y.enrolled)).toBe(0);
-      const inSection = (await enrolments2027(s)).filter((e) => e.sectionId === section);
+      const inSection = (await nextYearEnrolments(s)).filter((e) => e.sectionId === section);
       expect(inSection).toHaveLength(2);
       await processRun(s, six.id);
-      expect((await enrolments2027(s)).length).toBe(4);
+      expect((await nextYearEnrolments(s)).length).toBe(4);
       await removeJob(six.id);
     });
 
@@ -203,9 +207,9 @@ describe('promotion apply', () => {
       const [passed, , absent] = s.students.six;
       await admin
         .post(`/students/${passed!.id}/enrolments`, {
-          academicYearId: s.y2027,
+          academicYearId: s.nextYear,
           classLevelId: s.classes[7],
-          sectionId: s.sections[2027][7].kha,
+          sectionId: s.sections.nextYear[7].kha,
           roll: 9,
         })
         .expect(201);
@@ -217,10 +221,10 @@ describe('promotion apply', () => {
       const rowOf = (id: string) => done.rows.find((r) => r.student.id === id)!;
       expect(rowOf(passed!.id).applyOutcome).toBe('ALREADY_ENROLLED');
       expect(rowOf(absent!.id).applyOutcome).toBe('SKIPPED_DEACTIVATED');
-      const own = (await enrolments2027(s)).find((e) => e.studentId === passed!.id)!;
-      expect(own).toMatchObject({ sectionId: s.sections[2027][7].kha, roll: 9 });
+      const own = (await nextYearEnrolments(s)).find((e) => e.studentId === passed!.id)!;
+      expect(own).toMatchObject({ sectionId: s.sections.nextYear[7].kha, roll: 9 });
       expect(rowOf(passed!.id).toEnrolmentId).toBe(own.id);
-      expect((await enrolments2027(s)).some((e) => e.studentId === absent!.id)).toBe(false);
+      expect((await nextYearEnrolments(s)).some((e) => e.studentId === absent!.id)).toBe(false);
       await removeJob(six.id);
     });
 
@@ -231,10 +235,12 @@ describe('promotion apply', () => {
       const full = await startApply(s, six.id, 422);
       expect(full.body.code).toBe('SECTION_FULL');
       expect(full.body.sections).toEqual([
-        { sectionId: s.sections[2027][7].ka, capacity: 1, enrolled: 0, incoming: 2 },
+        { sectionId: s.sections.nextYear[7].ka, capacity: 1, enrolled: 0, incoming: 2 },
       ]);
       // Raise 7 ক to 2, apply, then an admission takes a seat before the job runs.
-      await admin.patch(`/setup/sections/${s.sections[2027][7].ka}`, { capacity: 2 }).expect(200);
+      await admin
+        .patch(`/setup/sections/${s.sections.nextYear[7].ka}`, { capacity: 2 })
+        .expect(200);
       await startApply(s, six.id);
       await admin
         .post('/students', {
@@ -243,9 +249,9 @@ describe('promotion apply', () => {
             { phone: randomPhone(), nameEn: 'Guardian', relation: 'FATHER', isPrimary: true },
           ],
           enrolment: {
-            academicYearId: s.y2027,
+            academicYearId: s.nextYear,
             classLevelId: s.classes[7],
-            sectionId: s.sections[2027][7].ka,
+            sectionId: s.sections.nextYear[7].ka,
             roll: null,
           },
         })
@@ -253,7 +259,9 @@ describe('promotion apply', () => {
       await expect(processRun(s, six.id)).rejects.toThrow('SECTION_FULL');
       expect(await run(s, six.id)).toMatchObject({ status: 'APPLYING', lastError: 'SECTION_FULL' });
       await removeJob(six.id);
-      await admin.patch(`/setup/sections/${s.sections[2027][7].ka}`, { capacity: 3 }).expect(200);
+      await admin
+        .patch(`/setup/sections/${s.sections.nextYear[7].ka}`, { capacity: 3 })
+        .expect(200);
       await admin.post(`/promotions/${six.id}/resume`).expect(200);
       await processRun(s, six.id);
       expect(await run(s, six.id)).toMatchObject({ status: 'APPLIED', lastError: null });
@@ -274,7 +282,7 @@ describe('promotion apply', () => {
         })
         .expect(409);
       expect(edit.body.code).toBe('ROW_APPLIED');
-      // A new student of class 7 (2026), then refresh and apply again.
+      // A new student of class 7 (this year), then refresh and apply again.
       const late = await withTenant(h.prisma, s.tenantId, async (tx) => {
         const st = await tx.student.create({
           data: { tenantId: s.tenantId, studentCode: `LATE-${Date.now()}`, nameBn: 'দেরি' },
@@ -283,9 +291,9 @@ describe('promotion apply', () => {
           data: {
             tenantId: s.tenantId,
             studentId: st.id,
-            academicYearId: s.y2026,
+            academicYearId: s.thisYear,
             classLevelId: s.classes[7],
-            sectionId: s.sections[2026][7].ka,
+            sectionId: s.sections.thisYear[7].ka,
             roll: 3,
           },
         });
@@ -299,8 +307,8 @@ describe('promotion apply', () => {
       await processRun(s, seven.id);
       const again = await run(s, seven.id);
       expect(again).toMatchObject({ status: 'APPLIED', counts: { pending: 0 } });
-      expect((await enrolments2027(s)).filter((e) => e.studentId === late)).toHaveLength(1);
-      expect(await enrolments2027(s)).toHaveLength(3);
+      expect((await nextYearEnrolments(s)).filter((e) => e.studentId === late)).toHaveLength(1);
+      expect(await nextYearEnrolments(s)).toHaveLength(3);
       await removeJob(seven.id);
     });
 
@@ -314,7 +322,7 @@ describe('promotion apply', () => {
         status: 'APPLYING',
         lastError: 'ACTOR_NOT_ADMIN',
       });
-      expect(await enrolments2027(s)).toHaveLength(0);
+      expect(await nextYearEnrolments(s)).toHaveLength(0);
       // The owner resumes it as themselves.
       await removeJob(seven.id);
       await api(s.tokens.owner).post(`/promotions/${seven.id}/resume`).expect(200);
@@ -335,7 +343,7 @@ describe('promotion apply', () => {
           await tx.studentSubjectChoice.create({
             data: {
               tenantId: s.tenantId,
-              academicYearId: s.y2026,
+              academicYearId: s.thisYear,
               studentId: st.id,
               subjectId: subject.id,
               kind: 'COMPULSORY',
@@ -347,7 +355,7 @@ describe('promotion apply', () => {
       await processRun(s, six.id);
       const choices = await withTenant(h.prisma, s.tenantId, (tx) =>
         tx.studentSubjectChoice.findMany({
-          where: { academicYearId: s.y2027 },
+          where: { academicYearId: s.nextYear },
           select: { studentId: true },
         }),
       );
@@ -374,9 +382,9 @@ describe('promotion apply', () => {
             data: ids.map((studentId, i) => ({
               tenantId: s.tenantId,
               studentId,
-              academicYearId: s.y2026,
+              academicYearId: s.thisYear,
               classLevelId: s.classes[8],
-              sectionId: s.sections[2026][8].ka,
+              sectionId: s.sections.thisYear[8].ka,
               roll: i + 1,
             })),
           });
@@ -386,8 +394,8 @@ describe('promotion apply', () => {
       const eight = (
         await api(s.tokens.admin)
           .post('/promotions', {
-            fromYearId: s.y2026,
-            toYearId: s.y2027,
+            fromYearId: s.thisYear,
+            toYearId: s.nextYear,
             classLevelId: s.classes[8],
           })
           .expect(201)
@@ -398,7 +406,7 @@ describe('promotion apply', () => {
       await processRun(s, eight.id);
       expect(Date.now() - started).toBeLessThan(15_000);
       expect((await run(s, eight.id)).status).toBe('APPLIED');
-      expect(await enrolments2027(s)).toHaveLength(600);
+      expect(await nextYearEnrolments(s)).toHaveLength(600);
       await removeJob(eight.id);
     }, 60_000);
 

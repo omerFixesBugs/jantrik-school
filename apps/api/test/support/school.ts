@@ -8,6 +8,8 @@ import {
   http,
   otpLogin,
   randomPhone,
+  testYear,
+  yearRange,
   type Harness,
 } from './harness.js';
 
@@ -38,11 +40,7 @@ export async function school(
         instituteTypeKey: opts.instituteTypeKey,
         status: 'ACTIVE',
         modules: ['ATTENDANCE'],
-        academicYear: {
-          name: '2026',
-          startDate: new Date('2026-01-01'),
-          endDate: new Date('2026-12-31'),
-        },
+        academicYear: yearRange(testYear(h)),
       })
     : await createTenant(h, { modules: ['ATTENDANCE'] });
   const tenantId = tenant.id;

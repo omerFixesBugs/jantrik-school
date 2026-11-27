@@ -9,6 +9,7 @@ import {
   http,
   otpLogin,
   randomPhone,
+  testYear,
   type Harness,
 } from './support/harness.js';
 
@@ -36,10 +37,11 @@ describe('/me and tenant-switch safety', () => {
     expect(ctx.labels['section']).toEqual({ bn: 'শাখা', en: 'Section' });
     expect(ctx.modules.sort()).toEqual(['ATTENDANCE', 'CORE']);
     expect(ctx.roles).toEqual(['ADMIN']);
+    const year = testYear(h);
     expect(ctx.academicYear).toMatchObject({
-      name: '2026',
-      startDate: '2026-01-01',
-      endDate: '2026-12-31',
+      name: String(year),
+      startDate: `${year}-01-01`,
+      endDate: `${year}-12-31`,
     });
   });
 

@@ -9,7 +9,7 @@ import type {
   FeeTermView,
 } from '@jantrik/shared';
 import { feesSchool, type FeesSchool } from './support/fees.js';
-import { bearer, createHarness, http, type Harness } from './support/harness.js';
+import { bearer, createHarness, http, yearRange, type Harness } from './support/harness.js';
 
 /** Fee setup (step 9, phase A): OWNER/ADMIN; money destinations OWNER only. */
 describe('fee setup', () => {
@@ -299,14 +299,10 @@ describe('fee setup', () => {
     });
 
     it("copies last year's amounts into a new year", async () => {
+      // The calendar year after the one the fixture year (around today) ends in.
       const next = await withTenant(h.prisma, s.tenantId, (tx) =>
         tx.academicYear.create({
-          data: {
-            tenantId: s.tenantId,
-            name: '2027',
-            startDate: new Date('2027-01-01'),
-            endDate: new Date('2027-12-31'),
-          },
+          data: { tenantId: s.tenantId, ...yearRange(Number(s.yearEnd.slice(0, 4)) + 1) },
         }),
       );
       const res = await api(s.tokens.admin)

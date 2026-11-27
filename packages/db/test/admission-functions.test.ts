@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { withContext, withTenant, type PrismaClient } from '../src/index.js';
-import { appClient, createTenant, platformClient, ingestClient } from './helpers.js';
+import { appClient, createTenant, platformClient, ingestClient, yearRange } from './helpers.js';
 
 // Sprint 1 P3b: the three public admission functions, run by jantrik_app with no request context
 // (as the API's public routes do), and the role that owns them (review focus 3 and 4).
 
+// These tests pass their own clock (p_now): the institute's years come from it, not from today.
 const NOW = new Date('2026-11-20T06:00:00Z');
+const NOW_YEAR = NOW.getUTCFullYear();
 
 interface School {
   tenantId: string;
@@ -16,15 +18,13 @@ interface School {
 }
 
 async function school(app: PrismaClient, opts: { status?: 'ACTIVE' | 'SUSPENDED' } = {}) {
-  const t = await createTenant(app, opts.status ? { status: opts.status } : {});
+  const t = await createTenant(app, {
+    academicYear: yearRange(NOW_YEAR),
+    ...(opts.status ? { status: opts.status } : {}),
+  });
   const ids = await withTenant(app, t.id, async (tx) => {
     const year = await tx.academicYear.create({
-      data: {
-        tenantId: t.id,
-        name: '2027',
-        startDate: new Date('2027-01-01'),
-        endDate: new Date('2027-12-31'),
-      },
+      data: { tenantId: t.id, ...yearRange(NOW_YEAR + 1) },
     });
     const c6 = await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_6' } });
     const c7 = await tx.classLevel.findFirstOrThrow({ where: { code: 'CLASS_7' } });

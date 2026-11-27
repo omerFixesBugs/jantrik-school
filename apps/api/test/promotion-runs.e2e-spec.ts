@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { withTenant } from '@jantrik/db';
-import type { PromotionRunDetail, PromotionRunsOverview } from '@jantrik/shared';
+import {
+  toBanglaDigits,
+  type PromotionRunDetail,
+  type PromotionRunsOverview,
+} from '@jantrik/shared';
 import { bearer, createHarness, http, type Harness } from './support/harness.js';
 import { promotionSchool, type PromotionSchool } from './support/promotion.js';
 
@@ -17,8 +21,8 @@ describe('promotion runs', () => {
   });
   const create = (school: PromotionSchool, classLevelId: string, extra: object = {}) =>
     api(school.tokens.admin).post('/promotions', {
-      fromYearId: school.y2026,
-      toYearId: school.y2027,
+      fromYearId: school.thisYear,
+      toYearId: school.nextYear,
       classLevelId,
       ...extra,
     });
@@ -50,23 +54,23 @@ describe('promotion runs', () => {
       meritPosition: 2,
       fromRoll: 1,
       targetClassLevel: { id: s.classes[7] },
-      targetSection: { id: s.sections[2027][7].ka },
+      targetSection: { id: s.sections.nextYear[7].ka },
     });
     expect(rowOf(six, failed!.id)).toMatchObject({
       decision: 'REPEAT',
       resultPassed: false,
       targetClassLevel: { id: s.classes[6] },
-      targetSection: { id: s.sections[2027][6].ka },
+      targetSection: { id: s.sections.nextYear[6].ka },
     });
     expect(rowOf(six, absent!.id)).toMatchObject({
       decision: 'PROMOTE',
       noResult: true,
-      targetSection: { id: s.sections[2027][7].ka },
+      targetSection: { id: s.sections.nextYear[7].ka },
     });
     expect(rowOf(six, s.students.sixB[0]!.id)).toMatchObject({
       decision: 'PROMOTE',
       meritPosition: 1,
-      targetSection: { id: s.sections[2027][7].kha },
+      targetSection: { id: s.sections.nextYear[7].kha },
     });
     const audit = await withTenant(h.prisma, s.tenantId, (tx) =>
       tx.auditLog.findMany({ where: { entity: 'promotion_run', entityId: six.id } }),
@@ -75,7 +79,7 @@ describe('promotion runs', () => {
     expect(audit[0]).toMatchObject({ action: 'CREATE', newValues: { rows: 4, repeat: 1 } });
   });
 
-  it('class 10 (the top class): everyone leaves as GRADUATED on the last day of 2026', async () => {
+  it('class 10 (the top class): everyone leaves as GRADUATED on the last day of the year', async () => {
     const run = (await create(s, s.classes[10]).expect(201)).body as PromotionRunDetail;
     expect(run.nextClassLevel).toBeNull();
     expect(run.rows).toHaveLength(2);
@@ -83,7 +87,7 @@ describe('promotion runs', () => {
       expect(r).toMatchObject({
         decision: 'LEAVE',
         leaveStatus: 'GRADUATED',
-        leftOn: '2026-12-31',
+        leftOn: `${s.year}-12-31`,
         targetClassLevel: null,
       });
   });
@@ -101,8 +105,8 @@ describe('promotion runs', () => {
     expect(dup.body).toMatchObject({ code: 'RUN_EXISTS', runId: six.id });
     const backwards = await api(s.tokens.admin)
       .post('/promotions', {
-        fromYearId: s.y2027,
-        toYearId: s.y2026,
+        fromYearId: s.nextYear,
+        toYearId: s.thisYear,
         classLevelId: s.classes[8],
       })
       .expect(422);
@@ -135,7 +139,7 @@ describe('promotion runs', () => {
             id: passed.id,
             decision: 'PROMOTE',
             targetClassLevelId: s.classes[7],
-            targetSectionId: s.sections[2027][8].ka,
+            targetSectionId: s.sections.nextYear[8].ka,
           },
         ],
       })
@@ -148,7 +152,7 @@ describe('promotion runs', () => {
             id: passed.id,
             decision: 'PROMOTE',
             targetClassLevelId: s.classes[7],
-            targetSectionId: s.sections[2026][7].ka,
+            targetSectionId: s.sections.thisYear[7].ka,
           },
         ],
       })
@@ -179,13 +183,13 @@ describe('promotion runs', () => {
               id: failed.id,
               decision: 'PROMOTE',
               targetClassLevelId: s.classes[7],
-              targetSectionId: s.sections[2027][7].kha,
+              targetSectionId: s.sections.nextYear[7].kha,
             },
             {
               id: passed.id,
               decision: 'LEAVE',
               leaveStatus: 'TRANSFERRED',
-              leftOn: '২০২৬-১২-১৫',
+              leftOn: toBanglaDigits(`${s.year}-12-15`),
               leaveReason: 'Moved',
             },
           ],
@@ -194,12 +198,12 @@ describe('promotion runs', () => {
     ).body as PromotionRunDetail;
     expect(rowOf(edited, s.students.six[1]!.id)).toMatchObject({
       decision: 'PROMOTE',
-      targetSection: { id: s.sections[2027][7].kha },
+      targetSection: { id: s.sections.nextYear[7].kha },
     });
     expect(edited.counts).toMatchObject({ promote: 3, repeat: 0, leave: 1 });
     expect(edited.rows.find((r) => r.id === passed.id)).toMatchObject({
       decision: 'LEAVE',
-      leftOn: '2026-12-15',
+      leftOn: `${s.year}-12-15`,
       leaveReason: 'Moved',
       targetSection: null,
     });
@@ -218,7 +222,7 @@ describe('promotion runs', () => {
             id: passed.id,
             decision: 'PROMOTE',
             targetClassLevelId: s.classes[7],
-            targetSectionId: s.sections[2027][7].ka,
+            targetSectionId: s.sections.nextYear[7].ka,
           },
         ],
       })
@@ -239,9 +243,9 @@ describe('promotion runs', () => {
         data: {
           tenantId: s.tenantId,
           studentId: st.id,
-          academicYearId: s.y2026,
+          academicYearId: s.thisYear,
           classLevelId: s.classes[6],
-          sectionId: s.sections[2026][6].kha,
+          sectionId: s.sections.thisYear[6].kha,
           roll: 2,
         },
       });
@@ -249,7 +253,7 @@ describe('promotion runs', () => {
     });
     const leaver = s.students.six[2]!;
     await admin
-      .post(`/students/${leaver.id}/leave`, { status: 'DROPPED_OUT', leftOn: '2026-11-30' })
+      .post(`/students/${leaver.id}/leave`, { status: 'DROPPED_OUT', leftOn: `${s.year}-11-30` })
       .expect(200);
     const refreshed = (await admin.post(`/promotions/${six.id}/refresh`).expect(200))
       .body as PromotionRunDetail;
@@ -259,7 +263,7 @@ describe('promotion runs', () => {
     expect(rowOf(refreshed, late)).toMatchObject({
       decision: 'PROMOTE',
       noResult: true,
-      targetSection: { id: s.sections[2027][7].kha },
+      targetSection: { id: s.sections.nextYear[7].kha },
     });
     // The leaver comes back for the other tests.
     await admin.post(`/students/${leaver.id}/return`).expect(200);
@@ -288,9 +292,9 @@ describe('promotion runs', () => {
   });
 
   it('the overview lists runs with counts and the classes without a run', async () => {
-    const view = (await api(s.tokens.admin).get(`/promotions?toYearId=${s.y2027}`).expect(200))
+    const view = (await api(s.tokens.admin).get(`/promotions?toYearId=${s.nextYear}`).expect(200))
       .body as PromotionRunsOverview;
-    expect(view.fromYear?.id).toBe(s.y2026);
+    expect(view.fromYear?.id).toBe(s.thisYear);
     expect(view.runs.map((r) => r.classLevel.id)).toEqual([
       s.classes[6],
       s.classes[7],
@@ -301,7 +305,7 @@ describe('promotion runs', () => {
 
   it('teachers and accountants get 403; another institute gets 404', async () => {
     await api(s.tokens.teacher).get(`/promotions/${six.id}`).expect(403);
-    await api(s.tokens.accountant).get(`/promotions?toYearId=${s.y2027}`).expect(403);
+    await api(s.tokens.accountant).get(`/promotions?toYearId=${s.nextYear}`).expect(403);
     const other = await promotionSchool(h);
     await api(other.tokens.admin).get(`/promotions/${six.id}`).expect(404);
     await api(other.tokens.admin)

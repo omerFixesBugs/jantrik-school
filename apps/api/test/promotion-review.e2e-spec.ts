@@ -15,7 +15,7 @@ import {
 import { applyJobId, PromotionApplyService } from '../src/promotion/promotion-apply.service.js';
 import { PromotionProcessor } from '../src/promotion/promotion.processor.js';
 import { TenantJobRunner } from '../src/tenancy/tenant-job-runner.service.js';
-import { bearer, createHarness, http, type Harness } from './support/harness.js';
+import { bearer, createHarness, http, yearRange, type Harness } from './support/harness.js';
 import { promotionSchool, promotionsQueue, type PromotionSchool } from './support/promotion.js';
 import { school } from './support/school.js';
 
@@ -33,7 +33,11 @@ describe('promotion: review fixes', () => {
   const createRun = async (s: PromotionSchool, n: 6 | 7 | 10) =>
     (
       await api(s.tokens.admin)
-        .post('/promotions', { fromYearId: s.y2026, toYearId: s.y2027, classLevelId: s.classes[n] })
+        .post('/promotions', {
+          fromYearId: s.thisYear,
+          toYearId: s.nextYear,
+          classLevelId: s.classes[n],
+        })
         .expect(201)
     ).body as PromotionRunDetail;
   const run = async (s: PromotionSchool, id: string) =>
@@ -70,7 +74,7 @@ describe('promotion: review fixes', () => {
           id: r.id,
           decision: 'REPEAT',
           targetClassLevelId: s.classes[7],
-          targetSectionId: s.sections[2027][7].ka,
+          targetSectionId: s.sections.nextYear[7].ka,
         })),
       })
       .expect(200);
@@ -82,25 +86,25 @@ describe('promotion: review fixes', () => {
     const enrolmentOf = async (studentId: string) =>
       (
         (await api(s.tokens.admin).get(`/students/${studentId}`).expect(200)).body as StudentProfile
-      ).enrolments.find((e) => e.academicYear.id === s.y2027)!;
+      ).enrolments.find((e) => e.academicYear.id === s.nextYear)!;
     const [passed, failed] = s.students.six;
     // The failed one was kept back by mistake: moved up to 7 ক. The passed one goes back to 6 ক.
     await api(s.tokens.admin)
       .patch(`/students/${failed!.id}/enrolments/${(await enrolmentOf(failed!.id)).id}`, {
         classLevelId: s.classes[7],
-        sectionId: s.sections[2027][7].ka,
+        sectionId: s.sections.nextYear[7].ka,
       })
       .expect(200);
     await api(s.tokens.admin)
       .patch(`/students/${passed!.id}/enrolments/${(await enrolmentOf(passed!.id)).id}`, {
         classLevelId: s.classes[6],
-        sectionId: s.sections[2027][6].ka,
+        sectionId: s.sections.nextYear[6].ka,
       })
       .expect(200);
     const preview = async (n: 6 | 7) =>
       (
         await api(s.tokens.admin)
-          .get(`/promotions/rolls?toYearId=${s.y2027}&classLevelId=${s.classes[n]}`)
+          .get(`/promotions/rolls?toYearId=${s.nextYear}&classLevelId=${s.classes[n]}`)
           .expect(200)
       ).body as RollsPreview;
     const rowOf = (p: RollsPreview, id: string) =>
@@ -119,16 +123,16 @@ describe('promotion: review fixes', () => {
     const admin = api(s.tokens.admin);
     const enrol = (studentId: string) =>
       admin.post(`/students/${studentId}/enrolments`, {
-        academicYearId: s.y2027,
+        academicYearId: s.nextYear,
         classLevelId: s.classes[7],
-        sectionId: s.sections[2027][7].ka,
+        sectionId: s.sections.nextYear[7].ka,
         roll: null,
       });
     const [a, , c] = s.students.six;
     await enrol(a!.id).expect(201);
     await enrol(c!.id).expect(201);
     await admin
-      .post(`/students/${a!.id}/leave`, { status: 'TRANSFERRED', leftOn: '2026-12-01' })
+      .post(`/students/${a!.id}/leave`, { status: 'TRANSFERRED', leftOn: `${s.year}-12-01` })
       .expect(200);
     // The seat a left is free again.
     await enrol(s.students.sixB[0]!.id).expect(201);
@@ -136,31 +140,28 @@ describe('promotion: review fixes', () => {
     const run7 = await createRun(s, 7);
     const check = (await admin.get(`/promotions/${run7.id}/apply-check`).expect(200))
       .body as PromotionApplyCheck;
-    expect(check.sections.find((x) => x.section.id === s.sections[2027][8].ka)).toMatchObject({
+    expect(check.sections.find((x) => x.section.id === s.sections.nextYear[8].ka)).toMatchObject({
       enrolled: 0,
     });
     const six = await createRun(s, 6);
     const check6 = (await admin.get(`/promotions/${six.id}/apply-check`).expect(200))
       .body as PromotionApplyCheck;
-    expect(check6.sections.find((x) => x.section.id === s.sections[2027][7].ka)).toMatchObject({
+    expect(check6.sections.find((x) => x.section.id === s.sections.nextYear[7].ka)).toMatchObject({
       enrolled: 2,
     });
   });
 
   it('SF2: a run comes only from the year just before the new one', async () => {
     const s = await promotionSchool(h);
-    const y2025 = await withTenant(h.prisma, s.tenantId, (tx) =>
-      tx.academicYear.create({
-        data: {
-          tenantId: s.tenantId,
-          name: '2025',
-          startDate: new Date('2025-01-01'),
-          endDate: new Date('2025-12-31'),
-        },
-      }),
+    const lastYear = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.academicYear.create({ data: { tenantId: s.tenantId, ...yearRange(s.year - 1) } }),
     );
     const res = await api(s.tokens.admin)
-      .post('/promotions', { fromYearId: y2025.id, toYearId: s.y2027, classLevelId: s.classes[6] })
+      .post('/promotions', {
+        fromYearId: lastYear.id,
+        toYearId: s.nextYear,
+        classLevelId: s.classes[6],
+      })
       .expect(422);
     expect(res.body).toMatchObject({ code: 'YEAR_ORDER', field: 'fromYearId' });
   });
@@ -169,7 +170,7 @@ describe('promotion: review fixes', () => {
     const s = await promotionSchool(h);
     const six = await createRun(s, 6);
     const failed = s.students.six[1]!; // REPEAT by default (failed): say that was a mistake
-    // Their 2026 choice is copied for a repeater.
+    // Their choice of this year is copied for a repeater.
     await withTenant(h.prisma, s.tenantId, async (tx) => {
       const subject = await tx.subject.findFirstOrThrow({
         where: { classLevelId: s.classes[6] },
@@ -178,7 +179,7 @@ describe('promotion: review fixes', () => {
       await tx.studentSubjectChoice.create({
         data: {
           tenantId: s.tenantId,
-          academicYearId: s.y2026,
+          academicYearId: s.thisYear,
           studentId: failed.id,
           subjectId: subject.id,
           kind: 'COMPULSORY',
@@ -190,28 +191,28 @@ describe('promotion: review fixes', () => {
     await removeJob(six.id);
     const profile = (await api(s.tokens.admin).get(`/students/${failed.id}`).expect(200))
       .body as StudentProfile;
-    const e2027 = profile.enrolments.find((e) => e.academicYear.id === s.y2027)!;
-    expect(e2027.classLevel.id).toBe(s.classes[6]);
+    const eNextYear = profile.enrolments.find((e) => e.academicYear.id === s.nextYear)!;
+    expect(eNextYear.classLevel.id).toBe(s.classes[6]);
 
     const fixed = (
       await api(s.tokens.admin)
-        .patch(`/students/${failed.id}/enrolments/${e2027.id}`, {
+        .patch(`/students/${failed.id}/enrolments/${eNextYear.id}`, {
           classLevelId: s.classes[7],
-          sectionId: s.sections[2027][7].kha,
+          sectionId: s.sections.nextYear[7].kha,
         })
         .expect(200)
     ).body as StudentProfile;
-    expect(fixed.enrolments.find((e) => e.id === e2027.id)).toMatchObject({
+    expect(fixed.enrolments.find((e) => e.id === eNextYear.id)).toMatchObject({
       classLevel: { id: s.classes[7] },
-      section: { id: s.sections[2027][7].kha },
+      section: { id: s.sections.nextYear[7].kha },
       roll: null,
     });
     const after = await withTenant(h.prisma, s.tenantId, async (tx) => ({
       choices: await tx.studentSubjectChoice.count({
-        where: { studentId: failed.id, academicYearId: s.y2027 },
+        where: { studentId: failed.id, academicYearId: s.nextYear },
       }),
       audit: await tx.auditLog.findFirst({
-        where: { entity: 'enrolment', entityId: e2027.id },
+        where: { entity: 'enrolment', entityId: eNextYear.id },
         orderBy: { createdAt: 'desc' },
       }),
     }));
@@ -222,14 +223,14 @@ describe('promotion: review fixes', () => {
     });
     // A section of the wrong class, and the current year's enrolment, are refused.
     await api(s.tokens.admin)
-      .patch(`/students/${failed.id}/enrolments/${e2027.id}`, {
+      .patch(`/students/${failed.id}/enrolments/${eNextYear.id}`, {
         classLevelId: s.classes[7],
-        sectionId: s.sections[2027][8].ka,
+        sectionId: s.sections.nextYear[8].ka,
       })
       .expect(422);
-    const e2026 = profile.enrolments.find((e) => e.academicYear.id === s.y2026)!;
+    const eThisYear = profile.enrolments.find((e) => e.academicYear.id === s.thisYear)!;
     const now = await api(s.tokens.admin)
-      .patch(`/students/${failed.id}/enrolments/${e2026.id}`, { classLevelId: s.classes[7] })
+      .patch(`/students/${failed.id}/enrolments/${eThisYear.id}`, { classLevelId: s.classes[7] })
       .expect(422);
     expect(now.body.code).toBe('NOT_A_NEW_YEAR');
     // Something of the new year already depends on it (an exam roster): refused.
@@ -237,12 +238,12 @@ describe('promotion: review fixes', () => {
       const exam = await tx.exam.create({
         data: {
           tenantId: s.tenantId,
-          academicYearId: s.y2027,
+          academicYearId: s.nextYear,
           kind: 'HALF_YEARLY',
           nameBn: 'অর্ধবার্ষিক',
           nameEn: 'Half-yearly',
-          startsOn: new Date('2027-06-01'),
-          endsOn: new Date('2027-06-10'),
+          startsOn: new Date(`${s.year + 1}-06-01`),
+          endsOn: new Date(`${s.year + 1}-06-10`),
           resultMode: 'GPA',
           meritOrder: ['GPA', 'ROLL'],
           failedRanking: 'AFTER_PASSED',
@@ -257,19 +258,19 @@ describe('promotion: review fixes', () => {
           examId: exam.id,
           studentId: failed.id,
           classLevelId: s.classes[7],
-          sectionId: s.sections[2027][7].kha,
+          sectionId: s.sections.nextYear[7].kha,
         },
       });
     });
     const used = await api(s.tokens.admin)
-      .patch(`/students/${failed.id}/enrolments/${e2027.id}`, {
+      .patch(`/students/${failed.id}/enrolments/${eNextYear.id}`, {
         classLevelId: s.classes[7],
-        sectionId: s.sections[2027][7].ka,
+        sectionId: s.sections.nextYear[7].ka,
       })
       .expect(409);
     expect(used.body).toMatchObject({ code: 'ENROLMENT_IN_USE', exams: 1 });
     await api(s.tokens.teacher)
-      .patch(`/students/${failed.id}/enrolments/${e2027.id}`, { classLevelId: s.classes[7] })
+      .patch(`/students/${failed.id}/enrolments/${eNextYear.id}`, { classLevelId: s.classes[7] })
       .expect(403);
   });
 
@@ -284,7 +285,7 @@ describe('promotion: review fixes', () => {
           id: r.id,
           decision: 'REPEAT',
           targetClassLevelId: s.classes[7],
-          targetSectionId: s.sections[2027][7].ka,
+          targetSectionId: s.sections.nextYear[7].ka,
         })),
       })
       .expect(200);
@@ -293,7 +294,7 @@ describe('promotion: review fixes', () => {
     await removeJob(seven.id);
     const p = (
       await api(s.tokens.admin)
-        .get(`/promotions/rolls?toYearId=${s.y2027}&classLevelId=${s.classes[7]}`)
+        .get(`/promotions/rolls?toYearId=${s.nextYear}&classLevelId=${s.classes[7]}`)
         .expect(200)
     ).body as RollsPreview;
     expect(p.pendingRuns).toEqual([
@@ -304,7 +305,7 @@ describe('promotion: review fixes', () => {
       }),
     ]);
     const body = {
-      toYearId: s.y2027,
+      toYearId: s.nextYear,
       classLevelId: s.classes[7],
       version: p.version,
       sections: p.sections.map((x) => ({
@@ -322,7 +323,7 @@ describe('promotion: review fixes', () => {
   it('NIT 8 and SF7: no roll proposed for a leaver; the switch check counts enrolments without a section', async () => {
     const s = await promotionSchool(h);
     const six = await createRun(s, 6);
-    // The absent student gets no section in 2027.
+    // The absent student gets no section in the new year.
     const absent = six.rows.find((r) => r.student.id === s.students.six[2]!.id)!;
     await api(s.tokens.admin)
       .put(`/promotions/${six.id}/rows`, {
@@ -334,17 +335,17 @@ describe('promotion: review fixes', () => {
     await removeJob(six.id);
     const passed = s.students.six[0]!;
     await api(s.tokens.admin)
-      .post(`/students/${passed.id}/leave`, { status: 'TRANSFERRED', leftOn: '2026-12-20' })
+      .post(`/students/${passed.id}/leave`, { status: 'TRANSFERRED', leftOn: `${s.year}-12-20` })
       .expect(200);
     const p = (
       await api(s.tokens.admin)
-        .get(`/promotions/rolls?toYearId=${s.y2027}&classLevelId=${s.classes[7]}`)
+        .get(`/promotions/rolls?toYearId=${s.nextYear}&classLevelId=${s.classes[7]}`)
         .expect(200)
     ).body as RollsPreview;
     expect(p.sections.flatMap((x) => x.rows).map((r) => r.studentId)).not.toContain(passed.id);
     expect(p.withoutSection).toBe(1);
     const check = (
-      await api(s.tokens.admin).get(`/promotions/switch-check?toYearId=${s.y2027}`).expect(200)
+      await api(s.tokens.admin).get(`/promotions/switch-check?toYearId=${s.nextYear}`).expect(200)
     ).body as SwitchCheck;
     expect(check).toMatchObject({ withoutSection: 1, clean: false });
   });
@@ -366,9 +367,9 @@ describe('promotion: review fixes', () => {
         data: {
           tenantId: s.tenantId,
           studentId: st.id,
-          academicYearId: s.y2027,
+          academicYearId: s.nextYear,
           classLevelId: s.classes[7],
-          sectionId: s.sections[2027][7].ka,
+          sectionId: s.sections.nextYear[7].ka,
         },
       });
     });
@@ -380,7 +381,7 @@ describe('promotion: review fixes', () => {
           id: row.id,
           decision: 'PROMOTE',
           targetClassLevelId: s.classes[7],
-          targetSectionId: s.sections[2027][7].kha,
+          targetSectionId: s.sections.nextYear[7].kha,
         },
       ],
     };
@@ -410,28 +411,21 @@ describe('promotion: review fixes', () => {
 
   it('SF6: a run with no applied row is deleted (and its year can go); an applied one stays', async () => {
     const s = await promotionSchool(h);
-    const y2028 = await withTenant(h.prisma, s.tenantId, (tx) =>
-      tx.academicYear.create({
-        data: {
-          tenantId: s.tenantId,
-          name: '2028',
-          startDate: new Date('2028-01-01'),
-          endDate: new Date('2028-12-31'),
-        },
-      }),
+    const yearAfterNext = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.academicYear.create({ data: { tenantId: s.tenantId, ...yearRange(s.year + 2) } }),
     );
     const empty = (
       await api(s.tokens.admin)
         .post('/promotions', {
-          fromYearId: s.y2027,
-          toYearId: y2028.id,
+          fromYearId: s.nextYear,
+          toYearId: yearAfterNext.id,
           classLevelId: s.classes[6],
         })
         .expect(201)
     ).body as PromotionRunDetail;
     await api(s.tokens.admin).del(`/promotions/${empty.id}`).expect(204);
     await api(s.tokens.admin).get(`/promotions/${empty.id}`).expect(404);
-    await api(s.tokens.admin).del(`/setup/academic-years/${y2028.id}`).expect(204);
+    await api(s.tokens.admin).del(`/setup/academic-years/${yearAfterNext.id}`).expect(204);
 
     const seven = await createRun(s, 7);
     await startApply(s, seven.id);
@@ -496,7 +490,7 @@ describe('promotion: review fixes', () => {
     await isLocked;
     let finished = false;
     const section = jobs
-      .run(s.tenantId, () => apply.applySection(six.id, s.sections[2027][7].ka), {
+      .run(s.tenantId, () => apply.applySection(six.id, s.sections.nextYear[7].ka), {
         actorUserId: s.userIds.admin,
       })
       .then((r) => {

@@ -3,7 +3,7 @@ import { getQueueToken } from '@nestjs/bullmq';
 import { withTenant, type TenantTx } from '@jantrik/db';
 import type { Queue } from 'bullmq';
 import { PROMOTIONS_QUEUE } from '../../src/promotion/promotion-apply.service.js';
-import { addMember, createTenant, otpLogin, type Harness } from './harness.js';
+import { addMember, createTenant, otpLogin, yearRange, type Harness } from './harness.js';
 
 export interface PromoStudent {
   id: string;
@@ -14,14 +14,20 @@ export interface PromoStudent {
 
 export interface PromotionSchool {
   tenantId: string;
-  y2026: string;
-  y2027: string;
+  /** The current year's calendar year: the test year (`testYear`) when the school was made. */
+  year: number;
+  /** The current year (the test year) and the next one. */
+  thisYear: string;
+  nextYear: string;
   /** Class level ids by number (6–10). */
   classes: Record<6 | 7 | 8 | 9 | 10, string>;
   /** Section ids: [year][class]['ক' | 'খ']. */
-  sections: Record<2026 | 2027, Record<6 | 7 | 8 | 9 | 10, { ka: string; kha: string }>>;
+  sections: Record<
+    'thisYear' | 'nextYear',
+    Record<6 | 7 | 8 | 9 | 10, { ka: string; kha: string }>
+  >;
   students: {
-    /** Class 6 ক of 2026: [0] passed (place 2), [1] failed, [2] absent (no result). */
+    /** Class 6 ক of this year: [0] passed (place 2), [1] failed, [2] absent (no result). */
     six: PromoStudent[];
     /** Class 6 খ: passed, place 1. */
     sixB: PromoStudent[];
@@ -30,16 +36,17 @@ export interface PromotionSchool {
     /** Class 10 ক: two students (the top class). */
     ten: PromoStudent[];
   };
-  /** The published 2026 ANNUAL exam of class 6. */
+  /** This year's published ANNUAL exam of class 6. */
   annualExamId: string;
   tokens: { owner: string; admin: string; teacher: string; accountant: string };
   userIds: { owner: string; admin: string; teacher: string; accountant: string };
 }
 
 /**
- * An NCTB school (classes 1–10, class 10 the top) with 2026 (current) and 2027, sections ক and খ
- * of classes 6–10 in both years, students in classes 6, 7 and 10 of 2026, and an ANNUAL exam of
- * 2026 published for class 6 (a passed, a failed and an absent student in ক, one passed in খ).
+ * An NCTB school (classes 1–10, class 10 the top) with this year (the test year, current) and the
+ * next, sections ক and খ of classes 6–10 in both years, students in classes 6, 7 and 10 of this
+ * year, and an ANNUAL exam of this year published for class 6 (a passed, a failed and an absent
+ * student in ক, one passed in খ).
  */
 export async function promotionSchool(
   h: Harness,
@@ -47,23 +54,19 @@ export async function promotionSchool(
 ): Promise<PromotionSchool> {
   const tenantId = (await createTenant(h, { modules: opts.modules ?? ['EXAMS'] })).id;
   const ids = await withTenant(h.prisma, tenantId, async (tx) => {
-    const y2026 = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
-    const y2027 = await tx.academicYear.create({
-      data: {
-        tenantId,
-        name: '2027',
-        startDate: new Date('2027-01-01'),
-        endDate: new Date('2027-12-31'),
-      },
+    const thisYear = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
+    const year = thisYear.startDate.getUTCFullYear();
+    const nextYear = await tx.academicYear.create({
+      data: { tenantId, ...yearRange(year + 1) },
     });
     const nums = [6, 7, 8, 9, 10] as const;
     const classes = {} as Record<6 | 7 | 8 | 9 | 10, string>;
     for (const n of nums)
       classes[n] = (await tx.classLevel.findFirstOrThrow({ where: { code: `CLASS_${n}` } })).id;
-    const sections = { 2026: {}, 2027: {} } as PromotionSchool['sections'];
-    for (const [year, yearId] of [
-      [2026, y2026.id],
-      [2027, y2027.id],
+    const sections = { thisYear: {}, nextYear: {} } as PromotionSchool['sections'];
+    for (const [key, yearId] of [
+      ['thisYear', thisYear.id],
+      ['nextYear', nextYear.id],
     ] as const) {
       for (const n of nums) {
         const mk = (name: string, sortOrder: number) =>
@@ -74,10 +77,10 @@ export async function promotionSchool(
               classLevelId: classes[n],
               name,
               sortOrder,
-              capacity: year === 2027 ? (opts.capacity ?? null) : null,
+              capacity: key === 'nextYear' ? (opts.capacity ?? null) : null,
             },
           });
-        sections[year][n] = { ka: (await mk('ক', 1)).id, kha: (await mk('খ', 2)).id };
+        sections[key][n] = { ka: (await mk('ক', 1)).id, kha: (await mk('খ', 2)).id };
       }
     }
     const enrol = async (
@@ -94,7 +97,7 @@ export async function promotionSchool(
         data: {
           tenantId,
           studentId: s.id,
-          academicYearId: y2026.id,
+          academicYearId: thisYear.id,
           classLevelId: classes[n],
           sectionId,
           roll,
@@ -103,28 +106,29 @@ export async function promotionSchool(
       return { id: s.id, code, roll, enrolmentId: e.id };
     };
     const six = [
-      await enrol(6, sections[2026][6].ka, 1, 'আরিফ'),
-      await enrol(6, sections[2026][6].ka, 2, 'কবির'),
-      await enrol(6, sections[2026][6].ka, 3, 'ইমরান'),
+      await enrol(6, sections.thisYear[6].ka, 1, 'আরিফ'),
+      await enrol(6, sections.thisYear[6].ka, 2, 'কবির'),
+      await enrol(6, sections.thisYear[6].ka, 3, 'ইমরান'),
     ];
-    const sixB = [await enrol(6, sections[2026][6].kha, 1, 'অমিত')];
+    const sixB = [await enrol(6, sections.thisYear[6].kha, 1, 'অমিত')];
     const seven = [
-      await enrol(7, sections[2026][7].ka, 1, 'খাদিজা'),
-      await enrol(7, sections[2026][7].ka, 2, 'ঋতু'),
+      await enrol(7, sections.thisYear[7].ka, 1, 'খাদিজা'),
+      await enrol(7, sections.thisYear[7].ka, 2, 'ঋতু'),
     ];
     const ten = [
-      await enrol(10, sections[2026][10].ka, 1, 'রহিম'),
-      await enrol(10, sections[2026][10].ka, 2, 'করিম'),
+      await enrol(10, sections.thisYear[10].ka, 1, 'রহিম'),
+      await enrol(10, sections.thisYear[10].ka, 2, 'করিম'),
     ];
-    const annualExamId = await publishedAnnual(tx, tenantId, y2026.id, classes[6], [
-      { student: six[0]!, sectionId: sections[2026][6].ka, passed: true, place: 2 },
-      { student: six[1]!, sectionId: sections[2026][6].ka, passed: false, place: null },
-      { student: six[2]!, sectionId: sections[2026][6].ka, passed: null, place: null },
-      { student: sixB[0]!, sectionId: sections[2026][6].kha, passed: true, place: 1 },
+    const annualExamId = await publishedAnnual(tx, tenantId, thisYear.id, classes[6], [
+      { student: six[0]!, sectionId: sections.thisYear[6].ka, passed: true, place: 2 },
+      { student: six[1]!, sectionId: sections.thisYear[6].ka, passed: false, place: null },
+      { student: six[2]!, sectionId: sections.thisYear[6].ka, passed: null, place: null },
+      { student: sixB[0]!, sectionId: sections.thisYear[6].kha, passed: true, place: 1 },
     ]);
     return {
-      y2026: y2026.id,
-      y2027: y2027.id,
+      year,
+      thisYear: thisYear.id,
+      nextYear: nextYear.id,
       classes,
       sections,
       students: { six, sixB, seven, ten },
@@ -159,7 +163,8 @@ export async function promotionSchool(
 
 /**
  * A published ANNUAL exam of one class (fixture rows, as a publish leaves them): candidates for
- * everyone, a result row for each with `passed` not null (null = absent: no result).
+ * everyone, a result row for each with `passed` not null (null = absent: no result). It is held
+ * in November of its academic year's first calendar year.
  */
 export async function publishedAnnual(
   tx: TenantTx,
@@ -173,6 +178,8 @@ export async function publishedAnnual(
     place: number | null;
   }[],
 ): Promise<string> {
+  const { startDate } = await tx.academicYear.findUniqueOrThrow({ where: { id: academicYearId } });
+  const year = startDate.getUTCFullYear();
   const exam = await tx.exam.create({
     data: {
       tenantId,
@@ -180,8 +187,8 @@ export async function publishedAnnual(
       kind: 'ANNUAL',
       nameBn: 'বার্ষিক পরীক্ষা',
       nameEn: 'Annual examination',
-      startsOn: new Date('2026-11-01'),
-      endsOn: new Date('2026-11-20'),
+      startsOn: new Date(`${year}-11-01`),
+      endsOn: new Date(`${year}-11-20`),
       resultMode: 'GPA',
       meritOrder: ['GPA', 'TOTAL_MARKS', 'ROLL'],
       failedRanking: 'AFTER_PASSED',

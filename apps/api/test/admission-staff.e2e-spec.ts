@@ -10,6 +10,7 @@ import {
   admissionCycle,
   admissionSchool,
   api,
+  cycleWindow,
   staffApplication,
   staffApplicationBody,
   type AdmissionSchool,
@@ -47,7 +48,7 @@ describe('admission (staff): cycles and applications', () => {
     it('the options list this institute’s years, classes and groups', async () => {
       const o = (await api(h, s.tokens.admin).get('/admission/options').expect(200))
         .body as AdmissionOptions;
-      expect(o.years.map((y) => y.name)).toEqual(['2027', '2026']);
+      expect(o.years.map((y) => y.name)).toEqual([String(s.year + 1), String(s.year)]);
       expect(o.classLevels.some((c) => c.id === s.class6)).toBe(true);
       expect(o.classLevels.some((c) => c.id === other.class6)).toBe(false);
     });
@@ -59,8 +60,7 @@ describe('admission (staff): cycles and applications', () => {
           .post('/admission/cycles', {
             academicYearId: s.nextYearId,
             nameBn: 'ভর্তি (খসড়া)',
-            opensAt: '2026-11-01T00:00:00+06:00',
-            closesAt: '2027-01-31T00:00:00+06:00',
+            ...cycleWindow(s),
           })
           .expect(201)
       ).body as AdmissionCycleView;
@@ -69,7 +69,7 @@ describe('admission (staff): cycles and applications', () => {
       const refused = await admin.post(`/admission/cycles/${c.id}/status`, { status: 'OPEN' });
       expect(refused.status).toBe(422);
       expect(refused.body.code).toBe('CYCLE_HAS_NO_CLASSES');
-      // The fixture cycle is open and inside its window today (2026-11 … 2027-01).
+      // The fixture cycle is open and inside its window today (all this year and next January).
       expect(cycle.status).toBe('OPEN');
       expect(cycle.takingApplications).toBe(true);
       const closed = (
@@ -81,10 +81,12 @@ describe('admission (staff): cycles and applications', () => {
 
     it("another institute's year is not found; a window that closes first is refused", async () => {
       const admin = api(h, s.tokens.admin);
+      // Last year's dates: the fixture cycle opens on 1 January of this year.
+      const last = s.year - 1;
       const base = {
         nameBn: 'x',
-        opensAt: '2026-11-01T00:00:00+06:00',
-        closesAt: '2026-12-01T00:00:00+06:00',
+        opensAt: `${last}-11-01T00:00:00+06:00`,
+        closesAt: `${last}-12-01T00:00:00+06:00`,
       };
       await admin
         .post('/admission/cycles', { ...base, academicYearId: other.nextYearId })
@@ -93,11 +95,11 @@ describe('admission (staff): cycles and applications', () => {
         .post('/admission/cycles', {
           ...base,
           academicYearId: s.nextYearId,
-          closesAt: '2026-10-01T00:00:00+06:00',
+          closesAt: `${last}-10-01T00:00:00+06:00`,
         })
         .expect(400);
       const res = await admin.patch(`/admission/cycles/${cycle.id}`, {
-        closesAt: '2026-10-01T00:00:00+06:00',
+        closesAt: `${last}-10-01T00:00:00+06:00`,
       });
       expect(res.status).toBe(422);
       expect(res.body.code).toBe('WINDOW');
@@ -153,7 +155,7 @@ describe('admission (staff): cycles and applications', () => {
         birthRegistrationNo: bn('20191234567890001'),
         dateOfBirth: bn('2019-06-15'),
       });
-      expect(a.applicationNo).toMatch(/^2027-\d{4}$/);
+      expect(a.applicationNo).toMatch(new RegExp(`^${s.year + 1}-\\d{4}$`));
       expect(a).toMatchObject({
         source: 'STAFF',
         status: 'SUBMITTED',
@@ -309,7 +311,7 @@ describe('admission (staff): cycles and applications', () => {
       expect(res.headers['content-type']).toContain('text/csv');
       expect(res.text.charCodeAt(0)).toBe(0xfeff);
       expect(res.text).toContain('আবেদন নম্বর');
-      expect(res.text).toMatch(/2027-\d{4}/);
+      expect(res.text).toMatch(new RegExp(`${s.year + 1}-\\d{4}`));
       expect(res.text).not.toMatch(/[০-৯]/);
       expect(res.text).toMatch(/01\d{3}-\d{6}/);
     });
@@ -320,7 +322,7 @@ describe('admission (staff): cycles and applications', () => {
           tenantId: s.tenantId,
           cycleId: cycle.id,
           cycleClassId: class6,
-          applicationNo: `2027-${String(50000 + i).padStart(6, '0')}`,
+          applicationNo: `${s.year + 1}-${String(50000 + i).padStart(6, '0')}`,
           source: 'ONLINE' as const,
           nameBn: `আবেদনকারী ${i}`,
           nameKey: `আবেদনকারী${i}`,
