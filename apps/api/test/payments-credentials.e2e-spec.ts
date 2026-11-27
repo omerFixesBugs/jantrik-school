@@ -60,6 +60,7 @@ describe('PaymentCredentialsService', () => {
     expect(row).toMatchObject({
       credentialsHint: '0001',
       keyVersion: 1,
+      credentialsVersion: 1,
       credentialsUpdatedAt: now,
       credentialsUpdatedById: a.ownerId,
       enabled: false,
@@ -142,6 +143,40 @@ describe('PaymentCredentialsService', () => {
     await expect(jobs.run(b.tenantId, () => service.read(a.accountId))).rejects.toMatchObject({
       code: 'CREDENTIALS_MISSING',
     });
+  });
+
+  it('an older ciphertext of the same account put back never decrypts (P7a1-x20)', async () => {
+    const a = await institute();
+    const former = { storeId: 'formerstore7', storePassword: 'Former-Pw-7@ssl' };
+    const save = (values: typeof creds) =>
+      jobs.run(a.tenantId, () =>
+        service.save(a.accountId, values, { actorUserId: a.ownerId, now: new Date() }),
+      );
+    await save(former);
+    const first = await stored(a.tenantId);
+    await save(creds);
+    const second = await stored(a.tenantId);
+    expect(await jobs.run(a.tenantId, () => service.read(a.accountId))).toEqual(creds);
+    // An SQL injection inside the institute (jantrik_app, any role's request) copies the former
+    // store's ciphertext back.
+    const old = first.credentialsCiphertext;
+    const changed = await withTenant(
+      h.prisma,
+      a.tenantId,
+      (tx) => tx.$executeRaw`UPDATE payment_gateway_accounts SET credentials_ciphertext = ${old}`,
+    );
+    expect(changed).toBe(1);
+    // Never the former store: unreadable, and the owner saves the store again.
+    await expect(jobs.run(a.tenantId, () => service.read(a.accountId))).rejects.toMatchObject({
+      code: 'CREDENTIALS_UNREADABLE',
+    });
+    const rolledBack = await stored(a.tenantId);
+    await save(creds);
+    expect(await jobs.run(a.tenantId, () => service.read(a.accountId))).toEqual(creds);
+    // One up on every new ciphertext, the one put back included.
+    expect(
+      [first, second, rolledBack, await stored(a.tenantId)].map((r) => r.credentialsVersion),
+    ).toEqual([1, 2, 3, 4]);
   });
 
   it('a changed key → CREDENTIALS_UNREADABLE, an error that names nothing', async () => {

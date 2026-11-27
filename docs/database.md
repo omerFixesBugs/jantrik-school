@@ -793,11 +793,18 @@ to_year_id)` → `enrolments` (two unique indexes on enrolments, supersets of th
     repeat at most 255 times, so the length is its own test); the hint (1 to 4 of
     `[A-Za-z0-9_-]`); credentials with their hint and the time they were saved (a person only
     with a time: a command that loaded them names nobody); a test with its time and one of the five
-    results; a job failure as a fixed code with its time; `key_version` 1 to 100.
-  - `credentials_ciphertext` is AES-256-GCM bound to the row (the API encrypts it). Every
-    client leaves it out of its reads unless a query names it (`CLIENT_OMIT` in `src/client.ts`,
-    like `users.password_hash`), and only the API's `PaymentCredentialsService` names it (a code
-    scan checks).
+    results; a job failure as a fixed code with its time; `key_version` 1 to 100;
+    `credentials_version` not negative.
+  - `credentials_ciphertext` is AES-256-GCM bound to the row and to `credentials_version` (the
+    API encrypts it). Every client leaves it out of its reads unless a query names it
+    (`CLIENT_OMIT` in `src/client.ts`, like `users.password_hash`), and only the API's
+    `PaymentCredentialsService` names it (a code scan checks).
+  - `credentials_version` (P7a1-x20, migration `20261117500100_payment_credentials_version`): the
+    trigger `payment_gateway_accounts_credentials_version` (BEFORE INSERT OR UPDATE, function
+    `app_payment_credentials_version()`) alone sets it: on INSERT 0 without a ciphertext and 1
+    with one, whatever the INSERT names; on UPDATE one up when the ciphertext changes, else the old
+    value. No UPDATE grant. The ciphertext's AAD names it, so an older ciphertext of the row put
+    back (by an SQL injection inside the institute) never decrypts again.
 - **`payment_intents`** (P7a2): one online payment attempt by a guardian for chosen dues of one
   child, paid in full (S22). Forced RLS; `jantrik_app` SELECT, INSERT and UPDATE by column: never
   the amount, our `tran_id`, the child, the payer, the account, `priced_on`, the request id or the

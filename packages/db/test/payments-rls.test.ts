@@ -82,7 +82,7 @@ describe('payment_gateway_accounts', () => {
     ).rejects.toThrow(/row-level security/i);
   });
 
-  it('a new account: sandbox, off, key version 1, no credentials', async () => {
+  it('a new account: sandbox, off, key version 1, no credentials (version 0)', async () => {
     const row = await withTenant(app, b.tenantId, (tx) =>
       tx.paymentGatewayAccount.findFirstOrThrow(),
     );
@@ -90,6 +90,7 @@ describe('payment_gateway_accounts', () => {
       mode: 'SANDBOX',
       enabled: false,
       keyVersion: 1,
+      credentialsVersion: 0,
       credentialsHint: null,
       lastTestResult: null,
     });
@@ -194,5 +195,59 @@ describe('payment_gateway_accounts', () => {
     ]) {
       await expect(sqlA(sql), sql).rejects.toThrow(/permission denied/i);
     }
+  });
+
+  // P7a1-x20: the ciphertext's additional data names this version, so an older ciphertext of the
+  // same row, copied back by an SQL injection inside the institute, never decrypts again.
+  it('credentials_version: set by the trigger alone, one up whenever the ciphertext changes', async () => {
+    const d = await institute(app);
+    const sqlD = (sql: string) => withTenant(app, d.tenantId, (tx) => tx.$executeRawUnsafe(sql));
+    const version = async () =>
+      (
+        await withTenant(app, d.tenantId, (tx) =>
+          tx.$queryRawUnsafe<{ v: number }[]>(
+            `SELECT credentials_version AS v FROM payment_gateway_accounts`,
+          ),
+        )
+      )[0]!.v;
+    const OTHER = `v1.${'B'.repeat(60)}`;
+    // An insert that names a version gets the trigger's: 0 without a ciphertext.
+    await sqlD(`INSERT INTO payment_gateway_accounts (id, tenant_id, provider, credentials_version)
+      VALUES (gen_random_uuid(), '${d.tenantId}', 'SSLCOMMERZ', 7)`);
+    expect(await version()).toBe(0);
+    // The app may not write it.
+    for (const v of [0, 1, 99]) {
+      await expect(
+        sqlD(`UPDATE payment_gateway_accounts SET credentials_version = ${v}`),
+      ).rejects.toThrow(/permission denied/i);
+    }
+    // Every new ciphertext: one up.
+    await sqlD(`UPDATE payment_gateway_accounts SET credentials_ciphertext = '${CIPHERTEXT}',
+      credentials_hint = '0001', credentials_updated_at = now()`);
+    expect(await version()).toBe(1);
+    await sqlD(`UPDATE payment_gateway_accounts SET credentials_ciphertext = '${OTHER}'`);
+    expect(await version()).toBe(2);
+    // Anything else, or the same ciphertext written again: unchanged.
+    await sqlD(`UPDATE payment_gateway_accounts SET updated_at = now(), enabled = false,
+      credentials_hint = '0002', key_version = 1, last_failure_code = 'TIMEOUT',
+      last_failure_at = now()`);
+    await sqlD(`UPDATE payment_gateway_accounts SET credentials_ciphertext = '${OTHER}'`);
+    expect(await version()).toBe(2);
+    // An older ciphertext put back is a change like any other.
+    await sqlD(`UPDATE payment_gateway_accounts SET credentials_ciphertext = '${CIPHERTEXT}'`);
+    expect(await version()).toBe(3);
+    // An insert with a ciphertext starts at 1, whatever it names.
+    const e = await institute(app);
+    await withTenant(app, e.tenantId, (tx) =>
+      tx.$executeRawUnsafe(`INSERT INTO payment_gateway_accounts (id, tenant_id, provider,
+        credentials_ciphertext, credentials_hint, credentials_updated_at, credentials_version)
+        VALUES (gen_random_uuid(), '${e.tenantId}', 'SSLCOMMERZ', '${CIPHERTEXT}', '0001', now(), 0)`),
+    );
+    const [inserted] = await withTenant(app, e.tenantId, (tx) =>
+      tx.$queryRawUnsafe<{ v: number }[]>(
+        `SELECT credentials_version AS v FROM payment_gateway_accounts`,
+      ),
+    );
+    expect(inserted!.v).toBe(1);
   });
 });

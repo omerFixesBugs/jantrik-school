@@ -1,7 +1,8 @@
 import { Logger } from '@nestjs/common';
-import { withTenant } from '@jantrik/db';
+import { withTenant, type Prisma } from '@jantrik/db';
 import type { GatewayAccountView, GatewayTestQueued } from '@jantrik/shared';
 import type { Redis } from 'ioredis';
+import { AuditService, type AuditEntry } from '../src/audit/audit.module.js';
 import { PAYMENTS_CONFIG, type PaymentsConfig } from '../src/payments/payments.config.js';
 import { startFakeSslcommerz, type FakeSslcommerz } from './support/fake-sslcommerz.js';
 import { feesSchool, type FeesSchool } from './support/fees.js';
@@ -22,6 +23,8 @@ const GOOD = { storeId: 'jantrik0001', storePassword: 'Good-Pw-31@ssl' };
 const SENTINEL = 'Sentinel-Pw-QX81zv@ssl';
 const PUBLIC_URL = 'https://api.jantrik.example';
 const ACCOUNT = '/fees/online-payments/account';
+/** Well-formed (the database CHECK) but no key decrypts it. */
+const UNREADABLE = `v1.${'A'.repeat(60)}`;
 
 /** Every string a value holds (Redis keys and values, response bodies). */
 async function redisDump(redis: Redis): Promise<string> {
@@ -87,6 +90,24 @@ describe('gateway account (OWNER)', () => {
       { timeout: 10_000, interval: 100 },
     );
   };
+
+  /** A store the fake accepts, one per test, so its requests can be told from other tests'. */
+  const storeFor = (storeId: string) => {
+    const store = { storeId, storePassword: `${storeId}-Pw@ssl` };
+    fake.addStore(store.storeId, store.storePassword);
+    return store;
+  };
+  /** How many times SSLCommerz (the fake) was asked about a store's transactions. */
+  const queriesFor = (storeId: string) =>
+    fake.requests.filter((r) => r.api === 'query' && r.fields['store_id'] === storeId).length;
+  /** Who did what to an institute's account (its audit rows). */
+  const auditOf = (school: FeesSchool) =>
+    withTenant(h.prisma, school.tenantId, (tx) =>
+      tx.auditLog.findMany({
+        where: { entity: 'payment_gateway_account' },
+        select: { actorUserId: true, newValues: true },
+      }),
+    );
 
   beforeAll(async () => {
     fake = await startFakeSslcommerz();
@@ -242,6 +263,167 @@ describe('gateway account (OWNER)', () => {
     await owner().put({ ...GOOD, storePassword: 'Wrong-Pw-00@ssl' });
     await new Promise((r) => setTimeout(r, 2500));
     expect((await owner().get()).body.lastTest).toBeNull();
+  });
+
+  it('a stale failure goes: new credentials and a passing test clear it (P7a1-x19)', async () => {
+    const school = await feesSchool(h);
+    const o = as(school.tokens.owner);
+    const setRow = (data: Prisma.PaymentGatewayAccountUpdateManyMutationInput) =>
+      withTenant(h.prisma, school.tenantId, (tx) => tx.paymentGatewayAccount.updateMany({ data }));
+    expect((await o.put(GOOD)).status).toBe(200);
+    // Credentials that cannot be decrypted (another key, a damaged row): the failure is shown.
+    await setRow({ credentialsCiphertext: UNREADABLE });
+    let view = await tested(school.tokens.owner);
+    expect(view.lastTest?.result).toBe('ERROR');
+    expect(view.lastFailure?.code).toBe('CREDENTIALS_UNREADABLE');
+    // The owner saves them again: the old failure no longer describes the account.
+    view = (await o.put(GOOD)).body as GatewayAccountView;
+    expect(view.lastFailure).toBeNull();
+    view = await tested(school.tokens.owner);
+    expect(view.lastTest?.result).toBe('OK');
+    expect(view.lastFailure).toBeNull();
+    // A failure a job recorded for the same credentials goes when a test passes.
+    await setRow({ lastFailureCode: 'CREDENTIALS_UNREADABLE', lastFailureAt: new Date() });
+    expect((await o.get()).body.lastFailure?.code).toBe('CREDENTIALS_UNREADABLE');
+    view = await tested(school.tokens.owner);
+    expect(view.lastTest?.result).toBe('OK');
+    expect(view.lastFailure).toBeNull();
+  });
+
+  it('a failed test switches an account that was on off, and the audit says so (P7a1-x5)', async () => {
+    const school = await feesSchool(h);
+    const o = as(school.tokens.owner);
+    await o.put(storeFor('gap0001'));
+    expect((await tested(school.tokens.owner)).lastTest?.result).toBe('OK');
+    expect((await o.post('enable')).body.enabled).toBe(true);
+    fake.override('query', { status: 500 });
+    const view = await tested(school.tokens.owner);
+    expect(view).toMatchObject({ enabled: false, lastTest: { result: 'ERROR' } });
+    expect(await auditOf(school)).toContainEqual({
+      actorUserId: school.userIds.owner,
+      newValues: { test: 'ERROR', enabled: false },
+    });
+  });
+
+  it('credentials that cannot be decrypted: ERROR and CREDENTIALS_UNREADABLE, SSLCommerz not asked, the account off', async () => {
+    const school = await feesSchool(h);
+    const o = as(school.tokens.owner);
+    const store = storeFor('gap0002');
+    await o.put(store);
+    expect((await tested(school.tokens.owner)).lastTest?.result).toBe('OK');
+    expect((await o.post('enable')).body.enabled).toBe(true);
+    await withTenant(h.prisma, school.tenantId, (tx) =>
+      tx.paymentGatewayAccount.updateMany({ data: { credentialsCiphertext: UNREADABLE } }),
+    );
+    const asked = queriesFor(store.storeId);
+    expect(asked).toBeGreaterThan(0);
+    const view = await tested(school.tokens.owner);
+    expect(view).toMatchObject({
+      enabled: false,
+      lastTest: { result: 'ERROR' },
+      lastFailure: { code: 'CREDENTIALS_UNREADABLE' },
+    });
+    expect(view.lastFailure?.at).toBe(view.lastTest?.at);
+    // The job stopped before SSLCommerz: nothing was sent for this store.
+    expect(queriesFor(store.storeId)).toBe(asked);
+    expect(await auditOf(school)).toContainEqual({
+      actorUserId: school.userIds.owner,
+      newValues: { test: 'ERROR', enabled: false },
+    });
+    expect((await o.post('enable')).body.code).toBe('TEST_REQUIRED');
+  });
+
+  it('"turn on" racing a test: committed while SSLCommerz is asked, a failed result switches it off', async () => {
+    const school = await feesSchool(h);
+    const o = as(school.tokens.owner);
+    const store = storeFor('gap0003');
+    await o.put(store);
+    expect((await tested(school.tokens.owner)).lastTest?.result).toBe('OK');
+    const before = queriesFor(store.storeId);
+    fake.override('query', { delayMs: 1500, status: 500 });
+    const asked = await o.post('test');
+    expect(asked.status).toBe(202);
+    const { requestedAt } = asked.body as GatewayTestQueued;
+    // The job waits for SSLCommerz, outside any transaction: the last test (OK) still allows "on".
+    await vi.waitFor(
+      () => {
+        if (queriesFor(store.storeId) === before) throw new Error('not asked yet');
+      },
+      { timeout: 10_000, interval: 20 },
+    );
+    expect((await o.post('enable')).body.enabled).toBe(true);
+    const view = await vi.waitFor(
+      async () => {
+        const v = (await o.get()).body as GatewayAccountView;
+        if (!v.lastTest || v.lastTest.at < requestedAt) throw new Error('not tested yet');
+        return v;
+      },
+      { timeout: 10_000, interval: 100 },
+    );
+    // The job locked the row before it read it: it saw the account on, and says it switched it off.
+    expect(view).toMatchObject({ enabled: false, lastTest: { result: 'ERROR' } });
+    expect(await auditOf(school)).toContainEqual({
+      actorUserId: school.userIds.owner,
+      newValues: { test: 'ERROR', enabled: false },
+    });
+  });
+
+  it('"turn on" racing a test: while the result is being recorded, it waits and finds no passing test', async () => {
+    const school = await feesSchool(h);
+    const o = as(school.tokens.owner);
+    await o.put(storeFor('gap0004'));
+    expect((await tested(school.tokens.owner)).lastTest?.result).toBe('OK');
+    // Hold the job's second transaction open just before it commits (the row is locked by then).
+    const audit = h.app.get(AuditService);
+    const record = AuditService.prototype.record;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let entered!: () => void;
+    const recording = new Promise<void>((resolve) => (entered = resolve));
+    const spy = vi.spyOn(audit, 'record').mockImplementation(async (entry: AuditEntry) => {
+      const values = entry.newValues as Record<string, unknown> | undefined;
+      if (values && 'test' in values) {
+        entered();
+        await gate;
+      }
+      return record.call(audit, entry);
+    });
+    try {
+      fake.override('query', { status: 500 });
+      expect((await o.post('test')).status).toBe(202);
+      await recording;
+      // The view still shows the passing test, so "turn on" goes on to its conditional update,
+      // which waits for the job's row lock.
+      const enabling = o.post('enable');
+      await vi.waitFor(
+        async () => {
+          const rows = await h.prisma.$queryRaw<{ waiting: number }[]>`
+            SELECT count(*)::int AS waiting FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'
+              AND query LIKE '%payment_gateway_accounts%'`;
+          if (!rows[0]?.waiting) throw new Error('not waiting yet');
+        },
+        { timeout: 10_000, interval: 50 },
+      );
+      release();
+      const res = await enabling;
+      expect(res.status).toBe(422);
+      expect(res.body.code).toBe('TEST_REQUIRED');
+    } finally {
+      release();
+      spy.mockRestore();
+    }
+    const view = (await o.get()).body as GatewayAccountView;
+    expect(view).toMatchObject({ enabled: false, lastTest: { result: 'ERROR' } });
+    const audited = await auditOf(school);
+    expect(audited).toContainEqual({
+      actorUserId: school.userIds.owner,
+      newValues: { test: 'ERROR' },
+    });
+    expect(audited).not.toContainEqual({
+      actorUserId: school.userIds.owner,
+      newValues: { enabled: true },
+    });
   });
 
   it('audit: field names for credentials, each test result, on and off; never a value', async () => {
