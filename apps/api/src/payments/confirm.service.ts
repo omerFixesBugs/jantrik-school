@@ -177,13 +177,16 @@ export class ConfirmService {
       const waiting = (e: { valId: string | null }) =>
         e.valId !== null && !answered.has(e.valId) && !tried.has(e.valId);
       // Each new val_id once: those SSLCommerz's listed addresses brought first, then the oldest.
-      const fresh = [
-        ...new Map(
-          [...since.filter((e) => e.sourceListed), ...since.filter((e) => !e.sourceListed)]
-            .filter(waiting)
-            .map((e) => [e.valId!, e.sourceListed === true] as const),
-        ),
-      ];
+      // A val_id a listed address brought stays SSLCommerz's (its own budget) when the payer's
+      // return carries it too.
+      const byValId = new Map<string, boolean>();
+      for (const e of [
+        ...since.filter((e) => e.sourceListed),
+        ...since.filter((e) => !e.sourceListed),
+      ].filter(waiting)) {
+        byValId.set(e.valId!, byValId.get(e.valId!) === true || e.sourceListed === true);
+      }
+      const fresh = [...byValId];
 
       // Only while the payment is open, a few a round and within the payment's budget; signals
       // that arrived while this job ran are taken in the next round.
