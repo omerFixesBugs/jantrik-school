@@ -139,7 +139,9 @@
       "CURRENCY_NOT_APPLICABLE": "Money in another currency is refunded, never applied.",
       "AMOUNT_UNKNOWN": "SSLCommerz did not report a usable amount: record it as refunded.",
       "TRX_ID_UNUSABLE": "SSLCommerz did not report a usable transaction ID: record it as refunded.",
-      "TRX_ID_USED": "This bank transaction is already recorded as a payment."
+      "TRX_ID_USED": "This bank transaction is already recorded as a payment.",
+      "ALREADY_REFUNDED": "This money is already recorded as refunded: dismiss this record as a repeat.",
+      "HELD_BY_PAYMENT": "This money belongs to an online payment: decide it on that payment."
     }
   }
 }

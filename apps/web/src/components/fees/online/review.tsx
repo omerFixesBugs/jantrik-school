@@ -64,6 +64,8 @@ const KNOWN_ERRORS = [
   'AMOUNT_UNKNOWN',
   'TRX_ID_UNUSABLE',
   'TRX_ID_USED',
+  'ALREADY_REFUNDED',
+  'HELD_BY_PAYMENT',
 ] as const;
 
 function useDecisionError() {

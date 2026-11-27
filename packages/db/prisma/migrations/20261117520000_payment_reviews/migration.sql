@@ -289,8 +289,9 @@ ALTER TABLE payment_signal_reviews
     OR (outcome = 'REFUNDED_OUTSIDE' AND refund_reference ~ '^[A-Za-z0-9._/-]{1,100}$'));
 
 -- At commit: a decision is about a VALIDATE event with a review reason (an item of the queue),
--- and money is never dismissed (P7b-E): a dismissal is only of a repeat record of money that an
--- intent holds, or that another review event (not itself dismissed) still records. Decisions on
+-- money is never dismissed (P7b-E): a dismissal is only of a repeat record of money that an
+-- intent holds, or that another review event (not itself dismissed) still records; and money is
+-- refunded outside once: not a second record of it, nor money an intent holds. Decisions on
 -- the records of one payment (one val_id) are serialised by an advisory lock on it, taken here
 -- and by the API before it inserts (P7b-x: two dismissals of the two records of one payment at
 -- once could otherwise each see the other standing): the second check waits for the first
@@ -312,6 +313,24 @@ BEGIN
   END IF;
   IF v_val IS NOT NULL THEN
     PERFORM pg_advisory_xact_lock(hashtextextended('payments-val:' || NEW.tenant_id::text || ':' || v_val, 0));
+  END IF;
+  -- Money is refunded outside once (review round 1, finding 2): never a second record of money
+  -- already refunded, nor money an intent holds (it is applied or refunded on the intent).
+  IF NEW.outcome = 'REFUNDED_OUTSIDE' AND v_val IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM payment_intents i
+               WHERE i.tenant_id = NEW.tenant_id AND i.val_id = v_val) THEN
+      RAISE EXCEPTION 'this money is an online payment''s own: it is decided on that payment'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM payment_signal_reviews r
+      JOIN payment_gateway_events e ON e.tenant_id = r.tenant_id AND e.id = r.event_id
+      WHERE r.tenant_id = NEW.tenant_id AND e.val_id = v_val AND r.id <> NEW.id
+        AND r.outcome = 'REFUNDED_OUTSIDE'
+    ) THEN
+      RAISE EXCEPTION 'this money was already refunded outside (another record of it)'
+        USING ERRCODE = 'check_violation';
+    END IF;
   END IF;
   IF NEW.outcome = 'DISMISSED' AND NOT (
     v_val IS NOT NULL AND (

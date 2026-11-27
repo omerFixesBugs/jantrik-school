@@ -808,6 +808,35 @@ export class ReviewService {
     const tx = this.db.tx;
     const event = await this.lockSignal(eventId);
     if (event.review) throw this.alreadyResolved();
+    // Money is refunded outside once (review round 1, finding 2), under its val_id's lock: never
+    // a second record of money already refunded, nor money an online payment of ours holds (that
+    // is decided on the payment). The database checks the same at commit.
+    if (outcome === 'REFUNDED_OUTSIDE' && event.valId) {
+      const [held, refunded] = await Promise.all([
+        tx.paymentIntent.count({ where: { valId: event.valId } }),
+        tx.paymentGatewayEvent.count({
+          where: {
+            valId: event.valId,
+            id: { not: event.id },
+            review: { is: { outcome: 'REFUNDED_OUTSIDE' } },
+          },
+        }),
+      ]);
+      if (held > 0) {
+        throw apiError(
+          409,
+          'HELD_BY_PAYMENT',
+          "This money is an online payment's own: decide it on that payment",
+        );
+      }
+      if (refunded > 0) {
+        throw apiError(
+          409,
+          'ALREADY_REFUNDED',
+          'This money is already recorded as refunded outside: dismiss this record as a repeat',
+        );
+      }
+    }
     if (outcome === 'DISMISSED' && !(await this.isRepeat(event.id, event.valId))) {
       throw apiError(
         422,
