@@ -243,7 +243,14 @@ describe('online payments: the public signal routes', () => {
     const view = await startPayment(h, s.tokens.guardian, s.students[1]!.id, { wait: false });
     for (let i = 0; i < 25; i++) {
       const valId = `VALFLOOD${String(i).padStart(4, '0')}`;
-      const res = await postReturn(h, s.slug, view.tranId, 'success', { val_id: valId }, randomIp());
+      const res = await postReturn(
+        h,
+        s.slug,
+        view.tranId,
+        'success',
+        { val_id: valId },
+        randomIp(),
+      );
       expect(res.status).toBe(303);
       expect(res.headers['location']).toContain(`/fees/pay/${view.id}`);
     }
