@@ -399,7 +399,7 @@ describe('online payments: confirmation and settle', () => {
             valId,
             fields: {},
             sourceListed: false,
-            receivedAt: new Date(Date.now() - 1000 + i),
+            receivedAt: new Date(Date.now() - valIds.length + i),
           })),
         }),
       );
