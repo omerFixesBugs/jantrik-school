@@ -446,6 +446,29 @@ describe('online payments: reconciliation', () => {
     expect((await members()).some((m) => m.includes(young.id))).toBe(false);
   });
 
+  it('an open payment whose latest step already ran is not listed again (no query every night)', async () => {
+    const { intent } = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, intent.id);
+    // SSLCommerz lists a success its validation API does not confirm: nothing to post, nothing to
+    // close (never when in doubt); the +25 h step ran.
+    fake.override('validate', { json: { status: 'INVALID_TRANSACTION' } });
+    clock.advance(25 * HOUR);
+    await step(intent.id, 4);
+    expect(await intentRow(h, s.tenantId, intent.id)).toMatchObject({
+      status: 'REDIRECTED',
+      lastCheckOutcome: 'SUCCESS_FOUND',
+    });
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    await loseJobs(intent.id);
+    clock.advance(HOUR);
+    await reconcile.requeueTenant(s.tenantId);
+    expect((await members()).some((m) => m.includes(intent.id))).toBe(false);
+    // Staff can still ask about it ("check now").
+    await api(h, s.tokens.guardian).post(
+      `/me/children/${child().id}/fees/online-payments/${intent.id}/abandon`,
+    );
+  });
+
   it('heal on read (the review page): an open payment overdue by 10 minutes is asked about, once a minute per institute', async () => {
     const { intent } = await readyPayment();
     await payAtGateway(h, fake, s.tenantId, intent.id);
