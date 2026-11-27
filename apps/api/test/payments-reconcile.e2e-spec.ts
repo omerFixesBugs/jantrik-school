@@ -448,6 +448,33 @@ describe('online payments: reconciliation', () => {
     expect((await members()).some((m) => m.includes(young.id))).toBe(false);
   });
 
+  it("Redis lost before a posted payment's +25 h query, the nightly run up to a day later: still asked, its second payment found (review round 2, probe C)", async () => {
+    const paid = (await readyPayment()).intent;
+    await payAtGateway(h, fake, s.tenantId, paid.id);
+    await step(paid.id, 1);
+    expect((await intentRow(h, s.tenantId, paid.id)).status).toBe('PAID');
+    // The guardian paid twice; that IPN was lost too. Then Redis is wiped (jobs and list).
+    const second = await payAtGateway(h, fake, s.tenantId, paid.id);
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    await loseJobs(paid.id);
+    // Its +25 h step falls due; the nightly run comes at +30 h (it may be up to 24 h after a wipe).
+    clock.advance(30 * HOUR);
+    await reconcile.requeueTenant(s.tenantId);
+    expect((await members()).filter((m) => m.includes(paid.id))).toEqual([member(paid.id, 4)]);
+    await vi.waitFor(
+      async () => {
+        const row = await intentRow(h, s.tenantId, paid.id);
+        expect(row.lastCheckedAt).toEqual(clock.now());
+        const duplicate = (await eventsOf(paid.id, 'VALIDATE')).find(
+          (e) => e.valId === second.valId,
+        );
+        expect(duplicate).toMatchObject({ reviewReason: 'DUPLICATE' });
+      },
+      { timeout: 15_000, interval: 100 },
+    );
+    expect(await paymentsOf(paid.id)).toHaveLength(1);
+  });
+
   it('an open payment whose latest step already ran is not listed again (no query every night)', async () => {
     const { intent } = await readyPayment();
     await payAtGateway(h, fake, s.tenantId, intent.id);
