@@ -287,8 +287,8 @@ not been decided yet (no `VALIDATE` event saying `VALID` or `VALIDATED`; one tha
   overdue by more than 2 minutes is added again with its own job id (nothing while that job
   exists); a step listed more than 8 days ago is dropped. It reads Redis only.
 - **The nightly fee run** (00:30 Asia/Dhaka) visits each institute in `fees:tenants` and, in that
-  institute's own context, lists again its open intents older than an hour (the latest due step now,
-  the later ones at their times), the intents posted in the last 26 hours whose +25 h query has not
+  institute's own context, lists again its open intents older than an hour (the latest due step now
+  unless it already ran, the later ones at their times), the intents posted in the last 26 hours whose +25 h query has not
   run, and the expired ones still PENDING at +25 h (their +7 day query). No query ever runs across
   institutes. It runs before the fee module check: validated money is posted even with fees off.
 - **Heal on read:** the guardian's payment page (P7a2) and the review queue (an open intent whose

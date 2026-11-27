@@ -1740,5 +1740,10 @@ step }`), as the nightly dues run is.
   `fee-collection.service.ts` (the online line), `fee-reports.service.ts` (`onlineToReview`), and the
   tests above. No P7a1 or P7a2 migration was edited; `PaymentCredentialsService` and
   `secrets.ts` were not touched.
+- **P7b-x22. The nightly re-queue skips a step that already ran** (found in self-review, fixed
+  test-first): an open payment whose latest due step already ran gets only its later steps, so
+  one that stays open after +25 h (SSLCommerz listing a success its validation API does not
+  confirm: never closed when in doubt) is not asked about every night; staff can still check it.
 - **Recorded only:** Playwright was not run locally (CI runs it; the screenshots are its
-  artifacts). Nothing called SSLCommerz: every test used the fake.
+  artifacts). Nothing called SSLCommerz: every test used the fake. The browser test uses the
+  seeded child `SHS-2026-0002` (as P7a2's does) and pays three of its dues.
