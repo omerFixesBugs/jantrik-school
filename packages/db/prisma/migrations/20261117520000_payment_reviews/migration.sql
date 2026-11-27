@@ -207,6 +207,7 @@ BEGIN
               THEN p.amount_paisa = i.amount_paisa AND p.paid_on = i.priced_on
             ELSE p.amount_paisa = i.applied_paisa
               AND p.paid_on BETWEEN i.priced_on AND p.recorded_on
+              AND i.validated_currency = 'BDT'
           END
   ) THEN
     RAISE EXCEPTION 'a gateway payment must be its intent''s money: it must match its intent (the amount, the bank transaction ID, the day)'
@@ -226,7 +227,8 @@ CREATE CONSTRAINT TRIGGER payment_intents_payment_match
 -- TrxID is the intent's bank_tran_id, and the amount and day are what was decided: posted by
 -- settle, the intent's amount on its checkout day (P7a-E, P7a2-x28: exactly P7a2's rule); applied
 -- from review (P7b), the applied amount on a day from the checkout day to the day it was recorded
--- (the gateway's day, P7b-F). A voided one's intent no longer holds it (P7a2). Replaces P7a2's
+-- (the gateway's day, P7b-F) and only for taka (P7b-G; review round 1, hardening c). A voided
+-- one's intent no longer holds it (P7a2). Replaces P7a2's
 -- function of the same name (migration 20261117510100, after its review) with the stricter union:
 -- every rule of P7a2's, and the applied branch only for an intent a person applied
 -- (applied_paisa, written only by that decision). P7a2's other rule, that an intent never lets go
@@ -266,6 +268,7 @@ BEGIN
                 THEN v_amount = i.amount_paisa AND v_paid_on = i.priced_on
               ELSE v_amount = i.applied_paisa
                 AND v_paid_on BETWEEN i.priced_on AND v_recorded_on
+                AND i.validated_currency = 'BDT'
             END
     ) THEN
       RAISE EXCEPTION 'a gateway payment must be its intent''s money: it must match its intent (the amount, the bank transaction ID, the day)'
