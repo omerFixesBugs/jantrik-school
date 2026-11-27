@@ -280,9 +280,7 @@ export class ConfirmService {
         intent.id,
         intent.payerUserId,
         outcome,
-        {
-          forgeable: !trusted,
-        },
+        { forgeable: !trusted },
       );
       return { failure: null, closed: result === 'POST' || result === 'REVIEW' };
     }
@@ -360,10 +358,10 @@ export class ConfirmService {
       // The session is over with nothing paid, and the gateway itself lists the failed or
       // cancelled attempt (or, past the session's lifetime, an unattempted or expired one): then
       // a failed or cancelled return (the path's word), or an IPN that said so, closes an open
-      // intent. Nothing found closes nothing
-      // (P7a2-x26): a return needs only the tran_id, so anyone who has it (even an <img> link)
-      // could otherwise close a payment still in progress, and the real payment would then wait
-      // for review as a late success. A query alone closes nothing either (P7b expires it).
+      // intent. Nothing found closes nothing (P7a2-x26): a return needs only the tran_id, so
+      // anyone who has it (even an <img> link) could otherwise close a payment still in
+      // progress, and the real payment would then wait for review as a late success. A query
+      // alone closes nothing either (P7b expires it).
       const closing = signals
         .filter(
           (s) =>
