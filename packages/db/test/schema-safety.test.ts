@@ -84,6 +84,9 @@ describe('schema safety net', () => {
         'sms_broadcasts',
         'sms_broadcast_targets',
         'payment_gateway_accounts',
+        'payment_intents',
+        'payment_intent_dues',
+        'payment_gateway_events',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);
@@ -199,6 +202,9 @@ describe('schema safety net', () => {
     ['app_verified_context', 'auth_context_key', 'app_context_key_id'].includes(fn);
   // And the public admission form's (sprint 1 P3b): no context at all, scoped by the slug.
   const isAdmission = (fn: string) => fn.startsWith('admission_');
+  // And the gateway signals' (sprint 1 P7a2): before any context, the institute comes from the
+  // slug and the intent from its own tran_id inside that institute.
+  const isPayments = (fn: string) => fn.startsWith('payment_signal_');
   // admission_submit takes a cycle class id: it is checked against the slug's institute inside
   // (another institute's class is CLOSED, admission-functions.test.ts).
   const ADMISSION_UUID_ARGS = ['admission_submit'];
@@ -232,7 +238,12 @@ describe('schema safety net', () => {
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
         AND p.proname <> ALL(${PRE_CONTEXT_AUTH_LOOKUPS})`;
     const scoped = rows.filter(
-      (r) => !isPlatform(r.fn) && !isIngest(r.fn) && !isContext(r.fn) && !isAdmission(r.fn),
+      (r) =>
+        !isPlatform(r.fn) &&
+        !isIngest(r.fn) &&
+        !isContext(r.fn) &&
+        !isAdmission(r.fn) &&
+        !isPayments(r.fn),
     );
     expect(scoped.map((r) => r.fn).sort()).toEqual([
       'app_find_or_create_user',
@@ -786,6 +797,134 @@ describe('schema safety net', () => {
       'admission_counters:INSERT': ['*'],
       'admission_counters:UPDATE': cols('last_no', 'updated_at'),
     });
+  });
+
+  // The gateway signals (sprint 1 P7a2, P7a-B): one definer function owned by the NOLOGIN
+  // jantrik_payments, run by jantrik_app only, and that role's grants exactly as written.
+  it('the payments function is owned by jantrik_payments, pins search_path, and only jantrik_app may run it', async () => {
+    const rows = await app.$queryRaw<
+      {
+        fn: string;
+        owner: string;
+        definer: boolean;
+        temp_last: boolean;
+        app_exec: boolean;
+        platform_exec: boolean;
+        ingest_exec: boolean;
+        login_exec: boolean;
+        public_exec: boolean;
+      }[]
+    >`
+      SELECT p.proname AS fn, r.rolname AS owner, p.prosecdef AS definer,
+             'search_path=pg_catalog, public, pg_temp' = ANY(p.proconfig) AS temp_last,
+             has_function_privilege('jantrik_app', p.oid, 'EXECUTE') AS app_exec,
+             has_function_privilege('jantrik_platform_app', p.oid, 'EXECUTE') AS platform_exec,
+             has_function_privilege('jantrik_ingest_app', p.oid, 'EXECUTE') AS ingest_exec,
+             has_function_privilege('jantrik_login_app', p.oid, 'EXECUTE') AS login_exec,
+             COALESCE(EXISTS (SELECT 1 FROM aclexplode(p.proacl) a
+                              WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'), true)
+               AS public_exec
+      FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
+      WHERE p.pronamespace = 'public'::regnamespace
+        AND (p.proname LIKE 'payment\_signal\_%' OR p.proowner = 'jantrik_payments'::regrole)`;
+    expect(rows.map((r) => r.fn)).toEqual(['payment_signal_record']);
+    expect(
+      rows.filter(
+        (r) =>
+          r.owner !== 'jantrik_payments' ||
+          !r.definer ||
+          !r.temp_last ||
+          !r.app_exec ||
+          r.platform_exec ||
+          r.ingest_exec ||
+          r.login_exec ||
+          r.public_exec,
+      ),
+    ).toEqual([]);
+  });
+
+  it('jantrik_payments: NOLOGIN, no login is a member, the owner may SET ROLE to it but not inherit it', async () => {
+    const [role] = await app.$queryRaw<
+      { login: boolean; superuser: boolean; bypassrls: boolean; members: string[] }[]
+    >`
+      SELECT r.rolcanlogin AS login, r.rolsuper AS superuser, r.rolbypassrls AS bypassrls,
+             ARRAY(SELECT m.rolname || ':' || a.inherit_option || ':' || a.set_option
+                   FROM pg_auth_members a JOIN pg_roles m ON m.oid = a.member
+                   WHERE a.roleid = r.oid ORDER BY 1)::text[] AS members
+      FROM pg_roles r WHERE r.rolname = 'jantrik_payments'`;
+    expect(role).toEqual({
+      login: false,
+      superuser: false,
+      bypassrls: false,
+      members: ['jantrik_owner:false:true'],
+    });
+    // No CREATE on public once the migrations ran, and jantrik_app is not a member (review
+    // focus 7): its `TO jantrik_payments` policies never apply to the API.
+    const [r] = await app.$queryRaw<{ create: boolean; app_member: boolean }[]>`
+      SELECT has_schema_privilege('jantrik_payments', 'public', 'CREATE') AS create,
+             pg_has_role('jantrik_app', 'jantrik_payments', 'MEMBER') AS app_member`;
+    expect(r).toEqual({ create: false, app_member: false });
+  });
+
+  // A snapshot: widening what the signal function may touch fails here (review focus 7).
+  it("jantrik_payments's table, column and function privileges and its policies are exactly the plan's", async () => {
+    const rows = await app.$queryRaw<{ grant: string }[]>`
+      SELECT c.relname || ':' || a.privilege_type || ':' || att.attname AS grant
+      FROM pg_class c
+      JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 AND NOT att.attisdropped
+      CROSS JOIN LATERAL aclexplode(att.attacl) a
+      WHERE c.relnamespace = 'public'::regnamespace AND a.grantee = 'jantrik_payments'::regrole
+      UNION
+      SELECT c.relname || ':' || a.privilege_type || ':*'
+      FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+      WHERE c.relnamespace = 'public'::regnamespace AND a.grantee = 'jantrik_payments'::regrole
+      UNION
+      SELECT 'function:' || a.privilege_type || ':' || p.proname
+      FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+      WHERE p.pronamespace = 'public'::regnamespace AND a.grantee = 'jantrik_payments'::regrole
+      ORDER BY 1`;
+    const got: Record<string, string[]> = {};
+    for (const { grant } of rows) {
+      const [table, privilege, column] = grant.split(':') as [string, string, string];
+      (got[`${table}:${privilege}`] ??= []).push(column);
+    }
+    for (const k of Object.keys(got)) got[k]!.sort();
+    const cols = (...c: string[]) => [...c].sort();
+    expect(got).toEqual({
+      'tenants:SELECT': cols('id', 'slug'),
+      'payment_intents:SELECT': cols('id', 'student_id', 'tenant_id', 'tran_id'),
+      'payment_gateway_events:INSERT': cols(
+        'id',
+        'tenant_id',
+        'intent_id',
+        'kind',
+        'outcome',
+        'tran_id',
+        'val_id',
+        'fields',
+        'source_listed',
+        'received_at',
+        'created_at',
+        'updated_at',
+      ),
+      // The verified context (the tenant_isolation policies an INSERT checks), the events' CHECK
+      // on what a signal may store, and its own function (an owner's entry in its ACL).
+      'function:EXECUTE': [
+        'app_verified_context',
+        'payment_event_fields_ok',
+        'payment_signal_record',
+      ],
+    });
+    const policies = await app.$queryRaw<{ policy: string }[]>`
+      SELECT c.relname || '.' || p.polname || ':' || p.polcmd::text AS policy
+      FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
+      WHERE 'jantrik_payments'::regrole = ANY (p.polroles)
+      ORDER BY 1`;
+    expect(policies.map((p) => p.policy)).toEqual([
+      'payment_gateway_events.payments_signal:a',
+      'payment_intents.payments_read:r',
+      'tenants.payments_read:r',
+    ]);
   });
 
   // The receiver parses internet input without a login: whatever it does goes through the
