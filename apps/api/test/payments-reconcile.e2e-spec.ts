@@ -510,4 +510,30 @@ describe('online payments: reconciliation', () => {
     await waitStatus(h, s.tenantId, intent.id, 'PAID');
     expect(await paymentsOf(intent.id)).toHaveLength(1);
   });
+
+  it('an undocumented status is unknown, never "no success": nothing closed on it, asked again at +7 days (review round 1, hardening d)', async () => {
+    const { intent } = await readyPayment();
+    // A status SSLCommerz does not document (the client reads it as OTHER).
+    await payAtGateway(h, fake, s.tenantId, intent.id, { status: 'PROCESSING' });
+    clock.advance(2 * HOUR);
+    await step(intent.id, 3);
+    expect(await intentRow(h, s.tenantId, intent.id)).toMatchObject({
+      status: 'REDIRECTED',
+      lastCheckOutcome: 'UNKNOWN',
+    });
+    clock.advance(23 * HOUR);
+    await step(intent.id, 4);
+    expect(await intentRow(h, s.tenantId, intent.id)).toMatchObject({
+      status: 'EXPIRED',
+      lastCheckOutcome: 'UNKNOWN',
+    });
+    // As a PENDING one: once more at +7 days, listed again by the nightly run after a loss.
+    const last = intent.createdAt.getTime() + 7 * 24 * HOUR;
+    expect(Number(await h.redis.zscore(PAYMENTS_OPEN_KEY, member(intent.id, 5)))).toBe(last);
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    await loseJobs(intent.id);
+    await reconcile.requeueTenant(s.tenantId);
+    expect((await members()).filter((m) => m.includes(intent.id))).toEqual([member(intent.id, 5)]);
+    await loseJobs(intent.id);
+  });
 });

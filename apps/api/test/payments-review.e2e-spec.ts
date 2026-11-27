@@ -654,6 +654,32 @@ describe('online payments: the review queue', () => {
     });
   });
 
+  it('a check that finds a status SSLCommerz does not document is no ground for a dismissal (review round 1, hardening d)', async () => {
+    // Another payment's money sent to this one: in review with no money of its own.
+    const mine = await readyPayment(70000);
+    const theirs = await readyPayment(60000, s.students[2]!.id, s.tokens.otherGuardian);
+    const t = await payAtGateway(h, fake, s.tenantId, theirs.intent.id);
+    await settle.settlePaid(
+      s.tenantId,
+      mine.intent.id,
+      mine.intent.payerUserId,
+      await validated(theirs.intent.tranId, t.valId),
+    );
+    // SSLCommerz lists an attempt of this one in a status it does not document.
+    fake.pay(mine.intent.sessionRef!, { status: 'PROCESSING' });
+    await reconcile.run({ tenantId: s.tenantId, intentId: mine.intent.id, step: 'manual' });
+    const view = await staffView(mine.intent.id);
+    expect(view.lastCheck!.outcome).toBe('UNKNOWN');
+    expect(view.actions).toMatchObject({ dismiss: true, dismissReady: false });
+    expect(
+      (
+        await as('admin')
+          .post(items(`/${mine.intent.id}/dismiss`), { note: 'not a payment of ours' })
+          .expect(409)
+      ).body.code,
+    ).toBe('CHECK_FIRST');
+  });
+
   it('money items: refunded outside or dismissed as a repeat record, once; never applied', async () => {
     const posted = await paidOnline({ amountPaisa: 50000 });
     const second = fake.pay(posted.intent.sessionRef!);
