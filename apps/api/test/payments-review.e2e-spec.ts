@@ -1239,4 +1239,52 @@ describe('online payments: the review queue', () => {
       refundReference: 'SSL-RF-0',
     });
   });
+
+  it('our own query lists a payment its validation names for another tran_id: dismissed after a check, the money an item until a person decides it (review round 2, probe B)', async () => {
+    const mine = await readyPayment(70000);
+    const t = await payAtGateway(h, fake, s.tenantId, mine.intent.id);
+    // SSLCommerz contradicts itself: its query lists the payment under this tran_id, its
+    // validation names another one.
+    fake.override('validate', {
+      json: {
+        ...t.fields,
+        status: 'VALID',
+        tran_id: newTranId(),
+        val_id: t.valId,
+        APIConnect: 'DONE',
+      },
+    });
+    await reconcile.run({ tenantId: s.tenantId, intentId: mine.intent.id, step: 'manual' });
+    expect(await intentRow(h, s.tenantId, mine.intent.id)).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      reviewReasons: ['TRAN_ID_MISMATCH'],
+      valId: null,
+    });
+    const [item, ...more] = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.findMany({ where: { valId: t.valId, reviewReason: { not: null } } }),
+    );
+    expect(more).toEqual([]);
+    expect(item).toMatchObject({ kind: 'VALIDATE', reviewReason: 'UNMATCHED' });
+
+    // A check lists that payment again: its money is the item's, so nothing is left to find.
+    await reconcile.run({ tenantId: s.tenantId, intentId: mine.intent.id, step: 'manual' });
+    const view = await staffView(mine.intent.id);
+    expect(view.lastCheck!.outcome).toBe('NO_SUCCESS');
+    expect(view.actions).toMatchObject({ dismiss: true, dismissReady: true });
+    await as('admin')
+      .post(items(`/${mine.intent.id}/dismiss`), { note: 'its money is the unmatched item' })
+      .expect(200);
+    // Checked again: still dismissed. The money item waits for a person, then is decided.
+    await reconcile.run({ tenantId: s.tenantId, intentId: mine.intent.id, step: 'manual' });
+    expect((await intentRow(h, s.tenantId, mine.intent.id)).status).toBe('DISMISSED');
+    const queue = (await as('admin').get(items('/review')).expect(200)).body as PaymentReviewQueue;
+    expect(queue.signals.find((x) => x.eventId === item!.id)).toMatchObject({
+      reason: 'UNMATCHED',
+      money: { valId: t.valId, amountPaisa: 70000 },
+      decision: null,
+    });
+    await as('admin')
+      .post(items(`/signals/${item!.id}/refunded-outside`), { note: NOTE })
+      .expect(200);
+  });
 });
