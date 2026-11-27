@@ -136,6 +136,13 @@ BEGIN
       RAISE EXCEPTION 'only a person''s decision moves a payment intent out of review'
         USING ERRCODE = 'check_violation';
     END IF;
+    -- The decider is the signed person (review round 1, hardening a; as P1-J8k and P6-b21): a
+    -- request cannot write someone else's decision. A context with no person is not checked.
+    IF (SELECT public.app_current_user_id()) IS NOT NULL
+       AND NEW.resolved_by_id IS DISTINCT FROM (SELECT public.app_current_user_id()) THEN
+      RAISE EXCEPTION 'a payment is decided by the signed-in person only'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
     IF NEW.status = 'PAID' AND NEW.fee_payment_id IS NULL THEN
       RAISE EXCEPTION 'an intent applied from review holds its new payment'
         USING ERRCODE = 'check_violation';
@@ -277,6 +284,26 @@ END
 $$;
 
 -- ───────────────────────────── payment_signal_reviews ─────────────────────────────
+-- The decider of a money item is the signed person, as on an intent (review round 1, hardening
+-- a); a context with no person is not checked.
+CREATE FUNCTION app_payment_signal_review_decider() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+  IF (SELECT public.app_current_user_id()) IS NOT NULL
+     AND NEW.resolved_by_id IS DISTINCT FROM (SELECT public.app_current_user_id()) THEN
+    RAISE EXCEPTION 'a payment is decided by the signed-in person only'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION app_payment_signal_review_decider() FROM PUBLIC;
+CREATE TRIGGER payment_signal_reviews_decider
+  BEFORE INSERT ON payment_signal_reviews
+  FOR EACH ROW EXECUTE FUNCTION app_payment_signal_review_decider();
+
 ALTER TABLE payment_signal_reviews
   -- Refunded with the event's validated amount (NULL when it was not a well-formed amount);
   -- a dismissal holds no amount.
