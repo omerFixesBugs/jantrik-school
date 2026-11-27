@@ -34,6 +34,7 @@ import {
   CHECKOUT_INIT_JOB,
   CONFIRM_JOB,
   PAYMENTS_QUEUE,
+  PAYMENTS_SWEEP_JOB,
   RECONCILE_JOB,
   UNMATCHED_CHECK_JOB,
   type AccountTestJobData,
@@ -126,6 +127,9 @@ export class PaymentsProcessor extends WorkerHost {
         case RECONCILE_JOB:
           await this.reconcile.run(job.data as ReconcileJobData);
           break;
+        case PAYMENTS_SWEEP_JOB:
+          await this.reconcile.sweep();
+          break;
       }
     } catch (error) {
       this.logger.error(`Payments job ${job.name} failed: ${(error as Error).name}`);
@@ -179,6 +183,7 @@ export class PaymentsModule implements OnModuleInit {
     private readonly hooks: FeeOnlineHooks,
     private readonly checkout: CheckoutService,
     private readonly settle: SettleService,
+    private readonly reconcile: ReconcileService,
   ) {}
 
   /**
@@ -192,6 +197,7 @@ export class PaymentsModule implements OnModuleInit {
       guardianOnline: (studentId) => this.checkout.guardianOnline(studentId),
       receiptOnline: (intentId) => this.settle.receiptOnline(intentId),
       gatewayVoided: (payment) => this.settle.gatewayVoided(payment),
+      nightly: (tenantId) => this.reconcile.requeueTenant(tenantId),
     });
   }
 }

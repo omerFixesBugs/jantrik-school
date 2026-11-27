@@ -17,6 +17,11 @@ export interface FeeOnlineHookSet {
   receiptOnline(paymentIntentId: string): Promise<{ tranId: string; instrument: string | null }>;
   /** In the void's transaction, with the student's lock held: the intent goes to review. */
   gatewayVoided(payment: GatewayVoid): Promise<void>;
+  /**
+   * The nightly fee run's visit to one institute (P7b-B): its open online payments are listed
+   * for reconciliation again (a Redis loss). Outside any transaction; opens its own.
+   */
+  nightly(tenantId: string): Promise<void>;
 }
 
 /**
@@ -52,5 +57,9 @@ export class FeeOnlineHooks {
   gatewayVoided(payment: GatewayVoid): Promise<void> {
     if (!this.hooks) throw new Error('The online payments module is not loaded');
     return this.hooks.gatewayVoided(payment);
+  }
+
+  nightly(tenantId: string): Promise<void> {
+    return this.hooks ? this.hooks.nightly(tenantId) : Promise.resolve();
   }
 }

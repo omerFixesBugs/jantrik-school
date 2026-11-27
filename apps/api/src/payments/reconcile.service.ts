@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import {
   isGatewayRef,
   type PaymentIntentStatus,
@@ -9,7 +9,9 @@ import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { AuditService } from '../audit/audit.module.js';
 import { Clock } from '../common/clock.js';
+import { RequestContext } from '../common/request-context.js';
 import { lockPaymentIntent, lockStudentFees, lockTenantFees } from '../fees/fee-locks.js';
+import { RateLimiter } from '../redis/rate-limiter.service.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { Db } from '../tenancy/db.service.js';
 import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
@@ -22,6 +24,7 @@ import { PaymentEventsService } from './payment-events.service.js';
 import {
   PAYMENTS_OPEN_KEY,
   PAYMENTS_QUEUE,
+  PAYMENTS_SWEEP_JOB,
   RECONCILE_DELAYS_MS,
   RECONCILE_JOB,
   RECONCILE_JOB_OPTS,
@@ -45,6 +48,21 @@ const SUCCESS: readonly AttemptStatus[] = ['VALID', 'VALIDATED'];
 const ENDED: readonly AttemptStatus[] = ['FAILED', 'CANCELLED', 'EXPIRED', 'UNATTEMPTED'];
 /** New validation IDs validated per step at most; the next step takes the rest. */
 const MAX_VALIDATIONS = 5;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+/** The sweep runs every 10 minutes and re-adds steps overdue by more than 2 minutes. */
+const SWEEP_EVERY_MS = 10 * MINUTE;
+const SWEEP_GRACE_MS = 2 * MINUTE;
+/** A step listed longer ago than this is dropped (step 5 is due at +7 days). */
+const SWEEP_MAX_AGE_MS = 8 * 24 * HOUR;
+/** The nightly run lists again an open intent older than this… */
+const REQUEUE_OPEN_AFTER_MS = HOUR;
+/** …and a posted one younger than this (its +25 h query, P7b-J). */
+const REQUEUE_PAID_WITHIN_MS = 26 * HOUR;
+/** Heal on read (the review page): a step overdue by more than this, once a minute per institute. */
+const HEAL_OVERDUE_MS = 10 * MINUTE;
+/** At most this many intents of one kind per institute per nightly run or heal. */
+const BATCH = 500;
 
 /** A step that could not ask the gateway for a reason of ours (credentials unreadable). */
 export class ReconcileJobError extends Error {
@@ -99,6 +117,35 @@ export class ReconcileQueue {
   async done(data: ReconcileJobData): Promise<void> {
     if (data.step !== 'manual') await this.redis.zrem(PAYMENTS_OPEN_KEY, member(data));
   }
+
+  /** The listed steps due at or before `before` (ms), with when each was due. */
+  async listedBefore(before: number): Promise<{ listed: string; dueAt: number }[]> {
+    const flat = await this.redis.zrangebyscore(PAYMENTS_OPEN_KEY, '-inf', before, 'WITHSCORES');
+    const rows: { listed: string; dueAt: number }[] = [];
+    for (let i = 0; i + 1 < flat.length; i += 2) {
+      rows.push({ listed: flat[i]!, dueAt: Number(flat[i + 1]) });
+    }
+    return rows;
+  }
+
+  async forget(listed: string): Promise<void> {
+    await this.redis.zrem(PAYMENTS_OPEN_KEY, listed);
+  }
+
+  /** One sweep every 10 minutes for all API instances (BullMQ upserts it by id). */
+  async scheduleSweep(): Promise<void> {
+    await this.queue.upsertJobScheduler(
+      PAYMENTS_SWEEP_JOB,
+      { every: SWEEP_EVERY_MS },
+      { name: PAYMENTS_SWEEP_JOB, opts: { removeOnComplete: true, removeOnFail: 50 } },
+    );
+  }
+}
+
+/** A listed step (`<tenantId>:<intentId>:<step>`), or null for anything else. */
+export function parseListed(listed: string): ReconcileJobData | null {
+  const m = /^([0-9a-f-]{36}):([0-9a-f-]{36}):([1-5])$/.exec(listed);
+  return m ? { tenantId: m[1]!, intentId: m[2]!, step: Number(m[3]) as 1 | 2 | 3 | 4 | 5 } : null;
 }
 
 /**
@@ -118,7 +165,7 @@ export class ReconcileQueue {
  * - A gateway error fails the step with a fixed code (3 attempts, then the sweep).
  */
 @Injectable()
-export class ReconcileService {
+export class ReconcileService implements OnModuleInit {
   private readonly logger = new Logger(ReconcileService.name);
 
   constructor(
@@ -130,6 +177,8 @@ export class ReconcileService {
     private readonly events: PaymentEventsService,
     private readonly confirm: ConfirmService,
     private readonly queues: ReconcileQueue,
+    private readonly context: RequestContext,
+    private readonly limiter: RateLimiter,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
   ) {}
 
@@ -262,6 +311,141 @@ export class ReconcileService {
       }
     }
     await this.queues.done(data);
+  }
+
+  /** One sweep of the payments queue for all API instances, every 10 minutes. */
+  async onModuleInit(): Promise<void> {
+    await this.queues.scheduleSweep();
+  }
+
+  /**
+   * The `payments-sweep` job (P7b-B): every listed step overdue by more than 2 minutes is added
+   * again with its own job id (nothing while that job exists); a step listed more than 8 days ago
+   * is dropped. It reads Redis only: no institute's data, no query across institutes.
+   */
+  async sweep(): Promise<void> {
+    const now = this.clock.now().getTime();
+    for (const { listed, dueAt } of await this.queues.listedBefore(now - SWEEP_GRACE_MS)) {
+      const data = parseListed(listed);
+      if (!data || dueAt < now - SWEEP_MAX_AGE_MS) {
+        await this.queues.forget(listed);
+        continue;
+      }
+      await this.queues.queueStep(data, dueAt);
+    }
+  }
+
+  /**
+   * The nightly fee run's visit (P7b-B, FeeOnlineHooks.nightly), in this institute's own context:
+   * after a Redis loss, its open payments older than an hour get their latest due step now and the
+   * later ones at their times; a payment posted in the last 26 hours whose +25 h query has not run
+   * gets it; an expired one still PENDING at +25 h gets its +7 day query. Job ids make it a no-op
+   * for steps whose jobs still exist.
+   */
+  async requeueTenant(tenantId: string): Promise<void> {
+    const now = this.clock.now();
+    const rows = await this.jobs.run(tenantId, async () => {
+      const tx = this.db.tx;
+      const select = { id: true, createdAt: true, lastCheckedAt: true } as const;
+      const [open, paid, pending] = await Promise.all([
+        tx.paymentIntent.findMany({
+          where: {
+            status: { in: [...OPEN] },
+            createdAt: { lt: new Date(now.getTime() - REQUEUE_OPEN_AFTER_MS) },
+          },
+          orderBy: { createdAt: 'asc' },
+          take: BATCH,
+          select,
+        }),
+        tx.paymentIntent.findMany({
+          where: {
+            status: 'PAID',
+            createdAt: { gte: new Date(now.getTime() - REQUEUE_PAID_WITHIN_MS) },
+          },
+          take: BATCH,
+          select,
+        }),
+        tx.paymentIntent.findMany({
+          where: {
+            status: 'EXPIRED',
+            lastCheckOutcome: 'PENDING',
+            createdAt: { gte: new Date(now.getTime() - SWEEP_MAX_AGE_MS) },
+          },
+          take: BATCH,
+          select,
+        }),
+      ]);
+      return { open, paid, pending };
+    });
+    for (const intent of rows.open) {
+      const due = ([1, 2, 3, 4] as const).filter(
+        (n) => this.queues.dueAt(intent.createdAt, n) <= now.getTime(),
+      );
+      const latest = due.at(-1);
+      for (const n of [1, 2, 3, 4] as const) {
+        // Of the steps already due only the latest runs (each asks the same question).
+        if (due.includes(n) && n !== latest) continue;
+        await this.queues.queueStep(
+          { tenantId, intentId: intent.id, step: n },
+          this.queues.dueAt(intent.createdAt, n),
+        );
+      }
+    }
+    for (const [list, n] of [
+      [rows.paid, 4],
+      [rows.pending, 5],
+    ] as const) {
+      for (const intent of list) {
+        const dueAt = this.queues.dueAt(intent.createdAt, n);
+        if (intent.lastCheckedAt && intent.lastCheckedAt.getTime() >= dueAt) continue;
+        await this.queues.queueStep({ tenantId, intentId: intent.id, step: n }, dueAt);
+      }
+    }
+  }
+
+  /**
+   * Heal on read (the review page): an open payment of this institute whose latest due step is
+   * more than 10 minutes overdue and has not run (its last check is older) is asked about now,
+   * at most once a minute per institute. In the caller's transaction; queued after commit.
+   */
+  async healOverdue(): Promise<void> {
+    const tenantId = this.context.requireTenantId();
+    const now = this.clock.now().getTime();
+    const open = await this.db.tx.paymentIntent.findMany({
+      where: {
+        status: { in: [...OPEN] },
+        createdAt: { lt: new Date(now - RECONCILE_DELAYS_MS[0] - HEAL_OVERDUE_MS) },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: BATCH,
+      select: { id: true, createdAt: true, lastCheckedAt: true },
+    });
+    const overdue = open.flatMap((intent) => {
+      const n = ([4, 3, 2, 1] as const).find(
+        (k) => this.queues.dueAt(intent.createdAt, k) <= now - HEAL_OVERDUE_MS,
+      );
+      if (!n) return [];
+      const dueAt = this.queues.dueAt(intent.createdAt, n);
+      if (intent.lastCheckedAt && intent.lastCheckedAt.getTime() >= dueAt) return [];
+      const data: ReconcileJobData = { tenantId, intentId: intent.id, step: n };
+      return [{ data, dueAt }];
+    });
+    if (overdue.length === 0) return;
+    const allowed = await this.limiter.tryConsume({
+      key: `pay-review-heal:${tenantId}`,
+      limit: 1,
+      windowSec: 60,
+    });
+    if (!allowed) return;
+    await this.context.afterCommit(async () => {
+      for (const { data, dueAt } of overdue) {
+        await this.queues
+          .queueStep(data, dueAt)
+          .catch((error: unknown) =>
+            this.logger.warn(`Could not queue a heal: ${(error as Error).name}`),
+          );
+      }
+    });
   }
 
   /** The intent's last query by tran_id (no actor: not a decision; the QUERY event is the record). */

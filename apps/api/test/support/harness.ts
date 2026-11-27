@@ -34,7 +34,7 @@ import { SMS_PROVIDER, type MemorySmsProvider } from '../../src/sms/sms.provider
 import { TenantAccessService } from '../../src/tenancy/tenant-access.service.js';
 import { Clock } from '../../src/common/clock.js';
 import { PAYMENTS_CONFIG, type PaymentsConfig } from '../../src/payments/payments.config.js';
-import { PAYMENTS_QUEUE } from '../../src/payments/payments.constants.js';
+import { PAYMENTS_QUEUE, PAYMENTS_SWEEP_JOB } from '../../src/payments/payments.constants.js';
 import { TestController } from './test.controller.js';
 import { phoneSource } from './test-phones.js';
 
@@ -84,8 +84,10 @@ export async function createHarness(
   await devicesQueue.removeJobScheduler(DEVICES_TICK_JOB);
   await devicesQueue.removeJobScheduler(EXPIRE_PUNCHES_JOB);
   // Reconciliation steps are delayed by minutes to days: none of one test file may run in a later
-  // one (against another fake SSLCommerz), so they are dropped when the file closes its app.
+  // one (against another fake SSLCommerz), so they are dropped when the file closes its app; and
+  // no sweep runs on its own (tests call ReconcileService.sweep).
   const paymentsQueue = app.get<Queue>(getQueueToken(PAYMENTS_QUEUE));
+  await paymentsQueue.removeJobScheduler(PAYMENTS_SWEEP_JOB);
   const prisma = createPrismaClient(process.env['DATABASE_URL']!);
   return {
     app,
