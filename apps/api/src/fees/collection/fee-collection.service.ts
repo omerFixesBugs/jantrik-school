@@ -12,6 +12,7 @@ import {
   todayIn,
   type FeeClosing,
   type FeeClosingCollector,
+  type FeePaymentChannel,
   type FeePaymentMethod,
   type FeeReceipt,
   type IsoDate,
@@ -28,6 +29,7 @@ import { Db } from '../../tenancy/db.service.js';
 import { TenantAccessService } from '../../tenancy/tenant-access.service.js';
 import { FeeDuesService } from '../dues/fee-dues.service.js';
 import { lockStudentFees, lockTenantFees } from '../fee-locks.js';
+import { FeeOnlineHooks } from '../fee-online-hooks.js';
 
 type CollectInput = z.output<typeof collectFeeSchema>;
 
@@ -63,7 +65,14 @@ export type DueRow = Prisma.FeeDueGetPayload<{
   include: { feeHead: { select: { sortOrder: true } } };
 }>;
 
-const METHOD_ORDER: FeePaymentMethod[] = ['CASH', 'BKASH', 'NAGAD'];
+const METHOD_ORDER: FeePaymentMethod[] = [
+  'CASH',
+  'BKASH',
+  'NAGAD',
+  'ROCKET',
+  'CARD',
+  'OTHER_ONLINE',
+];
 
 /**
  * The fee counter (docs/fees.md → Collection): cash for one or several dues of one student,
@@ -84,6 +93,7 @@ export class FeeCollectionService implements OnModuleInit {
     private readonly sms: TenantSmsService,
     private readonly smsCap: AttendanceSettingsService,
     private readonly access: TenantAccessService,
+    private readonly online: FeeOnlineHooks,
   ) {}
 
   /** A receipt SMS goes out only while its payment is still valid (a void cancels it). */
@@ -202,24 +212,39 @@ export class FeeCollectionService implements OnModuleInit {
     return rows.reduce((sum, d) => sum + dueBalance(this.balanceInput(d), asOf).total, 0);
   }
 
+  /** What one due owes on a day: principal, fine (to that day) and their sum. */
+  owedOn(row: Prisma.FeeDueGetPayload<object>, asOf: IsoDate) {
+    return dueBalance(this.balanceInput(row), asOf);
+  }
+
   /**
    * Record money for these dues (the caller holds the student's lock): allocate it as owed on the
    * day it was paid, take the next receipt number, write the payment and its allocations,
    * re-derive the dues' totals, audit, and queue the receipt SMS. Returns the payment's id.
+   *
+   * GATEWAY (online, sprint 1 P7a2): only the payments module's settle calls it, in a job acting
+   * as the guardian who paid (the principal: `collected_by_id` and the audit row name them), with
+   * the intent it records; the intent becomes PAID with it in the same transaction.
    */
   async recordPayment(input: {
     studentId: string;
     dues: DueRow[];
     amountPaisa: number;
     method: FeePaymentMethod;
-    channel: 'COUNTER' | 'MOBILE_MANUAL';
+    channel: FeePaymentChannel;
     trxId: string | null;
     senderPhone: string | null;
     paidOn: IsoDate;
     recordedOn: IsoDate;
     clientRequestId: string;
+    /** GATEWAY only: the online payment intent this payment records. */
+    paymentIntentId?: string | null;
   }): Promise<string> {
     const tx = this.db.tx;
+    const paymentIntentId = input.paymentIntentId ?? null;
+    if ((input.channel === 'GATEWAY') !== (paymentIntentId !== null)) {
+      throw new Error('A gateway payment, and only one, names its payment intent');
+    }
     const owed = input.dues.map((d) => ({
       row: d,
       balance: dueBalance(this.balanceInput(d), input.paidOn),
@@ -259,6 +284,7 @@ export class FeeCollectionService implements OnModuleInit {
         senderPhone: input.senderPhone,
         collectedById: this.context.requirePrincipal().userId,
         clientRequestId: input.clientRequestId,
+        paymentIntentId,
       },
       select: { id: true, receiptYear: true, receiptNo: true },
     });
@@ -284,6 +310,7 @@ export class FeeCollectionService implements OnModuleInit {
         channel: input.channel,
         trxId: input.trxId,
         paidOn: input.paidOn,
+        ...(paymentIntentId ? { paymentIntentId } : {}),
         allocations: allocations.map((a) => ({ ...a })),
       },
     });
@@ -343,10 +370,14 @@ export class FeeCollectionService implements OnModuleInit {
       }),
       this.dues.planContext(),
     ]);
+    // An online payment was paid by the guardian, not collected by staff: no collector's name.
+    const online = p.channel === 'GATEWAY';
     const names = await staffNames(
       tx,
-      [p.collectedById, p.voidedById].filter((v): v is string => !!v),
+      [online ? null : p.collectedById, p.voidedById].filter((v): v is string => !!v),
     );
+    const gateway =
+      online && p.paymentIntentId ? await this.online.receiptOnline(p.paymentIntentId) : null;
     return {
       id: p.id,
       receiptNumber: receiptNumber(p.receiptYear, p.receiptNo),
@@ -362,6 +393,9 @@ export class FeeCollectionService implements OnModuleInit {
       method: p.method,
       channel: p.channel,
       trxId: p.trxId,
+      online: gateway
+        ? { tranId: gateway.tranId, bankTranId: p.trxId ?? '', instrument: gateway.instrument }
+        : null,
       senderPhone: p.senderPhone ? maskPhone(p.senderPhone) : null,
       amountPaisa: p.amountPaisa,
       paidOn: dateFromDb(p.paidOn),
@@ -391,12 +425,16 @@ export class FeeCollectionService implements OnModuleInit {
           principalPaisa: a.principalPaisa,
           finePaisa: a.finePaisa,
         })),
-      collectedBy: p.collectedById ? staffRef(names, p.collectedById) : null,
+      collectedBy: !online && p.collectedById ? staffRef(names, p.collectedById) : null,
       balanceTodayPaisa: await this.balanceToday(p.studentId, ctx.today),
     };
   }
 
-  /** OWNER/ADMIN: a payment is voided (never edited or deleted); its dues owe again. */
+  /**
+   * OWNER/ADMIN: a payment is voided (never edited or deleted); its dues owe again. An online
+   * payment's intent goes back to review with VOIDED in the same transaction (P7a-G): the money
+   * is then applied again or refunded outside (P7b).
+   */
   async void(id: string, reason: string): Promise<FeeReceipt> {
     const tx = this.db.tx;
     const found = await tx.feePayment.findUnique({ where: { id }, select: { studentId: true } });
@@ -424,6 +462,13 @@ export class FeeCollectionService implements OnModuleInit {
       where: { paymentId: id, status: 'VERIFIED' },
       data: { status: 'VOIDED' },
     });
+    if (payment.channel === 'GATEWAY' && payment.paymentIntentId) {
+      await this.online.gatewayVoided({
+        paymentId: id,
+        studentId: payment.studentId,
+        paymentIntentId: payment.paymentIntentId,
+      });
+    }
     await this.audit.record({
       entity: 'fee_payment',
       entityId: id,
@@ -438,6 +483,8 @@ export class FeeCollectionService implements OnModuleInit {
    * One day per collector and method (docs/fees.md → Daily closing). A payment counts on the day
    * it was recorded; a void is deducted on the day it is made (never on the payment's own day),
    * so a closed day never changes afterwards. An accountant sees only their own closing.
+   * Online payments are listed under no collector (P7a-V: the guardian paid them; P7b adds their
+   * own line).
    */
   async closing(query: { date?: IsoDate; collectorId?: string }): Promise<FeeClosing> {
     const tx = this.db.tx;
@@ -450,7 +497,10 @@ export class FeeCollectionService implements OnModuleInit {
     const collectorId = admin ? query.collectorId : me.userId;
     const ctx = await this.dues.planContext();
     const date = query.date ?? ctx.today;
-    const who = collectorId ? { collectedById: collectorId } : {};
+    const who = {
+      channel: { not: 'GATEWAY' as const },
+      ...(collectorId ? { collectedById: collectorId } : {}),
+    };
     // Voided that day in the institute's timezone: look a day either side, then keep that day.
     const day = dateToDb(date).getTime();
     const [recorded, voidedNear] = await Promise.all([

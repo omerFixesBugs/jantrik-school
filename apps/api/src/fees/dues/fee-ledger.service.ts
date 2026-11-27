@@ -9,6 +9,7 @@ import {
   type IsoDate,
 } from '@jantrik/shared';
 import { Db } from '../../tenancy/db.service.js';
+import { FeeOnlineHooks } from '../fee-online-hooks.js';
 import { FeeStudentsService } from '../fee-students.service.js';
 import { FeeSetupService } from '../setup/fee-setup.service.js';
 import { FeeDuesService } from './fee-dues.service.js';
@@ -32,6 +33,7 @@ export class FeeLedgerService {
     private readonly dues: FeeDuesService,
     private readonly students: FeeStudentsService,
     private readonly setup: FeeSetupService,
+    private readonly online: FeeOnlineHooks,
   ) {}
 
   async ledger(studentId: string, opts: { upTo?: IsoDate } = {}): Promise<FeeLedger> {
@@ -42,7 +44,7 @@ export class FeeLedgerService {
     await this.dues.ensureForStudents([studentId], { ctx });
     const today = ctx.today;
 
-    const [rows, waivers, membership, payments] = await Promise.all([
+    const [rows, waivers, membership, payments, onlinePending] = await Promise.all([
       tx.feeDue.findMany({
         where: { studentId },
         include: dueInclude,
@@ -67,6 +69,8 @@ export class FeeLedgerService {
           recordedOn: true,
         },
       }),
+      // Dues an online payment in progress names (the counter's badge, review focus 2).
+      this.online.pendingDueIds(studentId),
     ]);
     const dues: FeeDueView[] = rows
       .sort(
@@ -115,6 +119,7 @@ export class FeeLedgerService {
           status: d.status,
           cancelReason: d.cancelReason,
           overdue: balance.total > 0 && dueDate < today,
+          onlinePending: onlinePending.has(d.id),
         };
       });
 

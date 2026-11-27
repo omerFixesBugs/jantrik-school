@@ -87,6 +87,7 @@ import { FeeLedgerService } from './dues/fee-ledger.service.js';
 import { FeeMobileService } from './mobile/fee-mobile.service.js';
 import { FeeRemindersService } from './reminders/fee-reminders.service.js';
 import { FeeReportsService } from './reports/fee-reports.service.js';
+import { FeeOnlineHooks } from './fee-online-hooks.js';
 import { FeeStudentsService } from './fee-students.service.js';
 import { FeeSetupService } from './setup/fee-setup.service.js';
 import { FeeSiblingsService } from './setup/fee-siblings.service.js';
@@ -538,7 +539,10 @@ export class FeeDuesController {
     FeeMobileService,
     FeeReportsService,
     FeeRemindersService,
+    FeeOnlineHooks,
   ],
-  exports: [FeeCollectionService],
+  // The payments module (sprint 1 P7a2): it records gateway money through FeeCollectionService,
+  // reads the dues engine and the guardian check, and registers its FeeOnlineHooks at start.
+  exports: [FeeCollectionService, FeeDuesService, FeeMobileService, FeeOnlineHooks],
 })
 export class FeesModule {}

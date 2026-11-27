@@ -4,8 +4,10 @@ import {
   dateFromDb,
   dateToDb,
   daysBetween,
+  FEE_PAYMENT_METHOD_LABELS,
   maskPhone,
   toCsv,
+  type FeePaymentMethod,
   type FeeCollections,
   type FeeDueList,
   type FeeDueListRow,
@@ -22,6 +24,10 @@ import { Db } from '../../tenancy/db.service.js';
 import { balanceOf } from '../due-balance.js';
 import { FeeDuesService } from '../dues/fee-dues.service.js';
 import { FeeStudentsService } from '../fee-students.service.js';
+
+/** The collections report's line for online payments (grouped by collector). */
+const ONLINE_KEY = 'ONLINE';
+const ONLINE_NAME = { nameBn: 'অনলাইনে (SSLCommerz)', nameEn: 'Online (SSLCommerz)' };
 
 type DueListQuery = z.output<typeof feeDueListQuerySchema>;
 type CollectionsQuery = z.output<typeof feeCollectionsQuerySchema>;
@@ -489,9 +495,11 @@ export class FeeReportsService {
           GROUP BY 1 ORDER BY 1`;
         break;
       case 'collector':
+        // Online payments were paid by guardians, not collected by staff: one line of their own
+        // (P7a-V), never a guardian as a collector.
         rows = await tx.$queryRaw<Row[]>`
-          SELECT collected_by_id::text AS key, count(*)::bigint AS count,
-                 sum(amount_paisa)::bigint AS amount
+          SELECT CASE WHEN channel = 'GATEWAY' THEN ${ONLINE_KEY} ELSE collected_by_id::text END AS key,
+                 count(*)::bigint AS count, sum(amount_paisa)::bigint AS amount
           FROM fee_payments WHERE status = 'ACTIVE' AND recorded_on BETWEEN ${from} AND ${to}
           GROUP BY 1 ORDER BY 3 DESC`;
         break;
@@ -520,9 +528,17 @@ export class FeeReportsService {
     } else if (q.groupBy === 'collector') {
       const staff = await staffNames(
         tx,
-        rows.map((r) => r.key),
+        rows.map((r) => r.key).filter((key) => key !== ONLINE_KEY),
       );
       names = new Map([...staff].map(([id, n]) => [id, { nameBn: n.nameBn, nameEn: n.name }]));
+      names.set(ONLINE_KEY, ONLINE_NAME);
+    } else if (q.groupBy === 'method') {
+      names = new Map(
+        rows.map((r) => {
+          const label = FEE_PAYMENT_METHOD_LABELS[r.key as FeePaymentMethod];
+          return [r.key, { nameBn: label?.bn ?? null, nameEn: label?.en ?? null }] as const;
+        }),
+      );
     }
     return {
       from: q.from,

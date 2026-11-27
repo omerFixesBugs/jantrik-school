@@ -6,6 +6,7 @@ import {
   addMonths,
   daysBetween,
   FEE_COLLECTION_GROUPS,
+  FEE_PAYMENT_METHODS,
   formatCount,
   formatDate,
   formatMonth,
@@ -13,6 +14,7 @@ import {
   isIsoDate,
   type FeeCollectionRow,
   type FeeCollections,
+  type FeePaymentMethod,
 } from '@jantrik/shared';
 import { DownloadIcon, PrinterIcon, WalletIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
@@ -130,7 +132,9 @@ export function CollectionsReport() {
       case 'month':
         return formatMonth(r.key, locale);
       case 'method':
-        return r.key === 'CASH' || r.key === 'BKASH' || r.key === 'NAGAD' ? tMethod(r.key) : r.key;
+        return (FEE_PAYMENT_METHODS as readonly string[]).includes(r.key)
+          ? tMethod(r.key as FeePaymentMethod)
+          : r.key;
       case 'head':
         return pick(locale, r) || '—';
       case 'collector':
