@@ -739,4 +739,60 @@ describe('SMS broadcasts', () => {
       .body as BroadcastAlert[];
     expect(alerts.find((x) => x.id === big.id)?.status).toBe('COST_CHANGED');
   });
+
+  it('P6-b21: another admin cancels, edits and sends a broadcast the first admin scheduled; the job then acts as them', async () => {
+    clock.set(dhaka('2026-11-20T10:00:00'));
+    const second = await addMember(h, tenantId, { roles: ['ADMIN'] });
+    const colleague = (await otpLogin(h, second.phone)).accessToken;
+    const scheduledByAdmin = async () => {
+      const b = await create({
+        body: 'Trip',
+        recipients: 'PRIMARY_GUARDIANS',
+        targets: [{ classLevelId: class1 }],
+      });
+      await api(admin)
+        .post(`/broadcasts/${b.id}/schedule`, {
+          scheduledAt: '2026-11-20T12:00:00+06:00',
+          ...(await confirm(b.id)),
+        })
+        .expect(200);
+      return b;
+    };
+    const scheduler = (id: string) =>
+      withTenant(h.prisma, tenantId, (tx) =>
+        tx.smsBroadcast.findUniqueOrThrow({ where: { id }, select: { scheduledById: true } }),
+      );
+
+    // Cancelling it: the database must not refuse another admin's cancel.
+    const c = await scheduledByAdmin();
+    expect(
+      (await api(colleague).post(`/broadcasts/${c.id}/cancel`).expect(200)).body,
+    ).toMatchObject({ status: 'CANCELLED', cancelReason: 'BY_ADMIN' });
+
+    // Editing it (new text and class): back to a draft before its targets change, then sent now
+    // by the colleague, so the job acts as the colleague, never as the first admin.
+    const e = await scheduledByAdmin();
+    const edited = (
+      await api(colleague)
+        .put(`/broadcasts/${e.id}`, {
+          body: 'Trip moved',
+          recipients: 'PRIMARY_GUARDIANS',
+          targets: [{ classLevelId: class2 }],
+        })
+        .expect(200)
+    ).body as BroadcastView;
+    expect(edited.status).toBe('DRAFT');
+    expect(await scheduler(e.id)).toEqual({ scheduledById: null });
+    const pv = (await api(colleague).post(`/broadcasts/${e.id}/preview`).expect(200))
+      .body as BroadcastPreview;
+    await api(colleague)
+      .post(`/broadcasts/${e.id}/send`, {
+        expectedRecipients: pv.recipients,
+        previewToken: pv.token,
+      })
+      .expect(200);
+    expect(await scheduler(e.id)).toEqual({ scheduledById: second.userId });
+    await expect.poll(() => statusOf(e.id), { timeout: 10_000 }).toBe('SENT');
+    expect((await logsOf(e.id)).map((l) => l.phone)).toEqual([p.c2]);
+  });
 });
