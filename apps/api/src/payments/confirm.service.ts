@@ -14,6 +14,10 @@ import { PaymentEventsService } from './payment-events.service.js';
 import { queueConfirm } from './confirm-queue.js';
 import { PAYMENTS_QUEUE, type IntentJobData, type UnmatchedJobData } from './payments.constants.js';
 import {
+  ATTEMPT_STATUSES,
+  LAPSED_ATTEMPTS,
+  LIVE_ATTEMPTS,
+  OVER_ATTEMPTS,
   PAYMENT_PROVIDER,
   PROVIDER_ERROR_CODES,
   type PaymentProvider,
@@ -34,6 +38,15 @@ const MAX_ROUNDS = 3;
  */
 export const VALIDATIONS_PER_ROUND = 3;
 const VALIDATIONS_PER_HOUR = 10;
+/**
+ * One query per payment every 10 s (P7a2-x32): a flood of signals from many addresses made about
+ * one per job. A job that finds the slot taken is not refused: it waits in the queue until the
+ * slot frees (ConfirmResult LATER), so the query is only ever delayed.
+ */
+const QUERY_SPACING_SEC = 10;
+
+/** What a confirm run asks of its job: done, or run again after `delayMs` (the query slot). */
+export type ConfirmResult = { kind: 'DONE' } | { kind: 'LATER'; delayMs: number };
 
 /** A confirm job that could not reach the gateway: retried by BullMQ (a fixed code only). */
 export class PaymentJobError extends Error {
@@ -57,6 +70,8 @@ const isFinalAnswer = (outcome: string | null): boolean =>
 export interface IntentFacts {
   id: string;
   tranId: string;
+  /** The session's lifetime (P7a-F, an hour after the checkout). */
+  expiresAt: Date;
   status: string;
   payerUserId: string;
   accountId: string;
@@ -94,7 +109,14 @@ export class ConfirmService {
       const tx = this.db.tx;
       const intent = await tx.paymentIntent.findUnique({
         where: { id: data.intentId },
-        select: { id: true, tranId: true, status: true, payerUserId: true, accountId: true },
+        select: {
+          id: true,
+          tranId: true,
+          status: true,
+          payerUserId: true,
+          accountId: true,
+          expiresAt: true,
+        },
       });
       if (!intent) return null;
       const events = await tx.paymentGatewayEvent.findMany({
@@ -129,14 +151,15 @@ export class ConfirmService {
     });
   }
 
-  async run(data: IntentJobData): Promise<void> {
+  async run(data: IntentJobData): Promise<ConfirmResult> {
     const tried = new Set<string>();
     let failure: ProviderErrorCode | null = null;
     let validatedAny = false;
     let leftToQuery = false;
+    let laterMs: number | null = null;
     for (let round = 0; ; round++) {
       const read = await this.read(data);
-      if (!read?.creds) return;
+      if (!read?.creds) return { kind: 'DONE' };
       const { intent, events, creds } = read;
       const open = intent.status === 'CREATED' || intent.status === 'REDIRECTED';
       const validations = events.filter((e) => e.kind === 'VALIDATE' && e.valId);
@@ -156,16 +179,25 @@ export class ConfirmService {
         null;
       const signals = events.filter((e) => e.kind === 'RETURN' || e.kind === 'IPN');
       const since = signals.filter((e) => lastQuery === null || e.receivedAt > lastQuery);
+      // val_ids SSLCommerz's listed addresses brought (at any time). Any other signal can be sent
+      // by anyone with the tran_id: another payment's val_id from such a signal alone never sends
+      // this payment to review (P7a2-x30).
+      const fromListed = new Set(
+        signals.filter((e) => e.sourceListed === true && e.valId).map((e) => e.valId!),
+      );
       const waiting = (e: { valId: string | null }) =>
         e.valId !== null && !answered.has(e.valId) && !tried.has(e.valId);
       // Each new val_id once: those SSLCommerz's listed addresses brought first, then the oldest.
-      const fresh = [
-        ...new Map(
-          [...since.filter((e) => e.sourceListed), ...since.filter((e) => !e.sourceListed)]
-            .filter(waiting)
-            .map((e) => [e.valId!, e.sourceListed === true] as const),
-        ),
-      ];
+      // A val_id a listed address brought stays SSLCommerz's (its own budget) when the payer's
+      // return carries it too.
+      const byValId = new Map<string, boolean>();
+      for (const e of [
+        ...since.filter((e) => e.sourceListed),
+        ...since.filter((e) => !e.sourceListed),
+      ].filter(waiting)) {
+        byValId.set(e.valId!, byValId.get(e.valId!) === true || e.sourceListed === true);
+      }
+      const fresh = [...byValId];
 
       // Only while the payment is open, a few a round and within the payment's budget; signals
       // that arrived while this job ran are taken in the next round.
@@ -182,7 +214,17 @@ export class ConfirmService {
           }
           tried.add(valId);
           validatedAny = true;
-          failure = (await this.validate(data.tenantId, intent, creds, valId)) ?? failure;
+          const done = await this.validate(
+            data.tenantId,
+            intent,
+            creds,
+            valId,
+            fromListed.has(valId),
+          );
+          failure = done.failure ?? failure;
+          // Posted or sent to review: the payment is closed, so nothing more is validated
+          // directly (the next round's query accounts for the rest).
+          if (done.closed) break;
         }
         if (fresh.length > VALIDATIONS_PER_ROUND) leftToQuery = true;
         continue;
@@ -195,7 +237,13 @@ export class ConfirmService {
       // validation in this job (a late payment). Once per job.
       const unaccounted = since.some((e) => (e.valId !== null ? waiting(e) : !validatedAny));
       if (failure === null && (open || unaccounted)) {
-        failure = await this.query(data.tenantId, intent, creds, signals, settled, tried);
+        const slot = `pay-query:${intent.id}`;
+        if (await this.limiter.tryConsume({ key: slot, limit: 1, windowSec: QUERY_SPACING_SEC })) {
+          failure = await this.query(data.tenantId, intent, creds, signals, settled, tried);
+        } else {
+          // Asked a moment ago: this job runs again once the slot frees (never refused).
+          laterMs = (await this.limiter.peek(slot)).retryAfter * 1000;
+        }
       }
       break;
     }
@@ -210,22 +258,33 @@ export class ConfirmService {
       });
       throw new PaymentJobError(code);
     }
+    return laterMs === null ? { kind: 'DONE' } : { kind: 'LATER', delayMs: laterMs };
   }
 
   /**
-   * One validation call and what follows from it (settle); the error code when the call failed.
-   * Reconciliation (P7b) validates what the query by tran_id lists through this, too.
+   * One validation call and what follows from it: the error code when the call failed, and
+   * whether settle closed the payment (posted it or sent it to review). `trusted`: the val_id
+   * came from SSLCommerz's listed address or from our own query, not only from signals anyone can
+   * send (P7a2-x30). Reconciliation (P7b) validates what its query by tran_id lists through this
+   * too (trusted: our own query).
    */
   async validate(
     tenantId: string,
     intent: IntentFacts,
     creds: SslcommerzCredentials,
     valId: string,
-  ): Promise<ProviderErrorCode | null> {
+    trusted: boolean,
+  ): Promise<{ failure: ProviderErrorCode | null; closed: boolean }> {
     const outcome = await this.provider.confirm(creds, { tranId: intent.tranId, valId });
     if (outcome.kind === 'PAID') {
-      await this.settle.settlePaid(tenantId, intent.id, intent.payerUserId, outcome);
-      return null;
+      const result = await this.settle.settlePaid(
+        tenantId,
+        intent.id,
+        intent.payerUserId,
+        outcome,
+        { forgeable: !trusted },
+      );
+      return { failure: null, closed: result === 'POST' || result === 'REVIEW' };
     }
     // A made-up val_id (INVALID), a pending or failed one, or no answer: recorded, nothing else.
     await this.jobs.run(tenantId, () =>
@@ -237,7 +296,7 @@ export class ConfirmService {
         valId,
       }),
     );
-    return outcome.kind === 'ERROR' ? outcome.code : null;
+    return { failure: outcome.kind === 'ERROR' ? outcome.code : null, closed: false };
   }
 
   private async query(
@@ -257,9 +316,13 @@ export class ConfirmService {
       this.events.record({
         intentId: intent.id,
         kind: 'QUERY',
+        // In ATTEMPT_STATUSES' order, so a paid or pending attempt is never cut off at 40
+        // characters (the payment's page reads it: queryFoundNothingLive).
         outcome: Array.isArray(attempts)
           ? statuses.length > 0
-            ? [...new Set(statuses)].join(',').slice(0, 40)
+            ? ATTEMPT_STATUSES.filter((s) => statuses.includes(s))
+                .join(',')
+                .slice(0, 40)
             : 'NONE'
           : attempts.code,
         tranId: intent.tranId,
@@ -277,18 +340,30 @@ export class ConfirmService {
         continue;
       }
       tried.add(attempt.valId);
-      failure = (await this.validate(tenantId, intent, creds, attempt.valId)) ?? failure;
+      // Every real attempt is validated, a second payment after the first posted included
+      // (a DUPLICATE event).
+      failure =
+        (await this.validate(tenantId, intent, creds, attempt.valId, true)).failure ?? failure;
     }
     const listed = new Set<string>(attempts.map((a) => a.status));
-    const live = ['VALID', 'VALIDATED', 'PENDING'].some((status) => listed.has(status));
-    const over = listed.has('FAILED') || listed.has('CANCELLED');
+    const live = LIVE_ATTEMPTS.some((status) => listed.has(status));
+    // SSLCommerz's query documents VALID, VALIDATED, PENDING and FAILED only; a session cancelled
+    // before any attempt, or left to time out, may be listed as UNATTEMPTED or EXPIRED. Those are
+    // true of a payer still on the gateway's page too, and a forged return makes us ask: they
+    // count as over only past the session's lifetime (the intent's expires_at), and only from
+    // our own query by our tran_id, never from a signal (P7a2-x31).
+    const lapsed =
+      askedAt.getTime() >= intent.expiresAt.getTime() &&
+      LAPSED_ATTEMPTS.some((status) => listed.has(status));
+    const over = lapsed || OVER_ATTEMPTS.some((status) => listed.has(status));
     if (!live && over && failure === null) {
       // The session is over with nothing paid, and the gateway itself lists the failed or
-      // cancelled attempt: then a failed or cancelled return (the path's word), or an IPN that
-      // said so, closes an open intent. Nothing found closes nothing (P7a2-x26): a return needs
-      // only the tran_id, so anyone who has it (even an <img> link) could otherwise close a
-      // payment still in progress, and the real payment would then wait for review as a late
-      // success. A query alone closes nothing either (P7b expires it).
+      // cancelled attempt (or, past the session's lifetime, an unattempted or expired one): then
+      // a failed or cancelled return (the path's word), or an IPN that said so, closes an open
+      // intent. Nothing found closes nothing (P7a2-x26): a return needs only the tran_id, so
+      // anyone who has it (even an <img> link) could otherwise close a payment still in
+      // progress, and the real payment would then wait for review as a late success. A query
+      // alone closes nothing either (P7b expires it).
       const closing = signals
         .filter(
           (s) =>
@@ -305,8 +380,15 @@ export class ConfirmService {
           (closing.fields as Record<string, unknown> | null)?.['status'] === 'CANCELLED'
             ? 'CANCELLED'
             : 'FAILED';
-        // The signal's word when the gateway lists it; otherwise the gateway's.
-        const word = listed.has(said) ? said : listed.has('FAILED') ? 'FAILED' : 'CANCELLED';
+        // The signal's word when the gateway lists it; otherwise the gateway's (FAILED, then
+        // CANCELLED); for an attempt listed only as UNATTEMPTED or EXPIRED, the signal's.
+        const word = listed.has(said)
+          ? said
+          : listed.has('FAILED')
+            ? 'FAILED'
+            : listed.has('CANCELLED')
+              ? 'CANCELLED'
+              : said;
         await this.settle.closeUnpaid(tenantId, intent.id, intent.payerUserId, word);
       }
     }

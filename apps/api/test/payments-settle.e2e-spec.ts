@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { getQueueToken } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { withTenant } from '@jantrik/db';
 import {
@@ -10,9 +11,11 @@ import {
   type FeeReceipt,
   type OnlinePaymentView,
 } from '@jantrik/shared';
+import type { Queue } from 'bullmq';
 import { FeeCollectionService } from '../src/fees/collection/fee-collection.service.js';
 import { ConfirmService, PaymentJobError } from '../src/payments/confirm.service.js';
 import { CheckoutService } from '../src/payments/checkout.service.js';
+import { confirmJobId, PAYMENTS_QUEUE } from '../src/payments/payments.constants.js';
 import { PAYMENT_PROVIDER, type PaymentProvider } from '../src/payments/provider.js';
 import { SettleService, type PaidOutcome } from '../src/payments/settle.service.js';
 import { startFakeSslcommerz, type FakeSslcommerz } from './support/fake-sslcommerz.js';
@@ -133,6 +136,14 @@ describe('online payments: confirmation and settle', () => {
     });
     await checkout.runInit({ tenantId: s.tenantId, intentId: intent.id });
     return intentRow(h, s.tenantId, intent.id);
+  };
+  /**
+   * The confirm job as a later run does it: the payment's query slot (one query every 10 s,
+   * P7a2-x32) is free again by then.
+   */
+  const runConfirm = async (intentId: string) => {
+    await h.redis.del(`rl:pay-query:${intentId}`);
+    return confirm.run({ tenantId: s.tenantId, intentId });
   };
   const validated = async (tranId: string, valId: string): Promise<PaidOutcome> => {
     const outcome = await provider.confirm(s.store, { tranId, valId });
@@ -303,7 +314,7 @@ describe('online payments: confirmation and settle', () => {
     // The due owes again; the same signal again posts nothing (it is in review).
     const ledger = await childFees(h, s.tokens.guardian, child().id);
     expect(ledger.ledger.dues.find((d) => d.id === due.id)!.balance.total).toBe(120000);
-    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    await runConfirm(intent.id);
     expect((await paymentsOf(intent.id)).filter((p) => p.status === 'ACTIVE')).toHaveLength(0);
   });
 
@@ -326,8 +337,197 @@ describe('online payments: confirmation and settle', () => {
     await vi.waitFor(async () =>
       expect((await eventsOf(pending.intent.id, 'QUERY')).length).toBeGreaterThan(0),
     );
-    await confirm.run({ tenantId: s.tenantId, intentId: pending.intent.id });
+    await runConfirm(pending.intent.id);
     expect((await intentRow(h, s.tenantId, pending.intent.id)).status).toBe('REDIRECTED');
+  });
+
+  it('a query listing a failed and a pending attempt together: the pending one wins, a fail return closes nothing, and "start again" is not offered', async () => {
+    const { intent } = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, intent.id, { status: 'FAILED' });
+    await payAtGateway(h, fake, s.tenantId, intent.id, { status: 'PENDING' });
+    await postReturn(h, s.slug, intent.tranId, 'fail', { status: 'FAILED' }).expect(303);
+    // Recorded in a fixed order, live first.
+    await vi.waitFor(async () =>
+      expect((await eventsOf(intent.id, 'QUERY')).map((e) => e.outcome)).toContain(
+        'PENDING,FAILED',
+      ),
+    );
+    await runConfirm(intent.id);
+    expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+    const page = (
+      await api(h, s.tokens.guardian)
+        .get(fees(`/online-payments/${intent.id}`))
+        .expect(200)
+    ).body as OnlinePaymentView;
+    expect(page).toMatchObject({ state: 'CONFIRMING', noLiveAttempt: false });
+  });
+
+  it("UNATTEMPTED or EXPIRED in our query: during the session a fail or cancel signal closes nothing and the payer's genuine payment posts; past the session's lifetime (expires_at) it closes the payment, and a new checkout is allowed (P7a2-x31)", async () => {
+    // SSLCommerz's query documents VALID, VALIDATED, PENDING and FAILED only: a session nobody has
+    // tried to pay yet (or cancelled before any attempt) may be listed as UNATTEMPTED, one left to
+    // time out as EXPIRED. During the session UNATTEMPTED is simply true while the payer is still
+    // on the gateway's page, and anyone with the tran_id can make us ask (a forged return).
+    const live = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, live.intent.id, { status: 'UNATTEMPTED' });
+    await http(h)
+      .get(`/public/payments/sslcommerz/${s.slug}/return/${live.intent.tranId}/cancel`)
+      .set('X-Forwarded-For', randomIp())
+      .expect(303);
+    await postIpn(h, s.slug, { tran_id: live.intent.tranId, status: 'EXPIRED' }).expect(200);
+    await vi.waitFor(async () =>
+      expect((await eventsOf(live.intent.id, 'QUERY')).length).toBeGreaterThan(0),
+    );
+    await runConfirm(live.intent.id);
+    expect((await intentRow(h, s.tenantId, live.intent.id)).status).toBe('REDIRECTED');
+    // The payer, still on the gateway's page, pays: a receipt, not a LATE_SUCCESS review.
+    const t = await payAtGateway(h, fake, s.tenantId, live.intent.id);
+    await postReturn(h, s.slug, live.intent.tranId, 'success', ipnFields(t)).expect(303);
+    const paid = await waitStatus(h, s.tenantId, live.intent.id, 'PAID');
+    expect(paid.reviewReasons).toEqual([]);
+    expect(await paymentsOf(live.intent.id)).toHaveLength(1);
+
+    // Past the session's lifetime (the intent's expires_at, an hour after the checkout), the same
+    // answers close it: a cancel return as CANCELLED, SSLCommerz's IPN saying EXPIRED as FAILED.
+    const lapsed = async (status: 'UNATTEMPTED' | 'EXPIRED') => {
+      const due = await extraDue(h, s, child().id, { amountPaisa: 60000, dueDate: s.today });
+      const intent = await earlierIntent({
+        dueId: due.id,
+        principal: 60000,
+        fine: 0,
+        pricedOn: s.today,
+        ageMs: 61 * 60_000,
+      });
+      await payAtGateway(h, fake, s.tenantId, intent.id, { status });
+      return { due, intent };
+    };
+    const cancelled = await lapsed('UNATTEMPTED');
+    await postReturn(h, s.slug, cancelled.intent.tranId, 'cancel', {
+      status: 'CANCELLED',
+    }).expect(303);
+    await waitStatus(h, s.tenantId, cancelled.intent.id, 'CANCELLED');
+    const page = (
+      await api(h, s.tokens.guardian)
+        .get(fees(`/online-payments/${cancelled.intent.id}`))
+        .expect(200)
+    ).body as OnlinePaymentView;
+    expect(page.state).toBe('NOT_PAID');
+    const failed = await lapsed('EXPIRED');
+    await postIpn(h, s.slug, { tran_id: failed.intent.tranId, status: 'EXPIRED' }).expect(200);
+    await waitStatus(h, s.tenantId, failed.intent.id, 'FAILED');
+    // A new checkout for the same due at once.
+    const again = await startPayment(h, s.tokens.guardian, child().id, {
+      dueIds: [cancelled.due.id],
+      expected: 60000,
+    });
+    expect(again.state).toBe('READY');
+    await api(h, s.tokens.guardian)
+      .post(fees(`/online-payments/${again.id}/abandon`))
+      .expect(200);
+
+    // A signal alone, the gateway listing nothing for the session: nothing closes.
+    const alone = await readyPayment();
+    await postIpn(h, s.slug, { tran_id: alone.intent.tranId, status: 'UNATTEMPTED' }).expect(200);
+    await postReturn(h, s.slug, alone.intent.tranId, 'cancel', { status: 'EXPIRED' }).expect(303);
+    await vi.waitFor(async () =>
+      expect((await eventsOf(alone.intent.id, 'QUERY')).length).toBeGreaterThan(0),
+    );
+    await runConfirm(alone.intent.id);
+    expect((await intentRow(h, s.tenantId, alone.intent.id)).status).toBe('REDIRECTED');
+  });
+
+  it('back from the gateway with nothing found: "confirming" offers "start again" once a query after the last signal listed no paid or pending attempt (P7a2-x31)', async () => {
+    const view = (intentId: string) =>
+      api(h, s.tokens.guardian)
+        .get(fees(`/online-payments/${intentId}`))
+        .expect(200)
+        .then((r) => r.body as OnlinePaymentView);
+    const { intent, due } = await readyPayment();
+    // At the gateway, nothing asked yet.
+    expect(await view(intent.id)).toMatchObject({ state: 'READY', noLiveAttempt: false });
+
+    // The guardian cancels; the gateway lists no attempt for the session (nothing closes it).
+    await postReturn(h, s.slug, intent.tranId, 'cancel', { status: 'CANCELLED' }).expect(303);
+    await vi.waitFor(async () =>
+      expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0),
+    );
+    expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+    expect(await view(intent.id)).toMatchObject({ state: 'CONFIRMING', noLiveAttempt: true });
+
+    // A signal after that query: not answered for yet, so not offered until the next query.
+    await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.create({
+        data: {
+          tenantId: s.tenantId,
+          intentId: intent.id,
+          kind: 'RETURN',
+          outcome: 'CANCEL',
+          tranId: intent.tranId,
+          fields: {},
+          sourceListed: false,
+          receivedAt: new Date(),
+        },
+      }),
+    );
+    expect(await view(intent.id)).toMatchObject({ state: 'CONFIRMING', noLiveAttempt: false });
+    await runConfirm(intent.id);
+    expect(await view(intent.id)).toMatchObject({ noLiveAttempt: true });
+
+    // "Start again": given up, and a new checkout for the same due at once.
+    await api(h, s.tokens.guardian)
+      .post(fees(`/online-payments/${intent.id}/abandon`))
+      .expect(200);
+    const again = await startPayment(h, s.tokens.guardian, child().id, {
+      dueIds: [due.id],
+      expected: 120000,
+    });
+    expect(again.state).toBe('READY');
+    await api(h, s.tokens.guardian)
+      .post(fees(`/online-payments/${again.id}/abandon`))
+      .expect(200);
+
+    // A cancel SSLCommerz lists as UNATTEMPTED during the session: left open, and offered to its
+    // payer alone (another family's guardian gets 404), who starts again.
+    const unattempted = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, unattempted.intent.id, { status: 'UNATTEMPTED' });
+    await postReturn(h, s.slug, unattempted.intent.tranId, 'cancel', {
+      status: 'CANCELLED',
+    }).expect(303);
+    await vi.waitFor(async () =>
+      expect((await eventsOf(unattempted.intent.id, 'QUERY')).length).toBeGreaterThan(0),
+    );
+    expect(await view(unattempted.intent.id)).toMatchObject({
+      state: 'CONFIRMING',
+      noLiveAttempt: true,
+      mine: true,
+    });
+    await api(h, s.tokens.otherGuardian)
+      .post(fees(`/online-payments/${unattempted.intent.id}/abandon`))
+      .expect(404);
+    await api(h, s.tokens.guardian)
+      .post(fees(`/online-payments/${unattempted.intent.id}/abandon`))
+      .expect(200);
+    const fresh = await startPayment(h, s.tokens.guardian, child().id, {
+      dueIds: [unattempted.due.id],
+      expected: 120000,
+    });
+    expect(fresh.state).toBe('READY');
+    await api(h, s.tokens.guardian)
+      .post(fees(`/online-payments/${fresh.id}/abandon`))
+      .expect(200);
+
+    // A pending attempt listed: still being paid, never offered.
+    const pending = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, pending.intent.id, { status: 'PENDING' });
+    await postReturn(h, s.slug, pending.intent.tranId, 'cancel', { status: 'CANCELLED' }).expect(
+      303,
+    );
+    await vi.waitFor(async () =>
+      expect((await eventsOf(pending.intent.id, 'QUERY')).length).toBeGreaterThan(0),
+    );
+    expect(await view(pending.intent.id)).toMatchObject({
+      state: 'CONFIRMING',
+      noLiveAttempt: false,
+    });
   });
 
   it('a forged fail or cancel return (the tran_id only, even by GET) closes nothing while the gateway lists no attempt; the real payment then posts', async () => {
@@ -343,7 +543,7 @@ describe('online payments: confirmation and settle', () => {
     await vi.waitFor(async () =>
       expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0),
     );
-    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    await runConfirm(intent.id);
     expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
     // The guardian, still on the gateway's page, pays: a receipt, not a LATE_SUCCESS review.
     const t = await payAtGateway(h, fake, s.tenantId, intent.id);
@@ -419,16 +619,16 @@ describe('online payments: confirmation and settle', () => {
       const flood = madeUp(8);
       await storeReturns(intent, flood);
       const asked = queries(intent.tranId);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect(validations(flood)).toBe(3);
       expect(queries(intent.tranId)).toBe(asked + 1);
       // The query answered for every signal stored before it: none of them is validated again.
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect(validations(flood)).toBe(3);
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
       // The real payment still posts: the query lists it.
       await payAtGateway(h, fake, s.tenantId, intent.id);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
       expect(validations(flood)).toBe(3);
     });
@@ -446,9 +646,97 @@ describe('online payments: confirmation and settle', () => {
       expect((await eventsOf(intent.id, 'RETURN')).filter((e) => e.valId === t.valId)).toHaveLength(
         1,
       );
-      await waitStatus(h, s.tenantId, intent.id, 'PAID');
+      // With the other budget spent, the genuine return waits for the payment's next query slot
+      // (at most 10 s, P7a2-x32); the IPN, when it comes, has a budget of its own.
+      await vi.waitFor(
+        async () => expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID'),
+        { timeout: 25_000, interval: 200 },
+      );
       expect(validations(flood)).toBeLessThanOrEqual(10);
+      // One query every 10 s however many jobs the flood made.
+      expect(queries(intent.tranId)).toBeLessThanOrEqual(3);
       expect(await paymentsOf(intent.id)).toHaveLength(1);
+    });
+
+    /** Signals as payment_signal_record stores them (no confirm job queued), in this order. */
+    const storeSignals = (
+      intent: { id: string; tranId: string },
+      signals: { valId: string; listed: boolean }[],
+    ) =>
+      withTenant(h.prisma, s.tenantId, (tx) =>
+        tx.paymentGatewayEvent.createMany({
+          data: signals.map(({ valId, listed }, i) => ({
+            tenantId: s.tenantId,
+            intentId: intent.id,
+            kind: listed ? ('IPN' as const) : ('RETURN' as const),
+            outcome: listed ? null : 'SUCCESS',
+            tranId: intent.tranId,
+            valId,
+            fields: {},
+            sourceListed: listed,
+            receivedAt: new Date(Date.now() - signals.length + i),
+          })),
+        }),
+      );
+
+    it("the real IPN's val_id keeps SSLCommerz's own budget when the payer's return carries it too: validated at once, no query, after a flood spent the other budget", async () => {
+      const { intent } = await readyPayment();
+      // Ten made-up val_ids from other addresses were validated earlier this hour.
+      await h.redis.set(`rl:pay-val-other:${intent.id}`, 10, 'EX', 3600);
+      const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+      await storeSignals(intent, [
+        { valId: t.valId, listed: true },
+        { valId: t.valId, listed: false },
+      ]);
+      const asked = queries(intent.tranId);
+      await runConfirm(intent.id);
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
+      expect(validations([t.valId])).toBe(1);
+      expect(queries(intent.tranId)).toBe(asked);
+    });
+
+    it('a round stops validating once a validation closes the payment: no val_id is validated after PAID', async () => {
+      const { intent } = await readyPayment();
+      const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+      const flood = madeUp(2);
+      await storeSignals(intent, [
+        { valId: t.valId, listed: true },
+        ...flood.map((valId) => ({ valId, listed: false })),
+      ]);
+      await runConfirm(intent.id);
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
+      expect(validations(flood)).toBe(0);
+      expect(await paymentsOf(intent.id)).toHaveLength(1);
+    });
+
+    it('queries are spaced per payment: with the slot taken, the confirm job waits in the queue (never refused), then asks and closes the payment (P7a2-x32)', async () => {
+      const { intent } = await readyPayment();
+      await payAtGateway(h, fake, s.tenantId, intent.id, { status: 'CANCELLED' });
+      // The payment's query slot is taken (signals made us ask a moment ago).
+      await h.redis.set(`rl:pay-query:${intent.id}`, 1000, 'EX', 30);
+      const asked = queries(intent.tranId);
+      expect(await confirm.run({ tenantId: s.tenantId, intentId: intent.id })).toMatchObject({
+        kind: 'LATER',
+      });
+      expect(queries(intent.tranId)).toBe(asked);
+      // Through the queue: the cancel return's job is delayed, neither failed nor dropped.
+      await postReturn(h, s.slug, intent.tranId, 'cancel', { status: 'CANCELLED' }).expect(303);
+      const queue = h.app.get<Queue>(getQueueToken(PAYMENTS_QUEUE));
+      const job = await vi.waitFor(
+        async () => {
+          const found = await queue.getJob(confirmJobId(intent.id));
+          expect(await found?.isDelayed()).toBe(true);
+          return found!;
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+      expect(queries(intent.tranId)).toBe(asked);
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+      // The slot frees: the job asks, and the cancelled attempt closes the payment.
+      await h.redis.del(`rl:pay-query:${intent.id}`);
+      await job.promote();
+      await waitStatus(h, s.tenantId, intent.id, 'CANCELLED');
+      expect(queries(intent.tranId)).toBe(asked + 1);
     });
 
     it('a closed payment: new val_ids are not validated unless the query lists them', async () => {
@@ -458,14 +746,14 @@ describe('online payments: confirmation and settle', () => {
       await waitStatus(h, s.tenantId, intent.id, 'PAID');
       const flood = madeUp(5);
       await storeReturns(intent, flood);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect(validations(flood)).toBe(0);
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
       expect(await paymentsOf(intent.id)).toHaveLength(1);
       // A real second payment of the same tran_id is listed by the query: validated, DUPLICATE.
       const again = await payAtGateway(h, fake, s.tenantId, intent.id);
       await storeReturns(intent, [again.valId]);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       const dup = (await eventsOf(intent.id, 'VALIDATE')).find((e) => e.valId === again.valId);
       expect(dup).toMatchObject({ reviewReason: 'DUPLICATE' });
       expect(validations(flood)).toBe(0);
@@ -486,7 +774,7 @@ describe('online payments: confirmation and settle', () => {
     expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
     // The payment completes at the gateway; the next confirm (a heal, a late IPN) posts it.
     t.status = 'VALID';
-    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    await runConfirm(intent.id);
     expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
     expect(await paymentsOf(intent.id)).toHaveLength(1);
   });
@@ -670,10 +958,11 @@ describe('online payments: confirmation and settle', () => {
 
   it('a payment already in review gets a perfect validation, end to end: the money recorded, never posted', async () => {
     const { intent } = await readyPayment();
-    // Another tran_id's val_id first: in review (TRAN_ID_MISMATCH) with no money on it.
+    // Another tran_id's val_id first, from SSLCommerz's listed address: in review
+    // (TRAN_ID_MISMATCH) with no money on it.
     const stray = await payAtGateway(h, fake, s.tenantId, intent.id);
     stray.tranId = newTranId();
-    await postReturn(h, s.slug, intent.tranId, 'success', { val_id: stray.valId }).expect(303);
+    await postIpn(h, s.slug, { tran_id: intent.tranId, val_id: stray.valId }).expect(200);
     await waitStatus(h, s.tenantId, intent.id, 'NEEDS_REVIEW');
     const smsBefore = (await receiptSms()).length;
     // Then the payment itself, perfect in every way, through the IPN route.
@@ -735,11 +1024,11 @@ describe('online payments: confirmation and settle', () => {
       expect((await receiptSms()).length).toBe(smsBefore);
     });
 
-    it('another tran_id in the validation answer → TRAN_ID_MISMATCH, no money recorded on it', async () => {
+    it("another tran_id in the validation answer, the val_id from SSLCommerz's listed address → TRAN_ID_MISMATCH, no money recorded on it (P7a-H)", async () => {
       const { intent } = await readyPayment();
       const t = await payAtGateway(h, fake, s.tenantId, intent.id);
       t.tranId = newTranId();
-      await postReturn(h, s.slug, intent.tranId, 'success', { val_id: t.valId }).expect(303);
+      await postIpn(h, s.slug, { tran_id: intent.tranId, val_id: t.valId }).expect(200);
       const row = await waitStatus(h, s.tenantId, intent.id, 'NEEDS_REVIEW');
       expect(row).toMatchObject({
         reviewReasons: ['TRAN_ID_MISMATCH'],
@@ -770,6 +1059,110 @@ describe('online payments: confirmation and settle', () => {
     });
   });
 
+  describe("another payment's val_id under this tran_id (P7a-H, narrowed by P7a2-x30)", () => {
+    /** A real payment of this store whose tran_id is no intent of the institute's. */
+    const strayPayment = async (intentId: string) => {
+      const stray = await payAtGateway(h, fake, s.tenantId, intentId);
+      stray.tranId = newTranId();
+      return stray;
+    };
+
+    it("the reviewer's probe P5: a forged return (GET, any address) leaves the payment open with an UNMATCHED event for P7b; the payer's genuine payment still posts", async () => {
+      const { intent } = await readyPayment();
+      const stray = await strayPayment(intent.id);
+      // Anyone with the tran_id (every guardian of the child) and a real val_id of this store.
+      await http(h)
+        .get(
+          `/public/payments/sslcommerz/${s.slug}/return/${intent.tranId}/success?val_id=${stray.valId}`,
+        )
+        .set('X-Forwarded-For', randomIp())
+        .expect(303);
+      await vi.waitFor(async () => {
+        const v = (await eventsOf(intent.id, 'VALIDATE')).find((e) => e.valId === stray.valId);
+        expect(v).toMatchObject({
+          outcome: 'VALID',
+          reviewReason: 'UNMATCHED',
+          tranId: stray.tranId,
+        });
+      });
+      await vi.waitFor(async () =>
+        expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0),
+      );
+      expect(await intentRow(h, s.tenantId, intent.id)).toMatchObject({
+        status: 'REDIRECTED',
+        reviewReasons: [],
+        valId: null,
+        validatedAmountPaisa: null,
+      });
+      // The payer pays on the gateway's page; their own return is validated and posted.
+      const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+      await postReturn(h, s.slug, intent.tranId, 'success', ipnFields(t), randomIp()).expect(303);
+      const paid = await waitStatus(h, s.tenantId, intent.id, 'PAID');
+      expect(paid).toMatchObject({ valId: t.valId, reviewReasons: [] });
+      expect(await paymentsOf(intent.id)).toHaveLength(1);
+    });
+
+    it('an IPN from an address SSLCommerz does not list is as forgeable: the payment stays open', async () => {
+      const { intent } = await readyPayment();
+      const stray = await strayPayment(intent.id);
+      await postIpn(h, s.slug, { tran_id: intent.tranId, val_id: stray.valId }, randomIp()).expect(
+        200,
+      );
+      await vi.waitFor(async () => {
+        const v = (await eventsOf(intent.id, 'VALIDATE')).find((e) => e.valId === stray.valId);
+        expect(v).toMatchObject({ reviewReason: 'UNMATCHED' });
+      });
+      await vi.waitFor(async () =>
+        expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0),
+      );
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+    });
+
+    it("the same val_id also brought by SSLCommerz's listed address, or listed by our own query: review (P7a-H kept)", async () => {
+      // A forged return and the listed IPN with the same val_id, in one round: review.
+      const both = await readyPayment();
+      const stray = await strayPayment(both.intent.id);
+      await withTenant(h.prisma, s.tenantId, (tx) =>
+        tx.paymentGatewayEvent.createMany({
+          data: [false, true].map((listed) => ({
+            tenantId: s.tenantId,
+            intentId: both.intent.id,
+            kind: listed ? ('IPN' as const) : ('RETURN' as const),
+            outcome: listed ? null : 'SUCCESS',
+            tranId: both.intent.tranId,
+            valId: stray.valId,
+            fields: {},
+            sourceListed: listed,
+            receivedAt: new Date(),
+          })),
+        }),
+      );
+      await runConfirm(both.intent.id);
+      expect(await intentRow(h, s.tenantId, both.intent.id)).toMatchObject({
+        status: 'NEEDS_REVIEW',
+        reviewReasons: ['TRAN_ID_MISMATCH'],
+        valId: null,
+      });
+
+      // An attempt our query lists under our tran_id, whose validation names another: review.
+      const listed = await readyPayment();
+      const t = await payAtGateway(h, fake, s.tenantId, listed.intent.id);
+      fake.override('validate', {
+        json: {
+          ...t.fields,
+          status: 'VALID',
+          APIConnect: 'DONE',
+          tran_id: newTranId(),
+          val_id: t.valId,
+        },
+      });
+      await postReturn(h, s.slug, listed.intent.tranId, 'cancel', {}, randomIp()).expect(303);
+      const review = await waitStatus(h, s.tenantId, listed.intent.id, 'NEEDS_REVIEW');
+      expect(review).toMatchObject({ reviewReasons: ['TRAN_ID_MISMATCH'], valId: null });
+      expect(await paymentsOf(listed.intent.id)).toEqual([]);
+    });
+  });
+
   it('review focus 4: a made-up val_id posts nothing; another intent’s val_id is a TRAN_ID_MISMATCH here and posts there', async () => {
     const first = await readyPayment();
     await postReturn(h, s.slug, first.intent.tranId, 'success', { val_id: 'VALMADEUP0001' }).expect(
@@ -786,11 +1179,12 @@ describe('online payments: confirmation and settle', () => {
       .post(fees(`/online-payments/${first.intent.id}/abandon`))
       .expect(200);
 
-    // The third child's payment, paid; its val_id replayed on the first child's return.
+    // The third child's payment, paid; its val_id replayed under the first child's tran_id, from
+    // SSLCommerz's listed address (a forged return alone leaves it open: P7a2-x30).
     const other = await readyPayment(120000, s.students[2]!.id, s.tokens.otherGuardian);
     const mine = await readyPayment();
     const t = await payAtGateway(h, fake, s.tenantId, other.intent.id);
-    await postReturn(h, s.slug, mine.intent.tranId, 'success', { val_id: t.valId }).expect(303);
+    await postIpn(h, s.slug, { tran_id: mine.intent.tranId, val_id: t.valId }).expect(200);
     const review = await waitStatus(h, s.tenantId, mine.intent.id, 'NEEDS_REVIEW');
     expect(review).toMatchObject({ reviewReasons: ['TRAN_ID_MISMATCH'], valId: null });
     expect(await paymentsOf(mine.intent.id)).toEqual([]);
@@ -1051,6 +1445,51 @@ describe('online payments: confirmation and settle', () => {
       expect(redis).not.toContain('sentinel0042');
     } finally {
       for (const spy of spies) spy.mockRestore();
+    }
+  });
+
+  it("a guardian's reads with a payment open ask SSLCommerz nothing and wait for nothing (the dashboard, the calendar, the fees page, the payment's page): the heal is only queued", async () => {
+    const due = await extraDue(h, s, child().id, { amountPaisa: 60000, dueDate: s.today });
+    const intent = await earlierIntent({
+      dueId: due.id,
+      principal: 60000,
+      fine: 0,
+      pricedOn: s.today,
+      ageMs: 5 * 60_000,
+    });
+    const queue = h.app.get<Queue>(getQueueToken(PAYMENTS_QUEUE));
+    // No job runs meanwhile, so any call to SSLCommerz would be a request's own.
+    await queue.pause();
+    // Redis slow to take the heal's job: a read must not wait for it either.
+    const add = queue.add.bind(queue);
+    const slowAdd = vi
+      .spyOn(queue, 'add')
+      .mockImplementation(async (...args: Parameters<Queue['add']>) => {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        return add(...args);
+      });
+    const before = fake.requests.length;
+    try {
+      for (const path of [
+        '/me/children',
+        `/me/children/${child().id}/attendance`,
+        fees(''),
+        fees(`/online-payments/${intent.id}`),
+      ]) {
+        const started = Date.now();
+        await api(h, s.tokens.guardian).get(path).expect(200);
+        expect(Date.now() - started, path).toBeLessThan(1500);
+      }
+      expect(fake.requests.length).toBe(before);
+      // The heal was queued all the same, after the answer.
+      await vi.waitFor(
+        async () => expect(await queue.getJob(confirmJobId(intent.id))).toBeTruthy(),
+        { timeout: 10_000, interval: 100 },
+      );
+      expect(fake.requests.length).toBe(before);
+    } finally {
+      slowAdd.mockRestore();
+      await queue.resume();
     }
   });
 

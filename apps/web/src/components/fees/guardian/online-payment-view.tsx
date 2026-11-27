@@ -22,6 +22,7 @@ import type { Locale } from '@/i18n/config';
 import { ApiError } from '@/lib/api/errors';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { pick, usePeriodLabel } from '@/lib/fees';
+import { abandonOffered } from '@/lib/online-payment';
 import { useErrorMessage } from '@/lib/hooks';
 import { GuardianNotice } from './guardian-gate';
 import { childFeesKey } from './use-child-fees';
@@ -36,9 +37,10 @@ function pollEvery(state: OnlinePaymentView['state'] | undefined, sinceMs: numbe
 
 /**
  * One online payment (sprint 1 P7a2): PREPARING → READY (off to SSLCommerz at once, with a button
- * as well) → back from the gateway CONFIRMING (the server asks SSLCommerz; "do not pay again") →
- * PAID with the receipt, CHECKING (the school checks it), NOT_PAID ("start again"), or EXPIRED.
- * Coming back from the gateway (`?from=gateway`) never sends the guardian there again.
+ * as well) → back from the gateway CONFIRMING (the server asks SSLCommerz; "do not pay again";
+ * "start again" once its query found nothing paid or pending) → PAID with the receipt, CHECKING
+ * (the school checks it), NOT_PAID ("start again"), or EXPIRED. Coming back from the gateway
+ * (`?from=gateway`) never sends the guardian there again.
  */
 export function OnlinePaymentPage({ childId, intentId }: { childId: string; intentId: string }) {
   const t = useTranslations('fees.guardian.online.page');
@@ -136,6 +138,8 @@ export function OnlinePaymentPage({ childId, intentId }: { childId: string; inte
               tile: 'bg-primary-soft text-primary-ink',
             };
   const Icon = tone.icon;
+  // "Start again": also from "confirming" once our query found nothing at SSLCommerz (P7a2-x31).
+  const offerAbandon = abandonOffered(p, shown);
 
   return (
     <div className="flex min-w-0 flex-col gap-(--section-gap)" data-testid="online-payment">
@@ -163,6 +167,11 @@ export function OnlinePaymentPage({ childId, intentId }: { childId: string; inte
           {leaving ? t('leaving') : t(`state.${shown}.title`)}
         </h1>
         <p className="text-muted-foreground max-w-md">{t(`state.${shown}.text`)}</p>
+        {shown === 'CONFIRMING' && offerAbandon && (
+          <p className="max-w-md text-sm" data-testid="online-nothing-found">
+            {t('nothingFound')}
+          </p>
+        )}
         <p
           className="font-numeric text-[2rem] leading-none font-light"
           data-testid="online-payment-amount"
@@ -214,7 +223,7 @@ export function OnlinePaymentPage({ childId, intentId }: { childId: string; inte
             </ButtonLink>
           </div>
         )}
-        {(shown === 'READY' || shown === 'PREPARING') && p.mine && (
+        {offerAbandon && (
           <Button
             variant="ghost"
             onClick={() => abandon.mutate()}

@@ -165,6 +165,7 @@
         "startAgain": "Start again",
         "payOtherWay": "Pay another way",
         "abandon": "Give up this payment",
+        "nothingFound": "SSLCommerz shows no payment for this. If you cancelled it, you can start again.",
         "dues": "What it pays",
         "fine": "Fine of {amount} included",
         "tranId": "Transaction ID",

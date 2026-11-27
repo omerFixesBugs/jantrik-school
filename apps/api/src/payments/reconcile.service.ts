@@ -33,6 +33,9 @@ import {
   type ReconcileStep,
 } from './payments.constants.js';
 import {
+  ATTEMPT_STATUSES,
+  LAPSED_ATTEMPTS,
+  OVER_ATTEMPTS,
   PAYMENT_PROVIDER,
   type AttemptStatus,
   type PaymentProvider,
@@ -44,8 +47,14 @@ const OPEN: readonly PaymentIntentStatus[] = ['CREATED', 'REDIRECTED'];
 /** Settled for good: only the +25 h query (a second payment) and "check now" still ask. */
 const FINAL: readonly PaymentIntentStatus[] = ['PAID', 'REFUNDED_OUTSIDE', 'DISMISSED'];
 const SUCCESS: readonly AttemptStatus[] = ['VALID', 'VALIDATED'];
-/** Attempts that are over with nothing paid (an undocumented status is never taken as one). */
-const ENDED: readonly AttemptStatus[] = ['FAILED', 'CANCELLED', 'EXPIRED', 'UNATTEMPTED'];
+/**
+ * Attempts that are over with nothing paid (an undocumented status is never taken as one):
+ * failed or cancelled, or unattempted or expired (P7a2-x31: these only count past the session's
+ * lifetime, which steps 1–3 require for a close anyway, and step 4 is past it).
+ */
+const ENDED: readonly AttemptStatus[] = [...OVER_ATTEMPTS, ...LAPSED_ATTEMPTS];
+/** confirm's query slot for a payment (P7a2-x32), and how long a query holds it. */
+const QUERY_SLOT_SEC = 10;
 /**
  * New validation IDs validated per step at most, confirm's own bound per round (P7a2-x24); the
  * next step takes the rest.
@@ -249,6 +258,15 @@ export class ReconcileService implements OnModuleInit {
     // now, as confirm records its own (P7a2-x24): a signal that arrives while the gateway answers
     // is not one this query answered for, so confirm still takes it.
     const askedAt = this.clock.now();
+    // The query takes confirm's slot for this payment when it is free (P7a2-x32), so a confirm
+    // right after waits its 10 s as after its own query; it never waits for it itself: its own
+    // schedule bounds it (four steps, +7 days, "check now" once a minute, the heal once a minute
+    // per institute).
+    await this.limiter.tryConsume({
+      key: `pay-query:${intent.id}`,
+      limit: 1,
+      windowSec: QUERY_SLOT_SEC,
+    });
     const attempts = await this.provider.query(creds, intent.tranId);
     const found = Array.isArray(attempts) ? attempts : [];
     const outcome: CheckOutcome = !Array.isArray(attempts)
@@ -261,7 +279,9 @@ export class ReconcileService implements OnModuleInit {
             ? 'NO_SUCCESS'
             : 'UNKNOWN';
     await this.jobs.run(data.tenantId, async () => {
-      const statuses = [...new Set(found.map((a) => a.status))];
+      // In ATTEMPT_STATUSES' order, as confirm records them (P7a2-x31): a paid or pending attempt
+      // is never cut off at 40 characters (the payment's page reads the latest query).
+      const statuses = ATTEMPT_STATUSES.filter((st) => found.some((a) => a.status === st));
       await this.events.record({
         intentId: intent.id,
         kind: 'QUERY',
@@ -291,7 +311,9 @@ export class ReconcileService implements OnModuleInit {
       .slice(0, MAX_VALIDATIONS);
     let failure: ProviderErrorCode | null = null;
     for (const valId of fresh) {
-      failure = (await this.confirm.validate(data.tenantId, intent, creds, valId)) ?? failure;
+      // Trusted: our own query listed it (P7a2-x30).
+      failure =
+        (await this.confirm.validate(data.tenantId, intent, creds, valId, true)).failure ?? failure;
     }
     if (failure) {
       const code = failure;

@@ -180,6 +180,12 @@ export interface OnlinePaymentView {
   receipt?: { id: string; receiptNumber: string };
   /** The one who started it is the caller. */
   mine: boolean;
+  /**
+   * In progress at the gateway (READY or CONFIRMING), and our own query by tran_id, asked since
+   * the last return or IPN, listed no paid or pending attempt: its payer may start again from
+   * "confirming" (P7a2-x31). False otherwise, and while a signal is not yet answered for.
+   */
+  noLiveAttempt: boolean;
 }
 
 // ─────────────────── Reconciliation and the review queue (P7b, docs/payments.md) ───────────────────

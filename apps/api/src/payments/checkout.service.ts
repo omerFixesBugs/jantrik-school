@@ -38,7 +38,13 @@ import {
   PAYMENTS_QUEUE,
   type IntentJobData,
 } from './payments.constants.js';
-import { PAYMENT_PROVIDER, type CheckoutRequest, type PaymentProvider } from './provider.js';
+import {
+  PAYMENT_PROVIDER,
+  PROVIDER_ERROR_CODES,
+  queryFoundNothingLive,
+  type CheckoutRequest,
+  type PaymentProvider,
+} from './provider.js';
 import { ReconcileQueue } from './reconcile.service.js';
 
 const PROVIDER = 'SSLCOMMERZ' as const;
@@ -295,7 +301,7 @@ export class CheckoutService {
       open &&
       this.clock.now().getTime() - row.createdAt.getTime() > HEAL_AFTER_MS
     ) {
-      // Heal on read: a lost signal or job is asked about again, at most once a minute.
+      // Heal on read: a lost signal or job is asked about again, at most once a minute, by a job.
       const allowed = await this.limiter.tryConsume({
         key: `pay-heal:${row.id}`,
         limit: 1,
@@ -303,11 +309,13 @@ export class CheckoutService {
       });
       if (allowed) {
         const data: IntentJobData = { tenantId: row.tenantId, intentId: row.id };
-        await this.context.afterCommit(() =>
-          queueConfirm(this.queue, data).catch((error: unknown) =>
+        // Queued once the read commits, and the read does not wait for it: a guardian's read
+        // never waits on the queue, let alone on SSLCommerz (only the job asks it).
+        await this.context.afterCommit(() => {
+          void queueConfirm(this.queue, data).catch((error: unknown) =>
             this.logger.warn(`Could not queue a heal: ${(error as Error).name}`),
-          ),
-        );
+          );
+        });
       }
     }
     return this.toView(row, this.context.requirePrincipal().userId);
@@ -348,7 +356,28 @@ export class CheckoutService {
     return this.view(studentId, intentId, { heal: false });
   }
 
-  private toView(row: IntentRow, me: string): OnlinePaymentView {
+  /**
+   * Whether our own query by tran_id, asked since the last return or IPN, listed no paid or
+   * pending attempt (P7a2-x31): the payer may then start again from "confirming". A query that
+   * failed answered nothing; a signal after the query is not answered for yet.
+   */
+  private async noLiveAttempt(intentId: string): Promise<boolean> {
+    const tx = this.db.tx;
+    const signal = await tx.paymentGatewayEvent.findFirst({
+      where: { intentId, kind: { in: ['RETURN', 'IPN'] } },
+      orderBy: { receivedAt: 'desc' },
+      select: { receivedAt: true },
+    });
+    const query = await tx.paymentGatewayEvent.findFirst({
+      where: { intentId, kind: 'QUERY', outcome: { notIn: [...PROVIDER_ERROR_CODES] } },
+      orderBy: { receivedAt: 'desc' },
+      select: { outcome: true, receivedAt: true },
+    });
+    if (!query || (signal && signal.receivedAt > query.receivedAt)) return false;
+    return queryFoundNothingLive(query.outcome);
+  }
+
+  private async toView(row: IntentRow, me: string): Promise<OnlinePaymentView> {
     const state = onlinePaymentState(row.status, row.events.length > 0);
     const mine = row.payerUserId === me;
     return {
@@ -372,6 +401,7 @@ export class CheckoutService {
       createdAt: row.createdAt.toISOString(),
       tranId: row.tranId,
       mine,
+      noLiveAttempt: row.status === 'REDIRECTED' ? await this.noLiveAttempt(row.id) : false,
       ...(mine && state === 'READY' && row.checkoutUrl ? { checkoutUrl: row.checkoutUrl } : {}),
       ...(row.status === 'PAID' && row.feePayment
         ? {

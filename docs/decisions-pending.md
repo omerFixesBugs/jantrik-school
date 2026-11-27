@@ -1786,6 +1786,103 @@ Recorded, review round 1 (not changed):
   listed attempt would close that too, but whether SSLCommerz sends one on a failed return is not
   documented (the smoke run can show it).
 
+### P7a2 after the review (round 2)
+
+No must-fix: the final review (a fresh reviewer, the whole PR) found no path that posts twice,
+posts without our own successful validation, or posts to the wrong institute, student or due.
+Fixed, each with a failing test first, taken alone during the run (owner away), each the safer
+option:
+
+- **P7a2-x30. Another payment's `val_id` brought only by signals anyone can send leaves the
+  payment open.** This narrows P7a-H for forgeable signals only; **an owner decision to
+  confirm**. Every guardian of the child has the `tran_id`, and any real `val_id` of the store
+  will do. A forged return (`GET …/return/<tranId>/success?val_id=…`, the review's probe P5) sent
+  the payment in progress to `NEEDS_REVIEW` with `TRAN_ID_MISMATCH`. The payer's genuine payment
+  was then never posted, and P7a cannot resolve reviews. Now, when every signal that brought that
+  `val_id` is a return or an IPN from an address SSLCommerz does not list:
+  - the validation is recorded as a `VALIDATE` event, marked `UNMATCHED` when no intent of the
+    institute has that `tran_id` (P7b's queue; S23 keeps it from posting);
+  - the payment stays as it is, and the payer's own validation still posts it.
+
+  From SSLCommerz's listed address, from our own query, or from both in one round: P7a-H as
+  before (review). Choices:
+  - Unlisted IPNs count as forgeable too (the reviewer named returns): anyone can post one, and
+    the attack would otherwise just move to the IPN route.
+  - Another intent's money is not marked `UNMATCHED`, as before: it posts through its own intent,
+    and P7b must not apply it here.
+
+- **P7a2-x31. UNATTEMPTED and EXPIRED, as our query lists them, close a payment only past the
+  session's lifetime.** SSLCommerz's query documents only VALID, VALIDATED, PENDING and FAILED,
+  so a real cancel may be listed as UNATTEMPTED or EXPIRED. It then stayed in "confirming" with no
+  way out, and a new checkout got 409 `PAYMENT_IN_PROGRESS`, for up to 60 minutes.
+  - **The first fix** counted them as over at once. The automated security review of it (medium)
+    pointed out that a forged return makes us ask while the payer is still on the gateway's page,
+    where UNATTEMPTED is simply true. That was round 1's finding again (x26): the payer's real
+    payment then waits for review as `LATE_SUCCESS`.
+  - **Now:** with a fail or cancel return, or an IPN that said so, they close the payment only
+    once the intent's `expires_at` has passed (an hour after the checkout, P7a-F). No shorter
+    gateway session timeout is recorded, so this is the longer, conservative value. The closing
+    word is the signal's: CANCELLED for a cancel, FAILED otherwise. FAILED and CANCELLED close
+    as before (x26). Never a signal alone, and never a validation answer (it names no `tran_id`
+    we could compare).
+  - **Before that**, "confirming" offers its payer "give up this payment", then the sheet to
+    start again, with a line that SSLCommerz shows no payment. This needs our own query, asked
+    after the last return or IPN, to list nothing paid or pending (`noLiveAttempt` on the payment
+    view). It is the payer's own abandon: anyone else gets 404 (x20).
+  - A query's statuses are recorded in a fixed order, the live ones first, so the page's reading
+    is never cut off at 40 characters.
+- **P7a2-x32. One query per payment every 10 seconds** (`pay-query:<intent>`): at most 6 a
+  minute, 360 an hour. Before (round 1's recorded note (c)), a slow flood from many addresses made
+  about one per job, and a signal promoting a job delayed by its backoff skipped the wait.
+  - A job that finds the slot taken is not refused. The same job is moved back to BullMQ's
+    delayed set until the slot frees (at most 10 s), and that is not counted as an attempt.
+  - A signal that promotes it meanwhile finds the slot still taken and asks nothing.
+  - Cost: under a flood that has spent the other validation budget, a payer's return without the
+    IPN waits up to 10 s for the next query. The IPN has a budget of its own.
+- **P7a2-x33. CI: the guardian calendar's 7.9 minutes** (`reports.spec.ts`, 1.7 s on #36). The
+  cause was the demo guardian's OTP budget, not the payments: 5 codes a phone per 15 minutes,
+  where a request the 1-minute cooldown refuses still counts (`RateLimiter.consume`).
+  - **The count** in run 46013055262: the window opened at 14:09:57 with the dashboard spec's
+    sign-in. Then fees-mobile (14:13), then P7a2's two Playwright tests: the second asked 4 s
+    after the first, was refused by the cooldown but counted, and asked again a minute later.
+    That made five.
+  - **The wait:** the calendar's sign-in at 14:17:06 was the sixth. The helper waited out the
+    window (it ended at 14:24:57; the test finished at 14:25:00).
+  - **Ruled out:** measured through the API with a payment open (a test now pins it), no guardian
+    read asks SSLCommerz or waits for a job.
+  - **Fix:** the P7a2 block signs in once, on one page shared by its two tests (serial), so the
+    demo guardian uses four codes in the window, with one spare for a retry. At the end it gives
+    up any payment a failed attempt left in progress, through the API with the page's own token
+    (no further code).
+  - **Also:** "heal on read" now queues its job after commit without the read waiting for it.
+
+Fixed without a decision of their own (each with a failing test first):
+
+- A `val_id` that SSLCommerz's listed address brought stays on that address's budget when the
+  payer's return carries it too. Before, the return's entry overwrote it, so after a flood the
+  real IPN's `val_id` waited for a query.
+- A round stops validating `val_id`s directly once a validation posts the payment or sends it to
+  review. The query's own list is still validated in full, so a second payment is a `DUPLICATE`
+  event.
+
+Tests added that pass as the code stood: a query listing a FAILED and a PENDING attempt together
+(the pending one wins: nothing closes, and "start again" is not offered). The reviewer's other
+two missing tests are the x30 tests (`TRAN_ID_MISMATCH` from an unlisted return) and the x31
+tests (UNATTEMPTED and EXPIRED, during the session and after it).
+
+Recorded, review round 2 (not changed):
+
+- **(a) x30's order:** once a forged `val_id` has been validated, a later listed IPN carrying it
+  is not validated again (its answer was final), so it does not send the payment to review. A
+  genuine IPN never carries another `tran_id`'s `val_id`; the `UNMATCHED` event is in P7b's queue.
+- **(b) "Start again" from "confirming"** may give up a payment whose money SSLCommerz had not
+  listed yet. That money then waits for review as `LATE_SUCCESS`: never lost, never posted twice
+  (S23). The page offers it only after our own query found nothing paid or pending.
+- **(c) Past `expires_at`, a payment that no signal closes stays open** until P7b expires it.
+  A new checkout is allowed by then anyway (P7a-F counts only unexpired payments).
+- **(d) Playwright was not run here** (its ports are the developer's). The CI fix is reasoned
+  from run 46013055262's timings and the OTP limits; CI shows it.
+
 ## Sprint 1, P7b: reconciliation and review queue (day run 2026-11-27)
 
 Online payments, part 3 ([payments.md](payments.md)): SSLCommerz is asked about every online

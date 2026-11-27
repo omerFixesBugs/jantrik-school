@@ -16,7 +16,7 @@ import {
   type GatewayAccountView,
   type GatewayTestQueued,
 } from '@jantrik/shared';
-import type { Job } from 'bullmq';
+import { DelayedError, type Job } from 'bullmq';
 import { RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import type { Env } from '../config/env.js';
@@ -98,7 +98,8 @@ export class GatewayAccountController {
 /**
  * The payments queue's jobs (data: ids only). A failure is logged by job name and error name
  * only: a gateway's answer, a URL or a credential never reaches a log line or a failed job. Only
- * `confirm` and `reconcile` fail their job (a fixed code), so BullMQ retries them.
+ * `confirm` and `reconcile` fail their job (a fixed code), so BullMQ retries them; a `confirm`
+ * that found the payment's query slot taken waits in the queue as the same job (P7a2-x32).
  */
 @Processor(PAYMENTS_QUEUE)
 export class PaymentsProcessor extends WorkerHost {
@@ -113,7 +114,8 @@ export class PaymentsProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job): Promise<void> {
+  async process(job: Job, token?: string): Promise<void> {
+    let laterMs: number | null = null;
     try {
       switch (job.name) {
         case ACCOUNT_TEST_JOB:
@@ -122,9 +124,11 @@ export class PaymentsProcessor extends WorkerHost {
         case CHECKOUT_INIT_JOB:
           await this.checkout.runInit(job.data as IntentJobData);
           break;
-        case CONFIRM_JOB:
-          await this.confirm.run(job.data as IntentJobData);
+        case CONFIRM_JOB: {
+          const result = await this.confirm.run(job.data as IntentJobData);
+          if (result.kind === 'LATER') laterMs = result.delayMs;
           break;
+        }
         case UNMATCHED_CHECK_JOB:
           await this.confirm.unmatchedCheck(job.data as UnmatchedJobData);
           break;
@@ -147,6 +151,12 @@ export class PaymentsProcessor extends WorkerHost {
           ? error
           : new Error('RECONCILE_FAILED');
       }
+    }
+    if (laterMs !== null) {
+      // Not an attempt: the same job (same id) waits until the payment's query slot frees.
+      if (!token) throw new Error('CONFIRM_LATER');
+      await job.moveToDelayed(Date.now() + laterMs, token);
+      throw new DelayedError();
     }
   }
 }
