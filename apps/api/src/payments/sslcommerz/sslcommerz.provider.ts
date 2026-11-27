@@ -39,9 +39,10 @@ const MAX_ANSWER_BYTES = 256 * 1024;
 const error = (code: ProviderErrorCode): ProviderError => ({ kind: 'ERROR', code });
 
 /**
- * Where a payer may be sent: SSLCommerz's own https pages (the sandbox and its subdomains), or,
- * with a fake SSLCommerz (development and tests), that fake's own address. Never an address the
- * gateway's answer chose freely.
+ * Where a payer may be sent: the sandbox's own https page host (`sandbox.sslcommerz.com`; P7a2-x21:
+ * no other SSLCommerz host, now that guardians are sent there), or, with a fake SSLCommerz
+ * (development and tests), that fake's own address. Never an address the gateway's answer chose
+ * freely; anything else fails the payment before a guardian is sent anywhere.
  */
 export function isAllowedCheckoutUrl(value: string, baseUrl: string): boolean {
   let url: URL;
@@ -56,7 +57,7 @@ export function isAllowedCheckoutUrl(value: string, baseUrl: string): boolean {
   return (
     url.protocol === 'https:' &&
     (url.port === '' || url.port === '443') &&
-    (host === 'sandbox.sslcommerz.com' || host.endsWith('.sslcommerz.com'))
+    host === 'sandbox.sslcommerz.com'
   );
 }
 

@@ -52,7 +52,12 @@ describe('SslcommerzProvider', () => {
     fake = await startFakeSslcommerz();
     fake.addStore(creds.storeId, creds.storePassword);
     fake.addStore('sleepy0001', 'sleepy0001@ssl', { active: false });
-    config = { apiPublicUrl: null, sslcommerzBaseUrl: fake.url, timeoutMs: 30_000 };
+    config = {
+      apiPublicUrl: null,
+      webPublicUrl: null,
+      sslcommerzBaseUrl: fake.url,
+      timeoutMs: 30_000,
+    };
     provider = new SslcommerzProvider(config);
   });
 
@@ -162,13 +167,15 @@ describe('SslcommerzProvider', () => {
       });
     });
 
-    it("against SSLCommerz itself, only SSLCommerz's own https pages", () => {
+    it("against SSLCommerz's sandbox, only the sandbox's own https pages (P7a2-x21)", () => {
       const ok = [
         'https://sandbox.sslcommerz.com/EasyCheckOut/testcde5f8a1',
-        'https://seamless-epay.sslcommerz.com/x',
         'https://SANDBOX.sslcommerz.com:443/x',
       ];
       const refused = [
+        // Other SSLCommerz hosts (the live one included): not the sandbox's payer page.
+        'https://seamless-epay.sslcommerz.com/x',
+        'https://securepay.sslcommerz.com/EasyCheckOut/x',
         'http://sandbox.sslcommerz.com/EasyCheckOut/x',
         'https://sandbox.sslcommerz.com.evil.example/x',
         'https://evilsslcommerz.com/x',
@@ -204,6 +211,22 @@ describe('SslcommerzProvider', () => {
         cardBrand: 'MOBILEBANKING',
         risk: 'LOW',
         paidAt: new Date('2026-11-18T04:30:15.000Z'),
+        // The whitelisted fields as reported (P7a2: the VALIDATE event's record); never the card
+        // number, the store, the customer or value_a.
+        reported: {
+          status: 'VALID',
+          tran_date: '2026-11-18 10:30:15',
+          amount: '1250.50',
+          store_amount: '1250.50',
+          currency: 'BDT',
+          currency_type: 'BDT',
+          currency_amount: '1250.50',
+          bank_tran_id: attempt.fields['bank_tran_id']!,
+          card_type: 'BKASH-BKash',
+          card_brand: 'MOBILEBANKING',
+          risk_level: '0',
+          risk_title: 'Safe',
+        },
       } satisfies ProviderOutcome);
       const second = await provider.confirm(creds, { tranId, valId: attempt.valId });
       expect(second).toMatchObject({ kind: 'PAID', repeated: true, amountPaisa: 125050 });
@@ -428,6 +451,7 @@ describe('the fake payer page', () => {
       fake.addStore(creds.storeId, creds.storePassword);
       const provider = new SslcommerzProvider({
         apiPublicUrl: null,
+        webPublicUrl: null,
         sslcommerzBaseUrl: fake.url,
         timeoutMs: 30_000,
       });

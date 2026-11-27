@@ -202,6 +202,7 @@ async function main(): Promise<void> {
   }
   const provider = new SslcommerzProvider({
     apiPublicUrl: null,
+    webPublicUrl: null,
     sslcommerzBaseUrl: start.baseUrl,
     timeoutMs: SSLCOMMERZ_TIMEOUT_MS,
   });

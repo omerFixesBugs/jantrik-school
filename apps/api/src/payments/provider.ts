@@ -1,4 +1,4 @@
-import type { GatewayTestResult, SslcommerzCredentials } from '@jantrik/shared';
+import type { GatewayTestResult, SignalField, SslcommerzCredentials } from '@jantrik/shared';
 import type { ZodType } from 'zod';
 
 /**
@@ -93,6 +93,11 @@ export interface PaymentFacts {
   risk: 'LOW' | 'HIGH';
   /** `tran_date`, read as Asia/Dhaka; shown only. */
   paidAt: Date | null;
+  /**
+   * The whitelisted fields as reported, short printable strings only (signalFields): what a
+   * VALIDATE or QUERY event stores for the person who reviews it.
+   */
+  reported: Partial<Record<SignalField, string>>;
 }
 
 export type ProviderOutcome =

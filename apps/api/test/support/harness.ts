@@ -66,6 +66,7 @@ export async function createHarness(
   if (opts.payments) {
     const payments: PaymentsConfig = {
       apiPublicUrl: null,
+      webPublicUrl: null,
       sslcommerzBaseUrl: process.env['SSLCOMMERZ_BASE_URL'] ?? 'http://127.0.0.1:9',
       timeoutMs: 30_000,
       ...opts.payments,

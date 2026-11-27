@@ -1,4 +1,4 @@
-import { parseGatewayAmount } from '@jantrik/shared';
+import { parseGatewayAmount, signalFields } from '@jantrik/shared';
 import { z } from 'zod';
 import type { AttemptStatus, PaymentFacts } from '../provider.js';
 
@@ -38,6 +38,7 @@ const paymentFields = {
   card_type: text,
   card_brand: text,
   risk_level: text,
+  risk_title: text,
   tran_date: text,
   APIConnect: text,
 };
@@ -78,6 +79,7 @@ export function paymentFacts(row: PaymentFieldsRow): PaymentFacts {
     // Only the documented "0" is low risk; anything else, missing included, waits for a person.
     risk: row.risk_level === '0' ? 'LOW' : 'HIGH',
     paidAt: parseTranDate(row.tran_date),
+    reported: signalFields(row),
   };
 }
 
