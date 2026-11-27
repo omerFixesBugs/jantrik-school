@@ -38,6 +38,15 @@ const MAX_ROUNDS = 3;
  */
 const VALIDATIONS_PER_ROUND = 3;
 const VALIDATIONS_PER_HOUR = 10;
+/**
+ * One query per payment every 10 s (P7a2-x32): a flood of signals from many addresses made about
+ * one per job. A job that finds the slot taken is not refused: it waits in the queue until the
+ * slot frees (ConfirmResult LATER), so the query is only ever delayed.
+ */
+const QUERY_SPACING_SEC = 10;
+
+/** What a confirm run asks of its job: done, or run again after `delayMs` (the query slot). */
+export type ConfirmResult = { kind: 'DONE' } | { kind: 'LATER'; delayMs: number };
 
 /** A confirm job that could not reach the gateway: retried by BullMQ (a fixed code only). */
 export class PaymentJobError extends Error {
@@ -141,14 +150,15 @@ export class ConfirmService {
     });
   }
 
-  async run(data: IntentJobData): Promise<void> {
+  async run(data: IntentJobData): Promise<ConfirmResult> {
     const tried = new Set<string>();
     let failure: ProviderErrorCode | null = null;
     let validatedAny = false;
     let leftToQuery = false;
+    let laterMs: number | null = null;
     for (let round = 0; ; round++) {
       const read = await this.read(data);
-      if (!read?.creds) return;
+      if (!read?.creds) return { kind: 'DONE' };
       const { intent, events, creds } = read;
       const open = intent.status === 'CREATED' || intent.status === 'REDIRECTED';
       const validations = events.filter((e) => e.kind === 'VALIDATE' && e.valId);
@@ -226,7 +236,13 @@ export class ConfirmService {
       // validation in this job (a late payment). Once per job.
       const unaccounted = since.some((e) => (e.valId !== null ? waiting(e) : !validatedAny));
       if (failure === null && (open || unaccounted)) {
-        failure = await this.query(data.tenantId, intent, creds, signals, settled, tried);
+        const slot = `pay-query:${intent.id}`;
+        if (await this.limiter.tryConsume({ key: slot, limit: 1, windowSec: QUERY_SPACING_SEC })) {
+          failure = await this.query(data.tenantId, intent, creds, signals, settled, tried);
+        } else {
+          // Asked a moment ago: this job runs again once the slot frees (never refused).
+          laterMs = (await this.limiter.peek(slot)).retryAfter * 1000;
+        }
       }
       break;
     }
@@ -241,6 +257,7 @@ export class ConfirmService {
       });
       throw new PaymentJobError(code);
     }
+    return laterMs === null ? { kind: 'DONE' } : { kind: 'LATER', delayMs: laterMs };
   }
 
   /**

@@ -137,6 +137,14 @@ describe('online payments: confirmation and settle', () => {
     await checkout.runInit({ tenantId: s.tenantId, intentId: intent.id });
     return intentRow(h, s.tenantId, intent.id);
   };
+  /**
+   * The confirm job as a later run does it: the payment's query slot (one query every 10 s,
+   * P7a2-x32) is free again by then.
+   */
+  const runConfirm = async (intentId: string) => {
+    await h.redis.del(`rl:pay-query:${intentId}`);
+    return confirm.run({ tenantId: s.tenantId, intentId });
+  };
   const validated = async (tranId: string, valId: string): Promise<PaidOutcome> => {
     const outcome = await provider.confirm(s.store, { tranId, valId });
     if (outcome.kind !== 'PAID') throw new Error(`not paid: ${outcome.kind}`);
@@ -306,7 +314,7 @@ describe('online payments: confirmation and settle', () => {
     // The due owes again; the same signal again posts nothing (it is in review).
     const ledger = await childFees(h, s.tokens.guardian, child().id);
     expect(ledger.ledger.dues.find((d) => d.id === due.id)!.balance.total).toBe(120000);
-    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    await runConfirm(intent.id);
     expect((await paymentsOf(intent.id)).filter((p) => p.status === 'ACTIVE')).toHaveLength(0);
   });
 
@@ -329,7 +337,7 @@ describe('online payments: confirmation and settle', () => {
     await vi.waitFor(async () =>
       expect((await eventsOf(pending.intent.id, 'QUERY')).length).toBeGreaterThan(0),
     );
-    await confirm.run({ tenantId: s.tenantId, intentId: pending.intent.id });
+    await runConfirm(pending.intent.id);
     expect((await intentRow(h, s.tenantId, pending.intent.id)).status).toBe('REDIRECTED');
   });
 
@@ -348,7 +356,7 @@ describe('online payments: confirmation and settle', () => {
     await vi.waitFor(async () =>
       expect((await eventsOf(live.intent.id, 'QUERY')).length).toBeGreaterThan(0),
     );
-    await confirm.run({ tenantId: s.tenantId, intentId: live.intent.id });
+    await runConfirm(live.intent.id);
     expect((await intentRow(h, s.tenantId, live.intent.id)).status).toBe('REDIRECTED');
     // The payer, still on the gateway's page, pays: a receipt, not a LATE_SUCCESS review.
     const t = await payAtGateway(h, fake, s.tenantId, live.intent.id);
@@ -402,7 +410,7 @@ describe('online payments: confirmation and settle', () => {
     await vi.waitFor(async () =>
       expect((await eventsOf(alone.intent.id, 'QUERY')).length).toBeGreaterThan(0),
     );
-    await confirm.run({ tenantId: s.tenantId, intentId: alone.intent.id });
+    await runConfirm(alone.intent.id);
     expect((await intentRow(h, s.tenantId, alone.intent.id)).status).toBe('REDIRECTED');
   });
 
@@ -440,7 +448,7 @@ describe('online payments: confirmation and settle', () => {
       }),
     );
     expect(await view(intent.id)).toMatchObject({ state: 'CONFIRMING', noLiveAttempt: false });
-    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    await runConfirm(intent.id);
     expect(await view(intent.id)).toMatchObject({ noLiveAttempt: true });
 
     // "Start again": given up, and a new checkout for the same due at once.
@@ -514,7 +522,7 @@ describe('online payments: confirmation and settle', () => {
     await vi.waitFor(async () =>
       expect((await eventsOf(intent.id, 'QUERY')).length).toBeGreaterThan(0),
     );
-    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    await runConfirm(intent.id);
     expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
     // The guardian, still on the gateway's page, pays: a receipt, not a LATE_SUCCESS review.
     const t = await payAtGateway(h, fake, s.tenantId, intent.id);
@@ -590,16 +598,16 @@ describe('online payments: confirmation and settle', () => {
       const flood = madeUp(8);
       await storeReturns(intent, flood);
       const asked = queries(intent.tranId);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect(validations(flood)).toBe(3);
       expect(queries(intent.tranId)).toBe(asked + 1);
       // The query answered for every signal stored before it: none of them is validated again.
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect(validations(flood)).toBe(3);
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
       // The real payment still posts: the query lists it.
       await payAtGateway(h, fake, s.tenantId, intent.id);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
       expect(validations(flood)).toBe(3);
     });
@@ -617,8 +625,15 @@ describe('online payments: confirmation and settle', () => {
       expect((await eventsOf(intent.id, 'RETURN')).filter((e) => e.valId === t.valId)).toHaveLength(
         1,
       );
-      await waitStatus(h, s.tenantId, intent.id, 'PAID');
+      // With the other budget spent, the genuine return waits for the payment's next query slot
+      // (at most 10 s, P7a2-x32); the IPN, when it comes, has a budget of its own.
+      await vi.waitFor(
+        async () => expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID'),
+        { timeout: 25_000, interval: 200 },
+      );
       expect(validations(flood)).toBeLessThanOrEqual(10);
+      // One query every 10 s however many jobs the flood made.
+      expect(queries(intent.tranId)).toBeLessThanOrEqual(3);
       expect(await paymentsOf(intent.id)).toHaveLength(1);
     });
 
@@ -653,7 +668,7 @@ describe('online payments: confirmation and settle', () => {
         { valId: t.valId, listed: false },
       ]);
       const asked = queries(intent.tranId);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
       expect(validations([t.valId])).toBe(1);
       expect(queries(intent.tranId)).toBe(asked);
@@ -667,7 +682,7 @@ describe('online payments: confirmation and settle', () => {
         { valId: t.valId, listed: true },
         ...flood.map((valId) => ({ valId, listed: false })),
       ]);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
       expect(validations(flood)).toBe(0);
       expect(await paymentsOf(intent.id)).toHaveLength(1);
@@ -710,14 +725,14 @@ describe('online payments: confirmation and settle', () => {
       await waitStatus(h, s.tenantId, intent.id, 'PAID');
       const flood = madeUp(5);
       await storeReturns(intent, flood);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       expect(validations(flood)).toBe(0);
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
       expect(await paymentsOf(intent.id)).toHaveLength(1);
       // A real second payment of the same tran_id is listed by the query: validated, DUPLICATE.
       const again = await payAtGateway(h, fake, s.tenantId, intent.id);
       await storeReturns(intent, [again.valId]);
-      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      await runConfirm(intent.id);
       const dup = (await eventsOf(intent.id, 'VALIDATE')).find((e) => e.valId === again.valId);
       expect(dup).toMatchObject({ reviewReason: 'DUPLICATE' });
       expect(validations(flood)).toBe(0);
@@ -738,7 +753,7 @@ describe('online payments: confirmation and settle', () => {
     expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
     // The payment completes at the gateway; the next confirm (a heal, a late IPN) posts it.
     t.status = 'VALID';
-    await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+    await runConfirm(intent.id);
     expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
     expect(await paymentsOf(intent.id)).toHaveLength(1);
   });
@@ -1101,7 +1116,7 @@ describe('online payments: confirmation and settle', () => {
           })),
         }),
       );
-      await confirm.run({ tenantId: s.tenantId, intentId: both.intent.id });
+      await runConfirm(both.intent.id);
       expect(await intentRow(h, s.tenantId, both.intent.id)).toMatchObject({
         status: 'NEEDS_REVIEW',
         reviewReasons: ['TRAN_ID_MISMATCH'],
