@@ -37,6 +37,13 @@ export class PaymentJobError extends Error {
 const isErrorCode = (outcome: string | null): boolean =>
   outcome !== null && (PROVIDER_ERROR_CODES as readonly string[]).includes(outcome);
 
+/**
+ * A validation answer that settles a val_id for good. Not an error (the call is retried), and not
+ * PENDING: a pending payment may still complete, so it is validated again (P7a2-x27).
+ */
+const isFinalAnswer = (outcome: string | null): boolean =>
+  outcome !== null && outcome !== 'PENDING' && !isErrorCode(outcome);
+
 interface IntentFacts {
   id: string;
   tranId: string;
@@ -114,7 +121,7 @@ export class ConfirmService {
       const { intent, events, creds } = read;
       const validated = new Set(
         events
-          .filter((e) => e.kind === 'VALIDATE' && e.valId && !isErrorCode(e.outcome))
+          .filter((e) => e.kind === 'VALIDATE' && e.valId && isFinalAnswer(e.outcome))
           .map((e) => e.valId!),
       );
       const signals = events.filter((e) => e.kind === 'RETURN' || e.kind === 'IPN');
