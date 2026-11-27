@@ -1545,3 +1545,13 @@ credentials_updated_at`): with several servers, clock differences could refuse a
   quotes part of the body back to its sender (Nest's body parser). Not logged, and the web app
   never sends malformed JSON, but a global filter with a fixed message would be cleaner; a
   follow-up of its own.
+
+### P7a1 after the review (round 2)
+
+No must-fix. Fixed, each with a failing test first:
+
+- **P7a1-x19. The last failure is cleared by new credentials and by a passing test.** Saving
+  credentials clears `last_failure_code` and `last_failure_at` in the same update that switches
+  the account off; a test that passes clears them too. Before, a `CREDENTIALS_UNREADABLE` stayed on
+  the page after the owner had saved the store again and its test had passed. No CHECK ties the
+  two columns to any other (only to each other), so nothing else changes.

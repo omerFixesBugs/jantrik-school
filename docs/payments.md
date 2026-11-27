@@ -31,7 +31,7 @@ payments.
 | Route                                        | Does                                                                                                                                                                            | Errors                                                     |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | `GET /fees/online-payments/account`          | `{ provider, mode, configured, enabled, hint, credentialsUpdatedAt, lastTest: { at, result } \| null, lastFailure: { at, code } \| null, ipnUrl }`; no row yet → not configured |                                                            |
-| `PUT /fees/online-payments/account`          | `{ storeId, storePassword }` (write-only): saved encrypted, **the account switched off and its last test cleared in the same update** (P7a-M); answers the view                 | 400 (messages name the field, never repeat a value)        |
+| `PUT /fees/online-payments/account`          | `{ storeId, storePassword }` (write-only): saved encrypted, **the account switched off and its last test and last failure cleared in the same update** (P7a-M, P7a1-x19); answers the view                 | 400 (messages name the field, never repeat a value)        |
 | `POST /fees/online-payments/account/test`    | 202 `{ requestedAt }`; queues an `account-test` job. The page asks for the view until `lastTest.at` reaches `requestedAt`                                                       | 422 `CREDENTIALS_REQUIRED`; 429 (10 an hour per institute) |
 | `POST /fees/online-payments/account/enable`  | on                                                                                                                                                                              | 422 `TEST_REQUIRED`, `API_PUBLIC_URL_MISSING`              |
 | `POST /fees/online-payments/account/disable` | off                                                                                                                                                                             |                                                            |
@@ -44,6 +44,10 @@ payments.
   `STORE_INACTIVE`, no answer in 30 s or no connection → `UNREACHABLE`, anything else → `ERROR`.
   The job acts for the owner who asked (the audit row names them) and records nothing if they are
   no longer the owner, or if the credentials were replaced while it ran.
+- **The last failure** (`lastFailure`) is a job's fixed code with its time, e.g.
+  `CREDENTIALS_UNREADABLE` when the test could not decrypt the credentials (the result is then
+  `ERROR` and SSLCommerz is not asked). New credentials and a passing test clear it (P7a1-x19): it
+  always describes the credentials the account has now.
 - **The IPN address** is `<API_PUBLIC_URL>/public/payments/sslcommerz/<slug>/ipn`, shown on the
   page to paste into the store's SSLCommerz panel (the route itself comes with P7a2). Without
   `API_PUBLIC_URL` the page says so and the account cannot be turned on.

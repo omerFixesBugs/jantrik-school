@@ -264,7 +264,12 @@ export class GatewayAccountService {
             lastTestedById: data.actorUserId,
             // Never on without a passing test (the database CHECK says the same).
             ...(result !== 'OK' ? { enabled: false } : {}),
-            ...(read.failure ? { lastFailureCode: read.failure, lastFailureAt: now } : {}),
+            // A passing test clears an earlier failure (P7a1-x19): these credentials work now.
+            ...(result === 'OK'
+              ? { lastFailureCode: null, lastFailureAt: null }
+              : read.failure
+                ? { lastFailureCode: read.failure, lastFailureAt: now }
+                : {}),
           },
         });
         if (count === 0) return;

@@ -54,7 +54,8 @@ export class PaymentCredentialsService {
 
   /**
    * Encrypt the credentials onto the account, and in the same update switch it off and clear its
-   * last test (P7a-M): new credentials are untested. `actorUserId` null: a command loaded them.
+   * last test (P7a-M): new credentials are untested. The last failure goes too (P7a1-x19): it was
+   * about the credentials these replace. `actorUserId` null: a command loaded them.
    */
   async save(
     accountId: string,
@@ -84,6 +85,8 @@ export class PaymentCredentialsService {
         lastTestAt: null,
         lastTestResult: null,
         lastTestedById: null,
+        lastFailureCode: null,
+        lastFailureAt: null,
       },
       select: { id: true },
     });
