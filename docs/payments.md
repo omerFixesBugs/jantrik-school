@@ -72,13 +72,13 @@ A guardian ticks some of a child's dues on the fees page ("অনলাইনে
 (bKash, Nagad, Rocket, cards), and comes back to a receipt that exists only after our server asked
 SSLCommerz itself and every check passed (S22, S23).
 
-| Route                                                          | Who                    | Does                                                                                                              | Errors                                                                                                                                                                                                                                                                           |
-| -------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /me/children/:id/fees` (existing)                         | the child's guardians  | gains `online: { available, inProgress: { intentId, mine, createdAt } \| null }`                                  |                                                                                                                                                                                                                                                                                  |
-| `POST /me/children/:id/fees/online-payments`                   | the child's guardians  | `{ dueIds (1–24, each once), expectedAmountPaisa, clientRequestId }` → 201 the payment view                       | 400 (an unknown key, such as an amount); 404; 409 `DUES_CHANGED { amountPaisa }`, `PAYMENT_IN_PROGRESS { intentId, mine }`; 422 `NOTHING_DUE`, `ONLINE_AMOUNT_OUT_OF_RANGE { minPaisa, maxPaisa }`, `ONLINE_PAYMENTS_OFF`, `IDEMPOTENCY_MISMATCH`; 429 (10 an hour per guardian) |
-| `GET /me/children/:id/fees/online-payments/:intentId`          | the child's guardians  | the payment view; `checkoutUrl` only for the one who started it, while it is READY; heals an open payment (below) | 404                                                                                                                                                                                                                                                                              |
-| `POST /me/children/:id/fees/online-payments/:intentId/abandon` | the one who started it | CANCELLED ("start again")                                                                                         | 404; 409 `NOT_ABANDONABLE`                                                                                                                                                                                                                                                       |
-| `GET /me/children/:id/fees/payments/:paymentId` (existing)     | the child's guardians  | gateway receipts too                                                                                              | 404                                                                                                                                                                                                                                                                              |
+| Route                                                          | Who                    | Does                                                                                                                                       | Errors                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /me/children/:id/fees` (existing)                         | the child's guardians  | gains `online: { available, inProgress: { intentId, mine, createdAt } \| null }`                                                           |                                                                                                                                                                                                                                                                                  |
+| `POST /me/children/:id/fees/online-payments`                   | the child's guardians  | `{ dueIds (1–24, each once), expectedAmountPaisa, clientRequestId }` → 201 the payment view                                                | 400 (an unknown key, such as an amount); 404; 409 `DUES_CHANGED { amountPaisa }`, `PAYMENT_IN_PROGRESS { intentId, mine }`; 422 `NOTHING_DUE`, `ONLINE_AMOUNT_OUT_OF_RANGE { minPaisa, maxPaisa }`, `ONLINE_PAYMENTS_OFF`, `IDEMPOTENCY_MISMATCH`; 429 (10 an hour per guardian) |
+| `GET /me/children/:id/fees/online-payments/:intentId`          | the child's guardians  | the payment view; `checkoutUrl` only for the one who started it, while it is READY; `noLiveAttempt` (below); heals an open payment (below) | 404                                                                                                                                                                                                                                                                              |
+| `POST /me/children/:id/fees/online-payments/:intentId/abandon` | the one who started it | CANCELLED ("start again")                                                                                                                  | 404; 409 `NOT_ABANDONABLE`                                                                                                                                                                                                                                                       |
+| `GET /me/children/:id/fees/payments/:paymentId` (existing)     | the child's guardians  | gateway receipts too                                                                                                                       | 404                                                                                                                                                                                                                                                                              |
 
 All `@RequireModule('FEES')` and `@Roles('GUARDIAN')`: staff never start a payment for a guardian
 (no staff payment links, S22), and another family's child or payment is a 404.
@@ -112,9 +112,17 @@ every 15 s; "do not pay again") → `PAID` (the amount, the receipt number, "Vie
 or pay another way) or `EXPIRED`. Review reasons are never shown to guardians. The sheet is loaded
 only when opened, so the fees page keeps its first-load size.
 
+**"Start again" from `CONFIRMING`** (P7a2-x31): once our own query, asked after the last return or
+IPN, listed nothing paid or pending at SSLCommerz (the view's `noLiveAttempt`), the page tells
+the payer that SSLCommerz shows no payment and offers "give up this payment", then the sheet. A
+cancel SSLCommerz lists as UNATTEMPTED, or not at all, closes nothing during the session (below),
+so this is the payer's way out; anyone else's abandon is a 404 (P7a2-x20).
+
 **Heal on read:** reading an open payment more than a minute after it started queues `confirm`
 again, at most once a minute per payment (`pay-heal:<intentId>`), so a lost signal or job is
-picked up while the guardian waits.
+picked up while the guardian waits. It is queued after the read commits and the read never waits
+for it: no guardian read asks SSLCommerz anything or waits for a job (P7a2-x33, pinned by a test
+of the dashboard, calendar, fees and payment reads).
 
 ## States
 
@@ -188,34 +196,45 @@ with the institute's own credentials, outside any transaction, and settles each 
   once; those SSLCommerz's listed addresses brought first, then the oldest) are validated, **at
   most 3 a round**, and **at most 10 an hour per payment** for the `val_id`s anyone but
   SSLCommerz brought, another 10 for those its listed addresses brought (Redis
-  `pay-val-other:<intent>`, `pay-val-listed:<intent>`; P7a2-x24). The rest are left to the query.
-  A `val_id` whose answer was `PENDING` is validated again (a later signal, or the query listing
-  it VALID; P7a2-x27); any other answer settles it.
+  `pay-val-other:<intent>`, `pay-val-listed:<intent>`; P7a2-x24). A `val_id` a listed address
+  brought stays on that budget when the payer's return carries it too. The rest are left to the
+  query. A round stops once a validation posts the payment or sends it to review. A `val_id`
+  whose answer was `PENDING` is validated again (a later signal, or the query listing it VALID;
+  P7a2-x27); any other answer settles it.
 - **The query by our `tran_id`** (a `QUERY` event, recorded at the time it was asked) is never
   refused and is authoritative: it lists every attempt, so it **answers for every signal stored
   before it** (such a `val_id` is validated only if the query lists it as a successful attempt).
   It is asked once per job while the payment is open (a failed or cancelled return, a made-up or
   pending `val_id`, a heal, `val_id`s left over), and on a closed payment when a signal since the
-  last query is unaccounted for: a new `val_id` (a second payment is then validated from the
+  last query is unaccounted for. **One query per payment every 10 s** (`pay-query:<intent>`,
+  P7a2-x32): a job that finds the slot taken is moved back to BullMQ's delayed set until it frees
+  (not counted as an attempt), so the query is only ever delayed, never refused. Unaccounted
+  signals: a new `val_id` (a second payment is then validated from the
   query's list and recorded as `DUPLICATE`; a made-up one is never validated), or a signal without
   one that came with no validation in that job (a late payment). Every successful attempt it lists
   whose money we have not seen is validated the same way: nothing is posted from a query answer
   alone (P7b-A).
 - **Closing:** a failed or cancelled return, or an IPN that said so, closes an open intent as
-  `FAILED` or `CANCELLED` **only when the query lists a failed or cancelled attempt** and no
+  `FAILED` or `CANCELLED` **only when our query lists a failed or cancelled attempt** and no
   successful or pending one (P7a2-x26; the signal's word if the query lists it, else the
   gateway's). A return needs only the `tran_id`, which every guardian of the child has (even an
   `<img>` link sends one): "nothing found" closes nothing, and the payment stays open for P7b's
   expiry. `PENDING` changes nothing.
+- **UNATTEMPTED and EXPIRED** (the query documents only VALID, VALIDATED, PENDING and FAILED, so
+  a real cancel may show as either) close the payment in the same way **only past the session's
+  lifetime**, the intent's `expires_at` (P7a2-x31). During the session UNATTEMPTED is simply true
+  of a payer still on the gateway's page, and a forged return makes us ask. The closing word is
+  the signal's. Before that, the payer may start again from "confirming" (above).
 - A gateway error records a `VALIDATE` or `QUERY` event with the code and the account's last
   failure, and fails the job with that code (BullMQ retries it; after the last attempt the intent
   stays as it is for P7b and the heal). Up to three rounds per job take signals that arrived while
   it ran.
 
 The review's probe (40 returns with made-up `val_id`s, which made 46 validation calls) now makes at
-most 10 validations of made-up `val_id`s an hour per payment, plus at most one query per job; the
-payer's own return is stored and posted whatever was sent before it
-(`payments-settle.e2e-spec.ts`, `payments-signals.e2e-spec.ts`).
+most 10 validations of made-up `val_id`s an hour per payment, plus one query every 10 s; the
+payer's own return is stored and posted whatever was sent before it (within the next query slot
+once the flood has spent the other budget; `payments-settle.e2e-spec.ts`,
+`payments-signals.e2e-spec.ts`).
 
 **`settle`** is the only place that posts. One transaction acting as the guardian who paid, under
 the tenant's fee lock (shared), the student's lock and the intent's row lock. A `VALIDATE` event is
@@ -225,7 +244,12 @@ written first, whatever follows. Then (`settle-decision.ts`):
    that money is recorded on this intent: an open, failed, cancelled, expired or dismissed intent
    goes to `NEEDS_REVIEW` with `TRAN_ID_MISMATCH`, one already in review gains the reason, a
    `PAID` or refunded one keeps its state (P7a-H). Money for no intent of ours marks the event
-   `UNMATCHED`; another intent's money is posted through that intent's own signals.
+   `UNMATCHED`; another intent's money is posted through that intent's own signals. **Except
+   when only forgeable signals brought that `val_id`** (P7a2-x30, narrowing P7a-H; an owner
+   decision to confirm): returns, or IPNs from an address SSLCommerz does not list. Then the
+   event is the only record and the intent stays as it is, so a stranger with the `tran_id` and
+   another payment's `val_id` cannot keep the payer's genuine payment from posting. From
+   SSLCommerz's listed address or from our query, P7a-H applies.
 2. The decision table:
 
 | Intent                                                 | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -384,7 +408,10 @@ Nothing in CI or in any local test calls SSLCommerz, the sandbox included.
   `settle-decision.spec.ts`, `public/no-tenant-access.spec.ts`, `apps/web/e2e/payments.spec.ts`
   (the owner's setup; a guardian paying and cancelling on the fake's page; the counter's badge).
 - **Playwright** also gives the API `WEB_PUBLIC_URL=http://localhost:3000`, so the fake's
-  payer page brings the browser back to the web app, and the fake posts its IPN to the API.
+  payer page brings the browser back to the web app, and the fake posts its IPN to the API. The
+  P7a2 block signs the demo guardian in once for both its tests (each phone has 5 codes in 15
+  minutes, and other specs sign the same guardian in) and gives up any payment a failed attempt
+  left in progress (P7a2-x33).
 
 ## Commands (the owner's)
 
