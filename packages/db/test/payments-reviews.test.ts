@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { newTranId } from '@jantrik/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { findOrCreateUser, withTenant, type PrismaClient, type TenantTx } from '../src/index.js';
+import {
+  findOrCreateUser,
+  withContext,
+  withTenant,
+  type PrismaClient,
+  type TenantTx,
+} from '../src/index.js';
 import { appClient, createTenant, ownerClient, randomPhone } from './helpers.js';
 
 // Online payments, part 3 (sprint 1 P7b, docs/payments.md → The review queue): a person's
@@ -745,6 +751,41 @@ describe('review decisions on online payments (P7b)', () => {
         tx.paymentIntent.findUniqueOrThrow({ where: { id: intent.id } }),
       ),
     ).toMatchObject({ status: 'PAID', feePaymentId: payment.id });
+  });
+
+  it('a decision names the signed person who made it (review round 1, hardening a; as P1-J8k)', async () => {
+    const as = <T>(userId: string, fn: (tx: TenantTx) => Promise<T>) =>
+      withContext(app, { tenantId: a.tenantId, userId }, fn);
+    const signed = /decided by the signed-in person only/i;
+    // An intent: refunded outside in the admin's request, naming someone else, is refused.
+    const intent = await inReview(a);
+    const refund = (by: string) =>
+      `UPDATE payment_intents SET status = 'REFUNDED_OUTSIDE', resolved_by_id = '${by}',
+         resolved_at = now(), resolution_note = 'given back by bKash',
+         refunded_outside_paisa = 100000 WHERE id = '${intent.id}'`;
+    await expect(as(a.admin, (tx) => tx.$executeRawUnsafe(refund(a.payer)))).rejects.toThrow(
+      signed,
+    );
+    await as(a.admin, (tx) => tx.$executeRawUnsafe(refund(a.admin)));
+    // A money item likewise.
+    const event = await validateEvent(a, {});
+    const review = (by: string) =>
+      as(a.admin, (tx) =>
+        tx.paymentSignalReview.create({
+          data: {
+            tenantId: a.tenantId,
+            eventId: event.id,
+            outcome: 'REFUNDED_OUTSIDE',
+            amountPaisa: 100000,
+            note: 'given back by bKash',
+            resolvedById: by,
+            resolvedAt: new Date(),
+          },
+        }),
+      );
+    await expect(review(a.payer)).rejects.toThrow(signed);
+    await review(a.admin);
+    // A context with no person (a job, server code) is not checked: the tests above decide so.
   });
 
   it('payment_signal_reviews and the decisions are history: no UPDATE, no DELETE', async () => {
