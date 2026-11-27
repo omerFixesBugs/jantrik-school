@@ -34,6 +34,8 @@ export class PaymentEventsService {
     valId?: string | null;
     fields?: Partial<Record<SignalField, string>>;
     reviewReason?: Extract<PaymentReviewReason, 'DUPLICATE' | 'UNMATCHED'> | null;
+    /** When it happened, if not now (a query: when it was asked). */
+    at?: Date;
   }): Promise<string> {
     const row = await this.db.tx.paymentGatewayEvent.create({
       data: {
@@ -45,7 +47,7 @@ export class PaymentEventsService {
         valId: isGatewayRef(event.valId) ? event.valId : null,
         fields: signalFields(event.fields ?? {}),
         reviewReason: event.reviewReason ?? null,
-        receivedAt: this.clock.now(),
+        receivedAt: event.at ?? this.clock.now(),
       },
       select: { id: true },
     });
