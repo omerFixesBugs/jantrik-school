@@ -382,9 +382,14 @@ export class ReconcileService implements OnModuleInit {
         (n) => this.queues.dueAt(intent.createdAt, n) <= now.getTime(),
       );
       const latest = due.at(-1);
+      // Its latest due step already ran (its last check is newer): only later steps are missing.
+      const ran =
+        latest !== undefined &&
+        intent.lastCheckedAt !== null &&
+        intent.lastCheckedAt.getTime() >= this.queues.dueAt(intent.createdAt, latest);
       for (const n of [1, 2, 3, 4] as const) {
         // Of the steps already due only the latest runs (each asks the same question).
-        if (due.includes(n) && n !== latest) continue;
+        if (due.includes(n) && (n !== latest || ran)) continue;
         await this.queues.queueStep(
           { tenantId, intentId: intent.id, step: n },
           this.queues.dueAt(intent.createdAt, n),
