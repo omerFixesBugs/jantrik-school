@@ -1195,4 +1195,48 @@ describe('online payments: the review queue', () => {
       },
     });
   });
+
+  // Review round 2: the reviewer's probes.
+
+  it('money validated at ৳0.00 is money of an unknown amount: refunded outside with none, never applied or dismissed (review round 2, probe F)', async () => {
+    const zero = await paidOnline({
+      fields: { amount: '0.00', currency_amount: '0.00', store_amount: '0.00' },
+    });
+    expect(zero.intent).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      reviewReasons: ['AMOUNT_MISMATCH'],
+      valId: zero.t.valId,
+      validatedAmountPaisa: null,
+      storeAmountPaisa: null,
+    });
+    expect((await staffView(zero.intent.id)).actions).toMatchObject({
+      apply: false,
+      refundOutside: true,
+      dismiss: false,
+    });
+    expect(
+      (
+        await apply(zero.intent.id, {
+          dueIds: [zero.due.id],
+          applyPaisa: 120000,
+          expectedOutstandingPaisa: 120000,
+        }).expect(422)
+      ).body.code,
+    ).toBe('AMOUNT_UNKNOWN');
+    expect(
+      (
+        await as('admin')
+          .post(items(`/${zero.intent.id}/dismiss`), { note: NOTE })
+          .expect(422)
+      ).body.code,
+    ).toBe('HAS_MONEY');
+    await as('admin')
+      .post(items(`/${zero.intent.id}/refunded-outside`), { note: NOTE, reference: 'SSL-RF-0' })
+      .expect(200);
+    expect(await intentRow(h, s.tenantId, zero.intent.id)).toMatchObject({
+      status: 'REFUNDED_OUTSIDE',
+      refundedOutsidePaisa: null,
+      refundReference: 'SSL-RF-0',
+    });
+  });
 });

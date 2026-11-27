@@ -824,6 +824,16 @@ describe('review decisions on online payments (P7b)', () => {
     );
   });
 
+  it('a validated amount of nothing is unknown (NULL), never 0: refunded outside with none (review round 2, probe F)', async () => {
+    // ৳0.00 validated could neither be applied, dismissed nor refunded (two CHECKs disagreed).
+    await expect(inReview(a, { amount: 0 })).rejects.toThrow(/payment_intents_validated_amount/);
+    const unknown = await inReview(a, { amount: null, reasons: '{AMOUNT_MISMATCH}' });
+    await sql(
+      a,
+      `UPDATE payment_intents SET status = 'REFUNDED_OUTSIDE', ${resolved(a)} WHERE id = '${unknown.id}'`,
+    );
+  });
+
   it('payment_signal_reviews and the decisions are history: no UPDATE, no DELETE', async () => {
     const event = await validateEvent(a, {});
     await signalReview(a, event.id);
