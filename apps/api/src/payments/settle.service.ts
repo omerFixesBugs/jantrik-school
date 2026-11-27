@@ -14,6 +14,7 @@ import type { GatewayVoid } from '../fees/fee-online-hooks.js';
 import { Db } from '../tenancy/db.service.js';
 import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
 import { PaymentEventsService } from './payment-events.service.js';
+import { lockPaymentMoney } from './payment-locks.js';
 import type { ProviderOutcome } from './provider.js';
 import { decideSettlement, type SettleDecision } from './settle-decision.js';
 
@@ -127,6 +128,16 @@ export class SettleService {
         const open = intent.status === 'CREATED' || intent.status === 'REDIRECTED';
         const duesChanged =
           sameTran && open && intent.valId === null ? await this.duesChanged(intent) : false;
+        // Money already refunded outside as a money item is never an intent's too (review round
+        // 2, probe E): read under its val_id's lock, which a decision on an item takes as well.
+        let refundedAsItem = false;
+        if (sameTran && intent.valId === null) {
+          await lockPaymentMoney(tx, paid.valId);
+          refundedAsItem =
+            (await tx.paymentSignalReview.count({
+              where: { outcome: 'REFUNDED_OUTSIDE', event: { valId: paid.valId } },
+            })) > 0;
+        }
         const decision = decideSettlement(
           {
             status: intent.status,
@@ -135,7 +146,7 @@ export class SettleService {
             valId: intent.valId,
           },
           paid,
-          { duesChanged, otherIntent, duplicate, forgeable },
+          { duesChanged, otherIntent, duplicate, forgeable, refundedAsItem },
         );
 
         await this.events.record({

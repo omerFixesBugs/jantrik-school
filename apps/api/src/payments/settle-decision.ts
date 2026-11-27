@@ -86,11 +86,19 @@ export function mismatchReasons(
  *   (the bank_tran_id already on a live payment): review instead.
  * - `forgeable`: the val_id came only from signals anyone with the tran_id can send (a return, or
  *   an IPN from an address SSLCommerz does not list), not from its listed address or our query.
+ * - `refundedAsItem`: this money (its val_id) was already recorded as refunded outside on a money
+ *   item (P7b): it is never this intent's too (review round 2, probe E).
  */
 export function decideSettlement(
   intent: IntentState,
   paid: PaidFacts,
-  opts: { duesChanged: boolean; otherIntent?: boolean; duplicate?: boolean; forgeable?: boolean },
+  opts: {
+    duesChanged: boolean;
+    otherIntent?: boolean;
+    duplicate?: boolean;
+    forgeable?: boolean;
+    refundedAsItem?: boolean;
+  },
 ): SettleDecision {
   // First, whose money is it? Another tran_id's money is never recorded on this intent (P7a-H).
   if (paid.tranId !== intent.tranId) {
@@ -107,6 +115,19 @@ export function decideSettlement(
   // Money the intent already holds came from another validation: this is a second payment.
   if (intent.valId !== null || HOLDS_MONEY.includes(intent.status)) {
     return { kind: 'EVENT_ONLY', eventReason: 'DUPLICATE' };
+  }
+  // Money already given back outside the app as a money item (SSLCommerz once named no payment of
+  // ours for it): never posted, never held here as well (the database refuses it); the payment
+  // waits for a person, as money received twice.
+  if (opts.refundedAsItem) {
+    return {
+      kind: 'REVIEW',
+      recordFacts: false,
+      addReasons: CLOSED_UNPAID.includes(intent.status)
+        ? ['LATE_SUCCESS', 'DUPLICATE']
+        : ['DUPLICATE'],
+      eventReason: null,
+    };
   }
   const reasons = mismatchReasons(intent, paid, opts.duesChanged);
   if (intent.status === 'NEEDS_REVIEW') {

@@ -402,3 +402,40 @@ CREATE CONSTRAINT TRIGGER payment_signal_reviews_check
   AFTER INSERT ON payment_signal_reviews
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION payment_review_event_check();
+
+-- The same rule from the intent's side, at commit (review round 2, probe E): an intent never holds
+-- money already refunded outside as a money item, so it is neither taken nor applied there too
+-- ("refunded once per val_id" was checked only as the item is decided). Through the API this
+-- needs SSLCommerz to answer inconsistently (no payment of ours for the money, then one): settle
+-- then sends the payment to review without the money. Under the same advisory lock on the money
+-- as payment_review_event_check, so a refund of the item and an intent taking it at once never
+-- both pass. Read again at commit (a deferred trigger gets the row as it was when it fired).
+CREATE FUNCTION payment_intents_refunded_item_check() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_val text;
+BEGIN
+  SELECT val_id INTO v_val FROM payment_intents WHERE tenant_id = NEW.tenant_id AND id = NEW.id;
+  IF v_val IS NULL THEN
+    RETURN NULL;
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('payments-val:' || NEW.tenant_id::text || ':' || v_val, 0));
+  IF EXISTS (
+    SELECT 1 FROM payment_signal_reviews r
+    JOIN payment_gateway_events e ON e.tenant_id = r.tenant_id AND e.id = r.event_id
+    WHERE r.tenant_id = NEW.tenant_id AND e.val_id = v_val AND r.outcome = 'REFUNDED_OUTSIDE'
+  ) THEN
+    RAISE EXCEPTION 'this money was already refunded outside (a money item): no online payment holds it too'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NULL;
+END
+$$;
+REVOKE ALL ON FUNCTION payment_intents_refunded_item_check() FROM PUBLIC;
+CREATE CONSTRAINT TRIGGER payment_intents_refunded_item_check
+  AFTER UPDATE OF val_id, status ON payment_intents
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW WHEN (NEW.val_id IS NOT NULL)
+  EXECUTE FUNCTION payment_intents_refunded_item_check();
