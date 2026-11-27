@@ -1891,5 +1891,99 @@ step }`), as the nightly dues run is.
   one that stays open after +25 h (SSLCommerz listing a success its validation API does not
   confirm: never closed when in doubt) is not asked about every night; staff can still check it.
 - **Recorded only:** Playwright was not run locally (CI runs it; the screenshots are its
-  artifacts). Nothing called SSLCommerz: every test used the fake. The browser test uses the
-  seeded child `SHS-2026-0002` (as P7a2's does) and pays three of its dues.
+  artifacts). Nothing called SSLCommerz: every test used the fake. The browser test used the
+  seeded child `SHS-2026-0002` (as P7a2's does); since review round 1 it has its own (P7b-x33).
+
+### P7b after the review (round 1)
+
+P7a2's review round 1 was merged in first (`bd95464f`): its migration ties a live gateway payment
+to its intent's money (P7a2-x28) and keeps an intent from letting go of a live payment (P7a2-x25);
+`confirm` validates at most 3 new `val_id`s a round within hourly budgets, closes only when the
+query lists a failed or cancelled attempt, and validates a `PENDING` one again. Fixed, each with a
+failing test first, taken alone during the run (owner away), each the safer option:
+
+- **P7b-x23. The merge: the stricter union.** P7b's migration redefines
+  `fee_payments_gateway_check` after P7a2's: every P7a2 rule for a payment `settle` posts (the
+  intent's amount, its `bank_tran_id` as the TrxID, paid on `priced_on`), and the applied branch
+  only for an intent a person applied (`applied_paisa`, written only by that decision: the applied
+  amount, a day from the checkout day to the day recorded, in taka, x28). P7a2's
+  `payment_intents_paid_check` is not redefined and stands. Reconciliation follows `confirm`: at
+  most 3 new `val_id`s a step (was 5; `confirm`'s bound per round), and its `QUERY` event is
+  recorded at the time it was asked, so a signal that arrives while SSLCommerz answers is still
+  `confirm`'s to take.
+- **P7b-x24. A void after a partial apply keeps the refund** (finding 1, must-fix). ৳1 200 in
+  review, ৳800 applied and ৳400 refunded outside, then the payment voided: the way back to review
+  cleared the refund, so the whole ৳1 200 could be applied again (records of ৳1 600 for ৳1 200).
+  Now only the applied part and the decision are cleared; `refunded_outside_paisa` and
+  `refund_reference` stay ("refunded outside" is final, P7b-N), never shrink and never lose
+  their reference (the guard trigger), and an intent in review may hold one below its validated
+  amount (the CHECK). The money still to decide is the validated amount less what was refunded:
+  apply refuses more (`AMOUNT_EXCEEDS_MONEY { moneyPaisa }`), a further remainder is added to the
+  refund (a new reference replaces the old on the row; the audit keeps both), "refunded outside"
+  records the whole amount (the audit names the rest). The staff view gains
+  `refundedOutside { amountPaisa, reference }` (the card shows "Already refunded outside"; the
+  dialogs offer only the rest) and the report counts the refund, the rest as to check.
+- **P7b-x25. One payment is one item, refunded outside once** (finding 2). `settle` (and the
+  unmatched check) record every validation, but give a `val_id` a review reason only the first
+  time, under its advisory lock (`PaymentEventsService.record`), so an IPN's confirm racing "check
+  now" or step 4 no longer makes two items of one second payment. A refund outside of a record
+  whose money another record already refunded is 409 `ALREADY_REFUNDED` (it can be dismissed as a
+  repeat), of money an intent holds 409 `HELD_BY_PAYMENT` (decided on that intent); the database
+  checks both at commit (`payment_review_event_check`, under the same lock).
+- **P7b-x26. A live gateway payment is never detached from its intent** (finding 3, P1-J10): the
+  reviewer's probe (an applied intent moved back to review "voided" with its payment live, then
+  refunded outside) is refused at commit by P7a2-x25 after the merge; no new rule was needed. The
+  probe is a database test.
+- **P7b-x27. A decision names the signed person** (hardening a, as P1-J8k and P6-b21): when a
+  request's context signs a person, `resolved_by_id` on an intent leaving review and on a money
+  item's decision must be that person (triggers); a context with no person is not checked.
+- **P7b-x28. A refunded item's amount is its event's** (hardening b): `amount_paisa` is the
+  event's `amount` read as the API reads it (at most 7 digits and 2 decimals), or NULL exactly
+  when that was not well-formed (checked at commit).
+- **P7b-x29. Applied only in taka, in the database too** (hardening c): the applied branch of the
+  match requires `validated_currency = 'BDT'` (P7b-G), from both sides.
+- **P7b-x30. An undocumented query status is UNKNOWN** (hardening d): an attempt in a status
+  SSLCommerz does not document (the client's `OTHER`) makes the check `UNKNOWN`, not
+  `NO_SUCCESS`: nothing closes on it before +25 h, a dismissal is refused (`CHECK_FIRST`), and at
+  +25 h it expires with the +7 day query, as `PENDING` does. The page says "an attempt in a state
+  SSLCommerz does not document".
+- **P7b-x31. Money items in the online report** (hardening e): a second payment (`DUPLICATE`) on
+  its payment's start day, money of no payment of ours (`UNMATCHED`) on the day it arrived; each
+  payment's money once (by `val_id`; a dismissed repeat record or money an intent holds is not
+  counted again); in received (amount, store share, charges), in "to check" while undecided, in
+  refunded outside once refunded. So received = paid + to check + refunded outside.
+- **P7b-x32. The nightly re-queue and the heal leave out, in the query, what has nothing to
+  run** (hardening f): an open payment past +25 h whose +25 h step ran, a posted one whose +25 h
+  query ran, an expired one whose +7 day query ran; the heal reads only payments whose latest due
+  step has not run. Before, 500 payments that stay open (never closed when in doubt) filled the
+  batch every night and crowded out newer ones.
+- **P7b-x33. The browser test has its own child and guardian** (CI, run 46019544785: the spec
+  failed after 12.9 s, its retry after 1.4 min, and P7a2's happy path after it took 8.1 min and
+  failed). Replayed through the API on the e2e seed, every step works; the failure was in the
+  browser, right after the admin's page opened: `passwordLogin` returns at once and the next
+  `goto` cut the login off (the race of P7a2-x29), then a 10 s wait. The retry waited out the
+  guardian's OTP cooldown and failed the same way. Sharing Tahmid (`SHS-2026-0002`) with
+  payments.spec also took one of his three owed dues per attempt and the father's OTP budget,
+  which that spec needs. Now: Rakib (`SHS-2026-0104`, `DEMO.rakibGuardian`, no other spec signs
+  in as his father), the dashboard awaited after each staff login, the items picked by their
+  intent id, the money applied to a month ahead, a payment left at the gateway continued, every
+  action, navigation and wait bounded at 30 s; an API test replays the flow. Playwright was not
+  run locally (its ports are the developer's).
+
+Recorded, review round 1 (not changed):
+
+- **(a) Tests the reviewer named, passing as the code stands** (`payments-review.e2e-spec.ts`):
+  apply and the counter on one due at once (one is recorded; the other finds the due paid, a 404
+  `Due not found` from either side, as the counter answers today); a void and a second apply at
+  once (never two live payments); a dismissal and a late payment at once (never dismissed with
+  money); a refund of an item while its twin is dismissed (one refund, one repeat); `TRX_ID_USED`,
+  `AMOUNT_UNKNOWN` (then refunded with no amount) and `TRX_ID_UNUSABLE`; another child's due
+  (404, nothing recorded). The report with an apply that has a refund part, and with refunded
+  items, is tested with x24 and x31.
+- **(b) Steps 1–3 still close on EXPIRED or UNATTEMPTED attempts after the hour** (P7b-x11),
+  while `confirm` closes a signal's payment only when the query lists FAILED or CANCELLED
+  (P7a2-x26): that rule is against forged returns while the payer may still pay; reconciliation
+  closes only a payment past its hour whose every listed attempt ended unpaid.
+- **(c) The loser of apply against the counter gets 404** (`openDues` finds the due paid), not
+  409 `DUES_CHANGED`; the page reloads the item either way. A clearer answer is a fee-module change
+  for later.

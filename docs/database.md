@@ -866,27 +866,41 @@ student_id)`), set on a `GATEWAY` payment only (the channel CHECK: a gateway met
     whole validated money (`refunded_outside_paisa IS NOT DISTINCT FROM validated_amount_paisa`: an
     amount that was not well-formed stays unknown) and nothing applied; **dismissed: no validated
     money** (`val_id IS NULL`; money is never dismissed, P7b-E); applied ≥ 1 and applied +
-    refunded outside = the validated amount; a refund reference only with a refund.
+    refunded outside = the validated amount; a refund outside only on a `PAID` (applied) or
+    `REFUNDED_OUTSIDE` intent, or on one back in review below its validated amount (kept from a
+    voided apply, P7b-x24); a refund reference only with a refund.
   - Trigger `payment_intents_resolution_guard` (BEFORE UPDATE, invoker, pinned `search_path`,
     beside P7a2's `payment_intents_guard`, which runs first): only a person's decision moves an
     intent out of `NEEDS_REVIEW` (S23: no job ever does), and the decision is written exactly then;
     `NEEDS_REVIEW` → `PAID` brings a payment, `PAID` → `NEEDS_REVIEW` drops it; when an intent
     comes back to review (a void, a success after a dismissal) its decision is cleared from the row
-    (the audit log keeps it).
+    (the audit log keeps it) except `refunded_outside_paisa` and `refund_reference`, which stay
+    ("refunded outside" is final, P7b-N) and, as it leaves review again, never shrink or lose the
+    reference (P7b-x24). When the context signs a person, the decider (`resolved_by_id`) must be
+    that person (P7b-x27, as P1-J8k); a context with no person is not checked.
   - **A live gateway payment matches its `PAID` intent**, at commit and from both sides
     (`fee_payments_gateway_check`, redefined here, and `payment_intents_payment_match`): the TrxID
-    is the intent's `bank_tran_id`; posted by `settle`, the intent's amount on its checkout day;
-    applied from review, the applied amount on a day from the checkout day to the day recorded.
+    is the intent's `bank_tran_id`; posted by `settle`, the intent's amount on its checkout day
+    (P7a2-x28's rule); applied from review, the applied amount on a day from the checkout day to
+    the day recorded, in taka (`validated_currency = 'BDT'`, P7b-x29). The redefinition is the
+    stricter union of P7a2's function and P7b's applied branch (P7b-x23); P7a2's
+    `payment_intents_paid_check` (an intent never lets go of a live payment) stands and also
+    refuses a live payment detached from its intent (P7b-x26).
   - **`payment_signal_reviews`** (P7b-C; S I for `jantrik_app`, no UPDATE or DELETE: history):
     the one final decision on a money item (UNIQUE `(tenant_id, event_id)`, composite key to
     `payment_gateway_events`): `REFUNDED_OUTSIDE` (with the event's amount when well-formed, an
-    optional reference) or `DISMISSED`; a note (3 to 500); who and when. Forced RLS,
+    optional reference) or `DISMISSED`; a note (3 to 500); who and when (the signed person when
+    the context has one: trigger `payment_signal_reviews_decider`, P7b-x27). Forced RLS,
     `tenant_isolation`, index `(tenant_id, resolved_at)`. A deferred constraint trigger
     (`payment_review_event_check`) checks at commit that the event is a `VALIDATE` with a review
-    reason and that a dismissal is only of a repeat record (an intent holds the same `val_id`, or
-    another review event records it and was not itself dismissed). It first takes an advisory lock
-    on `(tenant, val_id)` (the API takes the same one before it inserts), so two dismissals of the
-    two records of one payment cannot both pass (the second waits and reads the first's commit).
+    reason; that a refund records the event's validated amount (its `amount` read as the API
+    reads it, else NULL; P7b-x28); that money is refunded once (not when another record of the
+    `val_id` was refunded, nor when an intent holds it; P7b-x25); and that a dismissal is only of
+    a repeat record (an intent holds the same `val_id`, or another review event records it and
+    was not itself dismissed). It first takes an advisory lock on `(tenant, val_id)` (the API takes
+    the same one before it inserts, and before it gives a new `VALIDATE` event a review reason), so
+    two decisions on the records of one payment cannot both pass (the second waits and reads the
+    first's commit).
 - Tests: `packages/db/test/payments-rls.test.ts`, `payments-secrets.test.ts`,
   `payments-intents.test.ts`, `payments-function.test.ts`, `payments-reviews.test.ts` (P7b),
   `schema-safety.test.ts`.

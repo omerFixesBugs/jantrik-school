@@ -290,21 +290,23 @@ query answer never posts by itself (P7b-A): every successful attempt it lists wh
 not been decided yet (no `VALIDATE` event saying `VALID` or `VALIDATED`; one that said
 `PENDING` is asked again) goes through the validation API and `settle`
 (`ConfirmService.validate`), exactly as an IPN does: one decision path for every signal. At most
-5 new `val_id`s per step.
+3 new `val_id`s per step (`confirm`'s own bound per round, P7b-x23).
 
 | Step     | When (after the intent was created) | Runs for                                                        | Besides asking                                                                                                                            |
 | -------- | ----------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | 1, 2, 3  | +5 min, +30 min, +2 h               | every intent not `PAID`, refunded or dismissed                  | an open intent past its hour whose listed attempts all ended unpaid (FAILED, CANCELLED, EXPIRED, UNATTEMPTED) → `FAILED` (or `CANCELLED`) |
-| 4        | +25 h                               | every intent (P7b-J: a second payment, a success after a close) | an intent still open → `EXPIRED`, PENDING included (audited, no person); one PENDING then is asked once more at +7 days                   |
-| 5        | +7 days                             | an intent PENDING at +25 h (P7b-K)                              | nothing: a success found goes to review as `LATE_SUCCESS`                                                                                 |
+| 4        | +25 h                               | every intent (P7b-J: a second payment, a success after a close) | an intent still open → `EXPIRED`, PENDING included (audited, no person); one PENDING or UNKNOWN then is asked once more at +7 days        |
+| 5        | +7 days                             | an intent PENDING or UNKNOWN at +25 h (P7b-K, P7b-x30)          | nothing: a success found goes to review as `LATE_SUCCESS`                                                                                 |
 | `manual` | "Check with SSLCommerz" (staff)     | any intent                                                      | as steps 1–3                                                                                                                              |
 
 - **Each step** (`reconcile` job `{ tenantId, intentId, step }`, job id `rec-<intentId>-<step>`, 3
   attempts from a minute apart): a short transaction reads the intent and its credentials; the
-  query runs outside any transaction; a `QUERY` event and the intent's `last_checked_at` and
-  `last_check_outcome` (`SUCCESS_FOUND`, `PENDING`, `NO_SUCCESS`, or the provider's error code)
-  are written; then the validations. Nothing is closed when in doubt: no attempt at all, a
-  `PENDING` one or a status SSLCommerz does not document changes nothing before +25 h.
+  query runs outside any transaction; a `QUERY` event (recorded at the time it was asked, as
+  `confirm`'s) and the intent's `last_checked_at` and `last_check_outcome` (`SUCCESS_FOUND`,
+  `PENDING`, `NO_SUCCESS` when every attempt listed ended unpaid or none was, `UNKNOWN` when one is
+  in a status SSLCommerz does not document, or the provider's error code) are written; then the
+  validations. Nothing is closed when in doubt: no attempt at all, a `PENDING` one or an `UNKNOWN`
+  one changes nothing before +25 h, and only `NO_SUCCESS` lets a dismissal go ahead (P7b-x30).
 - **An intent in review** is only asked about: `settle` records what it finds (a second payment is
   a `DUPLICATE` item) and never moves it out of review (S23).
 - **A gateway error** (or unreadable credentials) fails the step with a fixed code; BullMQ retries
@@ -321,12 +323,15 @@ not been decided yet (no `VALIDATE` event saying `VALID` or `VALIDATED`; one tha
   exists); a step listed more than 8 days ago is dropped. It reads Redis only.
 - **The nightly fee run** (00:30 Asia/Dhaka) visits each institute in `fees:tenants` and, in that
   institute's own context, lists again its open intents older than an hour (the latest due step now
-  unless it already ran, the later ones at their times), the intents posted in the last 26 hours whose +25 h query has not
-  run, and the expired ones still PENDING at +25 h (their +7 day query). No query ever runs across
-  institutes. It runs before the fee module check: validated money is posted even with fees off.
+  unless it already ran, the later ones at their times), the intents posted in the last 26 hours
+  whose +25 h query has not run, and the expired ones still PENDING or UNKNOWN at +25 h (their +7
+  day query). Each list leaves out, in its query, what has nothing left to run (an open intent past
+  +25 h whose +25 h step ran), so payments that stay open never crowd out the rest (500 per list,
+  oldest first; P7b-x32). No query ever runs across institutes. It runs before the fee module
+  check: validated money is posted even with fees off.
 - **Heal on read:** the guardian's payment page (P7a2) and the review queue (an open intent whose
   latest due step is more than 10 minutes overdue and has not run is asked about now, at most once
-  a minute per institute).
+  a minute per institute; the query reads only such intents, P7b-x32).
 
 ## The review queue (P7b)
 
@@ -367,6 +372,9 @@ expectedOutstandingPaisa, refundOutside?: { reference }, note, clientRequestId }
   validation was recorded, never before the checkout day nor after today; P7b-F), recorded today,
   the admin as the actor; the intent `PAID` with `applied_paisa`. Less than the money only with
   `refundOutside`: the rest is recorded as given back outside the app in the same action (P7b-E).
+  **The money** is what SSLCommerz validated less what was already refunded outside (an applied
+  payment voided back into review keeps its refunded part, P7b-x24); a further remainder is added
+  to that refund (a new reference replaces the old one on the row; the audit keeps both).
   Errors: 409 `ALREADY_RESOLVED`, `DUES_CHANGED { outstandingPaisa }` (what the chosen dues owe on
   the payment day differs from what was shown), `TRX_ID_USED` (that bank transaction is already a
   live payment); 422 `NO_MONEY`, `CURRENCY_NOT_APPLICABLE` (P7b-G), `AMOUNT_UNKNOWN`,
@@ -374,7 +382,11 @@ expectedOutstandingPaisa, refundOutside?: { reference }, note, clientRequestId }
 { remainderPaisa }`, `IDEMPOTENCY_MISMATCH`; a retried `clientRequestId` → the same receipt.
 - **Refunded outside** (intents with validated money; money items): `{ note, reference? }`, the
   whole money given back outside the app (SSLCommerz's merchant panel or by hand; the refund API is
-  not used, P7b-I). Final: no undo in the app (P7b-N). 422 `NO_MONEY`.
+  not used, P7b-I); for an intent with a refund kept from a voided apply, the rest now (the audit
+  names it), its earlier reference kept unless a new one is given. Final: no undo in the app
+  (P7b-N). 422 `NO_MONEY`. **One payment is refunded once** (P7b-x25): a money item whose money
+  another record already refunded is 409 `ALREADY_REFUNDED` (dismiss it as a repeat), one whose
+  money an intent holds 409 `HELD_BY_PAYMENT` (decide it on that intent).
 - **Dismiss**: an intent **without** validated money (its own: a `TRAN_ID_MISMATCH` carries
   another payment's money elsewhere) and only after a check in the last 15 minutes found no
   success (409 `CHECK_FIRST`, 422 `HAS_MONEY`); its dues are free again and a success that still
@@ -385,15 +397,23 @@ expectedOutstandingPaisa, refundOutside?: { reference }, note, clientRequestId }
   checkout (no snapshot, no payer; two institutes sharing one store would even see each other's
   money as unmatched), and money paid twice is normally given back.
 - **A void of an applied payment** sends the intent back to review (`VOIDED`); the decision is
-  cleared from the row (the audit log keeps it) and it may be applied again: one live payment.
+  cleared from the row (the audit log keeps it), except the money already refunded outside with it,
+  which stays with its reference (P7b-N, P7b-x24: the view's `refundedOutside`, the card's "Already
+  refunded outside"); the rest may be applied again: one live payment.
+- **One item per payment:** `settle` and the unmatched check record every validation, but put a
+  `val_id` in the queue only once (under its advisory lock): two signals validating one second
+  payment at once make one item (P7b-x25).
 - **What the guardian sees** (P7a's view): `PAID` with the receipt after an apply, `REFUNDED` after
   a refund outside, `NOT_PAID` after a dismissal. Never the reasons.
 - **The database:** only a person's decision moves an intent out of review, and the decision is
-  written exactly then (`payment_intents_resolution_guard`); a refunded intent records the whole
-  validated amount, applied + refunded outside is the validated amount, a dismissed one holds no
-  money (CHECKs); a live gateway payment and its `PAID` intent agree on the amount, the TrxID and
-  the day, checked at commit from both sides; `payment_signal_reviews` holds one final decision
-  per item, history only. Details: [database.md](database.md) → Online payments.
+  written exactly then, in the name of the signed person (`payment_intents_resolution_guard`,
+  P7b-x27); a refunded intent records the whole validated amount, applied + refunded outside is the
+  validated amount, a refund outside never shrinks or loses its reference, a dismissed one holds no
+  money (CHECKs and the guard); a live gateway payment and its `PAID` intent agree on the amount,
+  the TrxID, the day and (applied) the currency, checked at commit from both sides, and an intent
+  never lets go of a live payment (P7a2-x25); `payment_signal_reviews` holds one final decision per
+  item, history only, by the signed person, a refund with its event's validated amount, once per
+  payment (P7b-x25, x28). Details: [database.md](database.md) → Online payments.
 
 ### The web pages
 
@@ -412,10 +432,14 @@ expectedOutstandingPaisa, refundOutside?: { reference }, note, clientRequestId }
   payments, OWNER/ADMIN/ACCOUNTANT; at most a year): per day each payment was started, in the
   institute's timezone: started (count, amount asked), open, paid now (count, amount of each
   payment: an applied one's applied amount), failed or cancelled, expired, in review (count, money
-  validated), refunded outside (count, amount, whole or the rest of an applied one), dismissed, and
-  all the money SSLCommerz validated for them with the store's share and **SSLCommerz's charges**
-  (amount − store amount where both are known; S24), whatever happened since. `…/csv`: a BOM,
-  ASCII digits, bn or en headers, formula-safe cells.
+  validated less any refund kept from a voided apply), refunded outside (count, amount, whole or
+  the rest of an applied one, kept after a void), dismissed, and all the money SSLCommerz validated
+  for them with the store's share and **SSLCommerz's charges** (amount − store amount where both are
+  known; S24), whatever happened since. **Money items count too** (P7b-x31): a second payment on its
+  payment's start day, money of no payment of ours on the day it arrived, each payment's money once
+  (a dismissed repeat record, or money an intent holds, is not counted again): in received, in
+  review while undecided, in refunded outside once refunded; so received = paid + in review +
+  refunded outside. `…/csv`: a BOM, ASCII digits, bn or en headers, formula-safe cells.
 - **The daily closing** (P7b-L): `FeeClosing.online` (count, amount, by method, voids made that day,
   net) for gateway payments recorded that day and gateway voids made that day, in the
   whole-institute closing only (OWNER/ADMIN, no collector chosen), counted in collected and net,
@@ -546,10 +570,12 @@ Nothing in CI or in any local test calls SSLCommerz, the sandbox included.
   `apps/api/test/payments-reconcile.e2e-spec.ts` (the schedule, every step, expiry, a late success,
   the sweep, the nightly re-queue, heal on read; steps run directly with a fake clock),
   `payments-review.e2e-spec.ts` (the queue, every action, two people at once, a late signal,
-  audit) and `payments-reports.e2e-spec.ts` (review focus 6), `apps/web/e2e/payments-review.spec.ts`
-  (paid at the counter while paying online, applied ahead; a risky payment; the accountant's view;
-  the closing's online line). The fake's payer page has a **Risky** button (paid, reported with
-  `risk_level` 1).
+  audit, the browser test's flow, review round 1's cases) and `payments-reports.e2e-spec.ts`
+  (review focus 6, money items), `apps/web/e2e/payments-review.spec.ts` (paid at the counter while
+  paying online, applied ahead; a risky payment; the accountant's view; the closing's online line;
+  its own child and guardian, Rakib `SHS-2026-0104` and `DEMO.rakibGuardian`, so it never uses
+  Tahmid's dues or his father's OTP budget, which payments.spec needs; P7b-x33). The fake's payer
+  page has a **Risky** button (paid, reported with `risk_level` 1).
 - **Playwright** also gives the API `WEB_PUBLIC_URL=http://localhost:3000`, so the fake's
   payer page brings the browser back to the web app, and the fake posts its IPN to the API.
 
