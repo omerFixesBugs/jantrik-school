@@ -5,12 +5,15 @@ import { ConfirmService } from '../src/payments/confirm.service.js';
 import {
   PAYMENTS_OPEN_KEY,
   PAYMENTS_QUEUE,
+  RECONCILE_JOB,
   RECONCILE_DELAYS_MS,
   reconcileJobId,
   type ReconcileStep,
 } from '../src/payments/payments.constants.js';
 import { PaymentJobError } from '../src/payments/confirm.service.js';
 import { ReconcileService } from '../src/payments/reconcile.service.js';
+import { FeeDuesProcessor } from '../src/fees/dues/fee-dues.processor.js';
+import { TenantJobRunner } from '../src/tenancy/tenant-job-runner.service.js';
 import { FakeClock } from './support/clock.js';
 import { startFakeSslcommerz, type FakeSslcommerz } from './support/fake-sslcommerz.js';
 import { createHarness, type Harness } from './support/harness.js';
@@ -27,6 +30,7 @@ import {
   PUBLIC_WEB,
   resetStartBudgets,
   startPayment,
+  waitStatus,
   type OnlineSchool,
 } from './support/payments.js';
 
@@ -324,5 +328,163 @@ describe('online payments: reconciliation', () => {
     await step(intent.id, 1);
     expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
     expect(await h.redis.zscore(PAYMENTS_OPEN_KEY, member(intent.id, 1))).toBeNull();
+  });
+  // ─────────────────────────── Healing (Task 3, P7b-B) ───────────────────────────
+
+  /** Forget an intent's scheduled steps in Redis (the jobs). */
+  const loseJobs = async (intentId: string) => {
+    for (const n of [1, 2, 3, 4, 5, 'manual'] as const) {
+      await (await queue.getJob(reconcileJobId(intentId, n)))?.remove();
+    }
+  };
+  const members = async () => h.redis.zrange(PAYMENTS_OPEN_KEY, 0, -1);
+
+  it('the jobs lost from Redis: the sweep adds the overdue steps again; the payment is posted once', async () => {
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    const { intent } = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, intent.id);
+    await loseJobs(intent.id);
+    // Not overdue yet (due at +5 min, swept 2 minutes after that): nothing.
+    clock.advance(6 * MINUTE);
+    await reconcile.sweep();
+    expect(await queue.getJob(reconcileJobId(intent.id, 1))).toBeUndefined();
+    clock.advance(2 * MINUTE);
+    await reconcile.sweep();
+    await waitStatus(h, s.tenantId, intent.id, 'PAID');
+    expect(await paymentsOf(intent.id)).toHaveLength(1);
+    // Only the overdue step: the others keep their places in the list, with no job yet.
+    expect(await queue.getJob(reconcileJobId(intent.id, 2))).toBeUndefined();
+    await vi.waitFor(async () =>
+      expect(await members()).toEqual([
+        member(intent.id, 2),
+        member(intent.id, 3),
+        member(intent.id, 4),
+      ]),
+    );
+    // A second sweep after the step is done adds nothing.
+    await reconcile.sweep();
+    expect(await queue.getJob(reconcileJobId(intent.id, 1))).toBeUndefined();
+    expect(await paymentsOf(intent.id)).toHaveLength(1);
+    // A step listed more than 8 days ago is dropped (the last, +25 h, as well 10 days on).
+    clock.advance(10 * 24 * HOUR);
+    await reconcile.sweep();
+    await loseJobs(intent.id);
+    expect(await members()).toEqual([]);
+  });
+
+  it("payments:open itself lost: the nightly run lists each institute's open payments again, in its own context", async () => {
+    const other = await onlineSchool(h, fake);
+    const otherDue = await extraDue(h, other, other.students[0]!.id, {
+      amountPaisa: 50000,
+      dueDate: other.today,
+    });
+    const theirs = await startPayment(h, other.tokens.guardian, other.students[0]!.id, {
+      dueIds: [otherDue.id],
+      expected: 50000,
+    });
+    const open = (await readyPayment()).intent;
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    for (const id of [open.id, theirs.id]) await loseJobs(id);
+    clock.advance(3 * HOUR);
+    const created = open.createdAt.getTime();
+
+    // One institute, as the nightly run visits it: only its own payments, the latest step due
+    // now and the later ones at their times.
+    await reconcile.requeueTenant(s.tenantId);
+    expect((await members()).filter((m) => m.includes(open.id))).toEqual([
+      member(open.id, 3),
+      member(open.id, 4),
+    ]);
+    expect(Number(await h.redis.zscore(PAYMENTS_OPEN_KEY, member(open.id, 4)))).toBe(
+      created + 25 * HOUR,
+    );
+    expect((await members()).some((m) => m.includes(theirs.id))).toBe(false);
+    await vi.waitFor(async () =>
+      expect((await intentRow(h, s.tenantId, open.id)).lastCheckedAt).toEqual(clock.now()),
+    );
+
+    // The nightly fee run does it for every institute it visits.
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    await loseJobs(open.id);
+    await h.app.get(FeeDuesProcessor).generateAll();
+    expect(await members()).toEqual(
+      expect.arrayContaining([member(open.id, 4), `${other.tenantId}:${theirs.id}:4`]),
+    );
+    await loseJobs(open.id);
+    await loseJobs(theirs.id);
+  });
+
+  it('a posted payment is listed again for +25 h; one PENDING at +25 h for +7 days; a young one not at all', async () => {
+    const paid = (await readyPayment()).intent;
+    await payAtGateway(h, fake, s.tenantId, paid.id);
+    await step(paid.id, 1);
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    await loseJobs(paid.id);
+    clock.advance(3 * HOUR);
+    await reconcile.requeueTenant(s.tenantId);
+    expect((await members()).filter((m) => m.includes(paid.id))).toEqual([member(paid.id, 4)]);
+
+    clock.set(new Date());
+    const pending = (await readyPayment()).intent;
+    await payAtGateway(h, fake, s.tenantId, pending.id, { status: 'PENDING' });
+    clock.advance(25 * HOUR);
+    await step(pending.id, 4);
+    expect((await intentRow(h, s.tenantId, pending.id)).status).toBe('EXPIRED');
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    await loseJobs(pending.id);
+    await reconcile.requeueTenant(s.tenantId);
+    expect((await members()).filter((m) => m.includes(pending.id))).toEqual([
+      member(pending.id, 5),
+    ]);
+
+    // Younger than an hour: its own jobs still stand; nothing listed again.
+    clock.set(new Date());
+    const young = (await readyPayment()).intent;
+    await h.redis.del(PAYMENTS_OPEN_KEY);
+    clock.advance(30 * MINUTE);
+    await reconcile.requeueTenant(s.tenantId);
+    expect((await members()).some((m) => m.includes(young.id))).toBe(false);
+  });
+
+  it('heal on read (the review page): an open payment overdue by 10 minutes is asked about, once a minute per institute', async () => {
+    const { intent } = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, intent.id);
+    await loseJobs(intent.id);
+    const budget = `rl:pay-review-heal:${s.tenantId}`;
+    await h.redis.del(budget);
+    const heal = () => h.app.get(TenantJobRunner).run(s.tenantId, () => reconcile.healOverdue());
+    // Step 1 is due at +5 min: not overdue by 10 minutes yet.
+    clock.advance(14 * MINUTE);
+    await heal();
+    expect(await queue.getJob(reconcileJobId(intent.id, 1))).toBeUndefined();
+    await h.redis.del(budget);
+    clock.advance(2 * MINUTE);
+    const add = vi.spyOn(queue, 'add');
+    try {
+      await heal();
+      await waitStatus(h, s.tenantId, intent.id, 'PAID');
+      expect(add.mock.calls.filter((c) => c[0] === RECONCILE_JOB)).toHaveLength(1);
+      // Within the minute: nothing more, whatever is overdue.
+      const later = (await readyPayment()).intent;
+      await loseJobs(later.id);
+      clock.advance(20 * MINUTE);
+      const before = add.mock.calls.length;
+      await heal();
+      expect(add.mock.calls.length).toBe(before);
+    } finally {
+      add.mockRestore();
+    }
+  });
+
+  it("heal on read (the guardian's page, P7a) still asks about a payment whose signals were lost", async () => {
+    const { intent, view } = await readyPayment();
+    await payAtGateway(h, fake, s.tenantId, intent.id);
+    await loseJobs(intent.id);
+    clock.advance(2 * MINUTE);
+    await api(h, s.tokens.guardian)
+      .get(`/me/children/${child().id}/fees/online-payments/${view.id}`)
+      .expect(200);
+    await waitStatus(h, s.tenantId, intent.id, 'PAID');
+    expect(await paymentsOf(intent.id)).toHaveLength(1);
   });
 });
