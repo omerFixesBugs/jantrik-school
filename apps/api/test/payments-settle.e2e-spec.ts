@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { getQueueToken } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { withTenant } from '@jantrik/db';
 import {
@@ -10,9 +11,11 @@ import {
   type FeeReceipt,
   type OnlinePaymentView,
 } from '@jantrik/shared';
+import type { Queue } from 'bullmq';
 import { FeeCollectionService } from '../src/fees/collection/fee-collection.service.js';
 import { ConfirmService, PaymentJobError } from '../src/payments/confirm.service.js';
 import { CheckoutService } from '../src/payments/checkout.service.js';
+import { confirmJobId, PAYMENTS_QUEUE } from '../src/payments/payments.constants.js';
 import { PAYMENT_PROVIDER, type PaymentProvider } from '../src/payments/provider.js';
 import { SettleService, type PaidOutcome } from '../src/payments/settle.service.js';
 import { startFakeSslcommerz, type FakeSslcommerz } from './support/fake-sslcommerz.js';
@@ -668,6 +671,36 @@ describe('online payments: confirmation and settle', () => {
       expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
       expect(validations(flood)).toBe(0);
       expect(await paymentsOf(intent.id)).toHaveLength(1);
+    });
+
+    it('queries are spaced per payment: with the slot taken, the confirm job waits in the queue (never refused), then asks and closes the payment (P7a2-x32)', async () => {
+      const { intent } = await readyPayment();
+      await payAtGateway(h, fake, s.tenantId, intent.id, { status: 'CANCELLED' });
+      // The payment's query slot is taken (signals made us ask a moment ago).
+      await h.redis.set(`rl:pay-query:${intent.id}`, 1000, 'EX', 30);
+      const asked = queries(intent.tranId);
+      expect(await confirm.run({ tenantId: s.tenantId, intentId: intent.id })).toMatchObject({
+        kind: 'LATER',
+      });
+      expect(queries(intent.tranId)).toBe(asked);
+      // Through the queue: the cancel return's job is delayed, neither failed nor dropped.
+      await postReturn(h, s.slug, intent.tranId, 'cancel', { status: 'CANCELLED' }).expect(303);
+      const queue = h.app.get<Queue>(getQueueToken(PAYMENTS_QUEUE));
+      const job = await vi.waitFor(
+        async () => {
+          const found = await queue.getJob(confirmJobId(intent.id));
+          expect(await found?.isDelayed()).toBe(true);
+          return found!;
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+      expect(queries(intent.tranId)).toBe(asked);
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('REDIRECTED');
+      // The slot frees: the job asks, and the cancelled attempt closes the payment.
+      await h.redis.del(`rl:pay-query:${intent.id}`);
+      await job.promote();
+      await waitStatus(h, s.tenantId, intent.id, 'CANCELLED');
+      expect(queries(intent.tranId)).toBe(asked + 1);
     });
 
     it('a closed payment: new val_ids are not validated unless the query lists them', async () => {
