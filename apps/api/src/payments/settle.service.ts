@@ -74,19 +74,22 @@ export class SettleService {
   /**
    * Settle one validated payment for the intent. A unique violation while posting (the
    * bank_tran_id already on a live payment, or a second payment for the intent) rolls everything
-   * back; it is then settled again as a DUPLICATE review, the money facts kept.
+   * back; it is then settled again as a DUPLICATE review, the money facts kept. `forgeable`: the
+   * val_id came only from signals anyone with the tran_id can send (P7a2-x30).
    */
   async settlePaid(
     tenantId: string,
     intentId: string,
     payerUserId: string,
     paid: PaidOutcome,
+    opts: { forgeable?: boolean } = {},
   ): Promise<SettleResult> {
+    const forgeable = opts.forgeable === true;
     try {
-      return await this.settleOnce(tenantId, intentId, payerUserId, paid, false);
+      return await this.settleOnce(tenantId, intentId, payerUserId, paid, false, forgeable);
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      return this.settleOnce(tenantId, intentId, payerUserId, paid, true);
+      return this.settleOnce(tenantId, intentId, payerUserId, paid, true, forgeable);
     }
   }
 
@@ -96,6 +99,7 @@ export class SettleService {
     payerUserId: string,
     paid: PaidOutcome,
     duplicate: boolean,
+    forgeable: boolean,
   ): Promise<SettleResult> {
     return this.jobs.run(
       tenantId,
@@ -131,7 +135,7 @@ export class SettleService {
             valId: intent.valId,
           },
           paid,
-          { duesChanged, otherIntent, duplicate },
+          { duesChanged, otherIntent, duplicate, forgeable },
         );
 
         await this.events.record({

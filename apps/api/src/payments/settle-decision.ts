@@ -84,16 +84,23 @@ export function mismatchReasons(
  *   money is handled through its own signals); otherwise such money is UNMATCHED.
  * - `duplicate`: a run before this one tried to post and the database refused it as a duplicate
  *   (the bank_tran_id already on a live payment): review instead.
+ * - `forgeable`: the val_id came only from signals anyone with the tran_id can send (a return, or
+ *   an IPN from an address SSLCommerz does not list), not from its listed address or our query.
  */
 export function decideSettlement(
   intent: IntentState,
   paid: PaidFacts,
-  opts: { duesChanged: boolean; otherIntent?: boolean; duplicate?: boolean },
+  opts: { duesChanged: boolean; otherIntent?: boolean; duplicate?: boolean; forgeable?: boolean },
 ): SettleDecision {
   // First, whose money is it? Another tran_id's money is never recorded on this intent (P7a-H).
   if (paid.tranId !== intent.tranId) {
     const eventReason = opts.otherIntent ? null : 'UNMATCHED';
-    if (HOLDS_MONEY.includes(intent.status)) return { kind: 'EVENT_ONLY', eventReason };
+    // Brought only by forgeable signals: the event is the record (UNMATCHED, for P7b's queue, when
+    // no intent of ours has that tran_id) and this payment stays as it is, so a stranger's val_id
+    // cannot keep a guardian's genuine payment from posting (P7a2-x30, narrowing P7a-H).
+    if (opts.forgeable || HOLDS_MONEY.includes(intent.status)) {
+      return { kind: 'EVENT_ONLY', eventReason };
+    }
     return { kind: 'REVIEW', recordFacts: false, addReasons: ['TRAN_ID_MISMATCH'], eventReason };
   }
   if (intent.valId === paid.valId) return { kind: 'NOTHING' };

@@ -168,6 +168,12 @@ export class ConfirmService {
         null;
       const signals = events.filter((e) => e.kind === 'RETURN' || e.kind === 'IPN');
       const since = signals.filter((e) => lastQuery === null || e.receivedAt > lastQuery);
+      // val_ids SSLCommerz's listed addresses brought (at any time). Any other signal can be sent
+      // by anyone with the tran_id: another payment's val_id from such a signal alone never sends
+      // this payment to review (P7a2-x30).
+      const fromListed = new Set(
+        signals.filter((e) => e.sourceListed === true && e.valId).map((e) => e.valId!),
+      );
       const waiting = (e: { valId: string | null }) =>
         e.valId !== null && !answered.has(e.valId) && !tried.has(e.valId);
       // Each new val_id once: those SSLCommerz's listed addresses brought first, then the oldest.
@@ -194,7 +200,9 @@ export class ConfirmService {
           }
           tried.add(valId);
           validatedAny = true;
-          failure = (await this.validate(data.tenantId, intent, creds, valId)) ?? failure;
+          failure =
+            (await this.validate(data.tenantId, intent, creds, valId, fromListed.has(valId))) ??
+            failure;
         }
         if (fresh.length > VALIDATIONS_PER_ROUND) leftToQuery = true;
         continue;
@@ -224,16 +232,23 @@ export class ConfirmService {
     }
   }
 
-  /** One validation call and what follows from it; the error code when the call failed. */
+  /**
+   * One validation call and what follows from it; the error code when the call failed. `trusted`:
+   * the val_id came from SSLCommerz's listed address or from our own query, not only from signals
+   * anyone can send (P7a2-x30).
+   */
   private async validate(
     tenantId: string,
     intent: IntentFacts,
     creds: SslcommerzCredentials,
     valId: string,
+    trusted: boolean,
   ): Promise<ProviderErrorCode | null> {
     const outcome = await this.provider.confirm(creds, { tranId: intent.tranId, valId });
     if (outcome.kind === 'PAID') {
-      await this.settle.settlePaid(tenantId, intent.id, intent.payerUserId, outcome);
+      await this.settle.settlePaid(tenantId, intent.id, intent.payerUserId, outcome, {
+        forgeable: !trusted,
+      });
       return null;
     }
     // A made-up val_id (INVALID), a pending or failed one, or no answer: recorded, nothing else.
@@ -290,7 +305,7 @@ export class ConfirmService {
         continue;
       }
       tried.add(attempt.valId);
-      failure = (await this.validate(tenantId, intent, creds, attempt.valId)) ?? failure;
+      failure = (await this.validate(tenantId, intent, creds, attempt.valId, true)) ?? failure;
     }
     const listed = new Set<string>(attempts.map((a) => a.status));
     const live = LIVE_ATTEMPTS.some((status) => listed.has(status));
