@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  FEE_PAYMENT_CHANNELS,
-  FEE_PAYMENT_METHOD_LABELS,
-  FEE_PAYMENT_METHODS,
-} from './fees.js';
+import { FEE_PAYMENT_CHANNELS, FEE_PAYMENT_METHOD_LABELS, FEE_PAYMENT_METHODS } from './fees.js';
 import {
   ONLINE_PAYMENT_STATES,
   PAYMENT_INTENT_STATUSES,
