@@ -34,21 +34,33 @@ CREATE TRIGGER sms_broadcasts_scheduler BEFORE INSERT OR UPDATE ON sms_broadcast
   FOR EACH ROW EXECUTE FUNCTION app_sms_broadcast_scheduler();
 
 -- Targets are inserted and deleted (never updated). The parent is read as the caller, so RLS
--- applies: a broadcast of another institute is not found, and its foreign key fails anyway.
+-- applies: a broadcast of another institute is not found, and its foreign key fails anyway. It is
+-- locked FOR SHARE by its id alone (review round 2): a target change racing the transaction that
+-- schedules the broadcast (which holds it FOR UPDATE) then waits for it and sees the result,
+-- instead of reading the draft it was and changing what goes out. A filter on the status would
+-- lock nothing while the row is still a draft. No new deadlock: an edit already holds the row FOR
+-- UPDATE before it replaces the targets, a new broadcast's own row is its creator's, and the job
+-- never writes targets.
 CREATE OR REPLACE FUNCTION app_sms_broadcast_target_scheduler() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp
   AS $$
   DECLARE
     v_user uuid := (SELECT public.app_current_user_id());
-    v_row public.sms_broadcast_targets;
+    v_broadcast uuid;
+    v_status public.broadcast_status;
+    v_by uuid;
   BEGIN
-    IF TG_OP = 'DELETE' THEN v_row := OLD; ELSE v_row := NEW; END IF;
-    IF v_user IS NOT NULL AND EXISTS (
-         SELECT 1 FROM public.sms_broadcasts b
-         WHERE b.id = v_row.broadcast_id
-           AND b.status = 'SCHEDULED'
-           AND b.scheduled_by_id IS DISTINCT FROM v_user) THEN
+    IF v_user IS NULL THEN
+      IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+      RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN v_broadcast := OLD.broadcast_id; ELSE v_broadcast := NEW.broadcast_id; END IF;
+    SELECT b.status, b.scheduled_by_id INTO v_status, v_by
+      FROM public.sms_broadcasts b
+      WHERE b.id = v_broadcast
+      FOR SHARE;
+    IF v_status = 'SCHEDULED' AND v_by IS DISTINCT FROM v_user THEN
       RAISE EXCEPTION 'a broadcast is scheduled by the signed-in person only'
         USING ERRCODE = 'insufficient_privilege';
     END IF;

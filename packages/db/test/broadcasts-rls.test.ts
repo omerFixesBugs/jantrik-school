@@ -338,6 +338,54 @@ describe('broadcasts RLS', () => {
       );
       expect((await row(id)).status).toBe('EXPIRED');
     });
+
+    // Review round 2: the targets check read the parent without a lock, so a colleague's insert
+    // or delete racing A's scheduling transaction (which holds the row FOR UPDATE, as the service
+    // does) went through, and A's SCHEDULED broadcast went to an audience A never previewed (no
+    // targets at all = the whole school). Two connections, the colleague signed as themselves.
+    it("a colleague's target change racing A's scheduling waits for it, then is refused", async () => {
+      const targets = (id: string) =>
+        withTenant(app, a, (tx) => tx.smsBroadcastTarget.count({ where: { broadcastId: id } }));
+      for (const attack of ['delete', 'insert'] as const) {
+        const id = await draftOfA();
+        await asA((tx) =>
+          tx.smsBroadcastTarget.create({
+            data: { tenantId: a, broadcastId: id, classLevelId: classA },
+          }),
+        );
+        let locked!: () => void;
+        let release!: () => void;
+        const isLocked = new Promise<void>((r) => (locked = r));
+        const released = new Promise<void>((r) => (release = r));
+        const scheduling = asA(async (tx) => {
+          await tx.$queryRaw`SELECT id FROM sms_broadcasts WHERE id = ${id}::uuid FOR UPDATE`;
+          await tx.smsBroadcast.update({
+            where: { id },
+            data: { status: 'SCHEDULED', scheduledAt: at(), scheduledById: userA },
+          });
+          locked();
+          await released;
+        });
+        await isLocked;
+        const change = asColleague((tx) =>
+          attack === 'delete'
+            ? tx.$executeRaw`DELETE FROM sms_broadcast_targets WHERE broadcast_id = ${id}::uuid`
+            : tx.$executeRaw`INSERT INTO sms_broadcast_targets (id, tenant_id, broadcast_id,
+                  class_level_id, updated_at)
+                VALUES (${randomUUID()}::uuid, ${a}::uuid, ${id}::uuid, ${classA}::uuid, now())`,
+        ).then(
+          () => 'went through',
+          (e: unknown) => (e instanceof Error ? e.message : String(e)),
+        );
+        // The colleague's statement is sent while A still holds the row, then A commits.
+        await new Promise((r) => setTimeout(r, 300));
+        release();
+        await scheduling;
+        expect(await change).toMatch(refused);
+        expect(await targets(id)).toBe(1);
+        expect(await row(id)).toMatchObject({ status: 'SCHEDULED', scheduledById: userA });
+      }
+    });
   });
 
   it('the BROADCAST SMS purpose exists', async () => {
