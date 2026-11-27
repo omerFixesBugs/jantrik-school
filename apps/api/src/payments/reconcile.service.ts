@@ -266,16 +266,24 @@ export class ReconcileService implements OnModuleInit {
     const askedAt = this.clock.now();
     const attempts = await this.provider.query(creds, intent.tranId);
     const found = Array.isArray(attempts) ? attempts : [];
-    const outcome: CheckOutcome = !Array.isArray(attempts)
-      ? attempts.code
-      : found.some((a) => SUCCESS.includes(a.status))
-        ? 'SUCCESS_FOUND'
-        : found.some((a) => a.status === 'PENDING')
-          ? 'PENDING'
-          : found.every((a) => ENDED.includes(a.status))
-            ? 'NO_SUCCESS'
-            : 'UNKNOWN';
-    await this.jobs.run(data.tenantId, async () => {
+    const outcome = await this.jobs.run(data.tenantId, async () => {
+      // A listed success whose money is accounted for elsewhere is not this payment's (review
+      // round 2, probe B): SSLCommerz once validated it for another tran_id or as a second
+      // payment (a money item records it, decided there), or another intent holds it. Otherwise
+      // every check would find it again and an intent holding no money could never be dismissed.
+      const elsewhere = await this.accountedElsewhere(intent.id, found);
+      const own = found.filter(
+        (a) => !(SUCCESS.includes(a.status) && a.valId !== null && elsewhere.has(a.valId)),
+      );
+      const outcome: CheckOutcome = !Array.isArray(attempts)
+        ? attempts.code
+        : own.some((a) => SUCCESS.includes(a.status))
+          ? 'SUCCESS_FOUND'
+          : own.some((a) => a.status === 'PENDING')
+            ? 'PENDING'
+            : own.every((a) => ENDED.includes(a.status))
+              ? 'NO_SUCCESS'
+              : 'UNKNOWN';
       // In ATTEMPT_STATUSES' order, as confirm records them (P7a2-x31): a paid or pending attempt
       // is never cut off at 40 characters (the payment's page reads the latest query).
       const statuses = ATTEMPT_STATUSES.filter((st) => found.some((a) => a.status === st));
@@ -293,6 +301,7 @@ export class ReconcileService implements OnModuleInit {
       await this.recordCheck(intent.id, outcome);
       if (!Array.isArray(attempts))
         await this.recordAccountFailure(intent.accountId, attempts.code);
+      return outcome;
     });
     if (!Array.isArray(attempts)) throw new PaymentJobError(attempts.code);
 
@@ -501,6 +510,37 @@ export class ReconcileService implements OnModuleInit {
           );
       }
     });
+  }
+
+  /**
+   * The validation IDs of listed successes whose money is accounted for elsewhere: a money item
+   * records it (a VALIDATE event with a review reason, UNMATCHED or DUPLICATE, decided there), or
+   * another intent holds it. In the caller's transaction.
+   */
+  private async accountedElsewhere(
+    intentId: string,
+    found: readonly { status: AttemptStatus; valId: string | null }[],
+  ): Promise<Set<string>> {
+    const valIds = [
+      ...new Set(
+        found
+          .filter((a) => SUCCESS.includes(a.status) && isGatewayRef(a.valId))
+          .map((a) => a.valId!),
+      ),
+    ];
+    if (valIds.length === 0) return new Set();
+    const tx = this.db.tx;
+    const [items, held] = await Promise.all([
+      tx.paymentGatewayEvent.findMany({
+        where: { kind: 'VALIDATE', valId: { in: valIds }, reviewReason: { not: null } },
+        select: { valId: true },
+      }),
+      tx.paymentIntent.findMany({
+        where: { valId: { in: valIds }, id: { not: intentId } },
+        select: { valId: true },
+      }),
+    ]);
+    return new Set([...items, ...held].map((r) => r.valId!));
   }
 
   /** The intent's last query by tran_id (no actor: not a decision; the QUERY event is the record). */
