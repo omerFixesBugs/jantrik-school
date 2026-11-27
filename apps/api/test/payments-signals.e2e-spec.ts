@@ -206,35 +206,60 @@ describe('online payments: the public signal routes', () => {
   });
 
   it('limits (P7a-C): 30 a minute from an unlisted address, 120 an hour per institute; SSLCommerz always gets through', async () => {
+    // A tran_id of its own each time, so no payment's own budget (below) is reached first.
+    const ipn = (ip: string) => postIpn(h, s.slug, { tran_id: newTranId(), status: 'VALID' }, ip);
     const ip = randomIp();
     for (let i = 0; i < 30; i++) {
-      expect((await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, ip)).status).toBe(200);
+      expect((await ipn(ip)).status).toBe(200);
     }
-    expect((await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, ip)).status).toBe(429);
+    expect((await ipn(ip)).status).toBe(429);
     // The institute's budget for unlisted senders: 120 an hour (90 left after the 30 above).
     for (let i = 0; i < 90; i++) {
-      const res = await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, randomIp());
-      expect(res.status).toBe(200);
+      expect((await ipn(randomIp())).status).toBe(200);
     }
-    expect(
-      (await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, randomIp())).status,
-    ).toBe(429);
+    expect((await ipn(randomIp())).status).toBe(429);
     // SSLCommerz's own address is not held back by either.
-    expect(
-      (await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, SSLCOMMERZ_IP)).status,
-    ).toBe(200);
+    expect((await ipn(SSLCOMMERZ_IP)).status).toBe(200);
   });
 
   it('a 61st return in a minute from one address: still 303, nothing recorded (the page heals)', async () => {
     const ip = randomIp();
+    // Returns for tran_ids this institute never made spend the address's budget too.
     for (let i = 0; i < 60; i++) {
-      await postReturn(h, s.slug, tranId, 'success', { status: 'VALID' }, ip).expect(303);
+      await postReturn(h, s.slug, newTranId(), 'success', { status: 'VALID' }, ip).expect(303);
     }
     const before = (await events({ kind: 'RETURN' })).length;
     const res = await postReturn(h, s.slug, tranId, 'success', { status: 'VALID' }, ip);
     expect(res.status).toBe(303);
     expect(res.headers['location']).toBe(`${PUBLIC_WEB}/children`);
     expect(await events({ kind: 'RETURN' })).toHaveLength(before);
+  });
+
+  it("one payment's budget (P7a2-x23): 10 signals an hour from anyone but SSLCommerz, whatever the address; SSLCommerz has 10 of its own", async () => {
+    // The reviewer's probe: anyone with the tran_id (it is in the return URL) sends returns with
+    // made-up val_ids from many addresses, each to be validated with the institute's credentials.
+    // The worker is paused here: the payment stays CREATED, which is enough to name it.
+    const view = await startPayment(h, s.tokens.guardian, s.students[1]!.id, { wait: false });
+    const sent: string[] = [];
+    for (let i = 0; i < 25; i++) {
+      const valId = `VALFLOOD${String(i).padStart(4, '0')}`;
+      const res = await postReturn(h, s.slug, view.tranId, 'success', { val_id: valId }, randomIp());
+      expect(res.status).toBe(303);
+      sent.push(res.headers['location'] as string);
+    }
+    const stored = await events({ intentId: view.id, kind: 'RETURN' });
+    expect(stored).toHaveLength(10);
+    // Over it: still a 303, to the children (nothing recorded; the payment's page heals).
+    expect(sent.at(-1)).toBe(`${PUBLIC_WEB}/children`);
+    // An IPN from an unlisted address counts against the same budget: 429, nothing stored.
+    expect(
+      (await postIpn(h, s.slug, { tran_id: view.tranId, status: 'VALID' }, randomIp())).status,
+    ).toBe(429);
+    // SSLCommerz's own notifications have a budget of their own: the flood never blocks them.
+    expect(
+      (await postIpn(h, s.slug, { tran_id: view.tranId, status: 'VALID' }, SSLCOMMERZ_IP)).status,
+    ).toBe(200);
+    expect(await events({ intentId: view.id, kind: 'IPN' })).toHaveLength(1);
   });
 
   it('nothing from a body reaches the logs', async () => {
