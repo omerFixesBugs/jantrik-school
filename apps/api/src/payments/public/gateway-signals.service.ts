@@ -41,7 +41,16 @@ const LIMITS = {
   ipnListedPerIp: { limit: 1200, windowSec: 60 },
   ipnOtherPerIp: { limit: 30, windowSec: 60 },
   ipnOtherPerInstitute: { limit: 120, windowSec: 3600 },
+  // One payment's signals, whatever the address (P7a2-x23): every guardian of the child has the
+  // tran_id (it is in the return URL), and each stored signal may be validated with the
+  // institute's credentials. A payment needs a return and an IPN per attempt; SSLCommerz's
+  // listed senders have a budget of their own, so a flood never blocks the real notification.
+  perPayment: { limit: 10, windowSec: 3600 },
 };
+
+/** The budget key of one payment's signals (our tran_id within the institute), by sender. */
+const paymentKey = (slug: string, tranId: string, listed: boolean) =>
+  `pay-sig-${listed ? 'listed' : 'other'}:${slug}:${tranId}`;
 
 interface Recorded {
   result: 'RECORDED' | 'INVALID' | 'UNKNOWN' | 'NO_INTENT';
@@ -124,8 +133,9 @@ export class GatewaySignalsService {
 
   /**
    * The payer's browser back from the gateway (POST or GET, P7a-N): where to send it (303). The
-   * word in the path is stored as a hint only. Over the address's budget: still a 303, nothing
-   * recorded (the payment's page heals it).
+   * word in the path is stored as a hint only. Over the address's budget or the payment's: still
+   * a 303, nothing recorded (the payment's page heals it). Neither budget is spent when the
+   * other refuses.
    */
   async payerReturn(
     slug: string,
@@ -137,10 +147,11 @@ export class GatewaySignalsService {
     const home = `${this.web}/children`;
     const word = { success: 'SUCCESS', fail: 'FAIL', cancel: 'CANCEL' }[outcome];
     if (!SLUG.test(slug) || !TRAN_ID_PATTERN.test(tranId) || !word || !fields) return home;
-    const allowed = await this.limiter.tryConsume({
-      key: `pay-ret-ip:${ip}`,
-      ...LIMITS.returnPerIp,
-    });
+    const listed = SSLCOMMERZ_SOURCES.has(ipv4(ip));
+    const allowed = await this.limiter.tryConsume(
+      { key: `pay-ret-ip:${ip}`, ...LIMITS.returnPerIp },
+      { key: paymentKey(slug, tranId, listed), ...LIMITS.perPayment },
+    );
     if (!allowed) return home;
     const valId = isGatewayRef(fields['val_id']) ? fields['val_id'] : null;
     const row = await this.record({
@@ -150,7 +161,7 @@ export class GatewaySignalsService {
       outcome: word,
       valId,
       fields: signalFields(fields),
-      sourceListed: SSLCOMMERZ_SOURCES.has(ipv4(ip)),
+      sourceListed: listed,
     });
     await this.follow(row);
     if (row.result !== 'RECORDED' || !row.intent_id || !row.student_id) return home;
@@ -160,7 +171,8 @@ export class GatewaySignalsService {
   /**
    * SSLCommerz's notification: always 200 unless over a budget (429), for an unknown institute or
    * intent too (a public slug list says as much). Listed senders get a large budget; any other
-   * sender a small one per address and, once its body parsed, one per institute.
+   * sender a small one per address and, once its body parsed, one per institute. Each payment
+   * (the tran_id named) has its own budget too, a separate one for listed senders (P7a2-x23).
    */
   async ipn(slug: string, fields: Record<string, unknown> | null, ip: string): Promise<void> {
     const listed = SSLCOMMERZ_SOURCES.has(ipv4(ip));
@@ -170,13 +182,14 @@ export class GatewaySignalsService {
     }
     // A malformed notification: OK, nothing stored, and no institute budget spent.
     if (!SLUG.test(slug) || !fields || !isGatewayRef(fields['tran_id'])) return;
-    if (
-      !listed &&
-      !(await this.limiter.tryConsume({
-        key: `pay-ipn-tenant:${slug}`,
-        ...LIMITS.ipnOtherPerInstitute,
-      }))
-    ) {
+    const perPayment = { key: paymentKey(slug, fields['tran_id'], listed), ...LIMITS.perPayment };
+    const allowed = listed
+      ? await this.limiter.tryConsume(perPayment)
+      : await this.limiter.tryConsume(
+          { key: `pay-ipn-tenant:${slug}`, ...LIMITS.ipnOtherPerInstitute },
+          perPayment,
+        );
+    if (!allowed) {
       throw new HttpException('Too many requests', HttpStatus.TOO_MANY_REQUESTS);
     }
     const row = await this.record({
