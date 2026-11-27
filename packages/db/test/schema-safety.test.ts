@@ -83,6 +83,7 @@ describe('schema safety net', () => {
         'notice_reads',
         'sms_broadcasts',
         'sms_broadcast_targets',
+        'payment_gateway_accounts',
       ]),
     );
     expect(tables.length).toBeGreaterThanOrEqual(18);

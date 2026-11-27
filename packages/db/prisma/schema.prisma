@@ -613,6 +613,9 @@ model User {
   smsBroadcastsScheduled SmsBroadcast[] @relation("SmsBroadcastScheduledBy")
   smsBroadcastsCancelled SmsBroadcast[] @relation("SmsBroadcastCancelledBy")
 
+  paymentAccountsCredentialsUpdated PaymentGatewayAccount[] @relation("PaymentAccountCredentialsUpdatedBy")
+  paymentAccountsTested             PaymentGatewayAccount[] @relation("PaymentAccountTestedBy")
+
   @@map("users")
 }
 
@@ -727,6 +730,8 @@ model Tenant {
 
   smsBroadcasts       SmsBroadcast[]
   smsBroadcastTargets SmsBroadcastTarget[]
+
+  paymentGatewayAccounts PaymentGatewayAccount[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -3899,4 +3904,51 @@ model SmsBroadcastTarget {
   @@unique([tenantId, id])
   @@index([tenantId, broadcastId])
   @@map("sms_broadcast_targets")
+}
+
+// ───────────────────────────── Online payments (sprint 1 P7a, docs/payments.md) ─────────────────────────────
+
+/// The online payment gateway an account belongs to (BKASH_TOKENIZED later, in its own migration).
+enum PaymentProvider {
+  SSLCOMMERZ
+
+  @@map("payment_provider")
+}
+
+/// An institute's gateway account: one per provider, SANDBOX only this sprint. The store ID and
+/// password are one AES-256-GCM ciphertext bound to this row (AAD payments:<provider>:<tenant>:<id>),
+/// left out of every read unless asked (CLIENT_OMIT) and read only by PaymentCredentialsService.
+/// On only after a passing test; saving credentials switches it off. Never deleted (P7a-P).
+model PaymentGatewayAccount {
+  id                     String          @id @default(uuid(7)) @db.Uuid
+  tenantId               String          @map("tenant_id") @db.Uuid
+  provider               PaymentProvider
+  /// SANDBOX only (a CHECK); live mode is a later decision.
+  mode                   String          @default("SANDBOX")
+  enabled                Boolean         @default(false)
+  /// "v1." + base64url(iv | tag | ciphertext) of {"storeId","storePassword"}.
+  credentialsCiphertext  String?         @map("credentials_ciphertext")
+  /// The store ID's last 4 characters, shown to the owner (never the password).
+  credentialsHint        String?         @map("credentials_hint")
+  keyVersion             Int             @default(1) @map("key_version") @db.SmallInt
+  credentialsUpdatedAt   DateTime?       @map("credentials_updated_at") @db.Timestamptz(3)
+  /// NULL when a command loaded them (payments:load-sandbox): no person did.
+  credentialsUpdatedById String?         @map("credentials_updated_by_id") @db.Uuid
+  lastTestAt             DateTime?       @map("last_test_at") @db.Timestamptz(3)
+  /// OK, BAD_CREDENTIALS, STORE_INACTIVE, UNREACHABLE or ERROR.
+  lastTestResult         String?         @map("last_test_result")
+  lastTestedById         String?         @map("last_tested_by_id") @db.Uuid
+  /// The last failure of a job that used the account (a fixed code), shown to the owner.
+  lastFailureCode        String?         @map("last_failure_code")
+  lastFailureAt          DateTime?       @map("last_failure_at") @db.Timestamptz(3)
+  createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant               Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  credentialsUpdatedBy User?  @relation("PaymentAccountCredentialsUpdatedBy", fields: [credentialsUpdatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lastTestedBy         User?  @relation("PaymentAccountTestedBy", fields: [lastTestedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, provider])
+  @@map("payment_gateway_accounts")
 }
