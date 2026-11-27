@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { withTenant, type PrismaClient } from '../src/index.js';
+import { withContext, withTenant, type PrismaClient, type TenantTx } from '../src/index.js';
 import { appClient, createTenant, randomPhone } from './helpers.js';
 
 // SMS broadcasts (sprint 1 P6b): forced RLS on sms_broadcasts and sms_broadcast_targets, no
@@ -120,6 +121,78 @@ describe('broadcasts RLS', () => {
         },
       }),
     );
+  });
+
+  it("cannot make the send job act as a colleague (sms_broadcasts.scheduled_by_id, P6-b21)", async () => {
+    // The send job signs its context as the broadcast's scheduler, read from this column (and
+    // checks that person's roles), so the app login must not be able to put anyone else there.
+    const colleague = await newUser(a);
+    const asA = <T>(fn: (tx: TenantTx) => Promise<T>) =>
+      withContext(app, { tenantId: a, userId: userA }, fn);
+    const asColleague = <T>(fn: (tx: TenantTx) => Promise<T>) =>
+      withContext(app, { tenantId: a, userId: colleague }, fn);
+    const at = new Date(Date.now() + 3_600_000);
+    const { id } = await asA((tx) =>
+      tx.smsBroadcast.create({
+        data: { tenantId: a, body: 'Sports day', recipients: 'STAFF', createdById: userA },
+        select: { id: true },
+      }),
+    );
+    // An injection in A's request: schedule A's draft in the colleague's name...
+    await expect(
+      asA(
+        (tx) => tx.$executeRaw`UPDATE sms_broadcasts
+          SET status = 'SCHEDULED', scheduled_at = ${at}, scheduled_by_id = ${colleague}::uuid
+          WHERE id = ${id}::uuid`,
+      ),
+    ).rejects.toThrow(/scheduled by the signed-in person only/);
+    // ...or insert a scheduled broadcast that names them.
+    await expect(
+      asA(
+        (tx) => tx.$executeRaw`INSERT INTO sms_broadcasts (id, tenant_id, body, recipients,
+            created_by_id, status, scheduled_at, scheduled_by_id, updated_at)
+          VALUES (${randomUUID()}::uuid, ${a}::uuid, 'x', 'STAFF', ${userA}::uuid, 'SCHEDULED',
+            ${at}, ${colleague}::uuid, now())`,
+      ),
+    ).rejects.toThrow(/scheduled by the signed-in person only/);
+
+    // The app's own writes still work. A schedules it as A.
+    await asA((tx) =>
+      tx.smsBroadcast.update({
+        where: { id },
+        data: { status: 'SCHEDULED', scheduledAt: at, scheduledById: userA },
+      }),
+    );
+    // Another admin may write the row as long as the scheduler stays as it is...
+    await asColleague(
+      (tx) => tx.$executeRaw`UPDATE sms_broadcasts SET scheduled_by_id = scheduled_by_id`,
+    );
+    // ...or edit it back to a draft, which clears the scheduler...
+    await expect(
+      asColleague(
+        (tx) => tx.$executeRaw`UPDATE sms_broadcasts SET scheduled_by_id = NULL, status = 'DRAFT',
+          scheduled_at = NULL WHERE id = ${id}::uuid`,
+      ),
+    ).resolves.toBe(1);
+    await expect(
+      asColleague(
+        (tx) => tx.$executeRaw`UPDATE sms_broadcasts
+          SET status = 'SCHEDULED', scheduled_at = ${at}, scheduled_by_id = ${userA}::uuid
+          WHERE id = ${id}::uuid`,
+      ),
+    ).rejects.toThrow(/scheduled by the signed-in person only/);
+    // ...and schedule it as themselves, never in A's name.
+    await asColleague((tx) =>
+      tx.smsBroadcast.update({
+        where: { id },
+        data: { status: 'SCHEDULED', scheduledAt: at, scheduledById: colleague },
+      }),
+    );
+    expect(
+      await withTenant(app, a, (tx) =>
+        tx.smsBroadcast.findUniqueOrThrow({ where: { id }, select: { scheduledById: true } }),
+      ),
+    ).toEqual({ scheduledById: colleague });
   });
 
   it('the BROADCAST SMS purpose exists', async () => {
