@@ -17,7 +17,7 @@ import { PAYMENT_PROVIDER, type PaymentProvider } from '../src/payments/provider
 import { ReconcileService } from '../src/payments/reconcile.service.js';
 import { SettleService, type PaidOutcome } from '../src/payments/settle.service.js';
 import { startFakeSslcommerz, type FakeSslcommerz } from './support/fake-sslcommerz.js';
-import { createHarness, type Harness } from './support/harness.js';
+import { createHarness, http, randomIp, type Harness } from './support/harness.js';
 import {
   api,
   childFees,
@@ -348,6 +348,70 @@ describe('online payments: the review queue', () => {
     // The counter's payment of the first due stands; nothing applied twice.
     const view = await guardianView(intent.id);
     expect(view).toMatchObject({ state: 'PAID', receipt: { id: receipt.id } });
+  });
+
+  it("the browser test's flow: the counter sees the payment in progress and takes the due; the payer's return finds it to check; applied ahead; the guardian sees the receipt", async () => {
+    // As apps/web/e2e/payments-review.spec.ts does it, through the API (the guardian on the
+    // gateway's page, the accountant at the counter, the admin in the queue).
+    const { due, intent } = await readyPayment(90000);
+    const ledger = (await as('accountant').get(`/fees/students/${child().id}/ledger`).expect(200))
+      .body as FeeLedger;
+    const pending = ledger.dues.filter((d) => d.onlinePending);
+    expect(pending.map((d) => d.id)).toEqual([due.id]);
+    await as('accountant')
+      .post('/fees/payments', {
+        studentId: child().id,
+        dueIds: [due.id],
+        amountPaisa: pending[0]!.balance.total,
+        expectedOutstandingPaisa: pending[0]!.balance.total,
+        clientRequestId: randomUUID(),
+      })
+      .expect(201);
+
+    // Paid on the gateway's page: the browser comes back (the IPN is off in this file).
+    const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+    const back = await http(h)
+      .post(`/public/payments/sslcommerz/${s.slug}/return/${intent.tranId}/success`)
+      .set('X-Forwarded-For', randomIp())
+      .type('form')
+      .send({ tran_id: t.tranId, val_id: t.valId, status: 'VALID' });
+    expect(back.status).toBe(303);
+    expect(back.headers['location']).toBe(
+      `${PUBLIC_WEB}/children/${child().id}/fees/pay/${intent.id}?from=gateway`,
+    );
+    await vi.waitFor(async () => expect((await guardianView(intent.id)).state).toBe('CHECKING'), {
+      timeout: 15_000,
+      interval: 100,
+    });
+    const queue = (await as('admin').get(items('/review')).expect(200)).body as PaymentReviewQueue;
+    const item = queue.intents.find((i) => i.id === intent.id)!;
+    expect(item).toMatchObject({
+      reasons: ['DUES_CHANGED'],
+      money: { amountPaisa: 90000 },
+      actions: { apply: true },
+    });
+
+    // The last period offered (a month ahead), the rest of the money refunded if it is less.
+    const now = (await as('admin').get(`/fees/students/${child().id}/ledger`).expect(200))
+      .body as FeeLedger;
+    const ahead = now.upcoming.at(-1)!;
+    const owed = ahead.amountPaisa - ahead.concessionPaisa;
+    const applying = Math.min(90000, owed);
+    const receipt = (
+      await apply(intent.id, {
+        advance: [{ headId: ahead.headId, periodKey: ahead.periodKey }],
+        applyPaisa: applying,
+        expectedOutstandingPaisa: owed,
+        ...(applying < 90000 ? { refundOutside: { reference: 'SSL-RF-0001' } } : {}),
+      }).expect(201)
+    ).body as FeeReceipt;
+    expect(receipt.lines.map((l) => l.periodKey)).toEqual([ahead.periodKey]);
+    expect(await guardianView(intent.id)).toMatchObject({
+      state: 'PAID',
+      receipt: { id: receipt.id, receiptNumber: receipt.receiptNumber },
+    });
+    // Nothing in progress is left for the child.
+    expect((await childFees(h, s.tokens.guardian, child().id)).online.inProgress).toBeNull();
   });
 
   it('less than the money: the rest must be recorded as refunded outside in the same action (P7b-E)', async () => {
