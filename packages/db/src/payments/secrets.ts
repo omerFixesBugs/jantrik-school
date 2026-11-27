@@ -1,10 +1,12 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
 // Payment gateway credentials at rest (sprint 1 P7a, docs/payments.md → Credentials). An
-// institute's store ID and password are kept as one AES-256-GCM ciphertext, bound to the account
-// they belong to by the additional data (AAD), so a ciphertext copied onto another institute's or
-// another account's row never decrypts. The key comes from PAYMENT_CREDENTIALS_KEY, its own
-// secret (the platform 2FA key's shape: platform/secrets.ts).
+// institute's store ID and password are kept as one AES-256-GCM ciphertext, bound by the
+// additional data (AAD) to the account they belong to and to the row's credentials version, so a
+// ciphertext copied onto another institute's or another account's row never decrypts, nor an
+// older ciphertext of the same row put back (the version, which a database trigger alone sets,
+// has gone up since: P7a1-x20). The key comes from PAYMENT_CREDENTIALS_KEY, its own secret (the
+// platform 2FA key's shape: platform/secrets.ts).
 
 export interface PaymentKeys {
   /** AES-256-GCM key for gateway credentials. */
@@ -33,9 +35,21 @@ export function paymentKeys(env: {
   };
 }
 
-/** The additional data that binds a ciphertext to one account of one institute. */
-export const credentialsAad = (provider: string, tenantId: string, accountId: string): string =>
-  `payments:${provider}:${tenantId}:${accountId}`;
+/**
+ * The additional data that binds a ciphertext to one account of one institute, and to one version
+ * of its credentials (`payment_gateway_accounts.credentials_version`, a whole number).
+ */
+export function credentialsAad(
+  provider: string,
+  tenantId: string,
+  accountId: string,
+  version: number,
+): string {
+  if (!Number.isSafeInteger(version) || version < 0) {
+    throw new Error('Payment credentials version must be a whole number');
+  }
+  return `payments:${provider}:${tenantId}:${accountId}:v${version}`;
+}
 
 /** "v1." + base64url(iv | tag | ciphertext). */
 export function encryptCredentials(plain: string, aad: string, keys: PaymentKeys): string {

@@ -322,8 +322,11 @@ CREATE TRIGGER payment_intents_insert_created
   BEFORE INSERT ON payment_intents
   FOR EACH ROW EXECUTE FUNCTION payment_intents_insert_created();
 
--- At commit: a PAID intent's payment is live, a gateway payment, and names this intent. Read
--- again then (a deferred trigger gets the row as it was when it fired).
+-- At commit: a PAID intent's payment is live, a gateway payment, and names this intent; and a
+-- live payment that names this intent is the one it holds as PAID, so an intent never lets go of
+-- its payment without the void (P7a2-x25: the guard alone let an update move PAID to review
+-- "voided" while the payment stayed ACTIVE). Read again then (a deferred trigger gets the row as
+-- it was when it fired).
 CREATE FUNCTION payment_intents_paid_check() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp
@@ -340,6 +343,14 @@ BEGIN
       AND p.channel = 'GATEWAY' AND p.payment_intent_id = NEW.id
   ) THEN
     RAISE EXCEPTION 'a PAID payment intent needs its own live gateway payment'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM fee_payments p
+    WHERE p.tenant_id = NEW.tenant_id AND p.payment_intent_id = NEW.id AND p.status = 'ACTIVE'
+      AND (v_status IS DISTINCT FROM 'PAID' OR v_payment IS DISTINCT FROM p.id)
+  ) THEN
+    RAISE EXCEPTION 'a live gateway payment keeps its intent PAID with it (void it first)'
       USING ERRCODE = 'check_violation';
   END IF;
   RETURN NULL;
@@ -453,7 +464,10 @@ ALTER TABLE fee_payments ADD CONSTRAINT fee_payments_trx_id CHECK (
   OR (channel = 'GATEWAY' AND trx_id ~ '^[A-Za-z0-9._-]{6,80}$'));
 
 -- At commit, the mirror of payment_intents_paid_check: a live gateway payment's intent is PAID
--- and holds it; a voided one's intent no longer does (the void moved it to review, P7a-G).
+-- and holds it, and the payment is that intent's money: its amount, the bank's transaction ID the
+-- validation reported, paid on the checkout day (P7a2-x28; the app cannot change any of the
+-- three on either row afterwards); a voided one's intent no longer holds it (the void moved it to
+-- review, P7a-G).
 CREATE FUNCTION fee_payments_gateway_check() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp
@@ -461,11 +475,15 @@ AS $$
 DECLARE
   v_status text;
   v_intent uuid;
+  v_amount integer;
+  v_trx text;
+  v_paid_on date;
 BEGIN
   IF NEW.channel <> 'GATEWAY' THEN
     RETURN NULL;
   END IF;
-  SELECT status::text, payment_intent_id INTO v_status, v_intent
+  SELECT status::text, payment_intent_id, amount_paisa, trx_id, paid_on
+    INTO v_status, v_intent, v_amount, v_trx, v_paid_on
     FROM fee_payments WHERE tenant_id = NEW.tenant_id AND id = NEW.id;
   IF v_status = 'ACTIVE' AND NOT EXISTS (
     SELECT 1 FROM payment_intents i
@@ -473,6 +491,14 @@ BEGIN
       AND i.fee_payment_id = NEW.id
   ) THEN
     RAISE EXCEPTION 'a gateway payment needs its intent PAID with it'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF v_status = 'ACTIVE' AND NOT EXISTS (
+    SELECT 1 FROM payment_intents i
+    WHERE i.tenant_id = NEW.tenant_id AND i.id = v_intent
+      AND i.amount_paisa = v_amount AND i.bank_tran_id = v_trx AND i.priced_on = v_paid_on
+  ) THEN
+    RAISE EXCEPTION 'a gateway payment must be its intent''s money (amount, bank transaction ID, checkout day)'
       USING ERRCODE = 'check_violation';
   END IF;
   IF v_status = 'VOID' AND EXISTS (

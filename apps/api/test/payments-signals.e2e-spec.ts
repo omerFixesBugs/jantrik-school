@@ -206,35 +206,73 @@ describe('online payments: the public signal routes', () => {
   });
 
   it('limits (P7a-C): 30 a minute from an unlisted address, 120 an hour per institute; SSLCommerz always gets through', async () => {
+    // A tran_id of its own each time, so no payment's own budget (below) is reached first.
+    const ipn = (ip: string) => postIpn(h, s.slug, { tran_id: newTranId(), status: 'VALID' }, ip);
     const ip = randomIp();
     for (let i = 0; i < 30; i++) {
-      expect((await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, ip)).status).toBe(200);
+      expect((await ipn(ip)).status).toBe(200);
     }
-    expect((await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, ip)).status).toBe(429);
+    expect((await ipn(ip)).status).toBe(429);
     // The institute's budget for unlisted senders: 120 an hour (90 left after the 30 above).
     for (let i = 0; i < 90; i++) {
-      const res = await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, randomIp());
-      expect(res.status).toBe(200);
+      expect((await ipn(randomIp())).status).toBe(200);
     }
-    expect(
-      (await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, randomIp())).status,
-    ).toBe(429);
+    expect((await ipn(randomIp())).status).toBe(429);
     // SSLCommerz's own address is not held back by either.
-    expect(
-      (await postIpn(h, s.slug, { tran_id: tranId, status: 'VALID' }, SSLCOMMERZ_IP)).status,
-    ).toBe(200);
+    expect((await ipn(SSLCOMMERZ_IP)).status).toBe(200);
   });
 
   it('a 61st return in a minute from one address: still 303, nothing recorded (the page heals)', async () => {
     const ip = randomIp();
+    // Returns for tran_ids this institute never made spend the address's budget too.
     for (let i = 0; i < 60; i++) {
-      await postReturn(h, s.slug, tranId, 'success', { status: 'VALID' }, ip).expect(303);
+      await postReturn(h, s.slug, newTranId(), 'success', { status: 'VALID' }, ip).expect(303);
     }
     const before = (await events({ kind: 'RETURN' })).length;
     const res = await postReturn(h, s.slug, tranId, 'success', { status: 'VALID' }, ip);
     expect(res.status).toBe(303);
     expect(res.headers['location']).toBe(`${PUBLIC_WEB}/children`);
     expect(await events({ kind: 'RETURN' })).toHaveLength(before);
+  });
+
+  it("a flood of returns from other addresses never keeps the payer's own signals out (P7a2-x23): no per-payment count before storing", async () => {
+    // Anyone with the tran_id (every guardian of the child; it is in the return URL) sends
+    // returns with made-up val_ids from many addresses. The bound lives in confirm, where the
+    // gateway is asked (payments-settle); a signal is never refused on a count others can spend.
+    // The worker is paused here: the payment stays CREATED, which is enough to name it.
+    const view = await startPayment(h, s.tokens.guardian, s.students[1]!.id, { wait: false });
+    for (let i = 0; i < 25; i++) {
+      const valId = `VALFLOOD${String(i).padStart(4, '0')}`;
+      const res = await postReturn(
+        h,
+        s.slug,
+        view.tranId,
+        'success',
+        { val_id: valId },
+        randomIp(),
+      );
+      expect(res.status).toBe(303);
+      expect(res.headers['location']).toContain(`/fees/pay/${view.id}`);
+    }
+    // The payer's own browser, from an address of its own: recorded and sent to the payment.
+    const genuine = await postReturn(
+      h,
+      s.slug,
+      view.tranId,
+      'success',
+      { val_id: 'VALGENUINE0001' },
+      randomIp(),
+    );
+    expect(genuine.headers['location']).toContain(`/fees/pay/${view.id}`);
+    expect(
+      (await events({ intentId: view.id, kind: 'RETURN', valId: 'VALGENUINE0001' })).length,
+    ).toBe(1);
+    // SSLCommerz's notification: stored too.
+    expect(
+      (await postIpn(h, s.slug, { tran_id: view.tranId, status: 'VALID' }, SSLCOMMERZ_IP)).status,
+    ).toBe(200);
+    expect(await events({ intentId: view.id, kind: 'RETURN' })).toHaveLength(26);
+    expect(await events({ intentId: view.id, kind: 'IPN' })).toHaveLength(1);
   });
 
   it('nothing from a body reaches the logs', async () => {

@@ -38,13 +38,13 @@ created on the owner's first save. Mode `SANDBOX` only (a CHECK; live mode is a 
 Never deleted, only switched off (P7a-P). Database details: [database.md](database.md) → Online
 payments.
 
-| Route                                        | Does                                                                                                                                                                            | Errors                                                     |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `GET /fees/online-payments/account`          | `{ provider, mode, configured, enabled, hint, credentialsUpdatedAt, lastTest: { at, result } \| null, lastFailure: { at, code } \| null, ipnUrl }`; no row yet → not configured |                                                            |
-| `PUT /fees/online-payments/account`          | `{ storeId, storePassword }` (write-only): saved encrypted, **the account switched off and its last test cleared in the same update** (P7a-M); answers the view                 | 400 (messages name the field, never repeat a value)        |
-| `POST /fees/online-payments/account/test`    | 202 `{ requestedAt }`; queues an `account-test` job. The page asks for the view until `lastTest.at` reaches `requestedAt`                                                       | 422 `CREDENTIALS_REQUIRED`; 429 (10 an hour per institute) |
-| `POST /fees/online-payments/account/enable`  | on                                                                                                                                                                              | 422 `TEST_REQUIRED`, `API_PUBLIC_URL_MISSING`              |
-| `POST /fees/online-payments/account/disable` | off                                                                                                                                                                             |                                                            |
+| Route                                        | Does                                                                                                                                                                                       | Errors                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `GET /fees/online-payments/account`          | `{ provider, mode, configured, enabled, hint, credentialsUpdatedAt, lastTest: { at, result } \| null, lastFailure: { at, code } \| null, ipnUrl }`; no row yet → not configured            |                                                            |
+| `PUT /fees/online-payments/account`          | `{ storeId, storePassword }` (write-only): saved encrypted, **the account switched off and its last test and last failure cleared in the same update** (P7a-M, P7a1-x19); answers the view | 400 (messages name the field, never repeat a value)        |
+| `POST /fees/online-payments/account/test`    | 202 `{ requestedAt }`; queues an `account-test` job. The page asks for the view until `lastTest.at` reaches `requestedAt`                                                                  | 422 `CREDENTIALS_REQUIRED`; 429 (10 an hour per institute) |
+| `POST /fees/online-payments/account/enable`  | on                                                                                                                                                                                         | 422 `TEST_REQUIRED`, `API_PUBLIC_URL_MISSING`              |
+| `POST /fees/online-payments/account/disable` | off                                                                                                                                                                                        |                                                            |
 
 - **On only after a passing test** (P7a-M): the API checks it, and the database refuses
   `enabled = true` unless credentials are saved and the last test is `OK`. A test that fails
@@ -54,6 +54,10 @@ payments.
   `STORE_INACTIVE`, no answer in 30 s or no connection → `UNREACHABLE`, anything else → `ERROR`.
   The job acts for the owner who asked (the audit row names them) and records nothing if they are
   no longer the owner, or if the credentials were replaced while it ran.
+- **The last failure** (`lastFailure`) is a job's fixed code with its time, e.g.
+  `CREDENTIALS_UNREADABLE` when the test could not decrypt the credentials (the result is then
+  `ERROR` and SSLCommerz is not asked). New credentials and a passing test clear it (P7a1-x19): it
+  always describes the credentials the account has now.
 - **The IPN address** is `<API_PUBLIC_URL>/public/payments/sslcommerz/<slug>/ipn`, shown on the
   page to paste into the store's SSLCommerz panel (each session also names it). Without
   `API_PUBLIC_URL` the page says so and the account cannot be turned on.
@@ -160,7 +164,10 @@ transaction, and nothing in a signal is trusted.
 - **Limits** (refused requests spend no shared budget): a return 60 a minute per address (over it:
   still a 303, nothing recorded; the page heals it); an IPN from a listed address 1 200 a minute
   per address; from any other address 30 a minute per address and then, once its body parsed,
-  120 an hour per institute; over either, 429.
+  120 an hour per institute; over either, 429. **No per-payment count** decides whether a signal
+  is stored (P7a2-x23): every guardian of the child has the `tran_id` (it is in the return URL),
+  so such a count would let anyone spend what the payer's own return depends on. What a flood of
+  signals can make us ask SSLCommerz is bounded in `confirm` instead (below, P7a2-x24).
 
 ### The role and the function (P7a-B)
 
@@ -179,18 +186,41 @@ credentials service out of `apps/api/src/payments/public/`. Database details:
 
 ## Confirmation and `settle`
 
-**The `confirm` job** (`{ tenantId, intentId }`, 6 attempts from 30 s, doubling): for every
-`val_id` a return or IPN carried that has not been validated yet, ask SSLCommerz's validation API
-with the institute's own credentials, outside any transaction, and settle each answer. With none
-to validate while the intent is open (a failed or cancelled return, a made-up `val_id`, a heal),
-or when a signal without a `val_id` came after the last query, ask the transaction query API by our
-`tran_id` (a `QUERY` event); every successful attempt it lists is then validated the same way:
-nothing is posted from a query answer alone (P7b-A). A failed or cancelled return, or an IPN that
-said so, closes an open intent as `FAILED` or `CANCELLED` only when the query finds no successful
-or pending attempt; `PENDING` changes nothing. A gateway error records a `VALIDATE` or `QUERY`
-event with the code and the account's last failure, and fails the job with that code (BullMQ
-retries it; after the last attempt the intent stays as it is for P7b and the heal). Up to three
-rounds per job take signals that arrived while it ran.
+**The `confirm` job** (`{ tenantId, intentId }`, 6 attempts from 30 s, doubling) asks SSLCommerz
+with the institute's own credentials, outside any transaction, and settles each answer:
+
+- **Validation, while the payment is open:** the new `val_id`s returns and IPNs carried (each
+  once; those SSLCommerz's listed addresses brought first, then the oldest) are validated, **at
+  most 3 a round**, and **at most 10 an hour per payment** for the `val_id`s anyone but
+  SSLCommerz brought, another 10 for those its listed addresses brought (Redis
+  `pay-val-other:<intent>`, `pay-val-listed:<intent>`; P7a2-x24). The rest are left to the query.
+  A `val_id` whose answer was `PENDING` is validated again (a later signal, or the query listing
+  it VALID; P7a2-x27); any other answer settles it.
+- **The query by our `tran_id`** (a `QUERY` event, recorded at the time it was asked) is never
+  refused and is authoritative: it lists every attempt, so it **answers for every signal stored
+  before it** (such a `val_id` is validated only if the query lists it as a successful attempt).
+  It is asked once per job while the payment is open (a failed or cancelled return, a made-up or
+  pending `val_id`, a heal, `val_id`s left over), and on a closed payment when a signal since the
+  last query is unaccounted for: a new `val_id` (a second payment is then validated from the
+  query's list and recorded as `DUPLICATE`; a made-up one is never validated), or a signal without
+  one that came with no validation in that job (a late payment). Every successful attempt it lists
+  whose money we have not seen is validated the same way: nothing is posted from a query answer
+  alone (P7b-A).
+- **Closing:** a failed or cancelled return, or an IPN that said so, closes an open intent as
+  `FAILED` or `CANCELLED` **only when the query lists a failed or cancelled attempt** and no
+  successful or pending one (P7a2-x26; the signal's word if the query lists it, else the
+  gateway's). A return needs only the `tran_id`, which every guardian of the child has (even an
+  `<img>` link sends one): "nothing found" closes nothing, and the payment stays open for P7b's
+  expiry. `PENDING` changes nothing.
+- A gateway error records a `VALIDATE` or `QUERY` event with the code and the account's last
+  failure, and fails the job with that code (BullMQ retries it; after the last attempt the intent
+  stays as it is for P7b and the heal). Up to three rounds per job take signals that arrived while
+  it ran.
+
+The review's probe (40 returns with made-up `val_id`s, which made 46 validation calls) now makes at
+most 10 validations of made-up `val_id`s an hour per payment, plus at most one query per job; the
+payer's own return is stored and posted whatever was sent before it
+(`payments-settle.e2e-spec.ts`, `payments-signals.e2e-spec.ts`).
 
 **`settle`** is the only place that posts. One transaction acting as the guardian who paid, under
 the tenant's fee lock (shared), the student's lock and the intent's row lock. A `VALIDATE` event is
@@ -240,7 +270,10 @@ more.
 - **A void** of a gateway payment (OWNER/ADMIN, the usual route) sends its intent back to
   `NEEDS_REVIEW` with `VOIDED` and without its payment, in the same transaction (P7a-G); a person
   applies it again or records it as refunded (the review queue). The database refuses a void that
-  leaves the intent holding it.
+  leaves the intent holding it, and an intent that lets go of a payment still live (P7a2-x25). A
+  live gateway payment must be its intent's money: posted by `settle`, the intent's amount, its
+  `bank_tran_id` as the TrxID, paid on its `priced_on` (P7a2-x28); applied from review (P7b), the
+  applied amount, the same TrxID, paid on a day from the checkout day to the day recorded.
 - **The counter** sees `onlinePending` on a due an open payment names (an "online payment in
   progress" badge) and still takes cash: the online money then waits for review as
   `DUES_CHANGED`, never on a due, never twice (review focus 2). Online first: the counter's stale
@@ -400,9 +433,11 @@ expectedOutstandingPaisa, refundOutside?: { reference }, note, clientRequestId }
   writer of an intent (checkout, abandon, the init job, settle, the void hook) takes the student's
   lock first, so the counter, a void and three signals for one payment queue up on the student.
 - Layers: BullMQ's `jobId` per intent; `VALIDATE` events by `val_id` (validated once per intent,
-  unless the call failed); the decision table under the row lock; `fee_payments_live_intent` (one
-  live payment per intent) and `fee_payments_live_trx` in the database; the payment's request id is
-  the intent's id; the receipt SMS's dedupe key.
+  unless the call failed or the answer was `PENDING`); the decision table under the row lock;
+  `fee_payments_live_intent` (one live payment per intent) and `fee_payments_live_trx` in the
+  database; the payment's request id is the intent's id; the receipt SMS's dedupe key. Three
+  settles at once make one decision to post (`recordPayment` runs once; the test fails with the
+  student's and the intent's locks removed).
 - **The review queue (P7b)** takes the same locks (tenant shared → student → intent row), so a
   decision, a late signal's `settle`, the counter and a void queue up on the student; decisions
   on a money item then take an advisory lock on its `val_id` (`payment-locks.ts`), which the
@@ -414,9 +449,18 @@ expectedOutstandingPaisa, refundOutside?: { reference }, note, clientRequestId }
 
 - The store ID and password are one AES-256-GCM ciphertext, `v1.` + base64url(iv | tag |
   ciphertext), in `credentials_ciphertext`. The additional data (AAD) is
-  `payments:<provider>:<tenantId>:<accountId>`, so a ciphertext copied onto another institute's
-  or another account's row never decrypts. Helpers: `packages/db/src/payments/secrets.ts`
-  (`paymentKeys`, `credentialsAad`, `encryptCredentials`, `decryptCredentials`).
+  `payments:<provider>:<tenantId>:<accountId>:v<credentials_version>`, so a ciphertext copied
+  onto another institute's or another account's row never decrypts. Helpers:
+  `packages/db/src/payments/secrets.ts` (`paymentKeys`, `credentialsAad`, `encryptCredentials`,
+  `decryptCredentials`).
+- **No rollback** (P7a1-x20): `credentials_version` is set by a database trigger alone: 0 for an
+  account without credentials, 1 when one is inserted with them, one up whenever the ciphertext
+  changes, unchanged by any other update. `jantrik_app` may not UPDATE it, and an INSERT's value is
+  replaced. Saving locks the row (`FOR NO KEY UPDATE`), encrypts as the row's version + 1 and
+  checks that the update stored that version; reading decrypts with the row's version. So an older
+  ciphertext of the same row put back (an SQL injection inside the institute: a store a former
+  owner once saved) raises the version past its own and reads as `CREDENTIALS_UNREADABLE`, never
+  as the old store; the owner saves the store again.
 - **The key** is `PAYMENT_CREDENTIALS_KEY` (at least 32 characters, its own secret). Required in
   production; development and tests derive one from `OTP_PEPPER` (not the key the platform
   derives for 2FA). Changing it makes every saved store unreadable: a job that needs them records

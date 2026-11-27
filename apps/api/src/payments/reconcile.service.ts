@@ -15,7 +15,7 @@ import { RateLimiter } from '../redis/rate-limiter.service.js';
 import { REDIS } from '../redis/redis.constants.js';
 import { Db } from '../tenancy/db.service.js';
 import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
-import { ConfirmService, PaymentJobError } from './confirm.service.js';
+import { ConfirmService, PaymentJobError, VALIDATIONS_PER_ROUND } from './confirm.service.js';
 import {
   PaymentCredentialsError,
   PaymentCredentialsService,
@@ -46,8 +46,11 @@ const FINAL: readonly PaymentIntentStatus[] = ['PAID', 'REFUNDED_OUTSIDE', 'DISM
 const SUCCESS: readonly AttemptStatus[] = ['VALID', 'VALIDATED'];
 /** Attempts that are over with nothing paid (an undocumented status is never taken as one). */
 const ENDED: readonly AttemptStatus[] = ['FAILED', 'CANCELLED', 'EXPIRED', 'UNATTEMPTED'];
-/** New validation IDs validated per step at most; the next step takes the rest. */
-const MAX_VALIDATIONS = 5;
+/**
+ * New validation IDs validated per step at most, confirm's own bound per round (P7a2-x24); the
+ * next step takes the rest.
+ */
+const MAX_VALIDATIONS = VALIDATIONS_PER_ROUND;
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 /** The sweep runs every 10 minutes and re-adds steps overdue by more than 2 minutes. */
@@ -237,7 +240,10 @@ export class ReconcileService implements OnModuleInit {
     if (!read.creds) throw new ReconcileJobError(read.credsFailure ?? 'CREDENTIALS_MISSING');
     const creds = read.creds;
 
-    // Outside any transaction: every attempt SSLCommerz knows for our tran_id.
+    // Outside any transaction: every attempt SSLCommerz knows for our tran_id. Recorded as asked
+    // now, as confirm records its own (P7a2-x24): a signal that arrives while the gateway answers
+    // is not one this query answered for, so confirm still takes it.
+    const askedAt = this.clock.now();
     const attempts = await this.provider.query(creds, intent.tranId);
     const found = Array.isArray(attempts) ? attempts : [];
     const outcome: CheckOutcome = !Array.isArray(attempts)
@@ -258,6 +264,7 @@ export class ReconcileService implements OnModuleInit {
             ? statuses.join(',').slice(0, 40)
             : 'NONE',
         tranId: intent.tranId,
+        at: askedAt,
       });
       await this.recordCheck(intent.id, outcome);
       if (!Array.isArray(attempts))

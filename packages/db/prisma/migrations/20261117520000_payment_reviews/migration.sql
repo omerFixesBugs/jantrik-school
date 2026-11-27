@@ -185,7 +185,7 @@ BEGIN
               AND p.paid_on BETWEEN i.priced_on AND p.recorded_on
           END
   ) THEN
-    RAISE EXCEPTION 'a gateway payment must match its intent: the amount, the TrxID and the day'
+    RAISE EXCEPTION 'a gateway payment must be its intent''s money: it must match its intent (the amount, the bank transaction ID, the day)'
       USING ERRCODE = 'check_violation';
   END IF;
   RETURN NULL;
@@ -200,11 +200,13 @@ CREATE CONSTRAINT TRIGGER payment_intents_payment_match
 
 -- At commit, a live gateway payment matches its intent: the intent is PAID with it (P7a2), the
 -- TrxID is the intent's bank_tran_id, and the amount and day are what was decided: posted by
--- settle, the intent's amount on its checkout day (P7a-E); applied from review (P7b), the
--- applied amount on a day from the checkout day to the day it was recorded (the gateway's day,
--- P7b-F). A voided one's intent no longer holds it (P7a2). Replaces P7a2's function of the same
--- name with the same two rules and the match added (sprint 1 P7a2 review: the database ties a
--- gateway payment to its intent).
+-- settle, the intent's amount on its checkout day (P7a-E, P7a2-x28: exactly P7a2's rule); applied
+-- from review (P7b), the applied amount on a day from the checkout day to the day it was recorded
+-- (the gateway's day, P7b-F). A voided one's intent no longer holds it (P7a2). Replaces P7a2's
+-- function of the same name (migration 20261117510100, after its review) with the stricter union:
+-- every rule of P7a2's, and the applied branch only for an intent a person applied
+-- (applied_paisa, written only by that decision). P7a2's other rule, that an intent never lets go
+-- of a live payment (payment_intents_paid_check, P7a2-x25), is not redefined here and stands.
 CREATE OR REPLACE FUNCTION fee_payments_gateway_check() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp
@@ -242,7 +244,7 @@ BEGIN
                 AND v_paid_on BETWEEN i.priced_on AND v_recorded_on
             END
     ) THEN
-      RAISE EXCEPTION 'a gateway payment must match its intent: the amount, the TrxID and the day'
+      RAISE EXCEPTION 'a gateway payment must be its intent''s money: it must match its intent (the amount, the bank transaction ID, the day)'
         USING ERRCODE = 'check_violation';
     END IF;
   END IF;

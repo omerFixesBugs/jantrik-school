@@ -3939,8 +3939,9 @@ enum PaymentProvider {
 }
 
 /// An institute's gateway account: one per provider, SANDBOX only this sprint. The store ID and
-/// password are one AES-256-GCM ciphertext bound to this row (AAD payments:<provider>:<tenant>:<id>),
-/// left out of every read unless asked (CLIENT_OMIT) and read only by PaymentCredentialsService.
+/// password are one AES-256-GCM ciphertext bound to this row and its credentials version (AAD
+/// payments:<provider>:<tenant>:<id>:v<version>), left out of every read unless asked (CLIENT_OMIT)
+/// and read only by PaymentCredentialsService.
 /// On only after a passing test; saving credentials switches it off. Never deleted (P7a-P).
 model PaymentGatewayAccount {
   id                     String          @id @default(uuid(7)) @db.Uuid
@@ -3954,6 +3955,10 @@ model PaymentGatewayAccount {
   /// The store ID's last 4 characters, shown to the owner (never the password).
   credentialsHint        String?         @map("credentials_hint")
   keyVersion             Int             @default(1) @map("key_version") @db.SmallInt
+  /// Set by a trigger alone, never by the app (P7a1-x20): 0 without credentials, 1 when inserted
+  /// with them, one up whenever the ciphertext changes. The AAD names it, so an older ciphertext
+  /// put back never decrypts.
+  credentialsVersion     Int             @default(0) @map("credentials_version")
   credentialsUpdatedAt   DateTime?       @map("credentials_updated_at") @db.Timestamptz(3)
   /// NULL when a command loaded them (payments:load-sandbox): no person did.
   credentialsUpdatedById String?         @map("credentials_updated_by_id") @db.Uuid

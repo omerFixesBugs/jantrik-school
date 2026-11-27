@@ -8,11 +8,12 @@ import {
 } from '../src/index.js';
 
 // Payment gateway credentials at rest (sprint 1 P7a, docs/payments.md): AES-256-GCM with the
-// account's identity as additional data, under a key of their own (PAYMENT_CREDENTIALS_KEY).
+// account's identity and its credentials version as additional data, under a key of their own
+// (PAYMENT_CREDENTIALS_KEY).
 
 const dev = { NODE_ENV: 'development', OTP_PEPPER: 'x'.repeat(40) };
 const json = JSON.stringify({ storeId: 'teststore0001', storePassword: 'sentinel-Pw@ssl' });
-const aadA = credentialsAad('SSLCOMMERZ', '0190a000-0000-7000-8000-00000000000a', 'acc-a');
+const aadA = credentialsAad('SSLCOMMERZ', '0190a000-0000-7000-8000-00000000000a', 'acc-a', 1);
 
 describe('payment credentials key', () => {
   it('development and tests derive one from OTP_PEPPER: stable, and not the platform key', () => {
@@ -39,8 +40,14 @@ describe('payment credentials key', () => {
     expect(set.encryption.equals(paymentKeys(dev).encryption)).toBe(false);
   });
 
-  it('the AAD names the provider, the institute and the account', () => {
-    expect(aadA).toBe('payments:SSLCOMMERZ:0190a000-0000-7000-8000-00000000000a:acc-a');
+  it('the AAD names the provider, the institute, the account and the credentials version', () => {
+    expect(aadA).toBe('payments:SSLCOMMERZ:0190a000-0000-7000-8000-00000000000a:acc-a:v1');
+    // The version is the row's (a whole number set by a trigger, P7a1-x20), never anything else.
+    for (const version of [-1, 1.5, Number.NaN]) {
+      expect(() => credentialsAad('SSLCOMMERZ', 't', 'a', version), String(version)).toThrow(
+        /version/,
+      );
+    }
   });
 });
 
@@ -55,20 +62,30 @@ describe('payment credentials at rest', () => {
     expect(decryptCredentials(stored, aadA, keys)).toBe(json);
   });
 
-  it('fails for another account, another institute, another key or a changed byte', () => {
+  it('fails for another account, institute, credentials version or key, or a changed byte', () => {
     const stored = encryptCredentials(json, aadA, keys);
     const otherAccount = credentialsAad(
       'SSLCOMMERZ',
       '0190a000-0000-7000-8000-00000000000a',
       'acc-b',
+      1,
     );
     const otherTenant = credentialsAad(
       'SSLCOMMERZ',
       '0190a000-0000-7000-8000-00000000000b',
       'acc-a',
+      1,
+    );
+    // An older (or newer) version of the same account's credentials: a rollback (P7a1-x20).
+    const otherVersion = credentialsAad(
+      'SSLCOMMERZ',
+      '0190a000-0000-7000-8000-00000000000a',
+      'acc-a',
+      2,
     );
     expect(() => decryptCredentials(stored, otherAccount, keys)).toThrow();
     expect(() => decryptCredentials(stored, otherTenant, keys)).toThrow();
+    expect(() => decryptCredentials(stored, otherVersion, keys)).toThrow();
     const otherKey = paymentKeys({ NODE_ENV: 'test', PAYMENT_CREDENTIALS_KEY: 'q'.repeat(40) });
     expect(() => decryptCredentials(stored, aadA, otherKey)).toThrow();
     const tampered = `${stored.slice(0, -2)}${stored.endsWith('A') ? 'B' : 'A'}`;

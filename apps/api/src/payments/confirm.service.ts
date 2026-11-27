@@ -25,6 +25,15 @@ import { SettleService } from './settle.service.js';
 const UNMATCHED_PER_HOUR = 30;
 /** Rounds of one confirm job: signals that arrive while it runs are taken in the next one. */
 const MAX_ROUNDS = 3;
+/**
+ * The bound on what signals make us ask the gateway with the institute's credentials (P7a2-x24):
+ * anyone with the tran_id can send a return with a made-up val_id. New val_ids validated directly
+ * per round, and per payment and hour (separately for the val_ids SSLCommerz's listed addresses
+ * brought and those anyone else did, so a flood never uses up the real IPN's). The rest are left
+ * to the query by tran_id, which lists every real attempt; it is never refused.
+ */
+export const VALIDATIONS_PER_ROUND = 3;
+const VALIDATIONS_PER_HOUR = 10;
 
 /** A confirm job that could not reach the gateway: retried by BullMQ (a fixed code only). */
 export class PaymentJobError extends Error {
@@ -37,6 +46,13 @@ export class PaymentJobError extends Error {
 const isErrorCode = (outcome: string | null): boolean =>
   outcome !== null && (PROVIDER_ERROR_CODES as readonly string[]).includes(outcome);
 
+/**
+ * A validation answer that settles a val_id for good. Not an error (the call is retried), and not
+ * PENDING: a pending payment may still complete, so it is validated again (P7a2-x27).
+ */
+const isFinalAnswer = (outcome: string | null): boolean =>
+  outcome !== null && outcome !== 'PENDING' && !isErrorCode(outcome);
+
 /** What validating a payment needs of its intent (also reconciliation, P7b). */
 export interface IntentFacts {
   id: string;
@@ -48,12 +64,13 @@ export interface IntentFacts {
 
 /**
  * The `confirm` job (sprint 1 P7a2, docs/payments.md → Confirmation): nothing in a signal is
- * trusted. For every validation ID a return or IPN carried that has not been validated yet, ask
- * SSLCommerz's validation API with the institute's own credentials, outside any transaction, and
- * settle each answer. With none to validate (a failed or cancelled return, an IPN without one, a
- * heal), ask the transaction query API by our tran_id; every successful attempt it lists is then
- * validated the same way (nothing posts from a query answer alone). A gateway error makes the job
- * fail with a fixed code so BullMQ retries it (6 attempts from 30 s); the intent stays as it is.
+ * trusted. While the payment is open, a few new validation IDs a return or IPN carried are
+ * validated with SSLCommerz's validation API (the institute's own credentials, outside any
+ * transaction), and each answer settled. Otherwise, or for the rest, ask the transaction query API
+ * by our tran_id: it answers for every signal stored before it, and every successful attempt it
+ * lists is then validated the same way (nothing posts from a query answer alone). A gateway error
+ * makes the job fail with a fixed code so BullMQ retries it (6 attempts from 30 s); the intent
+ * stays as it is.
  */
 @Injectable()
 export class ConfirmService {
@@ -83,7 +100,14 @@ export class ConfirmService {
       const events = await tx.paymentGatewayEvent.findMany({
         where: { intentId: intent.id },
         orderBy: { receivedAt: 'asc' },
-        select: { kind: true, outcome: true, valId: true, fields: true, receivedAt: true },
+        select: {
+          kind: true,
+          outcome: true,
+          valId: true,
+          fields: true,
+          sourceListed: true,
+          receivedAt: true,
+        },
       });
       let creds: SslcommerzCredentials | null = null;
       try {
@@ -109,40 +133,69 @@ export class ConfirmService {
     const tried = new Set<string>();
     let failure: ProviderErrorCode | null = null;
     let validatedAny = false;
+    let leftToQuery = false;
     for (let round = 0; ; round++) {
       const read = await this.read(data);
       if (!read?.creds) return;
       const { intent, events, creds } = read;
-      const validated = new Set(
-        events
-          .filter((e) => e.kind === 'VALIDATE' && e.valId && !isErrorCode(e.outcome))
+      const open = intent.status === 'CREATED' || intent.status === 'REDIRECTED';
+      const validations = events.filter((e) => e.kind === 'VALIDATE' && e.valId);
+      // Answered for good (PENDING is not, P7a2-x27), and money seen (VALID, VALIDATED).
+      const answered = new Set(
+        validations.filter((e) => isFinalAnswer(e.outcome)).map((e) => e.valId!),
+      );
+      const settled = new Set(
+        validations
+          .filter((e) => e.outcome === 'VALID' || e.outcome === 'VALIDATED')
           .map((e) => e.valId!),
       );
+      // The query lists every attempt of our tran_id: it has answered for each signal stored
+      // before it was asked, whatever val_id that signal carried (P7a2-x24).
+      const lastQuery =
+        events.filter((e) => e.kind === 'QUERY' && !isErrorCode(e.outcome)).at(-1)?.receivedAt ??
+        null;
       const signals = events.filter((e) => e.kind === 'RETURN' || e.kind === 'IPN');
-      const pending = [
-        ...new Set(signals.map((e) => e.valId).filter((v): v is string => !!v)),
-      ].filter((v) => !validated.has(v) && !tried.has(v));
+      const since = signals.filter((e) => lastQuery === null || e.receivedAt > lastQuery);
+      const waiting = (e: { valId: string | null }) =>
+        e.valId !== null && !answered.has(e.valId) && !tried.has(e.valId);
+      // Each new val_id once: those SSLCommerz's listed addresses brought first, then the oldest.
+      const fresh = [
+        ...new Map(
+          [...since.filter((e) => e.sourceListed), ...since.filter((e) => !e.sourceListed)]
+            .filter(waiting)
+            .map((e) => [e.valId!, e.sourceListed === true] as const),
+        ),
+      ];
 
-      // Signals that arrived while this job ran are taken in the next round.
-      if (pending.length > 0 && round < MAX_ROUNDS) {
-        validatedAny = true;
-        for (const valId of pending) {
+      // Only while the payment is open, a few a round and within the payment's budget; signals
+      // that arrived while this job ran are taken in the next round.
+      if (open && !leftToQuery && fresh.length > 0 && round < MAX_ROUNDS) {
+        for (const [valId, listed] of fresh.slice(0, VALIDATIONS_PER_ROUND)) {
+          const allowed = await this.limiter.tryConsume({
+            key: `pay-val-${listed ? 'listed' : 'other'}:${intent.id}`,
+            limit: VALIDATIONS_PER_HOUR,
+            windowSec: 3600,
+          });
+          if (!allowed) {
+            leftToQuery = true;
+            continue;
+          }
           tried.add(valId);
+          validatedAny = true;
           failure = (await this.validate(data.tenantId, intent, creds, valId)) ?? failure;
         }
+        if (fresh.length > VALIDATIONS_PER_ROUND) leftToQuery = true;
         continue;
       }
 
-      // Nothing (more) to validate. Ask the gateway by our tran_id while the intent is still open
-      // (a failed or cancelled return, a made-up val_id, a heal), or when a signal without a
-      // val_id came after the last query (a late payment). Once per job.
-      const open = intent.status === 'CREATED' || intent.status === 'REDIRECTED';
-      const lastQuery = events.filter((e) => e.kind === 'QUERY').at(-1)?.receivedAt ?? null;
-      const lastBare = signals.filter((e) => !e.valId).at(-1)?.receivedAt ?? null;
-      const newSignal =
-        !validatedAny && lastBare !== null && (lastQuery === null || lastBare > lastQuery);
-      if (failure === null && (open || newSignal)) {
-        failure = await this.query(data.tenantId, intent, creds, signals, validated, tried);
+      // Ask by tran_id while the payment is open (a failed or cancelled return, a made-up or
+      // pending val_id, a heal, val_ids left to the query), or when a signal since the last query
+      // is still unaccounted for: a new val_id on a closed payment (a second payment, or a made-up
+      // one: never validated unless the query lists it), or a signal without one that came with no
+      // validation in this job (a late payment). Once per job.
+      const unaccounted = since.some((e) => (e.valId !== null ? waiting(e) : !validatedAny));
+      if (failure === null && (open || unaccounted)) {
+        failure = await this.query(data.tenantId, intent, creds, signals, settled, tried);
       }
       break;
     }
@@ -192,9 +245,12 @@ export class ConfirmService {
     intent: IntentFacts,
     creds: SslcommerzCredentials,
     signals: { kind: string; outcome: string | null; fields: unknown }[],
-    validated: Set<string>,
+    settled: Set<string>,
     tried: Set<string>,
   ): Promise<ProviderErrorCode | null> {
+    // Recorded as asked now: a signal that arrives while the gateway answers is not one it
+    // answered for.
+    const askedAt = this.clock.now();
     const attempts = await this.provider.query(creds, intent.tranId);
     const statuses = Array.isArray(attempts) ? attempts.map((a) => a.status) : [];
     await this.jobs.run(tenantId, () =>
@@ -207,27 +263,32 @@ export class ConfirmService {
             : 'NONE'
           : attempts.code,
         tranId: intent.tranId,
+        at: askedAt,
       }),
     );
     if (!Array.isArray(attempts)) return attempts.code;
 
     let failure: ProviderErrorCode | null = null;
+    // Every successful attempt it lists whose money we have not seen yet (an earlier answer of
+    // PENDING or INVALID included): the gateway lists only real attempts of our tran_id.
     for (const attempt of attempts) {
       if (attempt.status !== 'VALID' && attempt.status !== 'VALIDATED') continue;
-      if (
-        !isGatewayRef(attempt.valId) ||
-        validated.has(attempt.valId) ||
-        tried.has(attempt.valId)
-      ) {
+      if (!isGatewayRef(attempt.valId) || settled.has(attempt.valId) || tried.has(attempt.valId)) {
         continue;
       }
       tried.add(attempt.valId);
       failure = (await this.validate(tenantId, intent, creds, attempt.valId)) ?? failure;
     }
-    const live = attempts.some((a) => ['VALID', 'VALIDATED', 'PENDING'].includes(a.status));
-    if (!live && failure === null) {
-      // The session is over with nothing paid: a failed or cancelled return (the path's word), or
-      // an IPN that said so, closes an open intent. A query alone closes nothing (P7b expires it).
+    const listed = new Set<string>(attempts.map((a) => a.status));
+    const live = ['VALID', 'VALIDATED', 'PENDING'].some((status) => listed.has(status));
+    const over = listed.has('FAILED') || listed.has('CANCELLED');
+    if (!live && over && failure === null) {
+      // The session is over with nothing paid, and the gateway itself lists the failed or
+      // cancelled attempt: then a failed or cancelled return (the path's word), or an IPN that
+      // said so, closes an open intent. Nothing found closes nothing (P7a2-x26): a return needs
+      // only the tran_id, so anyone who has it (even an <img> link) could otherwise close a
+      // payment still in progress, and the real payment would then wait for review as a late
+      // success. A query alone closes nothing either (P7b expires it).
       const closing = signals
         .filter(
           (s) =>
@@ -239,15 +300,14 @@ export class ConfirmService {
         )
         .at(-1);
       if (closing) {
-        const cancelled =
+        const said =
           closing.outcome === 'CANCEL' ||
-          (closing.fields as Record<string, unknown> | null)?.['status'] === 'CANCELLED';
-        await this.settle.closeUnpaid(
-          tenantId,
-          intent.id,
-          intent.payerUserId,
-          cancelled ? 'CANCELLED' : 'FAILED',
-        );
+          (closing.fields as Record<string, unknown> | null)?.['status'] === 'CANCELLED'
+            ? 'CANCELLED'
+            : 'FAILED';
+        // The signal's word when the gateway lists it; otherwise the gateway's.
+        const word = listed.has(said) ? said : listed.has('FAILED') ? 'FAILED' : 'CANCELLED';
+        await this.settle.closeUnpaid(tenantId, intent.id, intent.payerUserId, word);
       }
     }
     return failure;
