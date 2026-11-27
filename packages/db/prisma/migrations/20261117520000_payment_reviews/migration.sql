@@ -99,9 +99,15 @@ ALTER TABLE payment_intents
     applied_paisa IS NULL
     OR (applied_paisa >= 1 AND validated_amount_paisa IS NOT NULL
         AND applied_paisa + COALESCE(refunded_outside_paisa, 0) = validated_amount_paisa)),
+  -- Money given back outside the app stays given back (P7b-N): an applied intent voided back
+  -- into review keeps its refunded part (review round 1, finding 1), so some money is left to
+  -- decide; otherwise only a PAID (applied) or REFUNDED_OUTSIDE intent has one.
   ADD CONSTRAINT payment_intents_refunded_paisa CHECK (
     refunded_outside_paisa IS NULL
-    OR (refunded_outside_paisa >= 1 AND status IN ('PAID', 'REFUNDED_OUTSIDE'))),
+    OR (refunded_outside_paisa >= 1
+        AND (status IN ('PAID', 'REFUNDED_OUTSIDE')
+             OR (status = 'NEEDS_REVIEW' AND validated_amount_paisa IS NOT NULL
+                 AND refunded_outside_paisa < validated_amount_paisa)))),
   -- What the institute's own records call the refund: ASCII letters, digits and -_./ only.
   ADD CONSTRAINT payment_intents_refund_reference CHECK (
     refund_reference IS NULL
@@ -115,8 +121,11 @@ ALTER TABLE payment_intents
 -- Only a person's decision moves an intent out of NEEDS_REVIEW (the three P7b actions; S23: no
 -- job ever does), and the decision is written exactly then. When the intent comes back to review
 -- (a void of the applied payment, a success after a dismissal) the decision is cleared from the
--- row; the audit log keeps it. A separate trigger from payment_intents_guard (P7a2), which runs
--- first (triggers fire in the order of their names).
+-- row (the audit log keeps it), except the money already given back outside the app: "refunded
+-- outside" is final (P7b-N), so a refund recorded with a partial apply stays, with its reference,
+-- and it never shrinks or loses its reference (review round 1, finding 1: a void then cleared it,
+-- and the whole money could be applied again). A separate trigger from payment_intents_guard
+-- (P7a2), which runs first (triggers fire in the order of their names).
 CREATE FUNCTION payment_intents_resolution_guard() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp
@@ -131,6 +140,13 @@ BEGIN
       RAISE EXCEPTION 'an intent applied from review holds its new payment'
         USING ERRCODE = 'check_violation';
     END IF;
+    IF OLD.refunded_outside_paisa IS NOT NULL
+       AND (NEW.refunded_outside_paisa IS NULL
+            OR NEW.refunded_outside_paisa < OLD.refunded_outside_paisa
+            OR (OLD.refund_reference IS NOT NULL AND NEW.refund_reference IS NULL)) THEN
+      RAISE EXCEPTION 'money refunded outside the app stays refunded, with its reference (P7b-N)'
+        USING ERRCODE = 'check_violation';
+    END IF;
     RETURN NEW;
   END IF;
   IF NEW.status = 'NEEDS_REVIEW' AND OLD.status IS DISTINCT FROM 'NEEDS_REVIEW' THEN
@@ -142,8 +158,9 @@ BEGIN
     NEW.resolved_at := NULL;
     NEW.resolution_note := NULL;
     NEW.applied_paisa := NULL;
-    NEW.refunded_outside_paisa := NULL;
-    NEW.refund_reference := NULL;
+    -- Kept: what was given back outside the app (an applied intent's refunded part).
+    NEW.refunded_outside_paisa := OLD.refunded_outside_paisa;
+    NEW.refund_reference := OLD.refund_reference;
     RETURN NEW;
   END IF;
   IF ROW(NEW.resolved_by_id, NEW.resolved_at, NEW.resolution_note, NEW.applied_paisa,

@@ -83,6 +83,7 @@
     "payer": "Paid by guardian {name}",
     "tranId": "Our transaction ID",
     "started": "Started",
+    "refundedBefore": "Already refunded outside",
     "receivedAt": "Received",
     "forPayment": "For",
     "noIntent": "No payment of ours",

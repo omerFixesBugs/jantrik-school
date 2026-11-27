@@ -131,7 +131,11 @@ function Review() {
         <RefundDialog
           key={open.item.id}
           target={{ kind: 'intent', id: open.item.id }}
-          amountPaisa={open.item.money?.amountPaisa ?? null}
+          amountPaisa={
+            open.item.money?.amountPaisa != null
+              ? open.item.money.amountPaisa - (open.item.refundedOutside?.amountPaisa ?? 0)
+              : null
+          }
           onClose={() => setOpen(null)}
         />
       )}

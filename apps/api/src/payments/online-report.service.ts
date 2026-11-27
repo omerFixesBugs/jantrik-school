@@ -73,8 +73,8 @@ export class OnlinePaymentsReportService {
              count(*) FILTER (WHERE status IN ('FAILED', 'CANCELLED'))::bigint AS failed,
              count(*) FILTER (WHERE status = 'EXPIRED')::bigint AS expired,
              count(*) FILTER (WHERE status = 'NEEDS_REVIEW')::bigint AS review,
-             sum(validated_amount_paisa) FILTER (WHERE status = 'NEEDS_REVIEW')::bigint
-               AS review_amount,
+             sum(validated_amount_paisa - COALESCE(refunded_outside_paisa, 0))
+               FILTER (WHERE status = 'NEEDS_REVIEW')::bigint AS review_amount,
              count(*) FILTER (WHERE status = 'REFUNDED_OUTSIDE' OR refunded_outside_paisa IS NOT NULL)::bigint
                AS refunded,
              sum(refunded_outside_paisa)::bigint AS refunded_amount,

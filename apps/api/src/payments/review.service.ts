@@ -414,6 +414,10 @@ export class ReviewService {
                 refundReference: r.refundReference,
               }
             : null,
+        refundedOutside:
+          r.refundedOutsidePaisa !== null
+            ? { amountPaisa: r.refundedOutsidePaisa, reference: r.refundReference }
+            : null,
         payment:
           r.status === 'PAID' && r.feePayment
             ? {
@@ -583,7 +587,10 @@ export class ReviewService {
     if (intent.status !== 'NEEDS_REVIEW') throw this.alreadyResolved();
     const block = this.applyBlock(intent);
     if (block) throw apiError(block.status, block.code, block.message);
-    const money = intent.validatedAmountPaisa!;
+    // The money still to decide: what was already given back outside the app stays given back
+    // (an applied payment voided back into review keeps its refunded part; P7b-N).
+    const kept = intent.refundedOutsidePaisa ?? 0;
+    const money = intent.validatedAmountPaisa! - kept;
     if (input.applyPaisa > money) {
       throw apiError(422, 'AMOUNT_EXCEEDS_MONEY', 'More than the money SSLCommerz confirmed', {
         moneyPaisa: money,
@@ -623,8 +630,10 @@ export class ReviewService {
         { remainderPaisa: remainder },
       );
     }
-    const refunded = remainder > 0 ? remainder : null;
-    const reference = refunded !== null ? (input.refundOutside?.reference ?? null) : null;
+    const refunded = kept + remainder > 0 ? kept + remainder : null;
+    // A new reference names this refund; otherwise the earlier one stays (never cleared).
+    const reference =
+      (remainder > 0 ? input.refundOutside?.reference : null) ?? intent.refundReference;
 
     const paymentId = await this.collection.recordPayment({
       studentId: intent.studentId,
@@ -663,7 +672,8 @@ export class ReviewService {
         status: 'PAID',
         action: 'APPLY',
         paymentId,
-        validatedAmountPaisa: money,
+        validatedAmountPaisa: intent.validatedAmountPaisa,
+        ...(kept > 0 ? { refundedBeforePaisa: kept } : {}),
         appliedPaisa: input.applyPaisa,
         refundedOutsidePaisa: refunded,
         reference,
@@ -687,6 +697,10 @@ export class ReviewService {
         'No money was confirmed for this payment: dismiss it instead',
       );
     }
+    // The whole money is then given back: what an earlier partial apply refunded (kept after
+    // its void) and the rest now.
+    const kept = intent.refundedOutsidePaisa;
+    const reference = input.reference ?? intent.refundReference;
     await this.db.tx.paymentIntent.update({
       where: { id: intent.id },
       data: {
@@ -695,7 +709,7 @@ export class ReviewService {
         resolvedAt: this.clock.now(),
         resolutionNote: input.note,
         refundedOutsidePaisa: intent.validatedAmountPaisa,
-        refundReference: input.reference,
+        refundReference: reference,
       },
       select: { id: true },
     });
@@ -708,7 +722,10 @@ export class ReviewService {
         status: 'REFUNDED_OUTSIDE',
         action: 'REFUND_OUTSIDE',
         refundedOutsidePaisa: intent.validatedAmountPaisa,
-        reference: input.reference,
+        ...(kept !== null && intent.validatedAmountPaisa !== null
+          ? { refundedBeforePaisa: kept, restPaisa: intent.validatedAmountPaisa - kept }
+          : {}),
+        reference,
         note: input.note,
       },
     });

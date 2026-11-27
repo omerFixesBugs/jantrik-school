@@ -334,6 +334,12 @@ export interface OnlinePaymentStaffView {
   dues: OnlinePaymentDueStaff[];
   lastCheck: { at: string; outcome: string } | null;
   decision: OnlinePaymentDecision | null;
+  /**
+   * Money already given back outside the app: with an applied intent, its refunded part; it stays
+   * after a void brings the intent back to review (P7b-N), and only the rest may then be applied
+   * or refunded.
+   */
+  refundedOutside: { amountPaisa: number; reference: string | null } | null;
   /** Its live payment (PAID). */
   payment: { id: string; receiptNumber: string } | null;
   actions: OnlinePaymentActions;

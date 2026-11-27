@@ -222,6 +222,19 @@ export function ReviewIntentCard({
           <Fact term={t('started')}>
             {formatDate(item.createdAt, locale, 'medium')}, {formatTime(item.createdAt, locale)}
           </Fact>
+          {item.status === 'NEEDS_REVIEW' && item.refundedOutside && (
+            <Fact term={t('refundedBefore')}>
+              <span className="font-numeric" data-testid="review-refunded-before">
+                {formatTaka(item.refundedOutside.amountPaisa, locale)}
+              </span>
+              {item.refundedOutside.reference && (
+                <>
+                  {' · '}
+                  <Ident value={item.refundedOutside.reference} />
+                </>
+              )}
+            </Fact>
+          )}
         </dl>
       </div>
 
@@ -442,7 +455,11 @@ export function ApplyDialog({
   const period = usePeriodLabel();
   const describe = useDecisionError();
   const id = useId();
-  const money = item.money?.amountPaisa ?? 0;
+  // The money still to decide: a refund recorded before (kept after a void) stays given back.
+  const money = Math.max(
+    0,
+    (item.money?.amountPaisa ?? 0) - (item.refundedOutside?.amountPaisa ?? 0),
+  );
   // One id for this decision: a retry after a lost answer returns the same receipt.
   const [requestId] = useState(randomId);
   const [picked, setPicked] = useState<Set<string> | null>(null);

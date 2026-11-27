@@ -83,6 +83,7 @@
     "payer": "অভিভাবক {name} দিয়েছেন",
     "tranId": "আমাদের লেনদেন আইডি",
     "started": "শুরু",
+    "refundedBefore": "আগেই বাইরে ফেরত",
     "receivedAt": "এসেছে",
     "forPayment": "যার জন্য",
     "noIntent": "আমাদের কোনো পেমেন্ট নয়",
