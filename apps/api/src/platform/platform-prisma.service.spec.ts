@@ -5,6 +5,8 @@ const SAFE: LoginPrivileges = {
   login: 'jantrik_platform_app',
   superuser: false,
   bypassRls: false,
+  replication: false,
+  createRole: false,
   canBecome: [],
 };
 
@@ -13,6 +15,8 @@ const privilegeRow = (p: LoginPrivileges) => ({
   login: p.login,
   superuser: p.superuser,
   bypass_rls: p.bypassRls,
+  replication: p.replication,
+  create_role: p.createRole,
   can_become: p.canBecome,
 });
 

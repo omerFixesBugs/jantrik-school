@@ -593,11 +593,88 @@ P0-9. **The login check reads `session_user`** (the login), never `current_user`
 
 Left by the final review for later (not built, each small):
 
-- **Redis runs as root and its image floats.** `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
-- **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
+- **Redis runs as root ~~and its image floats~~** (the image is pinned since the follow-ups of 2026-11-16, F-4 below; running as root is still open). `start-redis.sh` is started with `sh`, which skips the image's entrypoint (it drops to the `redis` user), as the earlier `sh -c` command did; `redis:7-alpine` is never pulled by the upgrade steps. The receiver can run Lua (`eval`), as it could before P0 with all of Redis. To do: end the script with `exec docker-entrypoint.sh redis-server …`, and pin a patched image or add `compose.sh pull redis` to the upgrade.
+- **Done 2026-11-16 (F-3 below).** **`CORS_ORIGINS` is compared normalised by the start-up check but raw by the CORS middleware:** an upper-case or slash-ended `CORS_ORIGINS` entry passes start-up while the browser's preflight fails. The compose file derives both lists from `PLATFORM_DOMAIN`, so only a hand-written setting can hit it. To do: normalise `CORS_ORIGINS` in `env.ts` too.
 - **The receiver's key scope `~<prefix>:devices:*` includes the worker's job schedulers** (the devices tick, expire-punches): code run in the receiver could delete them until the worker restarts and recreates them. Accepted for now (the scope the plan set); narrower read/write key selectors are possible at some cost across BullMQ upgrades.
-- **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
+- **Done 2026-11-16 (F-5 below).** **Refuse REPLICATION logins too** (`rolreplication`, and possibly `rolcreaterole`) in the login check; every production role is already created without them.
 - **Local Playwright configs** that are not in git (`playwright.alt*.config.ts`, `dbg`, `shots`) set `CORS_ORIGINS` but not `PLATFORM_ORIGINS`: their platform specs now get 403 until they set it.
+
+## Small follow-ups (day run 2026-11-16)
+
+Branch `chore/small-followups`, one PR. Decided by the agent alone (the owner was away); each can
+be changed in review.
+
+F-1. **P1-I is built as the owner answered:** a password is also refused when it contains a
+distinctive word of an institute's name. The name is split at spaces, punctuation, symbols and
+zero-width spaces; generic words and words of digits only (`2026` in "Udvash 2026 Batch") are
+dropped; every remaining word of 4 or more code points (the whole-name rule's counting) is
+refused. The whole-name rule stays (digits included). Both sides are compared like the phone rule:
+NFKC (full-width letters and digits), lower case, ASCII digits, khanda ta in its old encoding
+(ত + ্ + ZWJ) read as ৎ, and without spaces, punctuation, symbols or invisible characters (soft
+hyphen, zero-width space and joiners, word joiner…), so `ko.dom2026` or `k-o-d-o-m` count as
+`kodom`. **Glued endings:** generic words glued to the end of a word are cut off only when they
+are 6 or more code points together (`শাপলাউচ্চবিদ্যালয়` → `শাপলা`, `Kodomtolaschool` →
+`kodomtola`), so a short generic ending leaves no fragment (`Australia` keeps its `alia`; `austr`
+is not a word of the name). The error code stays `HAS_INSTITUTE_NAME` (its message now says "the
+name or a word from it"), so the web and the API did not change shape.
+
+F-2. **The generic words** (`GENERIC_NAME_WORDS` in `packages/shared/src/password.ts`), chosen
+from the owner's examples "and similar": the kind of institute (school, college, madrasa, academy,
+coaching, centre, institute, kindergarten, polytechnic, pathshala…), its level (high, secondary,
+primary, junior, dakhil, alim, fazil, kamil…), who it is for (girls, boys, mohila…), its medium and
+standing (english, bangla, version, international, model, ideal, public, government/govt, cadet,
+residential, pilot, memorial, smriti, shaheed…), madrasa name words (darul, uloom, jamia, hafizia,
+nurani, qawmi, islamia, quran, ebtedayee…), nursery and shishu, `and` written in Bangla, each in
+Bangla and in English letters with common spellings (madrasah, madrassa, bidyalay, uchcha,
+balika, madhyamik, prathomik, adarsha, sarkari, মাদরাসা, সরকারী, একাডেমী…). Not generic: place
+names and people's names (`Dhaka`, `Motijheel`, `Cantonment`, `Salim`): they point at the
+institute, so they are refused. Choices beyond the owner's words:
+
+- **Generic words glued to the end of a word** are cut off too (6 or more code points together,
+  F-1), and the whole glued word is still refused as well, so the rule never refuses less than
+  splitting at spaces alone. Only endings: a generic word at the start of an ordinary word is not
+  cut (`Highland` stays `highland`, so `highschool2026` is allowed).
+- **Invisible characters and other ways of writing** are ignored on both sides, for whole names
+  too (F-1). Unicode forms (য় as one code point or two) were already unified.
+- **The slug is not checked** (the decision mentioned it as a "perhaps"; the owner's answer did not
+  ask for it).
+
+F-3. **`CORS_ORIGINS` is normalised in `env.ts`** like `PLATFORM_ORIGINS` (lower-case host, no
+trailing slash or default port). An entry that is not exactly an origin (`*`, a bare host, or a
+URL with a login, a path, a query or a fragment) is kept as written instead of stopping the start:
+it matches no browser's Origin, production refuses it, and a developer's existing `.env` keeps
+working. **Also fixed for `PLATFORM_ORIGINS`** (they share the helper, which used `URL.origin`):
+`https://app.jantrik.com.bd@evil.example` used to become `https://evil.example` and pass the
+production check (in both lists, since before this PR for `PLATFORM_ORIGINS`). Such an entry is
+now no origin: production refuses it in either list, and `PLATFORM_ORIGINS` refuses it everywhere,
+as it already refused entries that are not URLs.
+
+F-4. **Redis is pinned to `redis:7.4.11-alpine`**, the version of the image this PC had (built
+2026-09-17; the tag exists on Docker Hub), in the production compose, the development compose and
+both CI jobs; a test checks the four agree and are exact. The exact tag, not a digest: Docker's
+patched rebuilds of the same version can still be taken (`compose.sh pull redis`, deploy.md §
+11). Your local Redis container keeps running `redis:7-alpine` until the next
+`docker compose up -d`, which pulls 7.4.11 and restarts it on the same volume. Postgres
+(`postgres:16-alpine`) and Caddy (`caddy:2-alpine`) still float: not asked, same fix if wanted.
+
+F-5. **The login check refuses REPLICATION and CREATEROLE** for the runtime logins, and a login
+that can become a role with either. CREATEROLE is refused too (the decision said "possibly"): no
+runtime login has or needs it, the local init script creates none with it, and `create-roles.sh`
+already refuses both for every role it makes, so no correct setup stops starting.
+
+F-6. **Test users' phones are unique per database, across runs too** (the appearance flake,
+P0-8). A per-run counter is not enough: the test database keeps every run's users, and Vitest
+gives each test file its own module (no shared memory). So one counter per database lives in a
+file in the OS temp folder (`jantrik-test-phones/`), taken 200 numbers at a time under a lock, and
+never behind a clock that moves 1 number a second (a deleted file restarts ahead of older runs,
+given about an hour and a half per 5 000 phones they used). New phones use operators no test used
+before (API +88013, db package +88014, 50 000 000 to 98 999 999; the seeds' fixed numbers are lower
+and the old random phones were 017/018), so they cannot meet old test users either. **The numbers
+never wrap:** when the 49 million are used up (the clock alone gets there in about May 2028),
+drawing stops with a message to recreate the test database and move the start date, instead of
+repeating numbers older runs gave out. The lock is taken over only when stale (10 s), by moving it
+aside first and checking its owner, and Windows' "being removed" answers (EPERM, EACCES) mean
+"busy". `randomPhone` kept its name (about 40 files call it).
 
 ## The refresh race fix (2026-11-15)
 
@@ -649,7 +726,7 @@ P1-G. **The rules are checked before the code** (a change to the plan's order, w
 
 P1-H. **`GET /me/password` also returns the person's own phone** (an addition to the plan), so the form can check the phone rule as they type. It is their own number, returned only to them.
 
-P1-I. **Open, for the owner: catch part of an institute's name too?** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widens the rule you set, so it is not built.
+P1-I. **Built in the follow-ups PR (`chore/small-followups`, the owner's answer of 2026-11-16; see F-1): a distinctive word of an institute's name is refused too.** The rule refuses a password containing an institute's whole name (spaces and case ignored), as planned. The review found that the likely weak form, the name's distinctive word plus a year (`শাপলা২০২৬১২৩৪` for "শাপলা উচ্চ বিদ্যালয়", `kodomtola@2026` for "Kodom Tola School"), passes. Catching it means dropping generic words (school, coaching, centre, college, academy, madrasa, high, model, উচ্চ, বিদ্যালয়, কোচিং, সেন্টার, মাদ্রাসা, একাডেমি…) and refusing what remains (4 characters or more), perhaps the slug too. It widened the rule you set, so it waited for your answer.
 
 - To change: `passwordProblems` in `packages/shared/src/password.ts` (the server and the form share it).
 
