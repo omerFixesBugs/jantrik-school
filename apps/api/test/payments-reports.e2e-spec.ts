@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import {
   addDays,
+  newTranId,
   type FeeClosing,
   type FeeCollections,
   type FeeReceipt,
   type FeeSummary,
   type OnlinePaymentsReport,
+  type PaymentReviewQueue,
 } from '@jantrik/shared';
+import { PAYMENT_PROVIDER, type PaymentProvider } from '../src/payments/provider.js';
 import { ReconcileService } from '../src/payments/reconcile.service.js';
 import { startFakeSslcommerz, type FakeSslcommerz } from './support/fake-sslcommerz.js';
 import { createHarness, http, type Harness } from './support/harness.js';
@@ -14,8 +17,10 @@ import {
   api,
   extraDue,
   intentRow,
+  ipnFields,
   onlineSchool,
   payAtGateway,
+  postIpn,
   PUBLIC_API,
   PUBLIC_WEB,
   startPayment,
@@ -246,5 +251,78 @@ describe('online payments in the reports, the daily closing and the dashboard', 
       .get(`/fees/reports/online-payments?from=${s.today}&to=${s.today}`)
       .expect(403);
     await http(h).get(`/fees/reports/online-payments?from=${s.today}&to=${s.today}`).expect(401);
+  });
+
+  it('money items count: a second payment and money of no payment in what was received and what waits; their refunds in refunded outside (review round 1, hardening e)', async () => {
+    const total = async () =>
+      (
+        (
+          await as('accountant')
+            .get(`/fees/reports/online-payments?from=${s.today}&to=${s.today}`)
+            .expect(200)
+        ).body as OnlinePaymentsReport
+      ).total;
+    const before = await total();
+    // A posted ৳400, and SSLCommerz takes the same session's money again (a DUPLICATE item).
+    const posted = await paidOnline(40000);
+    expect(posted.intent.status).toBe('PAID');
+    const second = fake.pay(posted.intent.sessionRef!);
+    await reconcile.run({ tenantId: s.tenantId, intentId: posted.intent.id, step: 4 });
+    // ৳50 of this store's money that names no payment of ours (an UNMATCHED item).
+    const session = await h.app.get<PaymentProvider>(PAYMENT_PROVIDER).createCheckout(s.store, {
+      tranId: newTranId(),
+      amountPaisa: 5000,
+      intentId: randomUUID(),
+      urls: {
+        success: 'https://x/s',
+        fail: 'https://x/f',
+        cancel: 'https://x/c',
+        ipn: 'https://x/i',
+      },
+      customer: {
+        name: 'X',
+        phone: '01700000000',
+        email: 'x@x',
+        address: 'N/A',
+        city: 'N/A',
+        postcode: 'N/A',
+        country: 'Bangladesh',
+      },
+    });
+    if (session.kind !== 'OK') throw new Error('no session');
+    const stray = fake.pay(session.sessionRef);
+    await postIpn(h, s.slug, ipnFields(stray)).expect(200);
+    const queue = async () =>
+      (await as('admin').get('/fees/online-payments/review').expect(200))
+        .body as PaymentReviewQueue;
+    await vi.waitFor(
+      async () =>
+        expect((await queue()).signals.some((i) => i.money.valId === stray.valId)).toBe(true),
+      { timeout: 15_000, interval: 100 },
+    );
+    const items = (await queue()).signals.filter((i) =>
+      [second.valId, stray.valId].includes(i.money.valId!),
+    );
+    expect(items.map((i) => i.reason).sort()).toEqual(['DUPLICATE', 'UNMATCHED']);
+
+    const waiting = await total();
+    expect(waiting.received.amountPaisa - before.received.amountPaisa).toBe(40000 + 40000 + 5000);
+    expect(waiting.review.count - before.review.count).toBe(2);
+    expect(waiting.review.amountPaisa - before.review.amountPaisa).toBe(40000 + 5000);
+    expect(waiting.paid.amountPaisa - before.paid.amountPaisa).toBe(40000);
+
+    // Both given back outside the app.
+    for (const item of items) {
+      await as('admin')
+        .post(`/fees/online-payments/signals/${item.eventId}/refunded-outside`, {
+          note: 'given back through the merchant panel',
+        })
+        .expect(200);
+    }
+    const after = await total();
+    expect(after.received.amountPaisa - before.received.amountPaisa).toBe(40000 + 40000 + 5000);
+    expect(after.review.count - before.review.count).toBe(0);
+    expect(after.refundedOutside.count - before.refundedOutside.count).toBe(2);
+    expect(after.refundedOutside.amountPaisa - before.refundedOutside.amountPaisa).toBe(45000);
   });
 });
