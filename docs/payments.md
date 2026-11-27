@@ -28,13 +28,13 @@ created on the owner's first save. Mode `SANDBOX` only (a CHECK; live mode is a 
 Never deleted, only switched off (P7a-P). Database details: [database.md](database.md) → Online
 payments.
 
-| Route                                        | Does                                                                                                                                                                            | Errors                                                     |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `GET /fees/online-payments/account`          | `{ provider, mode, configured, enabled, hint, credentialsUpdatedAt, lastTest: { at, result } \| null, lastFailure: { at, code } \| null, ipnUrl }`; no row yet → not configured |                                                            |
-| `PUT /fees/online-payments/account`          | `{ storeId, storePassword }` (write-only): saved encrypted, **the account switched off and its last test and last failure cleared in the same update** (P7a-M, P7a1-x19); answers the view                 | 400 (messages name the field, never repeat a value)        |
-| `POST /fees/online-payments/account/test`    | 202 `{ requestedAt }`; queues an `account-test` job. The page asks for the view until `lastTest.at` reaches `requestedAt`                                                       | 422 `CREDENTIALS_REQUIRED`; 429 (10 an hour per institute) |
-| `POST /fees/online-payments/account/enable`  | on                                                                                                                                                                              | 422 `TEST_REQUIRED`, `API_PUBLIC_URL_MISSING`              |
-| `POST /fees/online-payments/account/disable` | off                                                                                                                                                                             |                                                            |
+| Route                                        | Does                                                                                                                                                                                       | Errors                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `GET /fees/online-payments/account`          | `{ provider, mode, configured, enabled, hint, credentialsUpdatedAt, lastTest: { at, result } \| null, lastFailure: { at, code } \| null, ipnUrl }`; no row yet → not configured            |                                                            |
+| `PUT /fees/online-payments/account`          | `{ storeId, storePassword }` (write-only): saved encrypted, **the account switched off and its last test and last failure cleared in the same update** (P7a-M, P7a1-x19); answers the view | 400 (messages name the field, never repeat a value)        |
+| `POST /fees/online-payments/account/test`    | 202 `{ requestedAt }`; queues an `account-test` job. The page asks for the view until `lastTest.at` reaches `requestedAt`                                                                  | 422 `CREDENTIALS_REQUIRED`; 429 (10 an hour per institute) |
+| `POST /fees/online-payments/account/enable`  | on                                                                                                                                                                                         | 422 `TEST_REQUIRED`, `API_PUBLIC_URL_MISSING`              |
+| `POST /fees/online-payments/account/disable` | off                                                                                                                                                                                        |                                                            |
 
 - **On only after a passing test** (P7a-M): the API checks it, and the database refuses
   `enabled = true` unless credentials are saved and the last test is `OK`. A test that fails
@@ -64,9 +64,18 @@ enabled: false }` (CREATE the first time, UPDATE after, with the old `enabled`),
 
 - The store ID and password are one AES-256-GCM ciphertext, `v1.` + base64url(iv | tag |
   ciphertext), in `credentials_ciphertext`. The additional data (AAD) is
-  `payments:<provider>:<tenantId>:<accountId>`, so a ciphertext copied onto another institute's
-  or another account's row never decrypts. Helpers: `packages/db/src/payments/secrets.ts`
-  (`paymentKeys`, `credentialsAad`, `encryptCredentials`, `decryptCredentials`).
+  `payments:<provider>:<tenantId>:<accountId>:v<credentials_version>`, so a ciphertext copied
+  onto another institute's or another account's row never decrypts. Helpers:
+  `packages/db/src/payments/secrets.ts` (`paymentKeys`, `credentialsAad`, `encryptCredentials`,
+  `decryptCredentials`).
+- **No rollback** (P7a1-x20): `credentials_version` is set by a database trigger alone: 0 for an
+  account without credentials, 1 when one is inserted with them, one up whenever the ciphertext
+  changes, unchanged by any other update. `jantrik_app` may not UPDATE it, and an INSERT's value is
+  replaced. Saving locks the row (`FOR NO KEY UPDATE`), encrypts as the row's version + 1 and
+  checks that the update stored that version; reading decrypts with the row's version. So an older
+  ciphertext of the same row put back (an SQL injection inside the institute: a store a former
+  owner once saved) raises the version past its own and reads as `CREDENTIALS_UNREADABLE`, never
+  as the old store; the owner saves the store again.
 - **The key** is `PAYMENT_CREDENTIALS_KEY` (at least 32 characters, its own secret). Required in
   production; development and tests derive one from `OTP_PEPPER` (not the key the platform
   derives for 2FA). Changing it makes every saved store unreadable: a job that needs them records

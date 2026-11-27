@@ -1555,3 +1555,19 @@ No must-fix. Fixed, each with a failing test first:
   the account off; a test that passes clears them too. Before, a `CREDENTIALS_UNREADABLE` stayed on
   the page after the owner had saved the store again and its test had passed. No CHECK ties the
   two columns to any other (only to each other), so nothing else changes.
+- **P7a1-x20. Each ciphertext names its credentials version, which a trigger alone sets**
+  (migration `20261117500100_payment_credentials_version`, after P7a1's and before P7a2's).
+  `jantrik_app` may write the ciphertext and the AAD had no version, so an SQL injection inside
+  the institute (any role's request) could copy an older ciphertext of the same row back, e.g. a
+  store a former owner once saved, and it still decrypted: once P7a2 moves money, payments would
+  go to that store. Now `credentials_version` is 0 for a new account without credentials, 1 for
+  one inserted with them, and one up whenever the ciphertext changes (unchanged by any other
+  update); the app has no UPDATE on it and the trigger replaces an INSERT's value. The AAD is
+  `payments:<provider>:<tenantId>:<accountId>:v<version>`. Saving locks the row, encrypts as its
+  version + 1 and checks the version the update stored; reading uses the row's version. A
+  ciphertext put back is `CREDENTIALS_UNREADABLE`, never the old store. Choices: the lock is
+  `FOR NO KEY UPDATE` rather than `FOR UPDATE` (the lock the update takes anyway; it does not block
+  a foreign key check on the row, which P7a2's rows referencing the account would need); a
+  ciphertext saved before this migration (development databases only) names no version, reads as
+  unreadable and is saved again; no CHECK ties the version to the ciphertext, so the migration
+  needs no backfill on those rows.

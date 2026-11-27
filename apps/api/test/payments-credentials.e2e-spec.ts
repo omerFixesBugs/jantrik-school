@@ -159,8 +159,11 @@ describe('PaymentCredentialsService', () => {
     expect(await jobs.run(a.tenantId, () => service.read(a.accountId))).toEqual(creds);
     // An SQL injection inside the institute (jantrik_app, any role's request) copies the former
     // store's ciphertext back.
-    const changed = await withTenant(h.prisma, a.tenantId, (tx) =>
-      tx.$executeRaw`UPDATE payment_gateway_accounts SET credentials_ciphertext = ${first.credentialsCiphertext}`,
+    const old = first.credentialsCiphertext;
+    const changed = await withTenant(
+      h.prisma,
+      a.tenantId,
+      (tx) => tx.$executeRaw`UPDATE payment_gateway_accounts SET credentials_ciphertext = ${old}`,
     );
     expect(changed).toBe(1);
     // Never the former store: unreadable, and the owner saves the store again.

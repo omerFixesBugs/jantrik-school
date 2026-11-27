@@ -28,7 +28,9 @@ export class PaymentCredentialsError extends Error {
  * The only reader and writer of an institute's encrypted gateway credentials (sprint 1 P7a,
  * docs/payments.md → Credentials; credentials-scan.spec.ts fails if another file names the
  * column). The store ID and password are one AES-256-GCM ciphertext bound to the account's
- * provider, institute and id (the AAD), so a ciphertext copied onto another row never decrypts.
+ * provider, institute and id and to the row's credentials version (the AAD), so neither a
+ * ciphertext copied onto another row nor an older one of the same row put back ever decrypts: a
+ * database trigger alone sets the version, one up whenever the ciphertext changes (P7a1-x20).
  * Runs in the caller's transaction (a request or a TenantJobRunner job): RLS scopes it.
  * Decrypted values exist only in memory, for one call to the gateway.
  */
@@ -56,6 +58,11 @@ export class PaymentCredentialsService {
    * Encrypt the credentials onto the account, and in the same update switch it off and clear its
    * last test (P7a-M): new credentials are untested. The last failure goes too (P7a1-x19): it was
    * about the credentials these replace. `actorUserId` null: a command loaded them.
+   *
+   * The row is locked first, so nothing else can change its ciphertext before this transaction
+   * ends: the update below raises the version it read by one (the trigger), and the ciphertext is
+   * encrypted as that next version (P7a1-x20). FOR NO KEY UPDATE, the lock the update itself
+   * takes: unlike FOR UPDATE, it does not block a foreign key check on the row.
    */
   async save(
     accountId: string,
@@ -63,18 +70,21 @@ export class PaymentCredentialsService {
     opts: { actorUserId: string | null; now: Date },
   ): Promise<void> {
     const clean = sslcommerzCredentialsSchema.parse(creds);
-    const account = await this.db.tx.paymentGatewayAccount.findUnique({
-      where: { id: accountId },
-      select: { id: true, tenantId: true, provider: true },
-    });
+    const [account] = await this.db.tx.$queryRaw<
+      { id: string; tenantId: string; provider: string; version: number }[]
+    >`SELECT id, tenant_id AS "tenantId", provider::text AS provider,
+        credentials_version AS version
+      FROM public.payment_gateway_accounts WHERE id = ${accountId}::uuid
+      FOR NO KEY UPDATE`;
     if (!account) throw new PaymentCredentialsError('CREDENTIALS_MISSING');
+    const version = account.version + 1;
     const plain = JSON.stringify({ storeId: clean.storeId, storePassword: clean.storePassword });
-    await this.db.tx.paymentGatewayAccount.update({
+    const saved = await this.db.tx.paymentGatewayAccount.update({
       where: { id: account.id },
       data: {
         credentialsCiphertext: encryptCredentials(
           plain,
-          credentialsAad(account.provider, account.tenantId, account.id),
+          credentialsAad(account.provider, account.tenantId, account.id, version),
           this.keys,
         ),
         credentialsHint: this.hint(clean.storeId),
@@ -88,19 +98,30 @@ export class PaymentCredentialsService {
         lastFailureCode: null,
         lastFailureAt: null,
       },
-      select: { id: true },
+      select: { credentialsVersion: true },
     });
+    // The trigger's version must be the one encrypted with, or the store could never be read.
+    if (saved.credentialsVersion !== version) {
+      throw new Error('Payment credentials were not saved as the expected version');
+    }
   }
 
   /**
    * The account's credentials, decrypted. CREDENTIALS_MISSING when none are saved (or the
    * account is not this institute's); CREDENTIALS_UNREADABLE when they cannot be decrypted
-   * (another key, another row's ciphertext): the owner enters them again.
+   * (another key, another row's ciphertext, an older ciphertext put back): the owner enters them
+   * again. The version is the row's, read with the ciphertext in one statement.
    */
   async read(accountId: string): Promise<SslcommerzCredentials> {
     const account = await this.db.tx.paymentGatewayAccount.findUnique({
       where: { id: accountId },
-      select: { id: true, tenantId: true, provider: true, credentialsCiphertext: true },
+      select: {
+        id: true,
+        tenantId: true,
+        provider: true,
+        credentialsVersion: true,
+        credentialsCiphertext: true,
+      },
     });
     if (!account?.credentialsCiphertext) throw new PaymentCredentialsError('CREDENTIALS_MISSING');
     let parsed: unknown;
@@ -108,7 +129,12 @@ export class PaymentCredentialsService {
       parsed = JSON.parse(
         decryptCredentials(
           account.credentialsCiphertext,
-          credentialsAad(account.provider, account.tenantId, account.id),
+          credentialsAad(
+            account.provider,
+            account.tenantId,
+            account.id,
+            account.credentialsVersion,
+          ),
           this.keys,
         ),
       );
