@@ -66,8 +66,14 @@ const SWEEP_GRACE_MS = 2 * MINUTE;
 const SWEEP_MAX_AGE_MS = 8 * 24 * HOUR;
 /** The nightly run lists again an open intent older than this… */
 const REQUEUE_OPEN_AFTER_MS = HOUR;
-/** …and a posted one younger than this (its +25 h query, P7b-J). */
-const REQUEUE_PAID_WITHIN_MS = 26 * HOUR;
+/**
+ * …and a posted one younger than this whose +25 h query has not run (P7b-J). The nightly run may
+ * come up to 24 hours after a Redis loss, when the +25 h step of a payment then fell due anywhere
+ * in that day: at least 49 hours (review round 2, probe C; 26 h missed such payments). 72 hours
+ * also covers a night the run missed; the last_checked_at filter keeps the list to those never
+ * asked at +25 h.
+ */
+const REQUEUE_PAID_WITHIN_MS = 72 * HOUR;
 /** Heal on read (the review page): a step overdue by more than this, once a minute per institute. */
 const HEAL_OVERDUE_MS = 10 * MINUTE;
 /** At most this many intents of one kind per institute per nightly run or heal. */
@@ -365,7 +371,7 @@ export class ReconcileService implements OnModuleInit {
   /**
    * The nightly fee run's visit (P7b-B, FeeOnlineHooks.nightly), in this institute's own context:
    * after a Redis loss, its open payments older than an hour get their latest due step now and the
-   * later ones at their times; a payment posted in the last 26 hours whose +25 h query has not run
+   * later ones at their times; a payment posted in the last 72 hours whose +25 h query has not run
    * gets it; an expired one still PENDING or UNKNOWN at +25 h gets its +7 day query. Job ids make
    * it a no-op for steps whose jobs still exist.
    */
