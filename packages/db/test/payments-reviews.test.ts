@@ -192,7 +192,12 @@ describe('review decisions on online payments (P7b)', () => {
   /** A VALIDATE event (money), with a review reason or none. */
   const validateEvent = (
     s: School,
-    opts: { reason?: 'UNMATCHED' | 'DUPLICATE' | null; valId?: string; intentId?: string | null },
+    opts: {
+      reason?: 'UNMATCHED' | 'DUPLICATE' | null;
+      valId?: string;
+      intentId?: string | null;
+      amount?: string;
+    },
   ) =>
     withTenant(app, s.tenantId, (tx) =>
       tx.paymentGatewayEvent.create({
@@ -203,7 +208,7 @@ describe('review decisions on online payments (P7b)', () => {
           outcome: 'VALID',
           tranId: 'JSOTHER0001',
           valId: opts.valId ?? `VAL${randomUUID().slice(0, 8)}`,
-          fields: { status: 'VALID', amount: '1000.00', bank_tran_id: 'BTXOTHER01' },
+          fields: { status: 'VALID', amount: opts.amount ?? '1000.00', bank_tran_id: 'BTXOTHER01' },
           reviewReason: opts.reason === undefined ? 'UNMATCHED' : opts.reason,
           receivedAt: new Date(),
         },
@@ -603,7 +608,7 @@ describe('review decisions on online payments (P7b)', () => {
       'payment_signal_reviews_refund_reference',
     );
     // Refunded with an unknown amount (not a well-formed amount): allowed.
-    await signalReview(a, (await validateEvent(a, {})).id, { amountPaisa: null });
+    await signalReview(a, (await validateEvent(a, { amount: '1,000' })).id, { amountPaisa: null });
 
     // The only record of some money cannot be dismissed (P7b-E).
     const only = await validateEvent(a, {});
@@ -786,6 +791,26 @@ describe('review decisions on online payments (P7b)', () => {
     await expect(review(a.payer)).rejects.toThrow(signed);
     await review(a.admin);
     // A context with no person (a job, server code) is not checked: the tests above decide so.
+  });
+
+  it("a refunded item's amount is its event's validated amount (review round 1, hardening b)", async () => {
+    const amount = /the event's validated amount/i;
+    // ৳1 000.00 validated: refunded as ৳999.99, or as unknown, refused; as ৳1 000.00, recorded.
+    await expect(
+      signalReview(a, (await validateEvent(a, {})).id, { amountPaisa: 99999 }),
+    ).rejects.toThrow(amount);
+    await expect(
+      signalReview(a, (await validateEvent(a, {})).id, { amountPaisa: null }),
+    ).rejects.toThrow(amount);
+    await signalReview(a, (await validateEvent(a, {})).id, { amountPaisa: 100000 });
+    await signalReview(a, (await validateEvent(a, { amount: '12.5' })).id, { amountPaisa: 1250 });
+    // An amount that was not well-formed stays unknown.
+    await expect(
+      signalReview(a, (await validateEvent(a, { amount: '1000.001' })).id, { amountPaisa: 100000 }),
+    ).rejects.toThrow(amount);
+    await signalReview(a, (await validateEvent(a, { amount: '1000.001' })).id, {
+      amountPaisa: null,
+    });
   });
 
   it('payment_signal_reviews and the decisions are history: no UPDATE, no DELETE', async () => {
