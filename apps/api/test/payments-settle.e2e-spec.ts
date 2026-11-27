@@ -656,6 +656,20 @@ describe('online payments: confirmation and settle', () => {
       expect(queries(intent.tranId)).toBe(asked);
     });
 
+    it('a round stops validating once a validation closes the payment: no val_id is validated after PAID', async () => {
+      const { intent } = await readyPayment();
+      const t = await payAtGateway(h, fake, s.tenantId, intent.id);
+      const flood = madeUp(2);
+      await storeSignals(intent, [
+        { valId: t.valId, listed: true },
+        ...flood.map((valId) => ({ valId, listed: false })),
+      ]);
+      await confirm.run({ tenantId: s.tenantId, intentId: intent.id });
+      expect((await intentRow(h, s.tenantId, intent.id)).status).toBe('PAID');
+      expect(validations(flood)).toBe(0);
+      expect(await paymentsOf(intent.id)).toHaveLength(1);
+    });
+
     it('a closed payment: new val_ids are not validated unless the query lists them', async () => {
       const { intent } = await readyPayment();
       const t = await payAtGateway(h, fake, s.tenantId, intent.id);
