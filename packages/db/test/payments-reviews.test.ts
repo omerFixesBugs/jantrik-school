@@ -142,11 +142,20 @@ describe('review decisions on online payments (P7b)', () => {
       },
     });
 
-  /** Apply `amount` of the intent's money to its due (the rest refunded outside), as P7b does. */
+  /**
+   * Apply `amount` of the intent's money to its due (the rest refunded outside), as P7b does. A
+   * reference already on the row is kept unless another is given.
+   */
   const apply = (
     s: School,
     intent: { id: string; trx: string },
-    opts: { amount: number; refunded?: number | null; payment?: number; paidOn?: Date },
+    opts: {
+      amount: number;
+      refunded?: number | null;
+      reference?: string;
+      payment?: number;
+      paidOn?: Date;
+    },
   ) =>
     withTenant(app, s.tenantId, async (tx) => {
       const p = await gatewayPayment(tx, s, intent, {
@@ -156,10 +165,22 @@ describe('review decisions on online payments (P7b)', () => {
       });
       await tx.$executeRawUnsafe(
         `UPDATE payment_intents SET status = 'PAID', fee_payment_id = '${p.id}', ${resolved(s)},
-           applied_paisa = ${opts.amount}, refunded_outside_paisa = ${opts.refunded ?? 'NULL'}
+           applied_paisa = ${opts.amount}, refunded_outside_paisa = ${opts.refunded ?? 'NULL'},
+           refund_reference = ${opts.reference ? `'${opts.reference}'` : 'refund_reference'}
          WHERE id = '${intent.id}'`,
       );
       return p;
+    });
+
+  /** The void of an applied payment, as the fee module's void and its hook do it (P7a-G). */
+  const voidApplied = (s: School, intentId: string, paymentId: string) =>
+    withTenant(app, s.tenantId, async (tx) => {
+      await tx.$executeRawUnsafe(
+        `UPDATE fee_payments SET status = 'VOID', voided_at = now(), voided_by_id = '${s.admin}', void_reason = 'wrong dues' WHERE id = '${paymentId}'`,
+      );
+      await tx.$executeRawUnsafe(
+        `UPDATE payment_intents SET status = 'NEEDS_REVIEW', fee_payment_id = NULL, review_reasons = '{HIGH_RISK,VOIDED}', review_since = now() WHERE id = '${intentId}'`,
+      );
     });
 
   /** A VALIDATE event (money), with a review reason or none. */
@@ -469,14 +490,9 @@ describe('review decisions on online payments (P7b)', () => {
 
     const applied = await inReview(a);
     const payment = await apply(a, applied, { amount: 60000, refunded: 40000 });
-    await withTenant(app, a.tenantId, async (tx) => {
-      await tx.$executeRawUnsafe(
-        `UPDATE fee_payments SET status = 'VOID', voided_at = now(), voided_by_id = '${a.admin}', void_reason = 'wrong dues' WHERE id = '${payment.id}'`,
-      );
-      await tx.$executeRawUnsafe(
-        `UPDATE payment_intents SET status = 'NEEDS_REVIEW', fee_payment_id = NULL, review_reasons = '{HIGH_RISK,VOIDED}', review_since = now() WHERE id = '${applied.id}'`,
-      );
-    });
+    await voidApplied(a, applied.id, payment.id);
+    // The applied part is cleared; the money already given back outside stays given back
+    // (review round 1, finding 1: "refunded outside" is final, P7b-N).
     expect(
       await withTenant(app, a.tenantId, (tx) =>
         tx.paymentIntent.findUniqueOrThrow({ where: { id: applied.id } }),
@@ -484,12 +500,58 @@ describe('review decisions on online payments (P7b)', () => {
     ).toMatchObject({
       status: 'NEEDS_REVIEW',
       appliedPaisa: null,
-      refundedOutsidePaisa: null,
-      refundReference: null,
+      refundedOutsidePaisa: 40000,
+      resolvedAt: null,
+      resolutionNote: null,
+    });
+    // Applied again: a new live payment, for the money still to decide.
+    await apply(a, applied, { amount: 60000, refunded: 40000 });
+  });
+
+  it('a void after a partial apply keeps the refund: the money is never applied twice (review round 1, finding 1)', async () => {
+    // ৳1 200 in review: ৳800 applied and ৳400 given back outside, then the payment is voided.
+    const intent = await inReview(a, { amount: 120000 });
+    const first = await apply(a, intent, { amount: 80000, refunded: 40000, reference: 'BK-RF-1' });
+    await voidApplied(a, intent.id, first.id);
+    expect(
+      await withTenant(app, a.tenantId, (tx) =>
+        tx.paymentIntent.findUniqueOrThrow({ where: { id: intent.id } }),
+      ),
+    ).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      appliedPaisa: null,
+      refundedOutsidePaisa: 40000,
+      refundReference: 'BK-RF-1',
       resolvedAt: null,
     });
-    // Applied again: a new live payment.
-    await apply(a, applied, { amount: 100000 });
+    // The whole ৳1 200 again, with or without the refund: refused (records of ৳1 600 for ৳1 200).
+    await expect(apply(a, intent, { amount: 120000 })).rejects.toThrow(
+      /payment_intents_applied|refunded outside/i,
+    );
+    await expect(apply(a, intent, { amount: 120000, refunded: 40000 })).rejects.toThrow(
+      /payment_intents_applied|refunded outside/i,
+    );
+    // The refund never shrinks, not even with the amounts adding up.
+    await expect(apply(a, intent, { amount: 100000, refunded: 20000 })).rejects.toThrow(
+      /refunded outside/i,
+    );
+    // The ৳800 still to decide: applied again.
+    await apply(a, intent, { amount: 80000, refunded: 40000 });
+
+    // Or the rest refunded too: the whole validated amount is then refunded outside.
+    const other = await inReview(a, { amount: 120000 });
+    const p = await apply(a, other, { amount: 80000, refunded: 40000 });
+    await voidApplied(a, other.id, p.id);
+    await expect(
+      sql(
+        a,
+        `UPDATE payment_intents SET status = 'REFUNDED_OUTSIDE', ${resolved(a)}, refunded_outside_paisa = 80000 WHERE id = '${other.id}'`,
+      ),
+    ).rejects.toThrow(/payment_intents_refunded_outside|refunded outside/i);
+    await sql(
+      a,
+      `UPDATE payment_intents SET status = 'REFUNDED_OUTSIDE', ${resolved(a)}, refunded_outside_paisa = 120000 WHERE id = '${other.id}'`,
+    );
   });
 
   it('payment_signal_reviews: one final decision per review event, of this institute only', async () => {

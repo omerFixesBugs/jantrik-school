@@ -9,6 +9,7 @@ import {
   type OnlinePaymentCheckQueued,
   type OnlinePaymentList,
   type OnlinePaymentStaffView,
+  type OnlinePaymentsReport,
   type OnlinePaymentView,
   type PaymentReviewQueue,
 } from '@jantrik/shared';
@@ -743,6 +744,97 @@ describe('online payments: the review queue', () => {
     expect(again.id).not.toBe(first.id);
     const payments = await paymentsOf(r.intent.id);
     expect(payments.map((p) => p.status)).toEqual(['VOID', 'ACTIVE']);
+  });
+
+  it('a void after a partial apply keeps the refund: only the money left may be applied or refunded (review round 1, finding 1)', async () => {
+    const report = async () =>
+      (
+        (
+          await as('admin')
+            .get(`/fees/reports/online-payments?from=${s.today}&to=${s.today}`)
+            .expect(200)
+        ).body as OnlinePaymentsReport
+      ).total;
+    const before = await report();
+    // ৳1 200 in review: ৳800 applied to a smaller due, ৳400 given back outside; then voided.
+    const r = await risky(120000);
+    const small = await extraDue(h, s, child().id, { amountPaisa: 80000, dueDate: s.today });
+    const first = (
+      await apply(r.intent.id, {
+        dueIds: [small.id],
+        applyPaisa: 80000,
+        expectedOutstandingPaisa: 80000,
+        refundOutside: { reference: 'BK-RF-1' },
+      }).expect(201)
+    ).body as FeeReceipt;
+    await as('admin').post(`/fees/payments/${first.id}/void`, { reason: 'wrong due' }).expect(200);
+    expect(await staffView(r.intent.id)).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      decision: null,
+      refundedOutside: { amountPaisa: 40000, reference: 'BK-RF-1' },
+    });
+    expect(await intentRow(h, s.tenantId, r.intent.id)).toMatchObject({
+      appliedPaisa: null,
+      refundedOutsidePaisa: 40000,
+      refundReference: 'BK-RF-1',
+    });
+    // The whole ৳1 200 again: refused (the records would cover ৳1 600 for ৳1 200).
+    expect(
+      (
+        await apply(r.intent.id, {
+          dueIds: [r.due.id],
+          applyPaisa: 120000,
+          expectedOutstandingPaisa: 120000,
+        }).expect(422)
+      ).body,
+    ).toMatchObject({ code: 'AMOUNT_EXCEEDS_MONEY', moneyPaisa: 80000 });
+    // The report keeps the refund; what waits is the ৳800 left.
+    const voided = await report();
+    expect(voided.refundedOutside.amountPaisa - before.refundedOutside.amountPaisa).toBe(40000);
+    expect(voided.review.amountPaisa - before.review.amountPaisa).toBe(80000);
+    expect(voided.received.amountPaisa - before.received.amountPaisa).toBe(120000);
+    // The ৳800 left: applied again.
+    const again = (
+      await apply(r.intent.id, {
+        dueIds: [r.due.id],
+        applyPaisa: 80000,
+        expectedOutstandingPaisa: 120000,
+      }).expect(201)
+    ).body as FeeReceipt;
+    expect(again.amountPaisa).toBe(80000);
+    expect(await intentRow(h, s.tenantId, r.intent.id)).toMatchObject({
+      status: 'PAID',
+      appliedPaisa: 80000,
+      refundedOutsidePaisa: 40000,
+      refundReference: 'BK-RF-1',
+    });
+    const after = await report();
+    expect(after.refundedOutside.amountPaisa - before.refundedOutside.amountPaisa).toBe(40000);
+    expect(after.paid.amountPaisa - before.paid.amountPaisa).toBe(80000);
+    expect(after.review.amountPaisa - before.review.amountPaisa).toBe(0);
+
+    // Or the rest given back too: the whole money is then refunded outside, the rest audited.
+    const o = await risky(120000);
+    const part = (
+      await apply(o.intent.id, {
+        dueIds: [small.id],
+        applyPaisa: 80000,
+        expectedOutstandingPaisa: 80000,
+        refundOutside: { reference: 'BK-RF-2' },
+      }).expect(201)
+    ).body as FeeReceipt;
+    await as('admin').post(`/fees/payments/${part.id}/void`, { reason: 'wrong due' }).expect(200);
+    await as('admin')
+      .post(items(`/${o.intent.id}/refunded-outside`), { note: NOTE, reference: 'BK-RF-3' })
+      .expect(200);
+    expect(await intentRow(h, s.tenantId, o.intent.id)).toMatchObject({
+      status: 'REFUNDED_OUTSIDE',
+      refundedOutsidePaisa: 120000,
+      refundReference: 'BK-RF-3',
+    });
+    expect((await auditOf('payment_intent', o.intent.id)).at(-1)).toMatchObject({
+      newValues: { status: 'REFUNDED_OUTSIDE', refundedOutsidePaisa: 120000, restPaisa: 80000 },
+    });
   });
 
   it('a retried apply gets the same receipt; each decision is audited; the guardian sees it', async () => {
