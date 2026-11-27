@@ -102,14 +102,20 @@ describe('review decisions on online payments (P7b)', () => {
   /** An intent waiting for review: with its validated money (`amount`), or without any. */
   const inReview = async (
     s: School,
-    opts: { amount?: number | null; money?: boolean; reasons?: string; currency?: string } = {},
+    opts: {
+      amount?: number | null;
+      money?: boolean;
+      reasons?: string;
+      currency?: string;
+      valId?: string;
+    } = {},
   ) => {
     const intent = await newIntent(s);
     const trx = bankTranId();
     const money =
       opts.money === false
         ? ''
-        : `, val_id = 'VAL${randomUUID().slice(0, 8)}', bank_tran_id = '${trx}',
+        : `, val_id = '${opts.valId ?? `VAL${randomUUID().slice(0, 8)}`}', bank_tran_id = '${trx}',
            instrument = 'BKASH-BKash', method = 'BKASH', validated_currency = '${opts.currency ?? 'BDT'}', risk = 'HIGH',
            validated_amount_paisa = ${opts.amount === undefined ? 100000 : (opts.amount ?? 'NULL')}`;
     await sql(
@@ -832,6 +838,93 @@ describe('review decisions on online payments (P7b)', () => {
       a,
       `UPDATE payment_intents SET status = 'REFUNDED_OUTSIDE', ${resolved(a)} WHERE id = '${unknown.id}'`,
     );
+  });
+
+  it("money refunded outside as an item is never an intent's too: neither taken nor applied (review round 2, probe E)", async () => {
+    const refunded = /already refunded outside/i;
+    const valId = `VAL${randomUUID().slice(0, 8)}`;
+    await signalReview(a, (await validateEvent(a, { valId })).id);
+    // An intent taking that money (SSLCommerz naming one of ours for it afterwards): refused.
+    await expect(inReview(a, { valId })).rejects.toThrow(refunded);
+    // Taken and applied in one transaction: refused at commit too.
+    const intent = await newIntent(a);
+    const trx = bankTranId();
+    await expect(
+      withTenant(app, a.tenantId, async (tx) => {
+        await tx.$executeRawUnsafe(
+          `UPDATE payment_intents SET status = 'NEEDS_REVIEW', review_reasons = '{HIGH_RISK}',
+             review_since = now(), closed_at = now(), val_id = '${valId}', bank_tran_id = '${trx}',
+             method = 'BKASH', validated_currency = 'BDT', validated_amount_paisa = 100000
+           WHERE id = '${intent.id}'`,
+        );
+        const p = await gatewayPayment(tx, a, intent, {
+          amount: 100000,
+          trxId: trx,
+          paidOn: new Date('2026-10-21'),
+        });
+        await tx.$executeRawUnsafe(
+          `UPDATE payment_intents SET status = 'PAID', fee_payment_id = '${p.id}', ${resolved(a)},
+             applied_paisa = 100000 WHERE id = '${intent.id}'`,
+        );
+      }),
+    ).rejects.toThrow(refunded);
+    // Money only recorded as items (one undecided, one a dismissed repeat) is no refund: an intent
+    // may take it (the items are then repeats of the intent's money).
+    const recorded = `VAL${randomUUID().slice(0, 8)}`;
+    await validateEvent(a, { valId: recorded });
+    await signalReview(a, (await validateEvent(a, { valId: recorded })).id, {
+      outcome: 'DISMISSED',
+      amountPaisa: null,
+    });
+    await inReview(a, { valId: recorded });
+
+    // Two connections at once, one refunding the item and one taking the money: each runs its
+    // commit-time check before the other commits (up to a second); one wins.
+    const twice = `VAL${randomUUID().slice(0, 8)}`;
+    const item = await validateEvent(a, { valId: twice });
+    const taker = await newIntent(a);
+    let ready = 0;
+    let checked = 0;
+    let bothReady!: () => void;
+    let bothChecked!: () => void;
+    const barrier = new Promise<void>((resolve) => (bothReady = resolve));
+    const checkedBarrier = new Promise<void>((resolve) => (bothChecked = resolve));
+    const meet = async (tx: TenantTx, constraint: string) => {
+      if (++ready === 2) bothReady();
+      await barrier;
+      await tx.$executeRawUnsafe(`SET CONSTRAINTS ${constraint} IMMEDIATE`);
+      if (++checked === 2) bothChecked();
+      await Promise.race([checkedBarrier, new Promise((resolve) => setTimeout(resolve, 1000))]);
+    };
+    const results = await Promise.allSettled([
+      withTenant(app, a.tenantId, async (tx) => {
+        await tx.paymentSignalReview.create({
+          data: {
+            tenantId: a.tenantId,
+            eventId: item.id,
+            outcome: 'REFUNDED_OUTSIDE',
+            amountPaisa: 100000,
+            note: 'given back by bKash',
+            resolvedById: a.admin,
+            resolvedAt: new Date(),
+          },
+        });
+        await meet(tx, 'payment_signal_reviews_check');
+      }),
+      withTenant(app, a.tenantId, async (tx) => {
+        await tx.$executeRawUnsafe(
+          `UPDATE payment_intents SET status = 'NEEDS_REVIEW', review_reasons = '{HIGH_RISK}',
+             review_since = now(), closed_at = now(), val_id = '${twice}', bank_tran_id = '${bankTranId()}',
+             method = 'BKASH', validated_currency = 'BDT', validated_amount_paisa = 100000
+           WHERE id = '${taker.id}'`,
+        );
+        await meet(tx, 'payment_intents_refunded_item_check');
+      }),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(
+      String((results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason),
+    ).toMatch(/already refunded outside|payment's own/i);
   });
 
   it('payment_signal_reviews and the decisions are history: no UPDATE, no DELETE', async () => {

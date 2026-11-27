@@ -198,6 +198,31 @@ describe('decideSettlement', () => {
     ).toEqual({ kind: 'POST' });
   });
 
+  it('money already refunded outside as a money item: never posted, never held; review as DUPLICATE (review round 2, probe E)', () => {
+    const opts = { duesChanged: false, refundedAsItem: true };
+    for (const status of ['CREATED', 'REDIRECTED', 'NEEDS_REVIEW'] as const) {
+      expect(decideSettlement(intent(status), paid(), opts), status).toEqual({
+        kind: 'REVIEW',
+        recordFacts: false,
+        addReasons: ['DUPLICATE'],
+        eventReason: null,
+      });
+    }
+    for (const status of ['FAILED', 'CANCELLED', 'EXPIRED', 'DISMISSED'] as const) {
+      expect(decideSettlement(intent(status), paid(), opts), status).toEqual({
+        kind: 'REVIEW',
+        recordFacts: false,
+        addReasons: ['LATE_SUCCESS', 'DUPLICATE'],
+        eventReason: null,
+      });
+    }
+    // An intent holding other money: a second payment, as before.
+    expect(decideSettlement(intent('PAID', 'VAL0'), paid(), opts)).toEqual({
+      kind: 'EVENT_ONLY',
+      eventReason: 'DUPLICATE',
+    });
+  });
+
   it('after a unique violation (the bank_tran_id already on a live payment): review as DUPLICATE', () => {
     expect(
       decideSettlement(intent('REDIRECTED'), paid(), { duesChanged: false, duplicate: true }),

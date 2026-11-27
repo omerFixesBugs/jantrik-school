@@ -1313,4 +1313,41 @@ describe('online payments: the review queue', () => {
       [again.id, 'ACTIVE'],
     ]);
   });
+
+  it('money refunded outside as an item that SSLCommerz then names for a payment of ours: review without it, never posted (review round 2, probe E)', async () => {
+    const mine = await readyPayment(70000);
+    const t = await payAtGateway(h, fake, s.tenantId, mine.intent.id);
+    const genuine = await validated(mine.intent.tranId, t.valId);
+    // First SSLCommerz named no payment of ours for it (a return brought it): an unmatched item,
+    // which an admin records as refunded outside.
+    await settle.settlePaid(
+      s.tenantId,
+      mine.intent.id,
+      mine.intent.payerUserId,
+      { ...genuine, tranId: newTranId() },
+      { forgeable: true },
+    );
+    const [item] = await withTenant(h.prisma, s.tenantId, (tx) =>
+      tx.paymentGatewayEvent.findMany({ where: { valId: t.valId, reviewReason: 'UNMATCHED' } }),
+    );
+    await as('admin')
+      .post(items(`/signals/${item!.id}/refunded-outside`), { note: NOTE, reference: 'SSL-RF-E' })
+      .expect(200);
+    // Then it answers that the same money is this payment's, matching it exactly.
+    expect(
+      await settle.settlePaid(s.tenantId, mine.intent.id, mine.intent.payerUserId, genuine),
+    ).toBe('REVIEW');
+    expect(await intentRow(h, s.tenantId, mine.intent.id)).toMatchObject({
+      status: 'NEEDS_REVIEW',
+      reviewReasons: ['DUPLICATE'],
+      valId: null,
+      feePaymentId: null,
+    });
+    expect(await paymentsOf(mine.intent.id)).toEqual([]);
+    // Nothing more to find: dismissed after a check; the refund stands.
+    await reconcile.run({ tenantId: s.tenantId, intentId: mine.intent.id, step: 'manual' });
+    await as('admin')
+      .post(items(`/${mine.intent.id}/dismiss`), { note: 'its money was refunded as an item' })
+      .expect(200);
+  });
 });
