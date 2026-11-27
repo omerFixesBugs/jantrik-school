@@ -37,11 +37,10 @@ const GATEWAY_AMOUNT_SQL = '^[0-9]{1,7}([.][0-9]{1,2})?$';
  * ACCOUNTANT): every payment started in the range, by the day it was started in the institute's
  * timezone and by where it stands now (each in one status column), with the money SSLCommerz
  * validated for them and its charges (amount − store amount, S24). Money items count too (review
- * round 1, hardening e): a
- * second payment (DUPLICATE) on its payment's day, money of no payment of ours (UNMATCHED) on the
- * day it arrived; each payment's money once (its val_id; a repeat record dismissed, or money an
- * intent holds, is not counted again): in received, to check while undecided, refunded outside
- * once refunded. Sums are taken in SQL as bigint.
+ * round 1, hardening e): a second payment (DUPLICATE) on its payment's day, money of no payment
+ * of ours (UNMATCHED) on the day it arrived; each payment's money once (its val_id; a repeat
+ * record dismissed, or money an intent holds, is not counted again): in received, to check while
+ * undecided, refunded outside once refunded. Sums are taken in SQL as bigint.
  */
 @Injectable()
 export class OnlinePaymentsReportService {
