@@ -203,9 +203,17 @@ export class ConfirmService {
           }
           tried.add(valId);
           validatedAny = true;
-          failure =
-            (await this.validate(data.tenantId, intent, creds, valId, fromListed.has(valId))) ??
-            failure;
+          const done = await this.validate(
+            data.tenantId,
+            intent,
+            creds,
+            valId,
+            fromListed.has(valId),
+          );
+          failure = done.failure ?? failure;
+          // Posted or sent to review: the payment is closed, so nothing more is validated
+          // directly (the next round's query accounts for the rest).
+          if (done.closed) break;
         }
         if (fresh.length > VALIDATIONS_PER_ROUND) leftToQuery = true;
         continue;
@@ -236,9 +244,10 @@ export class ConfirmService {
   }
 
   /**
-   * One validation call and what follows from it; the error code when the call failed. `trusted`:
-   * the val_id came from SSLCommerz's listed address or from our own query, not only from signals
-   * anyone can send (P7a2-x30).
+   * One validation call and what follows from it: the error code when the call failed, and
+   * whether settle closed the payment (posted it or sent it to review). `trusted`: the val_id
+   * came from SSLCommerz's listed address or from our own query, not only from signals anyone can
+   * send (P7a2-x30).
    */
   private async validate(
     tenantId: string,
@@ -246,13 +255,19 @@ export class ConfirmService {
     creds: SslcommerzCredentials,
     valId: string,
     trusted: boolean,
-  ): Promise<ProviderErrorCode | null> {
+  ): Promise<{ failure: ProviderErrorCode | null; closed: boolean }> {
     const outcome = await this.provider.confirm(creds, { tranId: intent.tranId, valId });
     if (outcome.kind === 'PAID') {
-      await this.settle.settlePaid(tenantId, intent.id, intent.payerUserId, outcome, {
-        forgeable: !trusted,
-      });
-      return null;
+      const result = await this.settle.settlePaid(
+        tenantId,
+        intent.id,
+        intent.payerUserId,
+        outcome,
+        {
+          forgeable: !trusted,
+        },
+      );
+      return { failure: null, closed: result === 'POST' || result === 'REVIEW' };
     }
     // A made-up val_id (INVALID), a pending or failed one, or no answer: recorded, nothing else.
     await this.jobs.run(tenantId, () =>
@@ -264,7 +279,7 @@ export class ConfirmService {
         valId,
       }),
     );
-    return outcome.kind === 'ERROR' ? outcome.code : null;
+    return { failure: outcome.kind === 'ERROR' ? outcome.code : null, closed: false };
   }
 
   private async query(
@@ -308,7 +323,10 @@ export class ConfirmService {
         continue;
       }
       tried.add(attempt.valId);
-      failure = (await this.validate(tenantId, intent, creds, attempt.valId, true)) ?? failure;
+      // Every real attempt is validated, a second payment after the first posted included
+      // (a DUPLICATE event).
+      failure =
+        (await this.validate(tenantId, intent, creds, attempt.valId, true)).failure ?? failure;
     }
     const listed = new Set<string>(attempts.map((a) => a.status));
     const live = LIVE_ATTEMPTS.some((status) => listed.has(status));
