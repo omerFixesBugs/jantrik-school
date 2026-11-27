@@ -60,7 +60,9 @@ describe('attendance reports', () => {
 
   beforeAll(async () => {
     h = await createHarness();
-    s = await school(h, { settings: { absentSmsEnabled: false } });
+    // Reports never look back before the year's start: these schools' years began months ago, so
+    // yesterday and the last 30 days are in them on 1 January too (see school()).
+    s = await school(h, { settings: { absentSmsEnabled: false }, yearAroundToday: true });
     // Yesterday (admin: outside the teacher's window) and today (teacher).
     await submit(s.admin, s.sectionA, s.a, ['PRESENT', 'LEAVE', 'ABSENT'], {
       date: yesterday(),
@@ -107,7 +109,10 @@ describe('attendance reports', () => {
      * present on day -3; student 2 absent today, on leave day -2, absent day -3, present day -4.
      */
     const streakSchool = async (leaveCountsAsAbsent: boolean) => {
-      const t = await school(h, { settings: { absentSmsEnabled: false, leaveCountsAsAbsent } });
+      const t = await school(h, {
+        settings: { absentSmsEnabled: false, leaveCountsAsAbsent },
+        yearAroundToday: true,
+      });
       const days: [number, AttendanceStatus[]][] = [
         [-4, ['ABSENT', 'PRESENT', 'PRESENT']],
         [-3, ['PRESENT', 'ABSENT', 'PRESENT']],
@@ -165,6 +170,7 @@ describe('attendance reports', () => {
       const c = await school(h, {
         instituteTypeKey: 'COACHING',
         settings: { absentSmsEnabled: false },
+        yearAroundToday: true,
       });
       // Yesterday: student 1 absent in period 1, everyone present in period 2.
       await submit(c.admin, c.sectionA, c.a, ['ABSENT', 'PRESENT', 'PRESENT'], {
@@ -256,7 +262,10 @@ describe('attendance reports', () => {
     });
 
     it('trend: a new institute has every day empty', async () => {
-      const fresh = await school(h, { settings: { absentSmsEnabled: false } });
+      const fresh = await school(h, {
+        settings: { absentSmsEnabled: false },
+        yearAroundToday: true,
+      });
       const r = (await trend(fresh.admin, { bySection: 1 }).expect(200))
         .body as AttendanceTrendReport;
       expect(r.days).toHaveLength(30);

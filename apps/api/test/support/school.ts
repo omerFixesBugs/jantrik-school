@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { provisionTenant, withTenant } from '@jantrik/db';
-import { DEVICE_SETTINGS_DEFAULTS, type AttendanceSettings } from '@jantrik/shared';
+import {
+  addDays,
+  addMonths,
+  dateToDb,
+  DEVICE_SETTINGS_DEFAULTS,
+  type AttendanceSettings,
+} from '@jantrik/shared';
 import {
   addMember,
   bearer,
@@ -8,6 +14,7 @@ import {
   http,
   otpLogin,
   randomPhone,
+  testToday,
   testYear,
   yearRange,
   type Harness,
@@ -31,7 +38,16 @@ export interface School {
  */
 export async function school(
   h: Harness,
-  opts: { instituteTypeKey?: string; settings?: Partial<AttendanceSettings> } = {},
+  opts: {
+    instituteTypeKey?: string;
+    settings?: Partial<AttendanceSettings>;
+    /**
+     * The current year starts on the 1st of the month three months before today's (and lasts a
+     * year) instead of on 1 January, for reports that never look back before the year's start:
+     * the weeks before today are then in the year on every day of it, 1 January included.
+     */
+    yearAroundToday?: boolean;
+  } = {},
 ): Promise<School> {
   const tenant = opts.instituteTypeKey
     ? await provisionTenant(h.prisma, {
@@ -46,6 +62,16 @@ export async function school(
   const tenantId = tenant.id;
   const ids = await withTenant(h.prisma, tenantId, async (tx) => {
     const year = await tx.academicYear.findFirstOrThrow({ where: { isCurrent: true } });
+    if (opts.yearAroundToday) {
+      const month = testToday(h).slice(0, 7);
+      await tx.academicYear.update({
+        where: { id: year.id },
+        data: {
+          startDate: dateToDb(`${addMonths(month, -3)}-01`),
+          endDate: dateToDb(addDays(`${addMonths(month, 9)}-01`, -1)),
+        },
+      });
+    }
     const classLevel = await tx.classLevel.findFirstOrThrow({ orderBy: { sortOrder: 'asc' } });
     const mkSection = (name: string) =>
       tx.section.create({
