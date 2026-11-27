@@ -65,7 +65,9 @@ describe('published results: guardians, result SMS, dashboard', () => {
           nameBn: 'বার্ষিক পরীক্ষা',
           nameEn: 'Annual exam',
           startsOn: '2026-11-01',
-          endsOn: '2026-11-20',
+          // The last day of the test year: 'upcoming' lists exams not yet ended, by today's real
+          // date, so a fixed day in November made this test fail from 21 Nov 2026.
+          endsOn: '2026-12-31',
           resultMode: 'GPA',
         })
         .expect(201)
