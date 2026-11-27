@@ -331,8 +331,10 @@ DECLARE
   v_kind text;
   v_reason text;
   v_val text;
+  v_reported text;
 BEGIN
-  SELECT kind::text, review_reason::text, val_id INTO v_kind, v_reason, v_val
+  SELECT kind::text, review_reason::text, val_id, fields->>'amount'
+    INTO v_kind, v_reason, v_val, v_reported
     FROM payment_gateway_events WHERE tenant_id = NEW.tenant_id AND id = NEW.event_id;
   IF v_kind IS DISTINCT FROM 'VALIDATE' OR v_reason IS NULL THEN
     RAISE EXCEPTION 'a signal review needs a VALIDATE event with a review reason'
@@ -358,6 +360,16 @@ BEGIN
       RAISE EXCEPTION 'this money was already refunded outside (another record of it)'
         USING ERRCODE = 'check_violation';
     END IF;
+  END IF;
+  -- Refunded: the event's validated amount (review round 1, hardening b), as the API reads it
+  -- (parseGatewayAmount: at most 7 digits and 2 decimals), or unknown (NULL) exactly when the
+  -- gateway's amount was not well-formed (or nothing).
+  IF NEW.outcome = 'REFUNDED_OUTSIDE' AND NEW.amount_paisa IS DISTINCT FROM (
+    CASE WHEN v_reported ~ '^[0-9]{1,7}([.][0-9]{1,2})?$'
+         THEN NULLIF(round(v_reported::numeric * 100)::integer, 0) END
+  ) THEN
+    RAISE EXCEPTION 'a refunded item records the event''s validated amount'
+      USING ERRCODE = 'check_violation';
   END IF;
   IF NEW.outcome = 'DISMISSED' AND NOT (
     v_val IS NOT NULL AND (
