@@ -991,7 +991,7 @@ describe('online payments: the review queue', () => {
     const due = (await childFees(h, s.tokens.guardian, child().id)).ledger.dues.find(
       (d) => d.id === r.due.id,
     )!;
-    expect(due).toMatchObject({ status: 'PAID', paidPrincipalPaisa: 120000 });
+    expect(due).toMatchObject({ paidPrincipalPaisa: 120000, balance: { total: 0 } });
     expect((await intentRow(h, s.tenantId, r.intent.id)).status).toBe(
       applied.status === 201 ? 'PAID' : 'NEEDS_REVIEW',
     );

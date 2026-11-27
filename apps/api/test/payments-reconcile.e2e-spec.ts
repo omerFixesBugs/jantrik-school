@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { getQueueToken } from '@nestjs/bullmq';
 import { withTenant } from '@jantrik/db';
 import { newTranId } from '@jantrik/shared';
