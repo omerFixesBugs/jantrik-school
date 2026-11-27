@@ -199,7 +199,7 @@ describe('SslcommerzProvider', () => {
         currencyType: 'BDT',
         currencyAmountPaisa: 125050,
         storeAmountPaisa: 125050,
-        bankTranId: attempt.fields['bank_tran_id'],
+        bankTranId: attempt.fields['bank_tran_id'] ?? null,
         instrument: 'BKASH-BKash',
         cardBrand: 'MOBILEBANKING',
         risk: 'LOW',
