@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { newTranId } from '@jantrik/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findOrCreateUser, withTenant, type PrismaClient, type TenantTx } from '../src/index.js';
-import { appClient, createTenant, randomPhone } from './helpers.js';
+import { appClient, createTenant, ownerClient, randomPhone } from './helpers.js';
 
 // Online payments, part 3 (sprint 1 P7b, docs/payments.md → The review queue): a person's
 // decision on an online payment in review (applied to dues, refunded outside the app, or
@@ -359,11 +359,34 @@ describe('review decisions on online payments (P7b)', () => {
             risk: 'LOW',
           },
         });
+        return intent.id;
       });
     await expect(post({ amount: 99999 })).rejects.toThrow(/match its intent/i);
     await expect(post({ trxId: bankTranId() })).rejects.toThrow(/match its intent/i);
     await expect(post({ paidOn: new Date('2026-10-21') })).rejects.toThrow(/match its intent/i);
-    await post({});
+    const settled = await post({});
+    // From the intent's side too: a PAID intent changed under its payment (here by the schema
+    // owner, past the column grants) is refused at commit.
+    const owner = ownerClient();
+    try {
+      for (const change of [`amount_paisa = 99999`, `priced_on = DATE '2026-10-21'`]) {
+        await expect(
+          withTenant(owner, a.tenantId, (tx) =>
+            tx.$executeRawUnsafe(`UPDATE payment_intents SET ${change} WHERE id = '${settled}'`),
+          ),
+          change,
+        ).rejects.toThrow(/match its intent/i);
+      }
+    } finally {
+      await owner.$disconnect();
+    }
+    // Back in review only without its payment (a void); applied only with a new one.
+    await expect(
+      sql(
+        a,
+        `UPDATE payment_intents SET status = 'NEEDS_REVIEW', review_reasons = '{VOIDED}', review_since = now() WHERE id = '${settled}'`,
+      ),
+    ).rejects.toThrow(/holds no payment|payment_intents_paid/i);
     // Applied from review: the applied amount, the intent's bank_tran_id, a day from the checkout
     // day to the day it was recorded.
     const early = await inReview(a);
@@ -540,6 +563,48 @@ describe('review decisions on online payments (P7b)', () => {
       reason: 'DUPLICATE',
     });
     await signalReview(a, repeat.id, { outcome: 'DISMISSED', amountPaisa: null });
+  });
+
+  it('two connections dismiss the two records of one payment at once: one wins, the money stays recorded', async () => {
+    const valId = `VAL${randomUUID().slice(0, 8)}`;
+    const events = [await validateEvent(a, { valId }), await validateEvent(a, { valId })];
+    let inserted = 0;
+    let checked = 0;
+    let bothInserted!: () => void;
+    let bothChecked!: () => void;
+    const barrier = new Promise<void>((resolve) => (bothInserted = resolve));
+    const checkedBarrier = new Promise<void>((resolve) => (bothChecked = resolve));
+    // Each inserts its dismissal, waits for the other, has the commit-time check run now, and
+    // waits (up to a second) for the other's check before committing: without a lock each sees
+    // the other record still standing; with it, the second check waits for the first commit.
+    const dismiss = (eventId: string) =>
+      withTenant(app, a.tenantId, async (tx) => {
+        await tx.paymentSignalReview.create({
+          data: {
+            tenantId: a.tenantId,
+            eventId,
+            outcome: 'DISMISSED',
+            note: 'the same payment twice',
+            resolvedById: a.admin,
+            resolvedAt: new Date(),
+          },
+        });
+        if (++inserted === 2) bothInserted();
+        await barrier;
+        await tx.$executeRawUnsafe(`SET CONSTRAINTS payment_signal_reviews_check IMMEDIATE`);
+        if (++checked === 2) bothChecked();
+        await Promise.race([checkedBarrier, new Promise((resolve) => setTimeout(resolve, 1000))]);
+      });
+    const results = await Promise.allSettled(events.map((e) => dismiss(e.id)));
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const failure = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(String(failure.reason)).toMatch(/money is never dismissed/i);
+    const dismissed = await withTenant(app, a.tenantId, (tx) =>
+      tx.paymentSignalReview.count({
+        where: { eventId: { in: events.map((e) => e.id) }, outcome: 'DISMISSED' },
+      }),
+    );
+    expect(dismissed).toBe(1);
   });
 
   it('payment_signal_reviews and the decisions are history: no UPDATE, no DELETE', async () => {
