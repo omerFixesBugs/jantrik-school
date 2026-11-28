@@ -103,12 +103,15 @@ export function DueCard({
   onToggle,
   manages,
   onAction,
+  previousYear = false,
 }: {
   due: FeeDueView;
   checked: boolean;
   onToggle: (checked: boolean) => void;
   manages: boolean;
   onAction: (kind: 'waive' | 'cancel') => void;
+  /** A due of an earlier year than the current one (P5, S17): marked, never moved. */
+  previousYear?: boolean;
 }) {
   const t = useTranslations('fees.counter');
   const locale = useLocale() as Locale;
@@ -144,6 +147,11 @@ export function DueCard({
       </span>
       <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <span>{t('ledger.dueOn', { date: formatDate(due.dueDate, locale) })}</span>
+        {previousYear && (
+          <span data-testid="previous-year">
+            <Pill tone="neutral">{t('ledger.previousYear', { year: due.academicYear.name })}</Pill>
+          </span>
+        )}
         {cancelled ? (
           <StatusPill kind="cancelled">{t('ledger.cancelledPill')}</StatusPill>
         ) : !owing && due.amountPaisa - due.concessionPaisa <= 0 ? (

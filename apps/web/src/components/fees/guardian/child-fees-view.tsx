@@ -236,6 +236,9 @@ function Loaded({ childId, view }: { childId: string; view: FeeGuardianView }) {
                 due={d}
                 concessions={ledger.concessions}
                 pending={pending.has(d.id)}
+                previousYear={
+                  ledger.currentYearId !== null && d.academicYear.id !== ledger.currentYearId
+                }
               />
             ))}
           </ul>

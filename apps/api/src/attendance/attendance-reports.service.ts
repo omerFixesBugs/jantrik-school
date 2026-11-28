@@ -415,7 +415,12 @@ export class AttendanceReportsService {
     }
     const register = buildRegister({
       month: query.month,
-      students: await this.attendance.roster(section.id, section.academicYearId),
+      // Everyone on the register on any day of the month: leavers until they left.
+      students: await this.attendance.roster(
+        section.id,
+        section.academicYearId,
+        `${query.month}-01`,
+      ),
       takenDates: [...byDate.keys()],
       records: [...byDate].flatMap(([date, s]) =>
         s.records.map((r) => ({ studentId: r.studentId, date, status: r.status })),

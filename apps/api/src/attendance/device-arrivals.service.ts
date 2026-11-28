@@ -12,6 +12,7 @@ import {
 } from '@jantrik/shared';
 import { idsOnDevices } from '../devices/device-users.js';
 import { Db } from '../tenancy/db.service.js';
+import { onRegisterOn } from './on-register.js';
 import { timeFromDb, type AttendanceTenant } from './attendance-settings.service.js';
 
 /** A student's arrival: the first IN punch that counts, PRESENT or LATE by the shift start. */
@@ -75,7 +76,7 @@ export class DeviceArrivalsService {
     const enrolments = await tx.enrolment.findMany({
       where: {
         OR: sections.map((s) => ({ sectionId: s.id, academicYearId: s.academicYearId })),
-        student: { deletedAt: null },
+        student: onRegisterOn(date),
       },
       orderBy: [{ roll: { sort: 'asc', nulls: 'last' } }, { student: { studentCode: 'asc' } }],
       select: { sectionId: true, studentId: true, student: { select: { status: true } } },

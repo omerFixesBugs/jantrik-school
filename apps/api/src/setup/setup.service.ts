@@ -12,6 +12,7 @@ import {
   type SetupShift,
   type SetupStudyGroup,
   type SetupSubject,
+  type TeacherCopyResult,
 } from '@jantrik/shared';
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
@@ -64,6 +65,12 @@ interface SubjectCreate {
   sortOrder: number;
 }
 type SubjectUpdate = Partial<Omit<SubjectCreate, 'classLevelId'>> & { isActive?: boolean };
+
+interface CopyTeachersInput {
+  fromAcademicYearId: string;
+  classTeachers: boolean;
+  subjectTeachers: boolean;
+}
 
 /** "HH:MM" ⇄ a TIME column (Prisma maps it to a Date on 1970-01-01 UTC). */
 const timeToDb = (t: string): Date => new Date(`1970-01-01T${t}:00Z`);
@@ -206,6 +213,132 @@ export class SetupService {
       });
     }
     return { ...target, isCurrent: true };
+  }
+
+  /**
+   * Section teachers (class teachers included) and subject teachers of `fromAcademicYearId`
+   * copied into this year's sections of the same class and name (P5). Someone no longer an ACTIVE
+   * staff member here, a deactivated subject or section, and rows already there are skipped; a
+   * section that already has a class teacher gets the copied one as an ordinary teacher.
+   * Idempotent.
+   */
+  async copyTeachers(toYearId: string, input: CopyTeachersInput): Promise<TeacherCopyResult> {
+    const tx = this.db.tx;
+    const to = await this.year(toYearId);
+    const from = await this.year(input.fromAcademicYearId);
+    if (from.id === to.id)
+      throw apiError(422, 'SAME_YEAR', 'Pick another year', { field: 'fromAcademicYearId' });
+    const sections = await tx.section.findMany({
+      where: { academicYearId: { in: [from.id, to.id] }, isActive: true },
+      select: { id: true, academicYearId: true, classLevelId: true, name: true },
+    });
+    const target = new Map(
+      sections
+        .filter((s) => s.academicYearId === to.id)
+        .map((s) => [`${s.classLevelId}|${s.name}`, s.id]),
+    );
+    const mapped = new Map<string, string>();
+    for (const s of sections.filter((x) => x.academicYearId === from.id)) {
+      const t = target.get(`${s.classLevelId}|${s.name}`);
+      if (t) mapped.set(s.id, t);
+    }
+    // The rule of the normal assignment paths (attendance and exams setup, review SF1): an ACTIVE
+    // OWNER, ADMIN or TEACHER membership and a staff profile. An accountant, or a former teacher
+    // whose subject assignment stayed behind, is not copied.
+    const [members, profiles] = await Promise.all([
+      tx.membership.findMany({
+        where: { status: 'ACTIVE', role: { in: ['OWNER', 'ADMIN', 'TEACHER'] } },
+        select: { userId: true },
+      }),
+      tx.staffProfile.findMany({ select: { userId: true } }),
+    ]);
+    // Each assignment path's own rule (review rounds 1 and 2): a section teacher needs an ACTIVE
+    // OWNER, ADMIN or TEACHER membership (legacy teachers without a staff profile included, as
+    // PUT /attendance/sections/:id/teachers allows); a subject teacher also a staff profile (as
+    // the exams setup requires). An accountant is neither.
+    const profiled = new Set(profiles.map((p) => p.userId));
+    const sectionStaff = new Set(members.map((m) => m.userId));
+    const subjectStaff = new Set([...sectionStaff].filter((id) => profiled.has(id)));
+    const result: TeacherCopyResult = { sectionTeachers: 0, subjectTeachers: 0, skipped: 0 };
+    const fromSectionIds = sections.filter((s) => s.academicYearId === from.id).map((s) => s.id);
+
+    if (input.classTeachers) {
+      const rows = await tx.sectionTeacher.findMany({
+        where: { sectionId: { in: fromSectionIds } },
+        select: { sectionId: true, userId: true, isClassTeacher: true },
+        orderBy: [{ isClassTeacher: 'desc' }, { createdAt: 'asc' }],
+      });
+      const existing = await tx.sectionTeacher.findMany({
+        where: { sectionId: { in: [...new Set(mapped.values())] } },
+        select: { sectionId: true, userId: true, isClassTeacher: true },
+      });
+      const have = new Set(existing.map((e) => `${e.sectionId}|${e.userId}`));
+      const hasClassTeacher = new Set(
+        existing.filter((e) => e.isClassTeacher).map((e) => e.sectionId),
+      );
+      for (const r of rows) {
+        const sectionId = mapped.get(r.sectionId);
+        if (!sectionId || !sectionStaff.has(r.userId) || have.has(`${sectionId}|${r.userId}`)) {
+          result.skipped++;
+          continue;
+        }
+        const isClassTeacher = r.isClassTeacher && !hasClassTeacher.has(sectionId);
+        await tx.sectionTeacher.create({
+          data: { tenantId: this.tenantId, sectionId, userId: r.userId, isClassTeacher },
+          select: { id: true },
+        });
+        have.add(`${sectionId}|${r.userId}`);
+        if (isClassTeacher) hasClassTeacher.add(sectionId);
+        result.sectionTeachers++;
+      }
+    }
+    if (input.subjectTeachers) {
+      const rows = await tx.sectionSubjectTeacher.findMany({
+        where: { sectionId: { in: fromSectionIds } },
+        select: {
+          sectionId: true,
+          subjectId: true,
+          classLevelId: true,
+          userId: true,
+          subject: { select: { isActive: true } },
+        },
+      });
+      const existing = new Set(
+        (
+          await tx.sectionSubjectTeacher.findMany({
+            where: { sectionId: { in: [...new Set(mapped.values())] } },
+            select: { sectionId: true, subjectId: true, userId: true },
+          })
+        ).map((e) => `${e.sectionId}|${e.subjectId}|${e.userId}`),
+      );
+      const data = [];
+      for (const r of rows) {
+        const sectionId = mapped.get(r.sectionId);
+        const key = `${sectionId}|${r.subjectId}|${r.userId}`;
+        if (!sectionId || !subjectStaff.has(r.userId) || !r.subject.isActive || existing.has(key)) {
+          result.skipped++;
+          continue;
+        }
+        existing.add(key);
+        data.push({
+          tenantId: this.tenantId,
+          sectionId,
+          subjectId: r.subjectId,
+          classLevelId: r.classLevelId,
+          userId: r.userId,
+        });
+      }
+      if (data.length > 0) await tx.sectionSubjectTeacher.createMany({ data });
+      result.subjectTeachers = data.length;
+    }
+    if (result.sectionTeachers + result.subjectTeachers > 0)
+      await this.audit.record({
+        entity: 'academic_year',
+        entityId: to.id,
+        action: 'UPDATE',
+        newValues: { step: 'copy_teachers', copiedFrom: from.id, ...result },
+      });
+    return result;
   }
 
   async deleteYear(id: string): Promise<void> {

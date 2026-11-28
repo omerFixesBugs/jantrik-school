@@ -598,6 +598,9 @@ model User {
 
   storedFilesCreated StoredFile[] @relation("StoredFileCreatedBy")
 
+  promotionRunsCreated PromotionRun[] @relation("PromotionRunCreatedBy")
+  promotionRunsApplied PromotionRun[] @relation("PromotionRunAppliedBy")
+
   @@map("users")
 }
 
@@ -703,6 +706,9 @@ model Tenant {
   storedFileUsage            StoredFileUsage?
   instituteProfile           InstituteProfile?
 
+  promotionRuns        PromotionRun[]
+  promotionRunStudents PromotionRunStudent[]
+
   @@index([instituteTypeId])
   @@map("tenants")
 }
@@ -778,7 +784,9 @@ model AcademicYear {
   feeDues        FeeDue[]
   exams          Exam[]
 
-  admissionCycles AdmissionCycle[]
+  admissionCycles   AdmissionCycle[]
+  promotionRunsFrom PromotionRun[]   @relation("PromotionRunFromYear")
+  promotionRunsTo   PromotionRun[]   @relation("PromotionRunToYear")
 
   @@unique([tenantId, id])
   @@unique([tenantId, name])
@@ -885,6 +893,8 @@ model ClassLevel {
   examClasses    ExamClass[]
 
   admissionCycleClasses AdmissionCycleClass[]
+  promotionRuns         PromotionRun[]
+  promotionRowsTargets  PromotionRunStudent[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -913,6 +923,7 @@ model StudyGroup {
   examCandidates ExamCandidate[]
 
   admissionCycleClasses AdmissionCycleClass[]
+  promotionRowsTargets  PromotionRunStudent[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -987,9 +998,14 @@ model Section {
   examMarkSheets     ExamMarkSheet[]
   examResults        ExamResult[]
 
+  promotionRowsFrom    PromotionRunStudent[] @relation("PromotionRowFromSection")
+  promotionRowsTargets PromotionRunStudent[] @relation("PromotionRowTargetSection")
+
   @@unique([tenantId, id])
   /// So rows can carry the class level and be checked against a subject's class.
   @@unique([tenantId, id, classLevelId])
+  /// So a promotion row's target section can be checked against its year and class (P5).
+  @@unique([tenantId, id, academicYearId, classLevelId])
   @@unique([tenantId, academicYearId, classLevelId, name])
   @@index([tenantId, classLevelId])
   @@map("sections")
@@ -1031,6 +1047,10 @@ model Student {
   /// Always STUDENT_PHOTO (CHECK): part of the foreign key, so the photo can only be a photo.
   photoFileKind        StoredFileKind @default(STUDENT_PHOTO) @map("photo_file_kind")
   status               StudentStatus  @default(ACTIVE)
+  /// The day a leaver left (GRADUATED, TRANSFERRED, DROPPED_OUT, INACTIVE without deletion);
+  /// NULL while the student stays (P5, S14).
+  leftOn               DateTime?      @map("left_on") @db.Date
+  leaveReason          String?        @map("leave_reason")
   // Fields required for Bangladesh education board registration.
   fatherNameBn         String?        @map("father_name_bn")
   fatherNameEn         String?        @map("father_name_en")
@@ -1069,6 +1089,7 @@ model Student {
   examCandidates          ExamCandidate[]
   devicePeople            DevicePerson[]
   admissionApplication    AdmissionApplication?
+  promotionRows           PromotionRunStudent[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
@@ -1150,7 +1171,13 @@ model Enrolment {
 
   subjectChoices StudentSubjectChoice[]
 
+  promotionRowsFrom PromotionRunStudent[] @relation("PromotionRowFromEnrolment")
+  promotionRowsTo   PromotionRunStudent[] @relation("PromotionRowToEnrolment")
+
   @@unique([tenantId, id])
+  /// So a promotion row's enrolments can be checked against its student (and its to-year).
+  @@unique([tenantId, id, studentId])
+  @@unique([tenantId, id, studentId, academicYearId])
   @@unique([tenantId, academicYearId, studentId])
   @@unique([tenantId, sectionId, roll])
   @@index([tenantId, academicYearId, classLevelId, sectionId])
@@ -1549,7 +1576,11 @@ model Exam {
   classes    ExamClass[]
   candidates ExamCandidate[]
 
+  promotionRuns PromotionRun[]
+
   @@unique([tenantId, id])
+  /// So a promotion run's merit exam can be checked against its from-year (P5).
+  @@unique([tenantId, id, academicYearId])
   @@index([tenantId, academicYearId, startsOn])
   @@map("exams")
 }
@@ -3460,4 +3491,142 @@ model AdmissionCounter {
 
   @@id([tenantId, year])
   @@map("admission_counters")
+}
+
+// ───────────────────────────── Promotion and new session (sprint 1 P5) ─────────────────────────────
+// A run per class moves its students into the next academic year (docs/promotion.md). Rows are
+// edited while pending; an applied row never changes again (restrictive policies, migration
+// 20261117200100_promotion_runs).
+
+/// How rolls are proposed for a group of students in the new year (assignRolls, @jantrik/shared).
+enum PromotionRollStrategy {
+  MERIT
+  NAME_BN
+  NAME_EN
+  MANUAL
+  KEEP
+
+  @@map("promotion_roll_strategy")
+}
+
+/// DRAFT (rows edited) → APPLYING (the job runs, or stopped with last_error) → APPLIED (no pending
+/// row left). Rows added by a refresh after APPLIED are applied by another apply.
+enum PromotionRunStatus {
+  DRAFT
+  APPLYING
+  APPLIED
+
+  @@map("promotion_run_status")
+}
+
+enum PromotionDecision {
+  PROMOTE
+  REPEAT
+  LEAVE
+
+  @@map("promotion_decision")
+}
+
+/// What applying a row did: a new enrolment, an enrolment that was already there (left as is,
+/// P5-D), the student marked as leaving, or nothing because the student was deactivated or had
+/// already left (another way) meanwhile.
+enum PromotionApplyOutcome {
+  ENROLLED
+  ALREADY_ENROLLED
+  LEFT
+  SKIPPED_DEACTIVATED
+  SKIPPED_LEFT
+
+  @@map("promotion_apply_outcome")
+}
+
+/// One promotion run: a from-class of the from-year moving into the to-year. History once applied
+/// (no DELETE grant); a draft is emptied, never deleted (P5-L).
+model PromotionRun {
+  id             String                @id @default(uuid(7)) @db.Uuid
+  tenantId       String                @map("tenant_id") @db.Uuid
+  fromYearId     String                @map("from_year_id") @db.Uuid
+  toYearId       String                @map("to_year_id") @db.Uuid
+  /// The from-class.
+  classLevelId   String                @map("class_level_id") @db.Uuid
+  rollStrategy   PromotionRollStrategy @map("roll_strategy")
+  /// A published exam of the from-year (defaults and merit order); checked against the from-year.
+  meritExamId    String?               @map("merit_exam_id") @db.Uuid
+  status         PromotionRunStatus    @default(DRAFT)
+  createdById    String                @map("created_by_id") @db.Uuid
+  /// The admin who pressed apply last (the job acts as them).
+  appliedById    String?               @map("applied_by_id") @db.Uuid
+  applyStartedAt DateTime?             @map("apply_started_at") @db.Timestamptz(3)
+  /// Set when no pending row is left.
+  appliedAt      DateTime?             @map("applied_at") @db.Timestamptz(3)
+  /// A fixed code (SECTION_FULL, ACTOR_NOT_ADMIN, ERROR…), never a message.
+  lastError      String?               @map("last_error")
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromYear   AcademicYear @relation("PromotionRunFromYear", fields: [tenantId, fromYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  toYear     AcademicYear @relation("PromotionRunToYear", fields: [tenantId, toYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel ClassLevel   @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  meritExam  Exam?        @relation(fields: [tenantId, meritExamId, fromYearId], references: [tenantId, id, academicYearId], onDelete: Restrict, onUpdate: Restrict)
+  createdBy  User         @relation("PromotionRunCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  appliedBy  User?        @relation("PromotionRunAppliedBy", fields: [appliedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  rows PromotionRunStudent[]
+
+  @@unique([tenantId, id])
+  /// The rows' target: a row carries its run's to-year, so its target section can be checked.
+  @@unique([tenantId, id, toYearId])
+  @@unique([tenantId, fromYearId, toYearId, classLevelId])
+  @@index([tenantId, toYearId])
+  @@map("promotion_runs")
+}
+
+/// One student of a run: the snapshot when the run was made, the decision and target, and what
+/// applying it did. Updated and deleted only while pending (applied_at NULL).
+model PromotionRunStudent {
+  id                 String                 @id @default(uuid(7)) @db.Uuid
+  tenantId           String                 @map("tenant_id") @db.Uuid
+  runId              String                 @map("run_id") @db.Uuid
+  /// Copied from the run, so the target section can be checked by a foreign key.
+  toYearId           String                 @map("to_year_id") @db.Uuid
+  studentId          String                 @map("student_id") @db.Uuid
+  fromEnrolmentId    String                 @map("from_enrolment_id") @db.Uuid
+  fromSectionId      String?                @map("from_section_id") @db.Uuid
+  fromRoll           Int?                   @map("from_roll")
+  /// From the merit exam; NULL = no result.
+  resultPassed       Boolean?               @map("result_passed")
+  /// The class position in the merit exam; NULL = unranked or no result.
+  meritPosition      Int?                   @map("merit_position")
+  decision           PromotionDecision
+  targetClassLevelId String?                @map("target_class_level_id") @db.Uuid
+  targetSectionId    String?                @map("target_section_id") @db.Uuid
+  targetStudyGroupId String?                @map("target_study_group_id") @db.Uuid
+  leaveStatus        StudentStatus?         @map("leave_status")
+  leftOn             DateTime?              @map("left_on") @db.Date
+  leaveReason        String?                @map("leave_reason")
+  appliedAt          DateTime?              @map("applied_at") @db.Timestamptz(3)
+  applyOutcome       PromotionApplyOutcome? @map("apply_outcome")
+  toEnrolmentId      String?                @map("to_enrolment_id") @db.Uuid
+  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  run              PromotionRun @relation(fields: [tenantId, runId, toYearId], references: [tenantId, id, toYearId], onDelete: Restrict, onUpdate: Restrict)
+  student          Student      @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  fromEnrolment    Enrolment    @relation("PromotionRowFromEnrolment", fields: [tenantId, fromEnrolmentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  fromSection      Section?     @relation("PromotionRowFromSection", fields: [tenantId, fromSectionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  targetClassLevel ClassLevel?  @relation(fields: [tenantId, targetClassLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  targetSection    Section?     @relation("PromotionRowTargetSection", fields: [tenantId, targetSectionId, toYearId, targetClassLevelId], references: [tenantId, id, academicYearId, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+  targetStudyGroup StudyGroup?  @relation(fields: [tenantId, targetStudyGroupId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  toEnrolment      Enrolment?   @relation("PromotionRowToEnrolment", fields: [tenantId, toEnrolmentId, studentId, toYearId], references: [tenantId, id, studentId, academicYearId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, runId, studentId])
+  /// A student is in at most one run into a given year.
+  @@unique([tenantId, toYearId, studentId])
+  @@index([tenantId, runId, targetSectionId])
+  @@index([tenantId, toYearId, targetClassLevelId])
+  @@index([tenantId, studentId])
+  @@map("promotion_run_students")
 }
