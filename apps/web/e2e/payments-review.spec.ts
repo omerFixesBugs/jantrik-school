@@ -306,9 +306,11 @@ test.describe('online payments: the review queue (P7b)', () => {
     expect(await findLayoutProblems(page), 'list 1366 px').toEqual([]);
     await page.screenshot({ path: test.info().outputPath('online-list-bn-1366.png') });
     await page.goto('/fees/online-payments/review');
-    await expect(
-      page.getByTestId('online-review').or(page.getByTestId('review-empty')),
-    ).toBeVisible(WAIT);
+    // The queue has loaded: its count or the empty card (never both; `online-review` is the whole
+    // page, skeleton included, and holds the empty card, so it would match twice once loaded).
+    await expect(page.getByTestId('review-count').or(page.getByTestId('review-empty'))).toBeVisible(
+      WAIT,
+    );
     await expect(page.getByTestId('review-apply')).toHaveCount(0, WAIT);
     await expect(page.getByTestId('review-refund')).toHaveCount(0, WAIT);
   });
