@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import {
   createPrismaClient,
-  loginPrivilegeProblems,
+  loginStartupVerdict,
   readLoginPrivileges,
   type PrismaClient,
 } from '@jantrik/db';
@@ -35,7 +35,11 @@ export class PlatformPrismaService implements OnModuleInit, OnModuleDestroy {
     private readonly main: PrismaService,
   ) {
     this.client = createPrismaClient(config.get('DATABASE_PLATFORM_URL', { infer: true }));
+    this.production = config.get('NODE_ENV', { infer: true }) === 'production';
   }
+
+  /** Production refuses TEMP and stored role settings on this login; elsewhere they are warned about. */
+  private readonly production: boolean;
 
   /**
    * First the login's privileges, failing closed like the API's own login (PrismaService): never
@@ -50,7 +54,8 @@ export class PlatformPrismaService implements OnModuleInit, OnModuleDestroy {
     await runStartupCheck({
       run: () => readLoginPrivileges(this.client),
       verdict: (p) => {
-        const problems = loginPrivilegeProblems(p);
+        const { problems, warnings } = loginStartupVerdict(p, { production: this.production });
+        for (const w of warnings) this.logger.warn(w);
         return problems.length === 0
           ? true
           : `DATABASE_PLATFORM_URL must use the platform login (jantrik_platform_app): ` +

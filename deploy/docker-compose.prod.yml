@@ -38,6 +38,10 @@ x-api-env: &api-env
   JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?}
   OTP_PEPPER: ${OTP_PEPPER:?}
   PLATFORM_TOTP_KEY: ${PLATFORM_TOTP_KEY:?}
+  # The public admission form (docs/admission.md): Cloudflare Turnstile's secret and the web
+  # app's address (the status page link in the "application received" SMS).
+  TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:?}
+  WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:?}
   SMS_PROVIDER: ${SMS_PROVIDER:-none}
   # Stored images per institute, in MB (docs/files.md).
   FILE_STORAGE_PER_TENANT_MB: ${FILE_STORAGE_PER_TENANT_MB:-1024}
@@ -211,6 +215,8 @@ services:
       args:
         # Inlined into the browser code: rebuild the image after changing the API's domain.
         NEXT_PUBLIC_API_URL: https://${API_DOMAIN:?}
+        # The Turnstile widget's site key for the public admission form (docs/admission.md).
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:?}
     image: jantrik-web:${IMAGE_TAG:-local}
     restart: unless-stopped
     environment:

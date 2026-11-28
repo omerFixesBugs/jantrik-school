@@ -7,6 +7,8 @@ const SAFE: LoginPrivileges = {
   bypassRls: false,
   replication: false,
   createRole: false,
+  temp: false,
+  roleSettings: [],
   canBecome: [],
 };
 
@@ -17,6 +19,8 @@ const privilegeRow = (p: LoginPrivileges) => ({
   bypass_rls: p.bypassRls,
   replication: p.replication,
   create_role: p.createRole,
+  temp: p.temp,
+  role_settings: p.roleSettings,
   can_become: p.canBecome,
 });
 

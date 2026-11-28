@@ -1,6 +1,7 @@
 import type { MeContext, ModuleKey, Role } from '@jantrik/shared';
 import {
   BookOpenCheckIcon,
+  ClipboardPenLineIcon,
   CalendarCheckIcon,
   LayoutDashboardIcon,
   MegaphoneIcon,
@@ -17,6 +18,7 @@ export type NavKey =
   | 'notices'
   | 'broadcasts'
   | 'students'
+  | 'admission'
   | 'attendance'
   | 'fees'
   | 'exams'
@@ -89,6 +91,14 @@ export const NAV_ITEMS: NavItem[] = [
     group: 'academic',
     module: 'CORE',
     roles: STAFF,
+  },
+  {
+    key: 'admission',
+    href: '/admission',
+    icon: ClipboardPenLineIcon,
+    group: 'academic',
+    module: 'CORE',
+    roles: ['OWNER', 'ADMIN'],
   },
   {
     key: 'attendance',

@@ -153,6 +153,38 @@ export class TenantSmsService implements OnModuleInit {
   }
 
   /**
+   * An SMS logged and sent outside the institute's daily cap, but counted in the day's total (it
+   * is QUEUED, then SENT): the admission code (decision P3-D), bounded by its own ceiling. No
+   * dedupe key. The caller sends it itself (the body stored here may be masked) and then calls
+   * markSent or markFailed. Returns the row's id.
+   */
+  async recordOutsideCap(input: {
+    purpose: SmsPurpose;
+    phone: string;
+    /** What is stored (a code is masked); the segments are the real text's. */
+    body: string;
+    segmentsOf: string;
+    localDate: IsoDate;
+  }): Promise<string> {
+    const tx = this.db.tx;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('sms:' || (SELECT public.app_current_tenant_id())::text, 0))`;
+    const log = await tx.smsLog.create({
+      data: {
+        tenantId: this.context.requireTenantId(),
+        phone: input.phone,
+        purpose: input.purpose,
+        status: 'QUEUED',
+        segments: smsLength(input.segmentsOf).segments,
+        body: input.body,
+        localDate: dateToDb(input.localDate),
+        sendAfter: new Date(),
+      },
+      select: { id: true },
+    });
+    return log.id;
+  }
+
+  /**
    * A batch queued whole or not at all (S18, SMS broadcasts): under the same per-institute lock
    * as `queue()`, rows whose dedupe key exists are skipped (DUPLICATE), and the rest are all
    * stored QUEUED (one job each after commit) only when they fit today's cap left; otherwise

@@ -29,7 +29,14 @@ export function configureApp(app: INestApplication): void {
           }),
       ),
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Jantrik-Client', 'X-Jantrik-Tenant'],
+    // X-Admission-Token: the public admission form's proved phone (docs/admission.md).
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Jantrik-Client',
+      'X-Jantrik-Tenant',
+      'X-Admission-Token',
+    ],
     // Lets the web app show a countdown for 429 responses.
     exposedHeaders: ['Retry-After'],
     // Every call from the web app is preflighted (another origin, Authorization or

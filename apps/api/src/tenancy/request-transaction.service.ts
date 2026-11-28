@@ -102,9 +102,11 @@ export class RequestTransaction {
 
   /** The person still holding one of `roles` here, read in the transaction. */
   private async recheckRoles(tx: TenantTx, roles: readonly Role[]) {
+    // Schema-qualified, like assertTenantAccess (P1-J8 review: no name here may resolve to a
+    // temporary object another request left on this pooled connection).
     const held = await tx.$queryRaw<{ role: Role }[]>`
-      SELECT role FROM memberships
-      WHERE user_id = app_current_user_id() AND status = 'ACTIVE'`;
+      SELECT role FROM public.memberships
+      WHERE user_id = (SELECT public.app_current_user_id()) AND status = 'ACTIVE'`;
     if (!held.some((m) => roles.includes(m.role))) {
       throw new ForbiddenException('Your role here has changed');
     }
@@ -114,13 +116,17 @@ export class RequestTransaction {
 /**
  * Re-checked on every tenant request (not just at switch-tenant), so suspending a tenant or
  * removing a membership takes effect immediately rather than when the access token expires.
+ * Schema-qualified: it runs first in every request, so no name in it may resolve to a temporary
+ * object another request left on this pooled connection (P1-J8 review; the runtime login has no
+ * TEMP either).
  */
 async function assertTenantAccess(tx: TenantTx): Promise<void> {
   const [row] = await tx.$queryRaw<{ status: string; member: boolean }[]>`
     SELECT t.status::text AS status,
-           EXISTS (SELECT 1 FROM memberships m
-                   WHERE m.user_id = app_current_user_id() AND m.status = 'ACTIVE') AS member
-    FROM tenants t`;
+           EXISTS (SELECT 1 FROM public.memberships m
+                   WHERE m.user_id = (SELECT public.app_current_user_id())
+                     AND m.status = 'ACTIVE') AS member
+    FROM public.tenants t`;
   if (!row || !['ACTIVE', 'TRIAL'].includes(row.status) || !row.member) {
     throw new ForbiddenException('No access to this tenant');
   }

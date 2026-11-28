@@ -6,9 +6,18 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { REDIS } from '../redis/redis.constants.js';
 
 const CACHE_TTL_SEC = 300;
+/**
+ * The generation of the cached roles and modules, part of every entry's key. A release bumps it
+ * when an API of the previous release, still running during the upgrade, could cache wrong
+ * values that the new one would read. P1-J8 (generation 2): between `migrate` and the restart,
+ * the old API sets settings the database no longer believes, reads no institute data, and would
+ * cache empty roles and modules for CACHE_TTL_SEC (403s, skipped device and import jobs).
+ */
+export const ACCESS_CACHE_GENERATION = 2;
 /** The institute's modules-cache version, bumped after the platform switches a module. */
 export const modulesVersionKey = (tenantId: string) => `tenant:${tenantId}:modules:ver`;
-const modulesKey = (tenantId: string, version: string) => `tenant:${tenantId}:modules:v${version}`;
+export const modulesKey = (tenantId: string, version: string) =>
+  `tenant:${tenantId}:modules:g${ACCESS_CACHE_GENERATION}:v${version}`;
 /**
  * The member's roles-cache version, bumped after every committed role/status change. It has no
  * expiry (one small counter per member): a counter that expired could start again at a number
@@ -17,7 +26,7 @@ const modulesKey = (tenantId: string, version: string) => `tenant:${tenantId}:mo
 export const rolesVersionKey = (tenantId: string, userId: string) =>
   `tenant:${tenantId}:user:${userId}:roles:ver`;
 export const rolesKey = (tenantId: string, userId: string, version: string) =>
-  `tenant:${tenantId}:user:${userId}:roles:v${version}`;
+  `tenant:${tenantId}:user:${userId}:roles:g${ACCESS_CACHE_GENERATION}:v${version}`;
 
 /**
  * Enabled modules per tenant and roles per member, cached in Redis for the guards.
@@ -103,9 +112,20 @@ export class TenantAccessService {
     expiresAfterMs: number,
     shownRoles: readonly string[] = [],
   ): Promise<void> {
+    // The institute comes from the URL: sign a context for it only once the person has an
+    // invitation there (P1-J8 review), read through their own person-only context.
+    const [invited] = await withContext(
+      this.prisma.client,
+      { userId },
+      (tx) =>
+        tx.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM public.auth_list_my_memberships()
+        WHERE tenant_id = ${tenantId}::uuid AND membership_status = 'INVITED'`,
+    );
+    if (!invited?.n) throw new NotFoundException('No invitation');
     await withContext(this.prisma.client, { tenantId, userId }, async (tx) => {
       await tx.$queryRaw`
-        SELECT id FROM memberships
+        SELECT id FROM public.memberships
         WHERE user_id = ${userId}::uuid AND status = 'INVITED'
         ORDER BY id
         FOR UPDATE`;

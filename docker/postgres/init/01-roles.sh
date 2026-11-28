@@ -44,6 +44,11 @@ CREATE ROLE jantrik_platform_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREA
 -- serial number and the writes of punches. Same rules as jantrik_auth.
 CREATE ROLE jantrik_ingest NOLOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
+-- Owns the three admission_* SECURITY DEFINER functions of the public admission form (sprint 1
+-- P3b): the slug's institute, its open classes, applications. Same rules as jantrik_auth;
+-- jantrik_app may run the functions but is NOT a member of this role.
+CREATE ROLE jantrik_admission NOLOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT jantrik_admission TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 
 -- Runtime role of the device receiver only (DATABASE_INGEST_URL). It may run the ingest_*
 -- functions and nothing else: no table grants and NOT a member of jantrik_app, so a device
@@ -69,5 +74,8 @@ for db in jantrik jantrik_test jantrik_e2e; do
 ALTER SCHEMA public OWNER TO jantrik_owner;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO jantrik_app;
+-- No temporary objects for the runtime logins, as in production (P1-J8 review, docs/database.md →
+-- The request context). The owner keeps the right.
+SELECT format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()) \gexec
 SQL
 done

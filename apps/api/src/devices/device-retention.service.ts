@@ -28,8 +28,9 @@ export class DeviceRetentionService {
   async instituteExists(tenantId: string): Promise<boolean> {
     // Compared as uuids (any letter case); no context gives NULL, which throws too.
     const [row] = await this.db.tx.$queryRaw<{ same: boolean | null; n: number }[]>`
-      SELECT app_current_tenant_id() = ${tenantId}::uuid AS same,
-             (SELECT count(*)::int FROM tenants WHERE id = app_current_tenant_id()) AS n`;
+      SELECT (SELECT public.app_current_tenant_id()) = ${tenantId}::uuid AS same,
+             (SELECT count(*)::int FROM public.tenants
+               WHERE id = (SELECT public.app_current_tenant_id())) AS n`;
     if (row?.same !== true) throw new Error("Not in the institute's context");
     return row.n > 0;
   }

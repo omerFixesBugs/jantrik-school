@@ -243,8 +243,9 @@ alone has its own database login:
   (`DATABASE_LOGIN_URL`, role `jantrik_login_app`) and the function
   `auth_find_user_for_password_login(phone, email)`, which returns the stored hash; the API
   verifies with argon2 as before.
-- `jantrik_login_app` may run that one function and nothing else (no table, no other function),
-  and `jantrik_app` may not run it. Only `AuthService` holds that client
+- `jantrik_login_app` may run that function and `auth_context_key()` (the request context key,
+  read once at start-up, next section) and nothing else (no table, no other function), and
+  `jantrik_app` may run neither. Only `AuthService` holds that client
   (`login-isolation.spec.ts`). Its pool is small (4 connections). The queue worker builds the
   same modules, so it gets `DATABASE_LOGIN_URL` and runs the start-up checks too, but never
   looks a hash up; the receiver never gets it.
@@ -261,15 +262,44 @@ alone has its own database login:
 - It **cannot** read any password hash or salt: its own, a co-member's or a stranger's.
 - It **cannot** run the password lookup, or anything as `jantrik_login_app`: that login's
   password is only in the API's (and the worker's) environment, never in the database.
-- It **can** learn whether a given person has a password at all, yes or no:
-  `auth_my_password_is_set()` (for `GET /me/password`) answers for `app.user_id`, which any SQL can
-  set with `set_config`. It reveals nothing about the password itself.
-- It **can still take over an account**, as before P1-J: the request's identity is
-  `app.user_id`, which any SQL can change with `set_config`. Set to someone else's id, the RLS
-  policies let it write that person's `password_hash` (then sign in with a password it chose) or
-  create a session for them. P1-J protects the password itself (people reuse passwords
-  elsewhere), not the account against an injection. Recorded for the owner: P1-J8 in
-  decisions-pending.
+- It **cannot** pose as anyone else or enter another institute (P1-J8, next section), so it can
+  neither write another person's `password_hash`, create or extend a session for them, nor learn
+  whether they have a password (`auth_my_password_is_set()` answers for the verified person).
+
+### The request context is signed (P1-J8)
+
+Before P1-J8 the request's identity was two settings, `app.tenant_id` and `app.user_id`, that any
+SQL in the transaction could change with `set_config`: an injection could set them to another
+person and write their `password_hash` (then sign in with a password it chose), insert a session
+for them, or enter any institute. Now:
+
+- `withContext` (and so `RequestTransaction.run`, the job runner and every other context) signs one
+  setting, `app.context`: the institute, the person, the connection's backend and the
+  transaction's start, with an HMAC key that lives in the database ([database.md](database.md) →
+  The request context). `app_current_tenant_id()` / `app_current_user_id()` believe nothing else,
+  and a value that does not verify for this very transaction raises 42501.
+- **The key** reaches the API and the worker through the password-login login: `LoginPrismaService`
+  registers itself as its source when it is built and loads it at start-up. **In production the
+  API does not start without it**; in development and tests it logs an error and loads it on the
+  first institute transaction (Playwright starts the API before its global setup migrates). Every
+  signed transaction also compares the database's key fingerprint and reloads a changed key once. `jantrik_app` can neither read the key nor run `auth_context_key()`. The
+  receiver never opens a context and has no key (`ingest-isolation.spec.ts`); `src/platform`
+  never touches either (`platform-isolation.spec.ts`).
+- **Nothing an injection leaves on a pooled connection runs in the next request's context:** a
+  transaction left open is closed by the pool and refused by `withContext`; temporary objects
+  cannot be created (TEMPORARY revoked; production refuses to start otherwise); session settings
+  and stored role settings can only break or slow later requests (production refuses a login with
+  stored role settings). The full list: [database.md](database.md) → The request context.
+- **So an injection is the person whose request it rides in, in their institute:** it can do what
+  that person could already do through RLS there, and nothing as anyone else. RLS does not
+  separate roles inside an institute (a teacher's injection can still write rows RLS lets the
+  institute write, e.g. memberships): P1-J10 in decisions-pending.
+- **Cost:** one check of about 40 µs per statement and function call site (the policies call the
+  functions wrapped, once per statement), and one more round trip for a context with only a
+  tenant or only a person (jobs, the login steps); a request's tenant-and-person context needs no
+  more round trips than before.
+- Tests: `packages/db/test/account-takeover.test.ts` (the attacks; they succeeded before),
+  `request-context.test.ts`, `login-prisma.service.spec.ts`.
 
 The platform admins' login is separate and unchanged ([platform.md](platform.md)).
 
@@ -311,7 +341,7 @@ JwtAuthGuard              @Public() skips; verify JWT + session not revoked → 
 RateLimitGuard            per user (authenticated) or per IP
 RolesGuard                @Roles(...)        → current roles from Redis (tenant:{tid}:user:{uid}:roles:v{n})
 ModuleGuard               @RequireModule(…)  → enabled modules from Redis (tenant:{tid}:modules)
-TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the handler
+TenantContextInterceptor  withContext({ tenantId: tid, userId: sub }) around the handler, signed (P1-J8)
                           (RequestTransaction.run; @OwnTransaction routes call it themselves):
                             - re-checks tenant ACTIVE/TRIAL + active membership (immediate suspension)
                             - handler runs inside the transaction (services use Db.tx)
@@ -427,6 +457,24 @@ session was switched to another institute in another tab and this tab's token ha
 - **Requests without the header** (mobile apps) are not checked.
 - **`@UserScoped` account routes** (`/auth/*`, `/me/preferences`) are not checked either, so
   logout always works.
+
+## The public admission form (no login)
+
+Guardians apply without an account (sprint 1 P3b, [admission.md](admission.md)). The routes under
+`/public/admission/:slug` are `@Public()` and never open an institute's transaction: they call
+three `SECURITY DEFINER` functions (owned by the NOLOGIN `jantrik_admission`) inside a transaction
+with no institute and no person (`withContext({})`). A code-scan test keeps `Db`,
+`TenantJobRunner` and `TenantSmsService` out of `apps/api/src/admission/public/`.
+
+- **The phone is proved by a code** (Redis, HMAC with `OTP_PEPPER`, the purpose and the institute
+  in the MAC input), then carried for 30 minutes in a phone token: HS256 with a key derived from
+  `JWT_ACCESS_SECRET` by HKDF (`jantrik/admission-phone/v1`), `typ: admission-phone`, audience the
+  institute's id. The access-token guard refuses it (another key and `typ`); the admission routes
+  refuse an access token; another institute's token is refused. The status page's code has its
+  own Redis slot and gives a status token (`typ: admission-status`): only the status route takes
+  it, and the status route takes nothing else (so a status code never opens the form).
+- **Turnstile** guards every code and every submit; a form ticket (its own HKDF key) dates the
+  form for the 15 s / 2 h rule. Both fail closed.
 
 ## The device receiver (no login)
 
