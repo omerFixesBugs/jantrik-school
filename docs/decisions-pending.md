@@ -1071,3 +1071,159 @@ After the security review of P3b (round 1):
   codes and tokens are never logged (only error names are). Per-address limits are generous on
   purpose: many guardians share one address behind mobile carriers' NAT (CGNAT); the per-phone and
   per-institute limits are the real bounds.
+
+## Sprint 1, P6: notices and broadcast (2026-11-17)
+
+Built during the unattended day run of 2026-11-17 from the P6 plan (PR #15,
+`docs/plans/sprint-1-p6-notices.md`) with its recommended defaults P6-A to P6-N and its split
+(P6a notices, P6b broadcasts). Decisions taken alone, each the safest option:
+
+- **P6-a1. Notices have no `SCHEDULED` status** (P6-A as recommended): visibility is computed
+  from `status`, `publish_at` and `expires_at` when read; no job. Publishing again moves a
+  scheduled notice's time; a live notice cannot be "published" again (409 `NOT_EDITABLE`).
+- **P6-a2. A publish time more than a minute in the past is refused** (422
+  `SCHEDULE_OUT_OF_RANGE`), not treated as "now": a past date is a mistake in the form.
+- **P6-a3. Targets on a `STAFF` notice are refused** (422 `TARGET_INVALID`) rather than ignored,
+  and a target section must be a current-year section of the target class (sections belong to a
+  year; one of another year would match no child).
+- **P6-a4. The expiry is a last day** in the form (the notice leaves the board at the end of that
+  day, Asia/Dhaka); the API stores the instant. It must be after the publish time (422
+  `EXPIRY_INVALID`); an unchanged past expiry does not block other edits.
+- **P6-a5. Only ACTIVE, not deleted children count** for a guardian's targeted notices and for the
+  read counts (a child who left no longer brings their class's notices).
+- **P6-a6. Audit entries hold the body's length, not the body** (a notice can be 5 000
+  characters; the title, audience, targets, pin and expiry are recorded).
+- **P6-a7. The dashboard card shows for staff and guardians** below the role's own cards, from
+  the same query as the board (no extra request when both are open).
+- **P6-a8. The Playwright spec signs in staff only** (owner and teacher by password): the demo
+  guardians' OTP budget (one code a minute, 5 per 15 minutes) is already shared by other specs.
+  Guardian visibility is covered by the API tests.
+- **Plan and code differences:** the plan's `/notices/new` and `/notices/[id]/edit` live under
+  `/notices/manage/` (one layout sends the management texts only to OWNER/ADMIN pages); the
+  manage page lists notices as rows rather than a table (it works at 390 px without scrolling
+  sideways).
+
+Changed after the review of #25 (round 1, nits only):
+
+- **P6-a9. The unread count's cache has a per-person read version** bumped after a read commits,
+  instead of deleting the entry (a count computed just before the read could otherwise be cached
+  again, stale, for 2 minutes).
+- **P6-a10. An edit keeps the targets the notice already had** without the current-year check; new
+  targets are still checked. An edit locks the notice before reading what the audit records.
+- **P6-a11. The board excerpt is cut at 200 characters as people see them** (grapheme clusters:
+  a Bangla conjunct or a multi-code-point emoji is never split; round 2).
+- **P6-a12. The per-person read version expires after an hour** (set with the increment), longer
+  than any count cached under it (round 2).
+
+P6b (SMS broadcasts), taken alone:
+
+- **P6-b1. Editing a scheduled broadcast puts it back to DRAFT** (its job stops by itself): the
+  admin previews and schedules again, so the cap, the count and quiet hours are all checked again.
+- **P6-b2. A draft can be cancelled too** (status CANCELLED): broadcasts are never deleted, so this
+  is how an admin tidies one away.
+- **P6-b3. A job that runs early or inside quiet hours delays itself** (BullMQ `moveToDelayed`
+  on the same job id) and moves `scheduled_at` and the `notices:due` score to the new time; the
+  sweep remains the safety net.
+- **P6-b4. Who is "without phone":** a student with no guardian phone of the chosen kind (no
+  primary guardian phone for `PRIMARY_GUARDIANS`), or a staff member with no login phone.
+- **P6-b5. The relevance check sends a queued broadcast SMS only while the broadcast is `SENT`**
+  (P6-L is ready: a later "stop" only has to change the status).
+- **P6-b6. The composer's prefix is the institute's registered name** (`MeContext.tenant.name`),
+  not the profile's short name (P2): the name is always there, and the admin may edit it.
+- **P6-b7. The Playwright spec composes and previews but does not send:** CI runs at any hour, and
+  inside Dhaka's quiet hours a send is refused by design. Sending, the cap, quiet hours and the
+  job are covered by the API tests with a fake clock.
+
+Changed after the review of #26 (round 1; each must/should fix with a test seen failing first):
+
+- **P6-b8. The preview's token is what the admin confirms (must-fix B1).** It hashes the text, the
+  recipient kind, the targets, the notice, the recipient count, the segments and the cost; send
+  and schedule must present it with the count, and anything changed since (another tab, another
+  admin, a new rate) is 409 `PREVIEW_CHANGED` with the new segments and cost. Before, only the
+  count was compared: a draft edited after its preview could go out at three times the cost.
+- **P6-b9. A broadcast found more than 3 hours late expires instead of sending (B3)**, measured from
+  its stored time (a quiet-hours wait moves that to 08:00): new status `EXPIRED` with
+  `{lateMinutes}`, on the OWNER/ADMIN dashboard for 3 days; a new preview and send is needed.
+  The sweep and heal-on-read still re-add such jobs; the job then expires them.
+- **P6-b10. Lost SMS jobs of a sent broadcast are re-added (B4):** after a send, and whenever its
+  job runs again, the jobs of its QUEUED SMS are re-added (job id = the SMS id, so existing jobs
+  are untouched) before its due entry is dropped; a failure keeps the entry and retries. Not
+  built: a general sweep for QUEUED SMS of other purposes whose job was lost (single SMS rely on
+  the after-commit add, as before P6); a follow-up if wanted.
+- **P6-b11. Broadcast SMS have a lower queue priority (B5):** BullMQ takes jobs without a priority
+  (login codes, receipts, absent SMS) before prioritised ones, so a large broadcast never delays a
+  login code.
+- **P6-b12. Quiet hours hold each broadcast SMS too (B8):** an SMS still waiting at 21:00 is delayed
+  (still QUEUED) until 08:00 by the SMS worker, never cancelled. Other purposes are unchanged.
+- **P6-b13. The send job retries with backoff; the sweep replaces a failed job (B2); the due entry is
+  dropped only if no new schedule changed it meanwhile (compare-and-delete on its score, B7).**
+  B7's race is narrow and has no deterministic test.
+- **P6-b14. One grouped query counts the SMS of a page of broadcasts, with an index on
+  `sms_logs (tenant_id, related_id)` (B6).**
+- **P6-b15. Segment counts never split a character (N3).** `smsLength` (shared by every SMS cost)
+  now counts parts the way gateways split them: a GSM-7 extension character or an emoji at a part's
+  end starts the next part. In that rare case the count (and the cost shown in fee reminders and
+  exam results too) is one higher than before; otherwise unchanged.
+- **Small ones:** a text of spaces only is 422 `SMS_EMPTY` (N1); the job re-reads who scheduled it
+  under the row lock and runs again for a new scheduler (N2); dashboard snippets are cut at whole
+  characters (N4).
+- **The migration `20261117410100_sms_broadcasts` was edited in place** (the `EXPIRED` value, its
+  CHECKs, the index). Only scratch and CI databases had applied it.
+
+Changed after the review of #26, round 2 (each should-fix with a test seen failing first):
+
+- **P6-b16. A scheduled broadcast is not sent when it became much dearer (SF1, money; for you to
+  confirm).** The audience is resolved again at send time (S19), so the confirmed token cannot
+  cover it: when the real cost exceeds the confirmed one by more than 10% and by more than one SMS,
+  nothing is sent (`COST_CHANGED`, on the dashboard; a new preview and confirmation is needed).
+  Within that margin it is sent and its real cost is stored and shown next to the previewed one.
+  Alternative: always send (as before) and only show the difference.
+- **P6-b17. The lateness limit counts from the time the admin chose (SF2).** A wait for quiet hours
+  no longer overwrites it; a broadcast that would go out more than 3 hours late expires instead.
+  With 3 hours and quiet hours of 11, every quiet-hours wait now expires (a job found at 23:20 for
+  20:30 is not sent the next morning); the early-run wait is unchanged.
+- **P6-b18. A broadcast that was never sent can be edited back into a draft (N-a)**, rather than a
+  "copy to a new draft" action: simpler, and nothing was sent, so no money history is lost (the
+  audit keeps the old status and reason).
+- **P6-b19. Opening the broadcasts list re-adds the jobs of sent broadcasts' SMS still QUEUED 10
+  minutes later, outside quiet hours (N-c).** Stopping a sent broadcast is a follow-up (P6-L).
+- **P6-b20. Fee reminders and exam result SMS get the bulk priority too (N-d):** they still queue
+  one by one with the same rules; only their place behind single SMS changes.
+- **P6-b21. The send job's person cannot be chosen by the app login (found by the merge check
+  with P1-J8, fixed at the rebase, 2026-11-27).** The job signs its context as
+  `sms_broadcasts.scheduled_by_id` and checks that person's roles; `jantrik_app` could write that
+  column, so an SQL injection in one person's request could have a broadcast sent as another admin
+  of the institute. Now two triggers (migration `20261117410200`) hold, for a request (a signed
+  person): a row it leaves `SCHEDULED` is scheduled by that person; it sets the scheduler only to
+  itself or clears it; it changes a `SCHEDULED` broadcast's targets only if it scheduled it. So an
+  injection can neither name someone else nor edit, retarget or bring back (UPDATE, or INSERT … ON
+  CONFLICT) a broadcast another person scheduled (the review's round 1 found the first trigger
+  covered only writes of the column itself). Every app path already works this way: scheduling and
+  send now set the caller; editing goes back to `DRAFT` before the targets change; cancelling and
+  the job's outcomes leave `SCHEDULED`. The approach of P1-J8k (`student_imports.created_by_id`):
+  no new role, no `.env` line, no API change. Like P1-J8k, a context with no person (only the
+  worker and server code sign one) is not checked.
+  - **Review round 2 (must-fix, fixed with a two-connection test):** the targets check locks the
+    broadcast `FOR SHARE` by its id, so a target change racing the scheduling transaction waits
+    for it and is then refused, instead of changing the audience of a broadcast its scheduler
+    already confirmed. An API test now has a second admin cancel, edit and send a broadcast the
+    first admin scheduled.
+  - **Recorded (review round 2):** the platform routes (`InstituteProvisioning.inTenant`) and the
+    fallback of `TenantAccessService.inTenant` run as `jantrik_app` with an institute and no
+    person, so an injection there would not be checked by these triggers (P1-J8k has the same
+    gap; none of those paths builds SQL from request input). The job also reads the audience at
+    send time (enrolments, guardian phones, the current year, memberships), which `jantrik_app`
+    can write: an injection could redirect a scheduled text to other phones within the 10 %
+    cost check (S19 resolves the audience at send time; P1-J10).
+  - **Only with #20:** before P1-J8, an injection can still set `app.user_id` itself, so the
+    triggers are a barrier only once #20 is merged. The merge order already puts #20 first; #26
+    must not go to production before #20.
+  - **Recorded, not changed (P1-J10):** `cancelled_by_id`, `created_by_id` and the Redis due set
+    give no such power (nothing acts as those people; only the API writes Redis). Inside its own
+    institute, `jantrik_app` can still insert `memberships`, `audit_logs` and `sms_logs`, so this
+    protects whom the job acts as, not SMS sending as such. P1-J8k has the same editing gap: a
+    colleague can still change the rows, mapping and status of an import that runs as its uploader
+    (already recorded under P1-J8q).
+- **Recorded only (N-e, N-f):** the edited migration `20261117410100_sms_broadcasts` needs fresh
+  databases wherever its earlier version was applied (only scratch and CI here); its new index on
+  `sms_logs` is created without `CONCURRENTLY`, fine before launch.

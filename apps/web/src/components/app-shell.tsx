@@ -54,6 +54,7 @@ import {
   PASSWORD_PATH,
   primaryRole,
 } from '@/lib/navigation';
+import { NoticeUnreadBadge } from '@/components/notices/notice-unread-badge';
 import { cn } from '@/lib/utils';
 
 const COLLAPSED_KEY = 'jantrik.sidebar.collapsed';
@@ -120,7 +121,7 @@ function NavLinks({
                       aria-current={active ? 'page' : undefined}
                       title={collapsed ? text : undefined}
                       className={cn(
-                        'flex min-h-(--control-h) items-center gap-3 rounded-full px-3 py-1.5 text-sm font-medium transition-colors',
+                        'relative flex min-h-(--control-h) items-center gap-3 rounded-full px-3 py-1.5 text-sm font-medium transition-colors',
                         'focus-visible:ring-sidebar-ring outline-none focus-visible:ring-2',
                         collapsed && 'justify-center px-0',
                         active
@@ -132,6 +133,9 @@ function NavLinks({
                       <span className={cn('min-w-0 flex-1 truncate', collapsed && 'sr-only')}>
                         {text}
                       </span>
+                      {item.key === 'notices' && (
+                        <NoticeUnreadBadge active={active} collapsed={collapsed} />
+                      )}
                       {item.soon && (
                         <span
                           className={cn(
