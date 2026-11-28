@@ -1071,3 +1071,96 @@ After the security review of P3b (round 1):
   codes and tokens are never logged (only error names are). Per-address limits are generous on
   purpose: many guardians share one address behind mobile carriers' NAT (CGNAT); the per-phone and
   per-institute limits are the real bounds.
+
+## Sprint 1, P5: promotion and new session (2026-11-17)
+
+**Built (day run 2026-11-17), for the owner's review with its PRs; nothing merged.** Plan:
+`docs/plans/sprint-1-p5-promotion.md` (PR #15, not approved yet). Built with the plan's
+recommended defaults for P5-A to P5-Q and its split: **P5a** (this PR: leaving, runs, apply and
+resume, numbering, the switch check, leave/return on the student page) and **P5b** (stacked on it:
+fee and teacher copies, previous-year dues markers, the leavers report, the new-year wizard).
+Rules as built: [promotion.md](promotion.md).
+
+Where the plan and the code disagreed (the code wins; recorded here):
+
+- **No P3 yet.** Built on `integration/sprint-1` (main + #16, #18, #17) without online admission:
+  new admits for the new year come from staff admission only, and numbering treats every
+  enrolment no run created as a new admit.
+- **The student list has no default ACTIVE filter** (the plan assumed one). Leavers stay in the
+  list, marked with their status; the status filter shows one kind at a time. Not changed (a
+  product decision: hide leavers by default?).
+- **Validation errors answer 400**, as everywhere in this API (zod), not 422: a leaving row
+  without a date, two equal numbers in one numbering request.
+
+Decided alone, each the safer option:
+
+- **P5-a1. A failed student of the top class repeats** instead of graduating (the plan: the top
+  class leaves as GRADUATED). Repeating keeps them; graduating someone by mistake removes them
+  from attendance and dues at apply.
+- **P5-a2. Leaving keeps the rolls** (one student's leave and the run's leavers alike): history,
+  and a return finds them in place. The plan said this for apply only.
+- **P5-a3. A new apply outcome, `SKIPPED_LEFT`:** a student who left another way after the run
+  was made is not enrolled into the new year (the plan only knew `SKIPPED_DEACTIVATED`).
+- **P5-a4. The roll strategy is optional when a run is made:** MERIT when a merit exam is found,
+  NAME_BN otherwise. MERIT without a published exam answers `422 MERIT_NEEDS_EXAMS` with
+  `reason: NO_EXAM` (`MODULE` without EXAMS); a given exam that is not published for that class
+  and year answers `422 MERIT_EXAM_INVALID` (new code).
+- **P5-a5. Permanent stops are not retried:** `SECTION_FULL`, `TARGET_INVALID` and
+  `ACTOR_NOT_ADMIN` end the job at once (BullMQ `UnrecoverableError`; the run stays APPLYING
+  with the code); other errors are retried 5 times with backoff, as planned.
+- **P5-a6. Resume is refused while the job is still in the queue** (`409 RUN_APPLYING`); a
+  finished or failed job of the same id is removed before the new one is queued (BullMQ would
+  ignore a second job with the same id).
+- **P5-a7. The apply-check `version` also covers the target sections' capacities and
+  enrolments**, so a run being applied into the same sections makes another admin check again
+  (`409 PREVIEW_CHANGED`) instead of applying on stale capacity figures.
+- **P5-a8. PROMOTE may go into any other active class** (skipping a class too); REPEAT must stay
+  in the run's class. Rows into a class or section deactivated since are refused at apply
+  (`422 TARGET_INVALID`).
+- **P5-a9. Numbering's PROMOTED strategy** is that of the run that promoted most of the class's
+  students (normally the class below); REPEATER: the class's own run; NEW: Bangla name.
+- **P5-a10. The study group is kept only while it is active.** Changing the merit exam takes the
+  results of pending rows again but never changes a decision.
+- **P5-a11. Audit names:** runs and their steps under `promotion_run` (create, rows, refresh,
+  apply, resume, each apply section, APPLIED); numbering under `class_level` (`step:
+number_rolls`); each leaver under `student` (old and new status).
+- **P5-a12. Setup's "in use" counts do not include promotion rows:** deleting a year, class,
+  section or group a row names answers `409 REFERENCE_CONFLICT` (the foreign key), as for other
+  references the counts do not list.
+
+### P5a after the review (round 1)
+
+What changed is listed in the PR's review comment. Decided alone:
+
+- **P5-a13. No removal of a run-created enrolment.** Correcting a placement (class, section,
+  group) covers a promotion or repeat applied by mistake; leave and return cover someone who
+  should have left. Removing the enrolment would leave its applied row (immutable history,
+  `ENROLLED`) pointing at nothing.
+- **P5-a14. Registers:** a student not ACTIVE without a leaving date (only possible for data set
+  before P5) stays on registers as before; only a leaving date takes someone off, from that day.
+- **P5-a15. A placement change is refused once that year has attendance, an exam roster or fee
+  dues for the student.** The fee dues are counted from the students module (a read of the fees
+  module's table, like the student limit's read of the subscription).
+- **P5-a16. Numbering while runs into the class are not applied** needs an explicit `force` (the
+  wizard asks).
+- **P5-a17. The CI checks job may take 20 minutes** (it takes 8–10 now; at 10 it was cancelled).
+- **P5-a18. Subject choices** are copied and removed through `SubjectChoicesModule` (exams), a
+  module with no imports, so students and promotion can both use it without a cycle.
+
+### P5a after the review (round 2)
+
+Decided alone:
+
+- **P5-a19. `left_on` is the last day on the register** (a leaver is marked that day and gone from
+  the next). The run's default leaving date stays the old year's last day, so graduates are on its
+  register; a leave today keeps the student on today's register.
+- **P5-a20. Roll groups follow the current class:** a row's student now in its run's own class is a
+  repeater, in any other class promoted (S15's "promoted" covers everyone who came up from another
+  class); old roll and merit place only within the run that orders the group.
+- **P5-a21. Capacity counts only students still here.** A student who returns is not checked
+  against the section's capacity again (return checks the student limit only), so a return can
+  take a section over its capacity; the apply-check and the next admission see it.
+- **P5-a22. The device day** uses the same register filter as the daily register (`on-register.ts`)
+  and is covered by the existing device-register tests; no separate leaver test there.
+- **P5-a23. "In use" readers** (`AttendanceUsage`, `ExamUsage`, `FeeUsage`) live in their modules,
+  each a module with no imports, so students reads them without a cycle.
