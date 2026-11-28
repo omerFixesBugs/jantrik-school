@@ -131,12 +131,15 @@ describe('schema safety net', () => {
   // P1-J: every definer function a runtime login may run whose owner can read
   // users.password_hash ("login: function"). Each was checked to return nothing of the hash.
   const PASSWORD_READING_OWNER_FUNCTIONS = [
+    'jantrik_app: app_context_key_id', // a one-way fingerprint of the context key (P1-J8)
     'jantrik_app: app_find_or_create_user', // the id only
+    'jantrik_app: app_verified_context', // the caller's own verified institute and person (P1-J8)
     'jantrik_app: auth_find_refresh_token', // the token's session and user ids
     'jantrik_app: auth_find_user_for_login', // id, name, locale
-    'jantrik_app: auth_list_my_memberships', // memberships of app.user_id
-    'jantrik_app: auth_my_password_is_set', // a boolean for app.user_id (P1-J2)
+    'jantrik_app: auth_list_my_memberships', // memberships of the verified person
+    'jantrik_app: auth_my_password_is_set', // a boolean for the verified person (P1-J2)
     'jantrik_app: auth_resolve_tenant', // the institute of a slug
+    'jantrik_login_app: auth_context_key', // the request context key (P1-J8), not the hash
     'jantrik_login_app: auth_find_user_for_password_login', // the hash: the password login only
   ];
   // Whole-row patterns of a users row (u.*, to_jsonb(u), row_to_json(u), ...) in a function body.
@@ -177,13 +180,27 @@ describe('schema safety net', () => {
     fn.startsWith('platform_') || fn === 'app_current_platform_admin_id';
   // So are the device receiver's: no context at all, scoped by the device's serial number.
   const isIngest = (fn: string) => fn.startsWith('ingest_');
+  // And the request context itself (P1-J8): the one reader of app.context, and the key's reader
+  // for the password-login login.
+  const isContext = (fn: string) =>
+    ['app_verified_context', 'auth_context_key', 'app_context_key_id'].includes(fn);
 
   it('no SECURITY DEFINER function takes a tenant id parameter', async () => {
+    // Parameters it takes: OUT parameters are results (app_verified_context() returns an
+    // institute and a person, it takes none).
     const all = await app.$queryRaw<{ fn: string; args: string }[]>`
       SELECT p.proname AS fn, pg_get_function_arguments(p.oid) AS args
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef`;
-    const rows = all.filter((r) => !isPlatform(r.fn));
+    const rows = all
+      .filter((r) => !isPlatform(r.fn))
+      .map((r) => ({
+        fn: r.fn,
+        args: r.args
+          .split(',')
+          .filter((a) => !/^\s*OUT\s/i.test(a))
+          .join(','),
+      }));
     expect(rows.length).toBeGreaterThan(0);
     const offenders = rows.filter((r) => /tenant/i.test(r.args) || /\buuid\b/i.test(r.args));
     expect(offenders).toEqual([]);
@@ -196,7 +213,7 @@ describe('schema safety net', () => {
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
         AND p.proname <> ALL(${PRE_CONTEXT_AUTH_LOOKUPS})`;
-    const scoped = rows.filter((r) => !isPlatform(r.fn) && !isIngest(r.fn));
+    const scoped = rows.filter((r) => !isPlatform(r.fn) && !isIngest(r.fn) && !isContext(r.fn));
     expect(scoped.map((r) => r.fn).sort()).toEqual([
       'app_find_or_create_user',
       'auth_list_my_memberships',
@@ -204,6 +221,89 @@ describe('schema safety net', () => {
       'search_student_ids',
     ]);
     expect(scoped.filter((r) => !r.scoped)).toEqual([]);
+  });
+
+  // P1-J8: the context functions check a signature, so every policy, function and view calls them
+  // as a scalar subquery, `(SELECT app_current_tenant_id())`: PostgreSQL then runs them once per
+  // statement (an InitPlan) instead of once per row a scan looks at. Column defaults and CHECKs
+  // (which cannot hold a subquery) must not call them at all, and nothing but the two functions
+  // calls app_verified_context() itself. Spaces, quoted names and a schema prefix are caught too.
+  const UNWRAPPED_CONTEXT_CALLS = `
+    SELECT 'policy ' || c.relname || '.' || p.polname AS what
+    FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
+    WHERE regexp_replace(coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' ||
+                         coalesce(pg_get_expr(p.polwithcheck, p.polrelid), ''),
+                         $1, '', 'gi') ~* $2
+    UNION ALL
+    SELECT 'function ' || p.proname
+    FROM pg_proc p
+    WHERE p.pronamespace = 'public'::regnamespace
+      AND p.proname NOT IN ('app_current_tenant_id', 'app_current_user_id', 'app_verified_context')
+      AND regexp_replace(p.prosrc, $1, '', 'gi') ~* $2
+    UNION ALL
+    SELECT 'view ' || v.viewname FROM pg_views v
+    WHERE v.schemaname = 'public' AND regexp_replace(v.definition, $1, '', 'gi') ~* $2
+    UNION ALL
+    SELECT 'default ' || c.relname || '.' || a.attname
+    FROM pg_attrdef d JOIN pg_class c ON c.oid = d.adrelid
+    JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+    WHERE c.relnamespace = 'public'::regnamespace AND pg_get_expr(d.adbin, d.adrelid) ~* $3
+    UNION ALL
+    SELECT 'constraint ' || c.relname || '.' || k.conname
+    FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid
+    WHERE c.relnamespace = 'public'::regnamespace AND k.contype = 'c'
+      AND pg_get_constraintdef(k.oid) ~* $3
+    ORDER BY 1`;
+  const NAME = String.raw`"?app_current_(tenant|user)_id"?\s*\(\s*\)`;
+  const WRAPPED_CALL = String.raw`\(\s*SELECT\s+("?public"?\.)?${NAME}(\s+AS\s+"?\w+"?)?\s*\)`;
+  const BARE_CALL = String.raw`${NAME}|"?app_verified_context"?\s*\(`;
+  const ANY_CALL = String.raw`app_current_(tenant|user)_id|app_verified_context`;
+  const unwrappedCalls = (client: PrismaClient) =>
+    client.$queryRawUnsafe<{ what: string }[]>(
+      UNWRAPPED_CONTEXT_CALLS,
+      WRAPPED_CALL,
+      BARE_CALL,
+      ANY_CALL,
+    );
+
+  it('every policy, function and view calls the context functions wrapped, once per statement', async () => {
+    expect(await unwrappedCalls(app)).toEqual([]);
+  });
+
+  it('the wrapped-call check finds an unwrapped call, in every form and place', async () => {
+    const owner = ownerClient();
+    class Rollback extends Error {}
+    let found: unknown;
+    try {
+      await owner.$transaction(async (tx) => {
+        for (const sql of [
+          `CREATE FUNCTION p1j8_probe() RETURNS uuid LANGUAGE sql AS 'SELECT app_current_tenant_id()'`,
+          'CREATE POLICY p1j8_probe ON students FOR SELECT USING (tenant_id = app_current_tenant_id())',
+          `CREATE FUNCTION p1j8_probe_space() RETURNS uuid LANGUAGE sql AS 'SELECT "app_current_user_id" ( )'`,
+          `CREATE FUNCTION p1j8_probe_direct() RETURNS uuid LANGUAGE sql AS 'SELECT (public.app_verified_context()).tenant_id'`,
+          'CREATE VIEW p1j8_probe_view AS SELECT id FROM students WHERE tenant_id = app_current_tenant_id()',
+          'ALTER TABLE grade_bands ADD COLUMN p1j8_probe uuid DEFAULT app_current_tenant_id()',
+          'ALTER TABLE grade_bands ADD CONSTRAINT p1j8_probe CHECK (tenant_id = app_current_tenant_id()) NOT VALID',
+        ]) {
+          await tx.$executeRawUnsafe(sql);
+        }
+        found = await unwrappedCalls(tx as unknown as PrismaClient);
+        throw new Rollback();
+      });
+    } catch (error) {
+      if (!(error instanceof Rollback)) throw error;
+    } finally {
+      await owner.$disconnect();
+    }
+    expect(found).toEqual([
+      { what: 'constraint grade_bands.p1j8_probe' },
+      { what: 'default grade_bands.p1j8_probe' },
+      { what: 'function p1j8_probe' },
+      { what: 'function p1j8_probe_direct' },
+      { what: 'function p1j8_probe_space' },
+      { what: 'policy students.p1j8_probe' },
+      { what: 'view p1j8_probe_view' },
+    ]);
   });
 
   // P1-J: only the password login's own login reads a password hash. jantrik_app may read every
@@ -320,8 +420,9 @@ describe('schema safety net', () => {
   });
 
   // The password login's own login: like the receiver's, it reaches the database only through its
-  // one function, never a table, and is a member of no role.
-  it('jantrik_login_app may run only the password lookup, and holds no other privilege', async () => {
+  // two functions (the hash lookup, and since P1-J8 the request context key), never a table, and
+  // is a member of no role.
+  it('jantrik_login_app may run only the password lookup and the context key, and holds no other privilege', async () => {
     const granted = await app.$queryRaw<{ name: string }[]>`
       SELECT c.relname::text AS name
       FROM pg_class c
@@ -337,7 +438,7 @@ describe('schema safety net', () => {
       SELECT p.proname::text
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace
-        AND p.proname <> 'auth_find_user_for_password_login'
+        AND p.proname <> ALL (ARRAY['auth_find_user_for_password_login', 'auth_context_key'])
         AND has_function_privilege('jantrik_login_app', p.oid, 'EXECUTE')
         AND NOT has_function_privilege('public', p.oid, 'EXECUTE')`;
     expect(granted).toEqual([]);
@@ -403,6 +504,17 @@ describe('schema safety net', () => {
   // The definer bodies use unqualified pg_catalog operators (enum =, text[] || text, …). A more
   // specific operator or function created in public would win over them, so no login role may
   // create anything there (only the NOLOGIN function owners may).
+  // P1-J8 review: a temporary object made through an SQL injection outlives the request on a
+  // pooled connection, and pg_temp is searched first for relations. No runtime login may create
+  // one (the migration revokes TEMPORARY from PUBLIC; the owner keeps it).
+  it('no runtime login may create temporary objects', async () => {
+    const rows = await app.$queryRaw<{ login: string; temp: boolean }[]>`
+      SELECT r AS login, has_database_privilege(r, current_database(), 'TEMPORARY') AS temp
+      FROM unnest(${RUNTIME_LOGINS}::text[]) AS r ORDER BY 1`;
+    expect(rows.filter((r) => r.temp)).toEqual([]);
+    expect(rows).toHaveLength(RUNTIME_LOGINS.length);
+  });
+
   it('no login role can create objects in schema public', async () => {
     const rows = await app.$queryRaw<{ role: string; can_create: boolean }[]>`
       SELECT r.rolname AS role, has_schema_privilege(r.oid, 'public', 'CREATE') AS can_create

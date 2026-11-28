@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findOrCreateUser, withTenant, type PrismaClient } from '../src/index.js';
-import { appClient, createTenant, ingestClient, ownerClient, randomPhone } from './helpers.js';
+import {
+  appClient,
+  createTenant,
+  ingestClient,
+  ownerClient,
+  randomPhone,
+  setSignedContext,
+} from './helpers.js';
 
 type Tx = Parameters<Parameters<typeof withTenant>[2]>[0];
 
@@ -810,7 +817,7 @@ describe('the device receiver roles', () => {
     // tenant_isolation (permissive, every role) would allow it there; the RESTRICTIVE
     // ingest_delete_untrusted_only does not.
     const deleted = await asIngest(async (tx) => {
-      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${a.tenantId}, true)`;
+      await setSignedContext(tx, { tenantId: a.tenantId });
       return tx.$executeRawUnsafe(`DELETE FROM device_source_ips WHERE id = '${a.sourceIpId}'`);
     });
     expect(deleted).toBe(0);
