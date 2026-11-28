@@ -92,10 +92,12 @@
     "schemeToLight": "Switch to light",
     "schemeSaveFailed": "Your light/dark choice could not be saved. Try again.",
     "schemeToDark": "Switch to dark",
-    "password": "Password"
+    "password": "Password",
+    "unreadNotices": "{count} unread notices"
   },
   "nav": {
     "dashboard": "Dashboard",
+    "notices": "Notices",
     "students": "{student} list",
     "admission": "Admission",
     "classesAndSections": "{classLevel} & {section}",

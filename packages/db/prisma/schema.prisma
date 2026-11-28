@@ -598,6 +598,11 @@ model User {
 
   storedFilesCreated StoredFile[] @relation("StoredFileCreatedBy")
 
+  noticesCreated   Notice[]     @relation("NoticeCreatedBy")
+  noticesPublished Notice[]     @relation("NoticePublishedBy")
+  noticesWithdrawn Notice[]     @relation("NoticeWithdrawnBy")
+  noticeReads      NoticeRead[]
+
   @@map("users")
 }
 
@@ -702,6 +707,10 @@ model Tenant {
   admissionCounters          AdmissionCounter[]
   storedFileUsage            StoredFileUsage?
   instituteProfile           InstituteProfile?
+
+  notices       Notice[]
+  noticeTargets NoticeTarget[]
+  noticeReads   NoticeRead[]
 
   @@index([instituteTypeId])
   @@map("tenants")
@@ -883,6 +892,7 @@ model ClassLevel {
   enrolments     Enrolment[]
   feeAmounts     FeeAmount[]
   examClasses    ExamClass[]
+  noticeTargets  NoticeTarget[]
 
   admissionCycleClasses AdmissionCycleClass[]
 
@@ -986,6 +996,7 @@ model Section {
   examCandidates     ExamCandidate[]
   examMarkSheets     ExamMarkSheet[]
   examResults        ExamResult[]
+  noticeTargets      NoticeTarget[]
 
   @@unique([tenantId, id])
   /// So rows can carry the class level and be checked against a subject's class.
@@ -3460,4 +3471,98 @@ model AdmissionCounter {
 
   @@id([tenantId, year])
   @@map("admission_counters")
+}
+
+// ───────────────────────────── Notices (sprint 1 P6, docs/notices.md) ─────────────────────────────
+
+enum NoticeAudience {
+  ALL
+  STAFF
+  GUARDIANS
+
+  @@map("notice_audience")
+}
+
+/// "Scheduled" is a PUBLISHED notice whose publish_at is still ahead (P6-A): visibility is computed
+/// when read, so no job flips it.
+enum NoticeStatus {
+  DRAFT
+  PUBLISHED
+  WITHDRAWN
+
+  @@map("notice_status")
+}
+
+/// A notice on the board. Never deleted (withdrawn instead); OWNER/ADMIN write it (S20).
+model Notice {
+  id              String         @id @default(uuid(7)) @db.Uuid
+  tenantId        String         @map("tenant_id") @db.Uuid
+  title           String
+  body            String
+  audience        NoticeAudience
+  status          NoticeStatus   @default(DRAFT)
+  publishAt       DateTime?      @map("publish_at") @db.Timestamptz(3)
+  expiresAt       DateTime?      @map("expires_at") @db.Timestamptz(3)
+  pinned          Boolean        @default(false)
+  createdById     String         @map("created_by_id") @db.Uuid
+  publishedById   String?        @map("published_by_id") @db.Uuid
+  withdrawnById   String?        @map("withdrawn_by_id") @db.Uuid
+  withdrawnAt     DateTime?      @map("withdrawn_at") @db.Timestamptz(3)
+  withdrawnReason String?        @map("withdrawn_reason")
+  /// The last edit after publishing ("edited" on the board, P6-N).
+  editedAt        DateTime?      @map("edited_at") @db.Timestamptz(3)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User           @relation("NoticeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  publishedBy User?          @relation("NoticePublishedBy", fields: [publishedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  withdrawnBy User?          @relation("NoticeWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targets     NoticeTarget[]
+  reads       NoticeRead[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status, publishAt(sort: Desc)])
+  @@map("notices")
+}
+
+/// Narrows a notice's guardians to some classes (or one section of a class); none = everyone of
+/// the audience. Staff see an ALL or STAFF notice whatever its targets (P6-G). Replaced whole on
+/// save (delete + insert), so there is no UPDATE.
+model NoticeTarget {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  noticeId     String   @map("notice_id") @db.Uuid
+  classLevelId String   @map("class_level_id") @db.Uuid
+  sectionId    String?  @map("section_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  notice     Notice     @relation(fields: [tenantId, noticeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel ClassLevel @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// A section of that class.
+  section    Section?   @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, noticeId])
+  @@map("notice_targets")
+}
+
+/// Who read a notice. Only for oneself (a restrictive policy); history: no UPDATE, no DELETE.
+model NoticeRead {
+  id       String   @id @default(uuid(7)) @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  noticeId String   @map("notice_id") @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  readAt   DateTime @default(now()) @map("read_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  notice Notice @relation(fields: [tenantId, noticeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, noticeId, userId])
+  @@index([tenantId, userId])
+  @@map("notice_reads")
 }

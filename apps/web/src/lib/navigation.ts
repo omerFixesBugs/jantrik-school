@@ -4,6 +4,7 @@ import {
   ClipboardPenLineIcon,
   CalendarCheckIcon,
   LayoutDashboardIcon,
+  MegaphoneIcon,
   Settings2Icon,
   UserCogIcon,
   UsersIcon,
@@ -12,7 +13,15 @@ import {
 } from 'lucide-react';
 
 export type NavKey =
-  'dashboard' | 'students' | 'admission' | 'attendance' | 'fees' | 'exams' | 'setup' | 'staff';
+  | 'dashboard'
+  | 'notices'
+  | 'students'
+  | 'admission'
+  | 'attendance'
+  | 'fees'
+  | 'exams'
+  | 'setup'
+  | 'staff';
 
 /** Sidebar groups, in display order. */
 export type NavGroup = 'overview' | 'academic' | 'accounts' | 'admin';
@@ -55,6 +64,15 @@ export const NAV_ITEMS: NavItem[] = [
     icon: LayoutDashboardIcon,
     group: 'overview',
     module: 'CORE',
+  },
+  {
+    // Every member reads the board; managing it is OWNER/ADMIN (the pages check).
+    key: 'notices',
+    href: '/notices',
+    icon: MegaphoneIcon,
+    group: 'overview',
+    module: 'CORE',
+    roles: [...STAFF_ROLES, 'GUARDIAN'],
   },
   {
     key: 'students',

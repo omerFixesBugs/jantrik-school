@@ -1,0 +1,78 @@
+{
+  "manage": {
+    "title": "Manage notices",
+    "hint": "Drafts, publishing now or later, and withdrawing. Withdrawn notices stay on record.",
+    "new": "New notice",
+    "empty": "No notices written yet.",
+    "col": {
+      "title": "Title",
+      "audience": "Who sees it",
+      "state": "Status",
+      "reads": "Read by",
+      "when": "Published"
+    },
+    "audience": {
+      "ALL": "Everyone",
+      "STAFF": "Staff",
+      "GUARDIANS": "Guardians"
+    },
+    "state": {
+      "DRAFT": "Draft",
+      "SCHEDULED": "Scheduled",
+      "PUBLISHED": "Published",
+      "EXPIRED": "Expired",
+      "WITHDRAWN": "Withdrawn"
+    },
+    "edit": "Edit",
+    "publish": "Publish",
+    "withdraw": "Withdraw",
+    "readCount": "{count}",
+    "targetsAll": "All classes",
+    "form": {
+      "newTitle": "New notice",
+      "editTitle": "Edit notice",
+      "titleLabel": "Title",
+      "bodyLabel": "Details",
+      "bodyHint": "Links are shown as text and cannot be clicked.",
+      "audienceLabel": "Who sees it",
+      "targetsLabel": "Only some classes or sections (guardians only)",
+      "targetsHint": "Leave empty for every guardian. Staff see every notice meant for them.",
+      "addTarget": "Add a class",
+      "removeTarget": "Remove",
+      "classLabel": "Class",
+      "sectionLabel": "Section",
+      "wholeClass": "Whole class",
+      "expiresLabel": "Show until (optional)",
+      "expiresHint": "It leaves the board at the end of this day.",
+      "pinnedLabel": "Pin to the top of the board",
+      "save": "Save",
+      "saved": "Notice saved",
+      "cancel": "Cancel",
+      "editedWarning": "Changing a published notice marks it \"edited\" for everyone."
+    },
+    "publishDialog": {
+      "title": "Publish notice",
+      "now": "Publish now",
+      "later": "Later, at a set time",
+      "date": "Date",
+      "time": "Time",
+      "hint": "Up to 30 days ahead. It appears on the board by itself when the time comes.",
+      "confirm": "Publish",
+      "done": "Notice published",
+      "scheduled": "Notice scheduled"
+    },
+    "withdrawDialog": {
+      "title": "Withdraw notice",
+      "text": "It leaves everyone's board and stays on record. It cannot be edited afterwards.",
+      "reason": "Reason",
+      "confirm": "Withdraw",
+      "done": "Notice withdrawn"
+    },
+    "errors": {
+      "TARGET_INVALID": "A chosen class or section is not valid. Staff notices take no classes.",
+      "EXPIRY_INVALID": "The end date must be after the notice is published.",
+      "SCHEDULE_OUT_OF_RANGE": "Choose now or a time within 30 days.",
+      "NOT_EDITABLE": "This notice can no longer be changed."
+    }
+  }
+}
