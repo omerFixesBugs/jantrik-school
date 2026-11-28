@@ -1794,8 +1794,8 @@ Fixed, each with a failing test first, taken alone during the run (owner away), 
 option:
 
 - **P7a2-x30. Another payment's `val_id` brought only by signals anyone can send leaves the
-  payment open.** This narrows P7a-H for forgeable signals only; **an owner decision to
-  confirm**. Every guardian of the child has the `tran_id`, and any real `val_id` of the store
+  payment open.** This narrows P7a-H for forgeable signals only. _Approved by the owner
+  (28 Nov 2026)._ Every guardian of the child has the `tran_id`, and any real `val_id` of the store
   will do. A forged return (`GET …/return/<tranId>/success?val_id=…`, the review's probe P5) sent
   the payment in progress to `NEEDS_REVIEW` with `TRAN_ID_MISMATCH`. The payer's genuine payment
   was then never posted, and P7a cannot resolve reviews. Now, when every signal that brought that

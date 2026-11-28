@@ -250,8 +250,8 @@ written first, whatever follows. Then (`settle-decision.ts`):
    goes to `NEEDS_REVIEW` with `TRAN_ID_MISMATCH`, one already in review gains the reason, a
    `PAID` or refunded one keeps its state (P7a-H). Money for no intent of ours marks the event
    `UNMATCHED`; another intent's money is posted through that intent's own signals. **Except
-   when only forgeable signals brought that `val_id`** (P7a2-x30, narrowing P7a-H; an owner
-   decision to confirm): returns, or IPNs from an address SSLCommerz does not list. Then the
+   when only forgeable signals brought that `val_id`** (P7a2-x30, narrowing P7a-H; approved by
+   the owner): returns, or IPNs from an address SSLCommerz does not list. Then the
    event is the only record and the intent stays as it is, so a stranger with the `tran_id` and
    another payment's `val_id` cannot keep the payer's genuine payment from posting. From
    SSLCommerz's listed address or from our query, P7a-H applies.
