@@ -556,9 +556,12 @@ function Run() {
             )}
             {changed > 0 && <p className="text-sm">{t('saveFirst')}</p>}
             <div>
+              {/* Not while the check reloads: a save changes the check's version (its rows'
+                  updatedAt) but often not the pending count in its key, so until the reload
+                  lands the version here is the old one and apply would get PREVIEW_CHANGED. */}
               <Button
                 onClick={() => apply.mutate(undefined)}
-                disabled={apply.isPending || changed > 0}
+                disabled={apply.isPending || changed > 0 || check.isFetching}
                 data-testid="apply-run"
               >
                 <PlayIcon aria-hidden />
