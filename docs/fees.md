@@ -19,7 +19,7 @@ always comes from the server. The bKash gateway (tokenized checkout) is not buil
 | ADMIN                        | setup (heads, amounts, terms, concessions, families, settings), cancel a due, waive a fine, recalculate, void a payment, reminders, see the numbers (read only) |
 | ACCOUNTANT                   | the counter (find a student, ledger, collect cash), receipts, daily closing (their own), verify/reject bKash/Nagad transfers, reports                           |
 | TEACHER (without ACCOUNTANT) | no fee route at all (403)                                                                                                                                       |
-| GUARDIAN                     | their own children's fees (`/me/children/:id/fees`, 404 for any other child): dues, receipts, "I paid by bKash/Nagad"                                           |
+| GUARDIAN                     | their own children's fees (`/me/children/:id/fees`, 404 for any other child): dues, receipts, paying online, "I paid by bKash/Nagad"                            |
 
 One person may hold TEACHER and ACCOUNTANT together (a class teacher who collects fees): fee
 access comes from ACCOUNTANT only, teaching rights stay those of a teacher. The staff page has a
@@ -108,8 +108,8 @@ what they owe (partial payments allowed). Principal is paid oldest due first, th
 
 - The counter sends what it showed as owed; if it moved meanwhile: 409 `DUES_CHANGED`.
 - `clientRequestId` is new for every attempt; a retried request returns the same receipt.
-- Locks, always in this order: the tenant's fee lock (shared), the student's, a TrxID's, the
-  receipt counter row, the SMS lock (`fee-locks.ts`).
+- Locks, always in this order: the tenant's fee lock (shared), the student's (then an online
+  payment intent's row), a TrxID's, the receipt counter row, the SMS lock (`fee-locks.ts`).
 - The cached totals on a due (paid principal and fine, the day the principal was cleared, waived
   fine) are re-derived from the allocations of live payments and the waivers, never incremented.
   A deferred database trigger checks every allocation at commit: never to a void payment or a
@@ -139,6 +139,48 @@ Audited. Voiding gives no money back by itself: refunds happen outside the app.
 `GET /fees/closing?date`: per collector and method. A payment counts on the day it was recorded;
 a void is deducted on the day it is made (listed with the payment's own date), so a closed day
 never changes afterwards. Totals: collected, voided, net. An accountant sees only their own.
+Online payments are under no collector (the guardian paid them; P7a-V) but on a line of their
+own, "Online (SSLCommerz)" (`online`: count, by method, voids made that day, net), in the
+whole-institute closing only (OWNER/ADMIN, no collector chosen; P7b-L). It counts in collected and
+net, never in cash in hand (the money went to the SSLCommerz account); an accountant's own
+closing, or one collector's, has none.
+
+## Online payments (SSLCommerz)
+
+Sprint 1 P7a, sandbox only. The owner saves, tests and switches on the institute's SSLCommerz
+store (Setup → Online payments); guardians then pay chosen dues of their child online, in full
+(S22): the request names dues, never an amount; the server computes what they owe today (fines
+included) and keeps what each owed (the snapshot). A payment is posted only after SSLCommerz's own
+validation API confirmed our transaction ID, BDT and the exact amount, at low risk, and the dues
+still owe exactly the snapshot; anything else waits for review with the money recorded and no
+receipt (S23). Everything about it: [payments.md](payments.md).
+
+- **Channel `GATEWAY`** (S21): methods `BKASH`, `NAGAD`, `ROCKET`, `CARD` or `OTHER_ONLINE` (from
+  SSLCommerz's card type), the TrxID is SSLCommerz's `bank_tran_id` (its own format, P7a-I), no
+  sender, and the payment names its intent (one live payment per intent). `recordPayment` takes it
+  from the payments module only, in a job acting as the guardian who paid.
+- **Paid on the checkout day** (P7a-E): the fines were counted to that day, so a payment that
+  crosses midnight is not refused; recorded on the day it arrives (its receipt number's year).
+- **Receipts:** "অনলাইনে (SSLCommerz) · <method>", the bank's and our transaction IDs, "paid
+  online" instead of a collector; the same receipt SMS (P7a-U).
+- **The counter** sees a due being paid online (`onlinePending`, a badge) and still takes cash;
+  the online money then waits for review (`DUES_CHANGED`), never on a due, never twice.
+- **Voids:** voiding an online payment sends its online payment back to review (`VOIDED`, P7a-G).
+- **Daily closing:** online payments are under no collector (P7a-V) and have their own line in the
+  whole-institute closing (P7b-L, above); the collections report by collector shows them as one
+  "Online (SSLCommerz)" line.
+- **Reconciliation (P7b):** SSLCommerz is asked about every online payment by our transaction ID
+  at +5 min, +30 min, +2 h and +25 h, so a lost notification still ends in a receipt or in review;
+  what never completed expires at +25 h.
+- **Who resolves (P7b-D):** an online payment SSLCommerz confirmed but that did not match waits in
+  the review queue (Fees → Online payments → to check). The OWNER or an ADMIN applies the money to
+  chosen dues of the child (a gateway payment, dated the day SSLCommerz took the money, P7b-F),
+  records it as refunded outside the app, or dismisses what holds no money; an ACCOUNTANT sees the
+  queue and may ask SSLCommerz again. Money is never dismissed and never applied twice.
+- **Reports:** the online payments report (Reports → Online payments: by the day each was
+  started and where it stands now, with SSLCommerz's charges, S24; CSV and print) and the
+  dashboard's "to check" count, which includes the queue (P7b-M).
+- **Locks:** step 2a, the intent's row, after the student's lock (`fee-locks.ts`).
 
 ## bKash/Nagad without the gateway
 
@@ -170,6 +212,39 @@ number is masked for the accountant.
   (dedupe key `fee-reminder:<student>:<latest overdue due>`); cancelled at send time if they paid.
 - Dashboard card: this month so far against the same days of last month, overdue (amount and
   students, as the defaulters list counts them), transfers waiting to be checked.
+
+## A new academic year (sprint 1 P5, S16, S17)
+
+Rules of the promotion itself: [promotion.md](promotion.md).
+
+- **Nothing moves (S17).** A promotion creates, changes and moves no due and no payment (tested).
+  Old dues stay on their year:
+  - a promoted student or a repeater, once enrolled in the new year (and once it is current),
+    is on the due list with them; the row's `previousYearsPaisa` (and the totals', and a
+    "previous years" column and CSV column) says how much of it is from earlier years;
+  - the staff ledger and the guardian's fees page mark such dues "previous year" (the ledger's
+    `currentYearId` names the current year), with a subtotal on the staff ledger;
+  - a leaver leaves the due list and gets no new dues, but keeps the ledger and can pay at the
+    counter.
+- **Leavers with dues** (Reports → "Leavers with dues", `GET /fees/reports/leavers-with-dues` and
+  `/csv`, OWNER/ADMIN/ACCOUNTANT, P5-K): everyone who owes but is not on the due list: leavers
+  (with status and date), ACTIVE students not enrolled in the current year ("not carried over"),
+  and deactivated students; each with the balance of all their open dues (every year) and their
+  latest class. Phones masked for the accountant; the CSV as the other reports (BOM, ASCII digits,
+  formula-safe).
+- **The admission fee is never charged again** (one ONE_TIME due per student and head across all
+  years); a YEARLY fee is charged each year.
+- **Copies into the new year** (OWNER/ADMIN, the wizard's fee step; each can run again and keeps
+  what is there; only into a year that starts later, and terms and concessions only from the
+  year just before it, `422 YEAR_ORDER`):
+  - amounts: `POST /fees/amounts/copy` (missing rows only);
+  - terms: `POST /fees/terms/copy`, exactly one year later (29 Feb → 28 Feb); a term of the same
+    Bangla name already in the new year is skipped; dates that fall outside the new year are
+    copied and counted (`outsideYear`, P5-M);
+  - concessions: `POST /fees/concessions/copy` (off by default in the wizard): those still
+    running on the old year's last day, for students still ACTIVE and enrolled in the new year,
+    from the new year's first day; one already there on that head is skipped (P5-N); one ending
+    in the new year keeps its end date. The audit row lists the copied student and head pairs.
 
 ## SMS
 

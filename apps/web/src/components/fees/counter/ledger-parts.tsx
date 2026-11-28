@@ -103,12 +103,15 @@ export function DueCard({
   onToggle,
   manages,
   onAction,
+  previousYear = false,
 }: {
   due: FeeDueView;
   checked: boolean;
   onToggle: (checked: boolean) => void;
   manages: boolean;
   onAction: (kind: 'waive' | 'cancel') => void;
+  /** A due of an earlier year than the current one (P5, S17): marked, never moved. */
+  previousYear?: boolean;
 }) {
   const t = useTranslations('fees.counter');
   const locale = useLocale() as Locale;
@@ -144,6 +147,11 @@ export function DueCard({
       </span>
       <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <span>{t('ledger.dueOn', { date: formatDate(due.dueDate, locale) })}</span>
+        {previousYear && (
+          <span data-testid="previous-year">
+            <Pill tone="neutral">{t('ledger.previousYear', { year: due.academicYear.name })}</Pill>
+          </span>
+        )}
         {cancelled ? (
           <StatusPill kind="cancelled">{t('ledger.cancelledPill')}</StatusPill>
         ) : !owing && due.amountPaisa - due.concessionPaisa <= 0 ? (
@@ -153,6 +161,13 @@ export function DueCard({
         ) : due.overdue ? (
           <StatusPill kind="overdue">{t('ledger.overduePill')}</StatusPill>
         ) : null}
+        {/* A guardian is paying it online right now (P7a2): cash is still taken; the online
+            money then waits for the school's review instead of being posted twice. */}
+        {owing && due.onlinePending && (
+          <span data-testid="fees-due-online-pending">
+            <Pill tone="info">{t('ledger.onlinePending')}</Pill>
+          </span>
+        )}
       </span>
     </>
   );

@@ -1071,3 +1071,1106 @@ After the security review of P3b (round 1):
   codes and tokens are never logged (only error names are). Per-address limits are generous on
   purpose: many guardians share one address behind mobile carriers' NAT (CGNAT); the per-phone and
   per-institute limits are the real bounds.
+
+## Sprint 1, P5: promotion and new session (2026-11-17)
+
+**Built (day run 2026-11-17), for the owner's review with its PRs; nothing merged.** Plan:
+`docs/plans/sprint-1-p5-promotion.md` (PR #15, not approved yet). Built with the plan's
+recommended defaults for P5-A to P5-Q and its split: **P5a** (this PR: leaving, runs, apply and
+resume, numbering, the switch check, leave/return on the student page) and **P5b** (stacked on it:
+fee and teacher copies, previous-year dues markers, the leavers report, the new-year wizard).
+Rules as built: [promotion.md](promotion.md).
+
+Where the plan and the code disagreed (the code wins; recorded here):
+
+- **No P3 yet.** Built on `integration/sprint-1` (main + #16, #18, #17) without online admission:
+  new admits for the new year come from staff admission only, and numbering treats every
+  enrolment no run created as a new admit.
+- **The student list has no default ACTIVE filter** (the plan assumed one). Leavers stay in the
+  list, marked with their status; the status filter shows one kind at a time. Not changed (a
+  product decision: hide leavers by default?).
+- **Validation errors answer 400**, as everywhere in this API (zod), not 422: a leaving row
+  without a date, two equal numbers in one numbering request.
+
+Decided alone, each the safer option:
+
+- **P5-a1. A failed student of the top class repeats** instead of graduating (the plan: the top
+  class leaves as GRADUATED). Repeating keeps them; graduating someone by mistake removes them
+  from attendance and dues at apply.
+- **P5-a2. Leaving keeps the rolls** (one student's leave and the run's leavers alike): history,
+  and a return finds them in place. The plan said this for apply only.
+- **P5-a3. A new apply outcome, `SKIPPED_LEFT`:** a student who left another way after the run
+  was made is not enrolled into the new year (the plan only knew `SKIPPED_DEACTIVATED`).
+- **P5-a4. The roll strategy is optional when a run is made:** MERIT when a merit exam is found,
+  NAME_BN otherwise. MERIT without a published exam answers `422 MERIT_NEEDS_EXAMS` with
+  `reason: NO_EXAM` (`MODULE` without EXAMS); a given exam that is not published for that class
+  and year answers `422 MERIT_EXAM_INVALID` (new code).
+- **P5-a5. Permanent stops are not retried:** `SECTION_FULL`, `TARGET_INVALID` and
+  `ACTOR_NOT_ADMIN` end the job at once (BullMQ `UnrecoverableError`; the run stays APPLYING
+  with the code); other errors are retried 5 times with backoff, as planned.
+- **P5-a6. Resume is refused while the job is still in the queue** (`409 RUN_APPLYING`); a
+  finished or failed job of the same id is removed before the new one is queued (BullMQ would
+  ignore a second job with the same id).
+- **P5-a7. The apply-check `version` also covers the target sections' capacities and
+  enrolments**, so a run being applied into the same sections makes another admin check again
+  (`409 PREVIEW_CHANGED`) instead of applying on stale capacity figures.
+- **P5-a8. PROMOTE may go into any other active class** (skipping a class too); REPEAT must stay
+  in the run's class. Rows into a class or section deactivated since are refused at apply
+  (`422 TARGET_INVALID`).
+- **P5-a9. Numbering's PROMOTED strategy** is that of the run that promoted most of the class's
+  students (normally the class below); REPEATER: the class's own run; NEW: Bangla name.
+- **P5-a10. The study group is kept only while it is active.** Changing the merit exam takes the
+  results of pending rows again but never changes a decision.
+- **P5-a11. Audit names:** runs and their steps under `promotion_run` (create, rows, refresh,
+  apply, resume, each apply section, APPLIED); numbering under `class_level` (`step:
+number_rolls`); each leaver under `student` (old and new status).
+- **P5-a12. Setup's "in use" counts do not include promotion rows:** deleting a year, class,
+  section or group a row names answers `409 REFERENCE_CONFLICT` (the foreign key), as for other
+  references the counts do not list.
+
+### P5a after the review (round 1)
+
+What changed is listed in the PR's review comment. Decided alone:
+
+- **P5-a13. No removal of a run-created enrolment.** Correcting a placement (class, section,
+  group) covers a promotion or repeat applied by mistake; leave and return cover someone who
+  should have left. Removing the enrolment would leave its applied row (immutable history,
+  `ENROLLED`) pointing at nothing.
+- **P5-a14. Registers:** a student not ACTIVE without a leaving date (only possible for data set
+  before P5) stays on registers as before; only a leaving date takes someone off, from that day.
+- **P5-a15. A placement change is refused once that year has attendance, an exam roster or fee
+  dues for the student.** The fee dues are counted from the students module (a read of the fees
+  module's table, like the student limit's read of the subscription).
+- **P5-a16. Numbering while runs into the class are not applied** needs an explicit `force` (the
+  wizard asks).
+- **P5-a17. The CI checks job may take 20 minutes** (it takes 8–10 now; at 10 it was cancelled).
+- **P5-a18. Subject choices** are copied and removed through `SubjectChoicesModule` (exams), a
+  module with no imports, so students and promotion can both use it without a cycle.
+
+### P5a after the review (round 2)
+
+Decided alone:
+
+- **P5-a19. `left_on` is the last day on the register** (a leaver is marked that day and gone from
+  the next). The run's default leaving date stays the old year's last day, so graduates are on its
+  register; a leave today keeps the student on today's register.
+- **P5-a20. Roll groups follow the current class:** a row's student now in its run's own class is a
+  repeater, in any other class promoted (S15's "promoted" covers everyone who came up from another
+  class); old roll and merit place only within the run that orders the group.
+- **P5-a21. Capacity counts only students still here.** A student who returns is not checked
+  against the section's capacity again (return checks the student limit only), so a return can
+  take a section over its capacity; the apply-check and the next admission see it.
+- **P5-a22. The device day** uses the same register filter as the daily register (`on-register.ts`)
+  and is covered by the existing device-register tests; no separate leaver test there.
+- **P5-a23. "In use" readers** (`AttendanceUsage`, `ExamUsage`, `FeeUsage`) live in their modules,
+  each a module with no imports, so students reads them without a cycle.
+
+### P5b: the wizard, copies and dues markers (stacked PR)
+
+Built in `feature/sprint-1-p5b-promotion-wizard` (on top of P5a). Decided alone:
+
+- **P5-b1. Teacher copy:** "class teachers" copies every section teacher of a section (the class
+  teacher and the others), keeping the class-teacher flag unless the new section already has one.
+  Staff counted: ACTIVE OWNER, ADMIN, TEACHER or ACCOUNTANT memberships.
+- **P5-b2. Concession copy** also skips students who left (only ACTIVE students enrolled in the new
+  year), and one already on that head in the new year, ended or not.
+- **P5-b3. Term copy** matches existing terms by Bangla name (the table's unique key).
+- **P5-b4. The leavers report** sums every open due of every year (not only earlier years), with
+  fines up to today, and lists each student's latest enrolment.
+- **P5-b5. Phones (P5-Q):** the decision grid stacks each row's controls instead of a sheet per row
+  (one layout for every width; checked at 390 px in Playwright).
+- **P5-b6. The wizard never switches the year by itself**, and its Playwright spec does not switch
+  either (the specs after it live in the seeded current year).
+
+After the review (round 1), decided alone:
+
+- **P5-b7. Teacher copy uses the assignment paths' rule:** an ACTIVE OWNER, ADMIN or TEACHER
+  membership and a staff profile (P5-b1 counted accountants and skipped the profile check).
+- **P5-b8. Fee copies only go forward in time** (`422 YEAR_ORDER` when the target year does not
+  start after the source year). Two concession copies at once never double a concession (the
+  second skips what the first made); the audit row lists the copied student and head pairs, the
+  term copy the copied term names.
+- **P5-b9. A concession that ends after the new year's first day is copied with its end date**
+  (and who ended it, and why); one ending on or before that day is not copied (it does not run in
+  the new year).
+- **P5-b10. The run page's "leaves" defaults the date to the old year's last day.**
+
+After the review (round 2), decided alone:
+
+- **P5-b11. A copied concession that ends in the new year keeps who ended it and why** (the
+  original's `ended_by`/`ended_reason`): the end date was their decision; the copy's own audit
+  row names the admin who copied it.
+- **P5-b12. Terms and concessions copy only from the year just before the target** (`422
+YEAR_ORDER`); amounts from any earlier year (they carry no dates). The wizard copies from the
+  new year's previous year.
+- **P5-b13. Concession copies into one year take turns** (an advisory lock per target year):
+  only open concessions are unique, so two copies at once could each add an ended one. No test
+  forces the race.
+- **P5-b14. The teacher copy follows each assignment path's own rule** (instead of making the
+  section-teacher route stricter): a section teacher needs an ACTIVE OWNER, ADMIN or TEACHER
+  membership, legacy teachers without a staff profile included, as
+  `PUT /attendance/sections/:id/teachers` allows and its tests rely on; a subject teacher also a
+  staff profile, as the exams setup requires. P5-b7's single rule (profile for both) dropped
+  legacy class teachers.
+- **P5-b15. The run page lets a stopped run be fixed** (APPLYING with an error): rows edited,
+  refreshed, the run deleted when nothing is applied; the API refuses while a retry is queued.
+
+## Sprint 1, P4: admission test and merit list (2026-11-18)
+
+Built on P3b (`feature/sprint-1-p3b-admission-public` at `faefd06e`, stacked: PR #24). The plan's
+recommended defaults **P4-A to P4-N are adopted as written** (tie-break `OLDER_FIRST` default with
+`YOUNGER_FIRST` and `NONE`; everyone tied on the last seat selected with a warning; rolls for
+SUBMITTED and SHORTLISTED by application number, never renumbered; absent and below the pass marks
+unranked; statuses change only at publish; republish allowed, ADMITTED never demoted; move-up a
+staff action; the SMS without the score; hundredths up to 1 000 full marks; scores editable after
+publish, audited; the fixed admit card; OWNER/ADMIN only; nothing but the test's details before
+publish; staff print the cards). Decisions taken alone, and where the code differs from the plan:
+
+- **P4-a1 (privacy). A published snapshot, separate from the draft.** The plan wrote the draft's
+  places on the same columns the status page would read, so a rebuild (or a score edited after
+  publish) would have shown before republishing, against its own test ("a correction built but not
+  republished: still version 1's values"). Now a build writes the draft (`test_result`,
+  `merit_position`, `waitlist_position`) and a publish copies the snapshot (`result_*`, and
+  `results_full_marks` on the class). The lookup reads only the snapshot and the roll; the role
+  cannot even read the draft or a live score.
+- **P4-a2. The lookup replaced with P3-b19's recipe:** `GRANT CREATE ON SCHEMA public TO
+jantrik_admission; SET ROLE jantrik_admission; CREATE OR REPLACE …; RESET ROLE; REVOKE CREATE`
+  (same signature, grants kept). Classes were already readable as a whole by the role (P3b), so the
+  plan's column grants on classes were not needed.
+- **P4-a3. A build is stale when anything it read changed:** a hash of the settings, the
+  tie-break and each ranked applicant's score, absence, date of birth and submission time
+  (`merit_inputs_hash`), plus the `builtAt` the admin saw. The plan's `scores_changed_at` alone
+  missed a withdrawal, a corrected date of birth or a changed seat count; it is kept for "changed
+  since publish" (P4-J).
+- **P4-a4. Who is in the list:** a roll and SUBMITTED, SHORTLISTED, SELECTED, WAITLISTED or
+  ADMITTED, or REJECTED by an earlier publish (reason NOT_SELECTED, FAILED or ABSENT, so a
+  correction can move them up). Withdrawn applicants and those rejected by staff for another
+  reason are left out (and keep their old result version, so the status page shows no result).
+- **P4-a5. Who gets a result SMS** is read from the SMS log: the status each application was last
+  told is in the dedupe key (`admission-result:<class>:v<version>:<application>:<status>`), so a
+  move-up within a version is a new SMS; an SMS still waiting is cancelled when its version is no
+  longer published or the status moved on. Its own queue `admission-results` (two processors on
+  one queue would drop each other's jobs).
+- **P4-a6. An application with a test roll stays in its class** (409 `HAS_TEST_ROLL`): a roll
+  belongs to its class's sequence.
+- **P4-a7. Move-up:** everyone sharing the first waitlist position moves together (ties exist
+  only with `NONE`; a tie is never split, as P4-B); the rest renumber from 1. No SMS of its own:
+  the moved applicant appears in the result SMS preview (count 1 when nobody else changed), the
+  plan's "optional single SMS".
+- **P4-a8. The waitlist boundary under `NONE`:** everyone tied on the last waitlisted place is
+  waitlisted, at a shared position (`waitlistTie` warning), as P4-B for the seats.
+- **P4-a9. Rolls need only a test cycle** (no other setting); the first roll is 1 unless
+  `startAt` is given; 422 `ROLLS_EXHAUSTED` above 999 999.
+- **P4-a10. Scores:** typing `a`/`অ` marks absent (the exams' `parseMarks`); a score with absent
+  ticked is 422 `SCORE_AND_ABSENT`; scores need the full marks (422 `TEST_NOT_CONFIGURED`).
+- **P4-a11 (owner, SMS). The result SMS share the institute's daily cap** (2 × active students
+  unless set in the attendance settings): an institute admitting its first students has a cap of
+  0, so every result SMS is skipped until it sets a cap; the preview says "0 left today" and how
+  many would be skipped. Not changed here (the cap is the owner's money rule).
+- **P4-a12. Withdrawing** is P3's status route (`WITHDRAWN` with a reason); no new route.
+- **P4-a13. Publish** sets `status_by`/`status_at` and clears an approval problem only on rows
+  whose status or reason changes; one audit row with the version, counts, the ids by outcome and
+  the flagged ones.
+- **P4-a14. The trigger functions are not named `admission_*`** (`test_score_within_full_marks`,
+  `full_marks_keep_test_scores`): P3b's safety test reserves that prefix for the definer functions.
+- **P4-a15. Not done here:** the bn screenshots at 390 px and the admit card's print check run in
+  CI's Playwright only (this run starts no servers); per-subject marks stay for later (S12).
+- **P4-a16 (review M1). Publish locks before it reads:** every applicant of the class with a roll,
+  in id order (as move-up), then the inputs are checked under the locks; its UPDATE also requires
+  the status it read (409 `MERIT_STALE` otherwise, nothing published). A withdrawal that commits
+  while it waits makes the publish stale; an approval is kept (ADMITTED, flagged if needed).
+- **P4-a17 (review S1, N3). Told = SENT, or QUEUED of the published version.** A result SMS
+  cancelled by a republish or failed told nobody and is owed again; the dedupe key carries the run
+  (`…:<status>:<run id>`), so the resend is a new SMS; a run takes the SMS writers' lock and checks
+  who is still owed before queueing, so two runs never send one SMS twice.
+- **P4-a18 (review S2). A build is published once** (`results_built_at`, 409 `ALREADY_PUBLISHED`,
+  the button off): republishing needs a new build.
+- **P4-a19 (review N1, N2, N4, N5, N6).** Rolls go only to the rows locked and still eligible, and
+  the audit lists what was written; a renumbered waitlist position is audited; the preview's
+  segments and cost count only what the cap lets through; the merit view's counts and warnings
+  leave withdrawn applicants out at once; a safety test pins that `jantrik_admission` has no
+  `CREATE` on `public` after the migrations.
+- **P4-a20 (review round 2). No lock blocks a foreign key:** the class row and the applicant rows
+  P4 locks are taken `FOR NO KEY UPDATE`, so a new application (its foreign key's KEY SHARE on the
+  class) never waits on a test operation; that removed a three-way lock cycle with P3's phone
+  lock (a 500 from a deadlock). A deadlock (`40P01`) or serialization failure (`40001`) anywhere in
+  the API now answers 409 `BUSY` with Retry-After (the lock timeout's answer).
+- **P4-a21 (review round 2 N1). A published result is not put back by hand** to SUBMITTED or
+  SHORTLISTED (409 `TEST_RESULT_PUBLISHED`): the next rebuild would undo a move-up the applicant
+  may already have been told about. Withdraw, reject and approve stay allowed.
+- **P4-a22 (review round 2 N2, recorded, not changed).** An SMS the worker has taken (passed its
+  relevance check, provider call in flight) is still QUEUED; if a republish keeps the status and a
+  new run starts in that window, the applicant can get the same result twice. Closing it needs a
+  SENDING state in the shared SMS pipeline (all purposes), which is beyond P4: a rare duplicate
+  of the same news.
+- **P4-a23 (review round 2 N3, N4).** The rolls' audit lists `{applicationId, roll}` in roll order;
+  a run's `skipped` means "not queued": over the cap, or no longer owed when the run reached them.
+- **P4-a24. The migration `20261117300100_admission_test` was edited in place** after the first
+  review (`results_built_at`). No database outside scratch and CI ever applied it; any that applied
+  the earlier version must be recreated (Prisma would refuse the changed checksum).
+
+## Sprint 1, P6: notices and broadcast (2026-11-17)
+
+Built during the unattended day run of 2026-11-17 from the P6 plan (PR #15,
+`docs/plans/sprint-1-p6-notices.md`) with its recommended defaults P6-A to P6-N and its split
+(P6a notices, P6b broadcasts). Decisions taken alone, each the safest option:
+
+- **P6-a1. Notices have no `SCHEDULED` status** (P6-A as recommended): visibility is computed
+  from `status`, `publish_at` and `expires_at` when read; no job. Publishing again moves a
+  scheduled notice's time; a live notice cannot be "published" again (409 `NOT_EDITABLE`).
+- **P6-a2. A publish time more than a minute in the past is refused** (422
+  `SCHEDULE_OUT_OF_RANGE`), not treated as "now": a past date is a mistake in the form.
+- **P6-a3. Targets on a `STAFF` notice are refused** (422 `TARGET_INVALID`) rather than ignored,
+  and a target section must be a current-year section of the target class (sections belong to a
+  year; one of another year would match no child).
+- **P6-a4. The expiry is a last day** in the form (the notice leaves the board at the end of that
+  day, Asia/Dhaka); the API stores the instant. It must be after the publish time (422
+  `EXPIRY_INVALID`); an unchanged past expiry does not block other edits.
+- **P6-a5. Only ACTIVE, not deleted children count** for a guardian's targeted notices and for the
+  read counts (a child who left no longer brings their class's notices).
+- **P6-a6. Audit entries hold the body's length, not the body** (a notice can be 5 000
+  characters; the title, audience, targets, pin and expiry are recorded).
+- **P6-a7. The dashboard card shows for staff and guardians** below the role's own cards, from
+  the same query as the board (no extra request when both are open).
+- **P6-a8. The Playwright spec signs in staff only** (owner and teacher by password): the demo
+  guardians' OTP budget (one code a minute, 5 per 15 minutes) is already shared by other specs.
+  Guardian visibility is covered by the API tests.
+- **Plan and code differences:** the plan's `/notices/new` and `/notices/[id]/edit` live under
+  `/notices/manage/` (one layout sends the management texts only to OWNER/ADMIN pages); the
+  manage page lists notices as rows rather than a table (it works at 390 px without scrolling
+  sideways).
+
+Changed after the review of #25 (round 1, nits only):
+
+- **P6-a9. The unread count's cache has a per-person read version** bumped after a read commits,
+  instead of deleting the entry (a count computed just before the read could otherwise be cached
+  again, stale, for 2 minutes).
+- **P6-a10. An edit keeps the targets the notice already had** without the current-year check; new
+  targets are still checked. An edit locks the notice before reading what the audit records.
+- **P6-a11. The board excerpt is cut at 200 characters as people see them** (grapheme clusters:
+  a Bangla conjunct or a multi-code-point emoji is never split; round 2).
+- **P6-a12. The per-person read version expires after an hour** (set with the increment), longer
+  than any count cached under it (round 2).
+
+P6b (SMS broadcasts), taken alone:
+
+- **P6-b1. Editing a scheduled broadcast puts it back to DRAFT** (its job stops by itself): the
+  admin previews and schedules again, so the cap, the count and quiet hours are all checked again.
+- **P6-b2. A draft can be cancelled too** (status CANCELLED): broadcasts are never deleted, so this
+  is how an admin tidies one away.
+- **P6-b3. A job that runs early or inside quiet hours delays itself** (BullMQ `moveToDelayed`
+  on the same job id) and moves `scheduled_at` and the `notices:due` score to the new time; the
+  sweep remains the safety net.
+- **P6-b4. Who is "without phone":** a student with no guardian phone of the chosen kind (no
+  primary guardian phone for `PRIMARY_GUARDIANS`), or a staff member with no login phone.
+- **P6-b5. The relevance check sends a queued broadcast SMS only while the broadcast is `SENT`**
+  (P6-L is ready: a later "stop" only has to change the status).
+- **P6-b6. The composer's prefix is the institute's registered name** (`MeContext.tenant.name`),
+  not the profile's short name (P2): the name is always there, and the admin may edit it.
+- **P6-b7. The Playwright spec composes and previews but does not send:** CI runs at any hour, and
+  inside Dhaka's quiet hours a send is refused by design. Sending, the cap, quiet hours and the
+  job are covered by the API tests with a fake clock.
+
+Changed after the review of #26 (round 1; each must/should fix with a test seen failing first):
+
+- **P6-b8. The preview's token is what the admin confirms (must-fix B1).** It hashes the text, the
+  recipient kind, the targets, the notice, the recipient count, the segments and the cost; send
+  and schedule must present it with the count, and anything changed since (another tab, another
+  admin, a new rate) is 409 `PREVIEW_CHANGED` with the new segments and cost. Before, only the
+  count was compared: a draft edited after its preview could go out at three times the cost.
+- **P6-b9. A broadcast found more than 3 hours late expires instead of sending (B3)**, measured from
+  its stored time (a quiet-hours wait moves that to 08:00): new status `EXPIRED` with
+  `{lateMinutes}`, on the OWNER/ADMIN dashboard for 3 days; a new preview and send is needed.
+  The sweep and heal-on-read still re-add such jobs; the job then expires them.
+- **P6-b10. Lost SMS jobs of a sent broadcast are re-added (B4):** after a send, and whenever its
+  job runs again, the jobs of its QUEUED SMS are re-added (job id = the SMS id, so existing jobs
+  are untouched) before its due entry is dropped; a failure keeps the entry and retries. Not
+  built: a general sweep for QUEUED SMS of other purposes whose job was lost (single SMS rely on
+  the after-commit add, as before P6); a follow-up if wanted.
+- **P6-b11. Broadcast SMS have a lower queue priority (B5):** BullMQ takes jobs without a priority
+  (login codes, receipts, absent SMS) before prioritised ones, so a large broadcast never delays a
+  login code.
+- **P6-b12. Quiet hours hold each broadcast SMS too (B8):** an SMS still waiting at 21:00 is delayed
+  (still QUEUED) until 08:00 by the SMS worker, never cancelled. Other purposes are unchanged.
+- **P6-b13. The send job retries with backoff; the sweep replaces a failed job (B2); the due entry is
+  dropped only if no new schedule changed it meanwhile (compare-and-delete on its score, B7).**
+  B7's race is narrow and has no deterministic test.
+- **P6-b14. One grouped query counts the SMS of a page of broadcasts, with an index on
+  `sms_logs (tenant_id, related_id)` (B6).**
+- **P6-b15. Segment counts never split a character (N3).** `smsLength` (shared by every SMS cost)
+  now counts parts the way gateways split them: a GSM-7 extension character or an emoji at a part's
+  end starts the next part. In that rare case the count (and the cost shown in fee reminders and
+  exam results too) is one higher than before; otherwise unchanged.
+- **Small ones:** a text of spaces only is 422 `SMS_EMPTY` (N1); the job re-reads who scheduled it
+  under the row lock and runs again for a new scheduler (N2); dashboard snippets are cut at whole
+  characters (N4).
+- **The migration `20261117410100_sms_broadcasts` was edited in place** (the `EXPIRED` value, its
+  CHECKs, the index). Only scratch and CI databases had applied it.
+
+Changed after the review of #26, round 2 (each should-fix with a test seen failing first):
+
+- **P6-b16. A scheduled broadcast is not sent when it became much dearer (SF1, money; for you to
+  confirm).** The audience is resolved again at send time (S19), so the confirmed token cannot
+  cover it: when the real cost exceeds the confirmed one by more than 10% and by more than one SMS,
+  nothing is sent (`COST_CHANGED`, on the dashboard; a new preview and confirmation is needed).
+  Within that margin it is sent and its real cost is stored and shown next to the previewed one.
+  Alternative: always send (as before) and only show the difference.
+- **P6-b17. The lateness limit counts from the time the admin chose (SF2).** A wait for quiet hours
+  no longer overwrites it; a broadcast that would go out more than 3 hours late expires instead.
+  With 3 hours and quiet hours of 11, every quiet-hours wait now expires (a job found at 23:20 for
+  20:30 is not sent the next morning); the early-run wait is unchanged.
+- **P6-b18. A broadcast that was never sent can be edited back into a draft (N-a)**, rather than a
+  "copy to a new draft" action: simpler, and nothing was sent, so no money history is lost (the
+  audit keeps the old status and reason).
+- **P6-b19. Opening the broadcasts list re-adds the jobs of sent broadcasts' SMS still QUEUED 10
+  minutes later, outside quiet hours (N-c).** Stopping a sent broadcast is a follow-up (P6-L).
+- **P6-b20. Fee reminders and exam result SMS get the bulk priority too (N-d):** they still queue
+  one by one with the same rules; only their place behind single SMS changes.
+- **P6-b21. The send job's person cannot be chosen by the app login (found by the merge check
+  with P1-J8, fixed at the rebase, 2026-11-27).** The job signs its context as
+  `sms_broadcasts.scheduled_by_id` and checks that person's roles; `jantrik_app` could write that
+  column, so an SQL injection in one person's request could have a broadcast sent as another admin
+  of the institute. Now two triggers (migration `20261117410200`) hold, for a request (a signed
+  person): a row it leaves `SCHEDULED` is scheduled by that person; it sets the scheduler only to
+  itself or clears it; it changes a `SCHEDULED` broadcast's targets only if it scheduled it. So an
+  injection can neither name someone else nor edit, retarget or bring back (UPDATE, or INSERT … ON
+  CONFLICT) a broadcast another person scheduled (the review's round 1 found the first trigger
+  covered only writes of the column itself). Every app path already works this way: scheduling and
+  send now set the caller; editing goes back to `DRAFT` before the targets change; cancelling and
+  the job's outcomes leave `SCHEDULED`. The approach of P1-J8k (`student_imports.created_by_id`):
+  no new role, no `.env` line, no API change. Like P1-J8k, a context with no person (only the
+  worker and server code sign one) is not checked.
+  - **Review round 2 (must-fix, fixed with a two-connection test):** the targets check locks the
+    broadcast `FOR SHARE` by its id, so a target change racing the scheduling transaction waits
+    for it and is then refused, instead of changing the audience of a broadcast its scheduler
+    already confirmed. An API test now has a second admin cancel, edit and send a broadcast the
+    first admin scheduled.
+  - **Recorded (review round 2):** the platform routes (`InstituteProvisioning.inTenant`) and the
+    fallback of `TenantAccessService.inTenant` run as `jantrik_app` with an institute and no
+    person, so an injection there would not be checked by these triggers (P1-J8k has the same
+    gap; none of those paths builds SQL from request input). The job also reads the audience at
+    send time (enrolments, guardian phones, the current year, memberships), which `jantrik_app`
+    can write: an injection could redirect a scheduled text to other phones within the 10 %
+    cost check (S19 resolves the audience at send time; P1-J10).
+  - **Only with #20:** before P1-J8, an injection can still set `app.user_id` itself, so the
+    triggers are a barrier only once #20 is merged. The merge order already puts #20 first; #26
+    must not go to production before #20.
+  - **Recorded, not changed (P1-J10):** `cancelled_by_id`, `created_by_id` and the Redis due set
+    give no such power (nothing acts as those people; only the API writes Redis). Inside its own
+    institute, `jantrik_app` can still insert `memberships`, `audit_logs` and `sms_logs`, so this
+    protects whom the job acts as, not SMS sending as such. P1-J8k has the same editing gap: a
+    colleague can still change the rows, mapping and status of an import that runs as its uploader
+    (already recorded under P1-J8q).
+- **Recorded only (N-e, N-f):** the edited migration `20261117410100_sms_broadcasts` needs fresh
+  databases wherever its earlier version was applied (only scratch and CI here); its new index on
+  `sms_logs` is created without `CONCURRENTLY`, fine before launch.
+
+## Sprint 1, P7a1: gateway accounts (day run 2026-11-27)
+
+Online payments, part 1 ([payments.md](payments.md)): the gateway account table, the credentials
+key, the SSLCommerz client and a fake SSLCommerz, the owner's account API and page, and the two
+owner commands. No money moves yet. Built with the approved plan's recommended defaults for the
+decisions it touches: **P7a-A** (two PRs; this is the first), **P7a-J** (the method mapping),
+**P7a-K** (payer fields in the client's request; filled by P7a2), **P7a-L** (৳10 to ৳5 lakh
+constants), **P7a-M** (on only after a passing test; the test is a query for a transaction that
+never existed; saving switches it off), **P7a-P** (never deleted), **P7a-S** (the base URL override
+outside production only). The rest are P7a2's. Taken alone during the run (owner away), each the
+safer option:
+
+- **P7a1-x1. `SSLCOMMERZ_BASE_URL` only names a fake on this machine:** outside production it must
+  be `http://127.0.0.1:<port>`, `http://localhost:<port>` or `http://[::1]:<port>` (the plan only
+  refused it in production). The API tests point it at `http://127.0.0.1:9`, where nothing listens,
+  unless a test starts the fake, so no test can reach SSLCommerz by accident.
+- **P7a1-x2. The ciphertext is left out of every Prisma read** unless a query names it
+  (`CLIENT_OMIT`, as `users.password_hash`), on top of the plan's code scan: a service that does
+  not name the column never holds it, even with a bare `findFirst()`.
+- **P7a1-x3. Who saved the credentials may be empty when a command loaded them**
+  (`payments:load-sandbox` audits with no person): the CHECK is "credentials, hint and time
+  together; a person only with a time" instead of the plan's "both NULL or both set". Tests alike:
+  a result and its time together, who asked only with a time.
+- **P7a1-x4. Saving credentials clears all three `last_test_*` columns** (the plan named the result
+  only), so the test CHECK holds and an old result never sits next to new credentials.
+- **P7a1-x5. A failed test while the account is on switches it off** (recorded, audited with
+  `enabled: false`). The database requires a passing last test while on; the alternative, keeping
+  the old `OK` and hiding the failure, would show the owner a stale state.
+- **P7a1-x6. The test job records nothing** if the person who asked is no longer the owner
+  (checked before and after the call) or if the credentials were replaced while it ran (the row's
+  `credentials_updated_at` must be the one it read): a result always belongs to what was tested.
+- **P7a1-x7. A malformed save is a 400** (the API's validation pipe, which lists paths and never
+  values), where the plan's table said 422. Store ID: 1 to 50 of `[A-Za-z0-9_-]` (trimmed);
+  password: 1 to 100 printable ASCII characters without spaces (never trimmed).
+- **P7a1-x8. The client never follows a redirect** (a 3xx is `HTTP_STATUS`: it could carry the
+  password elsewhere) and reads at most 256 KB. A session `FAILED` is `AUTH_FAILED` when its reason
+  mentions credentials, else `INVALID_REQUEST`; the free text is dropped. A validation answer for
+  another `val_id` than the one asked is `BAD_RESPONSE`.
+- **P7a1-x9. A JSON number where SSLCommerz documents a string counts as missing:** an amount sent
+  as a number is "not a well-formed amount" (P7a2 will review it as `AMOUNT_MISMATCH`), a numeric
+  `risk_level` is `HIGH`. Nothing is read through a float. The smoke run shows what the sandbox
+  really sends.
+- **P7a1-x10. The payer page check:** https on `sandbox.sslcommerz.com` or another
+  `*.sslcommerz.com` host on port 443 (no login part); with the fake, exactly the fake's origin.
+- **P7a1-x11. The smoke command skips with exit 0** when either sandbox variable is missing (it is
+  not a failure), and refuses production with exit 1. It also asks once with a wrong password, to
+  see SSLCommerz's answer for bad credentials (the test connection's mapping); nothing else.
+- **P7a1-x12. `tsx` joins the API's dev dependencies** (the version the workspace already uses) to
+  run the three scripts (`payments:sandbox-smoke`, `payments:load-sandbox`, `payments:fake`); no
+  new package. The scripts are type-checked and linted with the API.
+- **P7a1-x13. The database-backed credentials tests live in
+  `apps/api/test/payments-credentials.e2e-spec.ts`**, not a `src` spec: the code scan forbids
+  naming the column anywhere under `apps/api/src` but the service.
+- **P7a1-x14. The account row is created on the first save;** reading the page creates nothing
+  (no row: "not set up").
+- **P7a1-x15. The fake for Playwright** listens on `127.0.0.1:4090` with store `jantrikfake01` /
+  `jantrikfake01@ssl`; the suite's API gets `SSLCOMMERZ_BASE_URL` pointing at it and
+  `API_PUBLIC_URL=http://localhost:4000`.
+- **P7a1-x16. Screenshots:** the Playwright spec checks the page's layout and saves bn 1366 and
+  390 px screenshots to its test output (CI artifacts). None were taken locally: this day run does
+  not run a browser locally.
+- **Recorded only:** the IPN address is shown from P7a1, but its route comes with P7a2 (pasting it
+  into the SSLCommerz panel early is harmless). Key rotation is not built (`key_version` 1).
+
+### P7a1 after the review (round 1)
+
+No must-fix. Fixed: the test job locks the account row before it decides, and a result that is
+not `OK` always sets the account off (an "enable" committed while a test ran could otherwise stay
+on next to a stale passing test); the code scan also reads `apps/api/scripts` and fails on the
+table's name in raw SQL. Recorded, not changed:
+
+- **P7a1-x17. No database rule ties a passing test to the current credentials** (`last_test_at >=
+credentials_updated_at`): with several servers, clock differences could refuse a valid "turn
+  on". The service's guard (a test of replaced credentials records nothing) stays.
+- **P7a1-x18. The payer page host check stays `*.sslcommerz.com`** in sandbox mode (P7a1-x10);
+  narrow it to the hosts the owner's smoke run shows, if wanted.
+- **P7a1-L1 (an older problem, every route):** a malformed JSON body gets a 400 whose message
+  quotes part of the body back to its sender (Nest's body parser). Not logged, and the web app
+  never sends malformed JSON, but a global filter with a fixed message would be cleaner; a
+  follow-up of its own.
+
+### P7a1 after the review (round 2)
+
+No must-fix. Fixed, each with a failing test first:
+
+- **P7a1-x19. The last failure is cleared by new credentials and by a passing test.** Saving
+  credentials clears `last_failure_code` and `last_failure_at` in the same update that switches
+  the account off; a test that passes clears them too. Before, a `CREDENTIALS_UNREADABLE` stayed on
+  the page after the owner had saved the store again and its test had passed. No CHECK ties the
+  two columns to any other (only to each other), so nothing else changes.
+- **P7a1-x20. Each ciphertext names its credentials version, which a trigger alone sets**
+  (migration `20261117500100_payment_credentials_version`, after P7a1's and before P7a2's).
+  `jantrik_app` may write the ciphertext and the AAD had no version, so an SQL injection inside
+  the institute (any role's request) could copy an older ciphertext of the same row back, e.g. a
+  store a former owner once saved, and it still decrypted: once P7a2 moves money, payments would
+  go to that store. Now `credentials_version` is 0 for a new account without credentials, 1 for
+  one inserted with them, and one up whenever the ciphertext changes (unchanged by any other
+  update); the app has no UPDATE on it and the trigger replaces an INSERT's value. The AAD is
+  `payments:<provider>:<tenantId>:<accountId>:v<version>`. Saving locks the row, encrypts as its
+  version + 1 and checks the version the update stored; reading uses the row's version. A
+  ciphertext put back is `CREDENTIALS_UNREADABLE`, never the old store. Choices: the lock is
+  `FOR NO KEY UPDATE` rather than `FOR UPDATE` (the lock the update takes anyway; it does not block
+  a foreign key check on the row, as `FOR UPDATE` would); a
+  ciphertext saved before this migration (development databases only) names no version, reads as
+  unreadable and is saved again; no CHECK ties the version to the ciphertext, so the migration
+  needs no backfill on those rows.
+
+Tests added that pass as the code stood (`payments-account.e2e-spec.ts`): an account that is on and
+then fails its test ends up off, audited `{ test, enabled: false }` (P7a1-x5); unreadable
+credentials give `ERROR` and `CREDENTIALS_UNREADABLE` through the job without asking SSLCommerz;
+"turn on" committed while SSLCommerz is asked is switched off by a failed result, and "turn on"
+sent while the result is being recorded waits for the job's row lock and then finds no passing
+test. Recorded, not changed:
+
+- **(a) `enabled` and `last_test_*` are writable by an SQL injection inside the institute** (any
+  role's request, as `jantrik_app`), within the CHECKs (on only with credentials and a last test of
+  `OK`). The same gap as every other table the app writes: P1-J10, role-aware database rules later.
+- **(b) The payer page host check accepts any `*.sslcommerz.com` host** (P7a1-x10, x18). Narrow it
+  to the hosts the owner's sandbox smoke run shows, before any guardian is sent there (P7a2).
+- **(c) Production checks the key only for its length** (at least 32 characters, no example marker,
+  not equal to another secret): nothing measures its strength. Nor does it refuse
+  `NODE_TLS_REJECT_UNAUTHORIZED=0`, which would switch off certificate checks for the calls to
+  SSLCommerz. Both belong to the production environment checks (docs/deploy.md).
+- **(d) With several workers, the test result recorded last wins:** two tests of the same
+  credentials running at once each record theirs, and the later commit stays (each is a real
+  answer from SSLCommerz, and each is audited).
+- **(e) P7a2's `settle` must compare `tran_id`:** the validation answer's `tran_id` must be the
+  payment's own before anything is settled (the client refuses an answer for another `val_id`,
+  P7a1-x8, and returns the answer's `tran_id` for its caller to compare).
+
+## Sprint 1, P7a2: checkout to receipt (day run 2026-11-27)
+
+Online payments, part 2 ([payments.md](payments.md)): guardians pay chosen dues in full through
+SSLCommerz's page (the fake in every test), the return and the IPN reach the database through one
+definer function under the new NOLOGIN role `jantrik_payments`, every payment is confirmed with
+SSLCommerz's validation API, and one decision table posts it or sends it to review. Stacked on
+P7a1. Built with the approved plan's recommended defaults for every decision it touches: **P7a-B**
+(the role and the definer function), **P7a-C** (documented addresses recorded and given a large
+rate budget, never enforced), **P7a-D** (`verify_sign` not checked), **P7a-E** (paid on the
+checkout day), **P7a-F** (one payment in progress per child for 60 minutes), **P7a-G** (voidable;
+the intent back to review with `VOIDED`; one live payment per intent), **P7a-H** (another
+`tran_id`'s `val_id` sends the named intent to review with no money on it), **P7a-I** (the
+`bank_tran_id` as the TrxID with its own format), **P7a-J** (the method mapping), **P7a-K** (the
+payer's fields), **P7a-L** (৳10 to ৳5 lakh), **P7a-N** (returns by POST or GET), **P7a-O** and
+**P7a-R** (validated money posted whatever happened after the checkout), **P7a-Q** (no retry of a
+failed session), **P7a-T** (P7b's statuses created now), **P7a-U** (the same receipt SMS),
+**P7a-V** (no collector in the daily closing). S22 and S23 hold as approved: anything risky or
+mismatched waits for review and is never posted automatically. Taken alone during the run (owner
+away), each the safer option:
+
+- **P7a2-x1. An amount (or any unknown key) in the checkout body is a 400**, the API's
+  validation pipe (as P7a1-x7), where the plan's test said 422. Nothing from the body is used but
+  the due ids, the amount the guardian was shown and the request id.
+- **P7a2-x2. The money facts come only with their `val_id`, and once it is set none of them
+  changes** (a CHECK and the guard trigger), stronger than the plan's "each written once": a fact
+  missing from one validation can never be filled in from another.
+- **P7a2-x3. A voided gateway payment cannot stay on its intent:** the gateway payment's deferred
+  check also runs on the void (the plan had it on insert only), so a void that skipped the hook is
+  refused by the database rather than leaving a `PAID` intent without a live payment.
+- **P7a2-x4. The payer page CHECK allows plain http only on `127.0.0.1`/`localhost`** (the fake
+  SSLCommerz of the tests and Playwright, refused in production by `SSLCOMMERZ_BASE_URL`'s rule);
+  the API's host check is unchanged.
+- **P7a2-x5. The fee module reads nothing of the payments tables:** the payments module registers
+  `FeeOnlineHooks` at start (the counter's pending dues, the guardian's `online`, a gateway
+  receipt's online part, the void). Without the module nobody can pay online and a gateway payment
+  cannot be voided. FeesModule now also exports `FeeDuesService` and `FeeMobileService` (the
+  guardian check).
+- **P7a2-x6. What SSLCommerz is sent about the payer is ASCII:** the guardian's English name as the
+  institute recorded it (else "Guardian"), the phone in local form, `noreply@jantrik.com.bd`, the
+  institute's English address (else `N/A`), city and postcode `N/A`, country Bangladesh. A Bangla
+  name is not sent (as "School fees" is sent in English, P7a1).
+- **P7a2-x7. An IPN's status stays in its fields** (its `outcome` column is empty), an IPN
+  without a well-formed `tran_id` is malformed (200 OK, nothing stored), and a RETURN row always
+  names an intent (a CHECK).
+- **P7a2-x8. The way back from the gateway is marked** (`?from=gateway` on the 303): the page then
+  never sends the guardian to the gateway again, even when the return was over its limit and the
+  payment still looks READY; it shows "confirming" and asks again.
+- **P7a2-x9. `confirm` asks the query API** when there is nothing left to validate and the intent
+  is still open (also after a made-up `val_id`), or when a signal without a `val_id` arrived after
+  the last query (a late payment); once per job, up to three rounds for signals that arrive while
+  it runs. The plan said "when there is none"; this also closes a failed return that carried a
+  `val_id` of a failed attempt.
+- **P7a2-x10. An unmatched IPN whose validated `tran_id` is one of ours** queues that intent's
+  `confirm` instead of being marked `UNMATCHED` (the money is then posted or reviewed through its
+  own intent).
+- **P7a2-x11. A `tran_id` mismatch whose `tran_id` is no intent of this institute** also marks the
+  VALIDATE event `UNMATCHED` (P7b's queue sees money with no intent), besides the named intent's
+  `TRAN_ID_MISMATCH`.
+- **P7a2-x12. A review also records the mismatches found** (an intent already in review, or a late
+  success, gets e.g. `AMOUNT_MISMATCH` next to `LATE_SUCCESS`), so the person reviewing sees them.
+- **P7a2-x13. A strange fact is stored as nothing, never fails the job:** a `store_amount` above the
+  amount, a `currency_type` over 10 characters, a `bank_tran_id` over 100 characters or with spaces
+  leave that column empty on the intent (and keep the reason it was not posted); the event keeps
+  the reported value (at most 100 printable characters).
+- **P7a2-x14. The init job fails an intent whose account was switched off meanwhile**
+  (`ONLINE_PAYMENTS_OFF`, no call to the gateway, not recorded as the account's failure).
+- **P7a2-x15. Online payments in the collections report** (by collector) are one "Online
+  (SSLCommerz)" line, so the rows still add up to the total and no guardian appears as a
+  collector; the CSV by method names every method (P7a-V carried over to the report).
+- **P7a2-x16. Signal bodies are read by the module's own reader** (a flat form of at most 16 KB,
+  read before the app's parsers); JSON, a larger body or a nested form is malformed.
+- **P7a2-x17. The listed sources** are the five addresses SSLCommerz's docs have named (sandbox
+  `103.26.139.87`, live `103.26.139.81`, `103.132.153.81`, the older sandbox `144.76.92.216`,
+  `144.76.92.241`): a listed one only gets the larger budget.
+- **P7a2-x18. The heal** also asks about a `CREATED` intent more than a minute old (nothing to
+  validate: a query finds nothing and changes nothing), once a minute per payment.
+- **P7a2-x19. `create-roles.sh` now checks `jantrik_admission` too** (it created the role but its
+  checks did not list it), with `jantrik_payments`; `restore.sh` requires both.
+- **P7a2-x20. Another guardian of the child cannot abandon a payment** (404; the plan said "the
+  payer only"); they see it, without its gateway page.
+- **P7a2-x21. The payer page must be `https://sandbox.sslcommerz.com` itself** (the review of
+  P7a1, P7a1-x18): no other `*.sslcommerz.com` host is accepted now that guardians are sent there.
+  If the owner's sandbox smoke run shows the payer page on another host, that host is added by
+  name; until then such a session fails (`BAD_RESPONSE`) and nobody is sent anywhere.
+- **P7a2-x22. `jantrik_payments` may run `app_verified_context()`:** every table's
+  `tenant_isolation` policy applies to it, and an INSERT checks both permissive policies (a SELECT
+  under `USING (true)` drops the other), so the role must be able to evaluate the verified context.
+  It returns the caller's own: in the function's empty context, none. Granted by the function's
+  owner (`SET ROLE jantrik_auth`), in the access migration; pinned in the role's privilege
+  snapshot.
+- **Recorded only:** a gateway payment's request id is its intent's id, so P7b's "apply again after
+  a void" needs a request id of its own. Playwright was not run locally (CI runs it; the
+  screenshots are its artifacts). Nothing called SSLCommerz: every test used the fake.
+
+### P7a2 after the review (round 1)
+
+No must-fix. P7a1's review round 2 was merged in first (each credentials ciphertext names its
+trigger-owned version, P7a1-x20): nothing in P7a2 builds an AAD or writes the ciphertext itself
+(every test saves credentials through the API, so through `PaymentCredentialsService`), so
+nothing else changed. Fixed, each with a failing test first, taken alone during the run (owner
+away), each the safer option:
+
+- **P7a2-x23. No per-payment count before a signal is stored.** The first fix of the validation
+  flood gave each payment a signal budget at the signal routes (10 an hour from anyone but
+  SSLCommerz, whatever the address, and 10 of SSLCommerz's own). The automated security review
+  of that fix (medium, denial of service): anyone with the `tran_id` (every guardian of the child;
+  it is in the return URL) could spend the count the payer's own browser return depends on, so the
+  honest payer's return was refused and "paid" waited for the IPN or a query. Replaced: a signal
+  is refused only by the per-address limits (and the per-institute one for unlisted IPNs), as
+  before; the payer's return is stored whatever others sent (a test sends 25 forged returns from
+  25 addresses first). The bound lives where the gateway is asked (x24).
+- **P7a2-x24. `confirm` bounds what signals make it ask SSLCommerz.** While the payment is open, at
+  most **3** new `val_id`s are validated directly **per round** (those SSLCommerz's listed
+  addresses brought first, then the oldest; each `val_id` once), and at most **10 an hour per
+  payment** for the `val_id`s anyone but SSLCommerz brought, another **10** for those its listed
+  addresses brought, so a flood never spends the real IPN's (Redis, counted in the job). The rest
+  are left to the query by `tran_id`, which is never refused and is authoritative: it lists every
+  attempt, so it answers for every signal stored before it was asked (such a `val_id` is
+  validated only if the query lists it as a successful attempt). Once the payment is closed (paid,
+  in review, failed, cancelled, expired), no `val_id` is validated directly: a new one makes the
+  job query, and only a listed one is validated (a second payment: a `DUPLICATE` event). A query
+  is recorded at the time it was asked, so a signal that arrives while SSLCommerz answers is not
+  taken as answered for. The review's probe (40 returns with made-up `val_id`s, 46 validation
+  calls) now makes at most 10 validations of made-up `val_id`s an hour per payment and at most one
+  query per job; the payer's genuine return is recorded and posted (`payments-settle`).
+- **P7a2-x25. An intent never lets go of a live payment** (`payment_intents_paid_check`, at
+  commit): a live gateway payment that names an intent must be the one that intent holds as
+  `PAID`; only the void (in the same transaction) lets it go. Before, an update could move `PAID`
+  to `NEEDS_REVIEW` with `VOIDED` and no payment while the payment stayed `ACTIVE`. Edited in the
+  P7a2 migration itself (the PR is a draft; only scratch and CI databases ran it).
+- **P7a2-x26. A fail or cancel return closes a payment only when the query lists a failed or
+  cancelled attempt** (and no successful or pending one); the signal's word when the query lists
+  it, else the gateway's. Before, a forged return with only the `tran_id` (even by GET: an
+  `<img>` link) closed a payment whose payer was still on the gateway's page whenever the query
+  found nothing yet, and the real payment then waited for review as `LATE_SUCCESS` instead of
+  getting its receipt. "Nothing found" now stays open for P7b's expiry (and the heal keeps asking).
+  The fake SSLCommerz already lists the `CANCELLED` attempt of a session cancelled on its page, so
+  the guardian's cancel still ends in "not paid" (an API test drives the fake's page through to a
+  new checkout).
+- **P7a2-x27. A `PENDING` answer settles nothing:** that `val_id` is validated again, from a later
+  signal or once the query lists it as successful. Every successful attempt the query lists is
+  validated until its money has been seen (an earlier `PENDING` or `INVALID` answer included).
+  Before, a payment first answered `PENDING` was never validated again and never posted.
+- **P7a2-x28. A gateway payment is its intent's money** (`fee_payments_gateway_check`, at commit):
+  a live gateway payment has the intent's `amount_paisa`, its `bank_tran_id` as `trx_id` and its
+  `priced_on` as `paid_on` (the app can change none of the three afterwards, on either row). The
+  review committed a ৳0.01 gateway payment for a ৳1,000 intent. P7b's "apply again" after a void
+  posts the same money (the same `bank_tran_id`, the voided payment no longer live), or changes
+  this rule in its own migration.
+- **P7a2-x29. Playwright, the cancelled payment** (CI: the test hung for 2.5 min, then 8.7 min on
+  its retry, until the job's 20-minute limit): the accountant's password login was followed at
+  once by a navigation, so the login could be cut off and `fees-search` never appeared, and
+  `fill()` had no timeout of its own (the 90 s test plus the OTP cooldown the helper waits out).
+  The retry then found the first attempt's payment still in progress (`child-online-continue`
+  instead of `child-online-open`, with no timeout either). Now the login waits for the dashboard,
+  every action and navigation in the P7a2 block fails within 30 s, and a payment an earlier
+  attempt left at the gateway is continued. Reasoned from the CI log only (Playwright cannot run
+  here: its ports are the developer's).
+
+Tests added that pass as the code stood (`payments-settle.e2e-spec.ts`): the counter taking the
+same due while `settle` posts, at once (one is posted, the other refused or in review, never
+both); one `bank_tran_id` on two payments (the second a `DUPLICATE` review); two dues with only
+the second changed (`DUES_CHANGED`); a due cancelled meanwhile (`DUES_CHANGED`); a perfect
+validation for a payment already in review, through the IPN route (recorded, never posted). The
+three-settles-at-once test now also counts the calls to `recordPayment` (one) and the receipt SMS
+(one): with the student's and the intent's locks removed from `settle` it fails (checked by hand;
+the payment count alone could not tell, as the unique index refuses the extras).
+
+Recorded, review round 1 (not changed):
+
+- **(a) An SQL injection inside the institute** (any role's request, as `jantrik_app`) can write
+  the money facts on an open intent, insert `VALIDATE` events, and choose `priced_on`,
+  `expires_at` and the payer on INSERT. This only ever blocks automatic posting (a review, a
+  `DUES_CHANGED` from a wrong snapshot, a `val_id` written once), never makes `settle` post:
+  `settle` posts only from the validation API's own answer, read under the intent's row lock, and
+  the database ties the payment to the intent (x25, x28). The same gap as every table the app
+  writes: P1-J10 (role-aware database rules later).
+- **(b) Two institutes sharing one SSLCommerz store** see each other's money as `UNMATCHED` (the
+  unmatched check validates the `val_id` with this institute's credentials: the same store says
+  VALID, and no intent of this institute has that `tran_id`). P7b must never apply such money
+  as-is: it may be another institute's.
+- **(c) Queries are not counted per payment:** `confirm` asks the query API at most once per job
+  (signals for one payment queue one job at a time), so a slow, steady flood from many addresses
+  can still make about one query per signal it sends, bounded by the per-address limits. Each
+  query lists only real attempts and posts nothing by itself.
+- **(d) After a real failed attempt**, a forged fail or cancel return can still close a payment
+  whose payer is trying again on the gateway's page (the query then lists `FAILED`); the later
+  success waits for review as `LATE_SUCCESS`. No money risk; matching the return's `val_id` to the
+  listed attempt would close that too, but whether SSLCommerz sends one on a failed return is not
+  documented (the smoke run can show it).
+
+### P7a2 after the review (round 2)
+
+No must-fix: the final review (a fresh reviewer, the whole PR) found no path that posts twice,
+posts without our own successful validation, or posts to the wrong institute, student or due.
+Fixed, each with a failing test first, taken alone during the run (owner away), each the safer
+option:
+
+- **P7a2-x30. Another payment's `val_id` brought only by signals anyone can send leaves the
+  payment open.** This narrows P7a-H for forgeable signals only. _Approved by the owner
+  (28 Nov 2026)._ Every guardian of the child has the `tran_id`, and any real `val_id` of the store
+  will do. A forged return (`GET …/return/<tranId>/success?val_id=…`, the review's probe P5) sent
+  the payment in progress to `NEEDS_REVIEW` with `TRAN_ID_MISMATCH`. The payer's genuine payment
+  was then never posted, and P7a cannot resolve reviews. Now, when every signal that brought that
+  `val_id` is a return or an IPN from an address SSLCommerz does not list:
+  - the validation is recorded as a `VALIDATE` event, marked `UNMATCHED` when no intent of the
+    institute has that `tran_id` (P7b's queue; S23 keeps it from posting);
+  - the payment stays as it is, and the payer's own validation still posts it.
+
+  From SSLCommerz's listed address, from our own query, or from both in one round: P7a-H as
+  before (review). Choices:
+  - Unlisted IPNs count as forgeable too (the reviewer named returns): anyone can post one, and
+    the attack would otherwise just move to the IPN route.
+  - Another intent's money is not marked `UNMATCHED`, as before: it posts through its own intent,
+    and P7b must not apply it here.
+
+- **P7a2-x31. UNATTEMPTED and EXPIRED, as our query lists them, close a payment only past the
+  session's lifetime.** SSLCommerz's query documents only VALID, VALIDATED, PENDING and FAILED,
+  so a real cancel may be listed as UNATTEMPTED or EXPIRED. It then stayed in "confirming" with no
+  way out, and a new checkout got 409 `PAYMENT_IN_PROGRESS`, for up to 60 minutes.
+  - **The first fix** counted them as over at once. The automated security review of it (medium)
+    pointed out that a forged return makes us ask while the payer is still on the gateway's page,
+    where UNATTEMPTED is simply true. That was round 1's finding again (x26): the payer's real
+    payment then waits for review as `LATE_SUCCESS`.
+  - **Now:** with a fail or cancel return, or an IPN that said so, they close the payment only
+    once the intent's `expires_at` has passed (an hour after the checkout, P7a-F). No shorter
+    gateway session timeout is recorded, so this is the longer, conservative value. The closing
+    word is the signal's: CANCELLED for a cancel, FAILED otherwise. FAILED and CANCELLED close
+    as before (x26). Never a signal alone, and never a validation answer (it names no `tran_id`
+    we could compare).
+  - **Before that**, "confirming" offers its payer "give up this payment", then the sheet to
+    start again, with a line that SSLCommerz shows no payment. This needs our own query, asked
+    after the last return or IPN, to list nothing paid or pending (`noLiveAttempt` on the payment
+    view). It is the payer's own abandon: anyone else gets 404 (x20).
+  - A query's statuses are recorded in a fixed order, the live ones first, so the page's reading
+    is never cut off at 40 characters.
+- **P7a2-x32. One query per payment every 10 seconds** (`pay-query:<intent>`): at most 6 a
+  minute, 360 an hour. Before (round 1's recorded note (c)), a slow flood from many addresses made
+  about one per job, and a signal promoting a job delayed by its backoff skipped the wait.
+  - A job that finds the slot taken is not refused. The same job is moved back to BullMQ's
+    delayed set until the slot frees (at most 10 s), and that is not counted as an attempt.
+  - A signal that promotes it meanwhile finds the slot still taken and asks nothing.
+  - Cost: under a flood that has spent the other validation budget, a payer's return without the
+    IPN waits up to 10 s for the next query. The IPN has a budget of its own.
+- **P7a2-x33. CI: the guardian calendar's 7.9 minutes** (`reports.spec.ts`, 1.7 s on #36). The
+  cause was the demo guardian's OTP budget, not the payments: 5 codes a phone per 15 minutes,
+  where a request the 1-minute cooldown refuses still counts (`RateLimiter.consume`).
+  - **The count** in run 46013055262: the window opened at 14:09:57 with the dashboard spec's
+    sign-in. Then fees-mobile (14:13), then P7a2's two Playwright tests: the second asked 4 s
+    after the first, was refused by the cooldown but counted, and asked again a minute later.
+    That made five.
+  - **The wait:** the calendar's sign-in at 14:17:06 was the sixth. The helper waited out the
+    window (it ended at 14:24:57; the test finished at 14:25:00).
+  - **Ruled out:** measured through the API with a payment open (a test now pins it), no guardian
+    read asks SSLCommerz or waits for a job.
+  - **Fix:** the P7a2 block signs in once, on one page shared by its two tests (serial), so the
+    demo guardian uses four codes in the window, with one spare for a retry. At the end it gives
+    up any payment a failed attempt left in progress, through the API with the page's own token
+    (no further code).
+  - **Also:** "heal on read" now queues its job after commit without the read waiting for it.
+
+Fixed without a decision of their own (each with a failing test first):
+
+- A `val_id` that SSLCommerz's listed address brought stays on that address's budget when the
+  payer's return carries it too. Before, the return's entry overwrote it, so after a flood the
+  real IPN's `val_id` waited for a query.
+- A round stops validating `val_id`s directly once a validation posts the payment or sends it to
+  review. The query's own list is still validated in full, so a second payment is a `DUPLICATE`
+  event.
+
+Tests added that pass as the code stood: a query listing a FAILED and a PENDING attempt together
+(the pending one wins: nothing closes, and "start again" is not offered). The reviewer's other
+two missing tests are the x30 tests (`TRAN_ID_MISMATCH` from an unlisted return) and the x31
+tests (UNATTEMPTED and EXPIRED, during the session and after it).
+
+Recorded, review round 2 (not changed):
+
+- **(a) x30's order:** once a forged `val_id` has been validated, a later listed IPN carrying it
+  is not validated again (its answer was final), so it does not send the payment to review. A
+  genuine IPN never carries another `tran_id`'s `val_id`; the `UNMATCHED` event is in P7b's queue.
+- **(b) "Start again" from "confirming"** may give up a payment whose money SSLCommerz had not
+  listed yet. That money then waits for review as `LATE_SUCCESS`: never lost, never posted twice
+  (S23). The page offers it only after our own query found nothing paid or pending.
+- **(c) Past `expires_at`, a payment that no signal closes stays open** until P7b expires it.
+  A new checkout is allowed by then anyway (P7a-F counts only unexpired payments).
+- **(d) Playwright was not run here** (its ports are the developer's). The CI fix is reasoned
+  from run 46013055262's timings and the OTP limits; CI shows it.
+
+## Sprint 1, P7b: reconciliation and review queue (day run 2026-11-27)
+
+Online payments, part 3 ([payments.md](payments.md)): SSLCommerz is asked about every online
+payment by our `tran_id` at +5 min, +30 min, +2 h and +25 h (and once more at +7 days for one still
+pending), healed after a Redis loss by a sweep, the nightly fee run and heal on read; the review
+queue where an OWNER or ADMIN applies the money to chosen dues, records it as refunded outside the
+app, or dismisses what holds no money; online money in the daily closing, a report and the
+dashboard. Stacked on P7a2. S22 and S23 hold as approved: nothing in P7b posts money without a
+person deciding, except a reconciliation that finds a payment passing every check, exactly as an
+IPN would (through `confirm` and `settle`). Built with the plan's recommended default for every one
+of **P7b-A to P7b-O**: A (a query answer only finds `val_id`s; the validation API decides), B (the
+sweep, the nightly per-institute re-queue, heal on read), C (`payment_signal_reviews`), D (OWNER
+and ADMIN decide; ACCOUNTANT reads and checks), E (money ends only applied or refunded outside; a
+remainder recorded as refunded in the same action; dismiss only without money, after a fresh
+check), F (the receipt dated the day SSLCommerz took the money), G (`CURRENCY_MISMATCH` refunded
+only), H (money items never applied), I (refunds outside the app), J (posted payments asked only at
++25 h), K (`EXPIRED` at +25 h, one more query at +7 days), L (the online line in the
+whole-institute closing only), M (the dashboard count and a tab badge, no SMS), N (no undo of
+"refunded outside"), O (events kept for ever). Taken alone during the run (owner away), each the
+safer option:
+
+- **P7b-x1. Only a person's decision moves an intent out of review, in the database**
+  (`payment_intents_resolution_guard`): the plan had the decision columns written only in that
+  move; the trigger also refuses the move without a decision, so no job can ever post or close an
+  item in review (S23).
+- **P7b-x2. Back in review, the decision is cleared from the row by the same trigger** (a void of
+  an applied payment, a success after a dismissal); P7a's `settle` and void hook are unchanged, and
+  the audit log keeps the earlier decision.
+- **P7b-x3. "Money" is a validated `val_id`:** money whose amount SSLCommerz did not report as a
+  well-formed amount (P7a2-x13) can be refunded outside (its amount stays unknown, NULL) but never
+  applied (422 `AMOUNT_UNKNOWN`) or dismissed. Apply is also refused when the `bank_tran_id` is not
+  a usable TrxID (422 `TRX_ID_UNUSABLE`), or when that bank transaction is already a live payment
+  (409 `TRX_ID_USED`, so a duplicate is never posted twice), or when it is more than the money (422
+  `AMOUNT_EXCEEDS_MONEY`).
+- **P7b-x4. A money item (UNMATCHED or DUPLICATE) is dismissed only as a repeat record** of money
+  held elsewhere (an intent holds the same `val_id`, or another item records it and was not itself
+  dismissed), else 422 `HAS_MONEY`; the plan's table offered "dismiss" for every money item, but
+  each one is validated money and P7b-E says money is never dismissed. A deferred trigger checks the
+  same at commit. With one SSLCommerz store shared by two institutes, each would see the other's
+  money as UNMATCHED: here it can only be recorded as refunded outside (never applied, P7b-H).
+- **P7b-x5. Every decision needs a note** (3 to 500 characters), apply included, and there is one
+  note per decision: apply's `refundOutside` carries only the reference, and the note also says how
+  the rest was given back (the plan had a second note for the refund).
+- **P7b-x6. A live gateway payment and its `PAID` intent are matched in the database** (TrxID,
+  amount, day), at commit and from both sides: `fee_payments_gateway_check` is redefined in P7b's
+  migration (with the P7a2 review's match as the coordinator described it: settle's payments carry
+  the intent's amount on its checkout day) and adds applied payments (the applied amount, on a day
+  from the checkout day to the day recorded); `payment_intents_payment_match` checks the same when
+  an intent changes. **Merge point:** P7a2's own fix to that function lands in its migration
+  `20261117510100`; P7b's `20261117520000` redefines it afterwards, so the merge must keep the
+  stricter union of both (P7b's applied branch included).
+- **P7b-x7. Security review of P7b, finding 1 (write skew):** two dismissals of the two records of
+  one payment at once could each see the other standing. The commit-time check now takes an
+  advisory lock on `(institute, val_id)` before it reads, and the API takes the same lock before it
+  inserts; a two-connection test shows one wins.
+- **P7b-x8. Security review of P7b, finding 2 (the match from the intent's side):** the deferred
+  `payment_intents_payment_match` (above), and the guard requires `PAID` → `NEEDS_REVIEW` to drop
+  the payment and `NEEDS_REVIEW` → `PAID` to bring a new one (the CHECKs already implied both; the
+  trigger says so first).
+- **P7b-x9. Reconciliation's due times are counted from the intent's creation** (the plan said
+  "after init"; the init job follows within seconds), so the sweep, the nightly run and the heal
+  compute the same times from the row.
+- **P7b-x10. Reconciliation validates only what the query lists** as VALID or VALIDATED whose
+  `val_id` is not decided (a `VALIDATE` event saying VALID or VALIDATED; one that said PENDING is
+  asked again), at most 5 per step; `val_id`s from signals stay `confirm`'s (with its own budget,
+  P7a2's review), so nobody's made-up `val_id` costs a validation call here.
+- **P7b-x11. Steps 1–3 close an open intent past its hour only when every attempt the query lists
+  ended unpaid in a documented status** (FAILED, CANCELLED, EXPIRED, UNATTEMPTED; CANCELLED when
+  each was cancelled); no attempt at all, a PENDING one or an undocumented status waits for +25 h.
+  This matches the P7a2 review's rule for `confirm`.
+- **P7b-x12. A close by reconciliation is audited with no person** (`{ status, by: 'RECONCILE',
+step }`), as the nightly dues run is.
+- **P7b-x13. "Check now" over its once-a-minute budget answers 429** (the plan said 202); the page
+  says it was asked less than a minute ago. The answer arrives on `lastCheck`.
+- **P7b-x14. The nightly re-queue runs for every institute the fee run visits, before its FEES
+  check**: validated money is posted even with fees switched off (P7a-O).
+- **P7b-x15. A count route for the fee tabs' badge**, `GET /fees/online-payments/review/count`
+  (not in the plan), so every fee page does not load the whole queue.
+- **P7b-x16. The report's charges cover all the money SSLCommerz validated for the day's
+  payments** (`received`: amount, the store's share, charges), whatever happened since: SSLCommerz
+  keeps its charge when a payment is later voided or refunded. The row also counts open and
+  dismissed payments, so the columns add up to the started ones.
+- **P7b-x17. The payment day when SSLCommerz sent no `tran_date`:** the day its validation was
+  recorded; any day is kept between the checkout day and today (P7b-F).
+- **P7b-x18. The closing's `online` is present for every whole-institute closing** (zeros on a
+  quiet day); the page shows the card only when something happened.
+- **P7b-x19. HTTP codes:** apply answers 201 with the receipt (as the counter); refunded outside
+  and dismiss answer 200 with the item.
+- **P7b-x20. Tests and the fake:** the fake SSLCommerz's payer page gains a **Risky** button
+  (paid, reported with `risk_level` 1) for the browser test; the API test harness drops the payments
+  queue's delayed jobs when a test file closes its app and removes the sweep's scheduler (tests call
+  it); P7a2's heal-on-read test uses an intent 2 minutes old (it was 5, when reconciliation's first
+  query now runs); a P7a2 database test's "applied again" now writes a decision; the closing test
+  voids on the same day (a voided payment's void is never changed).
+- **P7b-x21. P7a files edited** (small): `confirm.service.ts` (`validate` public for
+  reconciliation), `checkout.service.ts` (the schedule once the session is made),
+  `fee-online-hooks.ts` (the nightly re-queue and the dashboard count), `fee-dues.processor.ts`,
+  `fee-collection.service.ts` (the online line), `fee-reports.service.ts` (`onlineToReview`), and the
+  tests above. No P7a1 or P7a2 migration was edited; `PaymentCredentialsService` and
+  `secrets.ts` were not touched.
+- **P7b-x22. The nightly re-queue skips a step that already ran** (found in self-review, fixed
+  test-first): an open payment whose latest due step already ran gets only its later steps, so
+  one that stays open after +25 h (SSLCommerz listing a success its validation API does not
+  confirm: never closed when in doubt) is not asked about every night; staff can still check it.
+- **Recorded only:** Playwright was not run locally (CI runs it; the screenshots are its
+  artifacts). Nothing called SSLCommerz: every test used the fake. The browser test used the
+  seeded child `SHS-2026-0002` (as P7a2's does); since review round 1 it has its own (P7b-x33).
+
+### P7b after the review (round 1)
+
+P7a2's review round 1 was merged in first (`bd95464f`): its migration ties a live gateway payment
+to its intent's money (P7a2-x28) and keeps an intent from letting go of a live payment (P7a2-x25);
+`confirm` validates at most 3 new `val_id`s a round within hourly budgets, closes only when the
+query lists a failed or cancelled attempt, and validates a `PENDING` one again. Fixed, each with a
+failing test first, taken alone during the run (owner away), each the safer option:
+
+- **P7b-x23. The merge: the stricter union.** P7b's migration redefines
+  `fee_payments_gateway_check` after P7a2's: every P7a2 rule for a payment `settle` posts (the
+  intent's amount, its `bank_tran_id` as the TrxID, paid on `priced_on`), and the applied branch
+  only for an intent a person applied (`applied_paisa`, written only by that decision: the applied
+  amount, a day from the checkout day to the day recorded, in taka, x28). P7a2's
+  `payment_intents_paid_check` is not redefined and stands. Reconciliation follows `confirm`: at
+  most 3 new `val_id`s a step (was 5; `confirm`'s bound per round), and its `QUERY` event is
+  recorded at the time it was asked, so a signal that arrives while SSLCommerz answers is still
+  `confirm`'s to take.
+- **P7b-x24. A void after a partial apply keeps the refund** (finding 1, must-fix). ৳1 200 in
+  review, ৳800 applied and ৳400 refunded outside, then the payment voided: the way back to review
+  cleared the refund, so the whole ৳1 200 could be applied again (records of ৳1 600 for ৳1 200).
+  Now only the applied part and the decision are cleared; `refunded_outside_paisa` and
+  `refund_reference` stay ("refunded outside" is final, P7b-N), never shrink and never lose
+  their reference (the guard trigger), and an intent in review may hold one below its validated
+  amount (the CHECK). The money still to decide is the validated amount less what was refunded:
+  apply refuses more (`AMOUNT_EXCEEDS_MONEY { moneyPaisa }`), a further remainder is added to the
+  refund (a new reference replaces the old on the row; the audit keeps both), "refunded outside"
+  records the whole amount (the audit names the rest). The staff view gains
+  `refundedOutside { amountPaisa, reference }` (the card shows "Already refunded outside"; the
+  dialogs offer only the rest) and the report counts the refund, the rest as to check.
+- **P7b-x25. One payment is one item, refunded outside once** (finding 2). `settle` (and the
+  unmatched check) record every validation, but give a `val_id` a review reason only the first
+  time, under its advisory lock (`PaymentEventsService.record`), so an IPN's confirm racing "check
+  now" or step 4 no longer makes two items of one second payment. A refund outside of a record
+  whose money another record already refunded is 409 `ALREADY_REFUNDED` (it can be dismissed as a
+  repeat), of money an intent holds 409 `HELD_BY_PAYMENT` (decided on that intent); the database
+  checks both at commit (`payment_review_event_check`, under the same lock).
+- **P7b-x26. A live gateway payment is never detached from its intent** (finding 3, P1-J10): the
+  reviewer's probe (an applied intent moved back to review "voided" with its payment live, then
+  refunded outside) is refused at commit by P7a2-x25 after the merge; no new rule was needed. The
+  probe is a database test.
+- **P7b-x27. A decision names the signed person** (hardening a, as P1-J8k and P6-b21): when a
+  request's context signs a person, `resolved_by_id` on an intent leaving review and on a money
+  item's decision must be that person (triggers); a context with no person is not checked.
+- **P7b-x28. A refunded item's amount is its event's** (hardening b): `amount_paisa` is the
+  event's `amount` read as the API reads it (at most 7 digits and 2 decimals), or NULL exactly
+  when that was not well-formed (checked at commit).
+- **P7b-x29. Applied only in taka, in the database too** (hardening c): the applied branch of the
+  match requires `validated_currency = 'BDT'` (P7b-G), from both sides.
+- **P7b-x30. An undocumented query status is UNKNOWN** (hardening d): an attempt in a status
+  SSLCommerz does not document (the client's `OTHER`) makes the check `UNKNOWN`, not
+  `NO_SUCCESS`: nothing closes on it before +25 h, a dismissal is refused (`CHECK_FIRST`), and at
+  +25 h it expires with the +7 day query, as `PENDING` does. The page says "an attempt in a state
+  SSLCommerz does not document".
+- **P7b-x31. Money items in the online report** (hardening e): a second payment (`DUPLICATE`) on
+  its payment's start day, money of no payment of ours (`UNMATCHED`) on the day it arrived; each
+  payment's money once (by `val_id`; a dismissed repeat record or money an intent holds is not
+  counted again); in received (amount, store share, charges), in "to check" while undecided, in
+  refunded outside once refunded. So received = paid + to check + refunded outside.
+- **P7b-x32. The nightly re-queue and the heal leave out, in the query, what has nothing to
+  run** (hardening f): an open payment past +25 h whose +25 h step ran, a posted one whose +25 h
+  query ran, an expired one whose +7 day query ran; the heal reads only payments whose latest due
+  step has not run. Before, 500 payments that stay open (never closed when in doubt) filled the
+  batch every night and crowded out newer ones.
+- **P7b-x33. The browser test has its own child and guardian, and signs each person in once**
+  (CI, run 46019544785: the spec failed after 12.9 s, its retry after 1.4 min, and P7a2's happy
+  path after it took 8.1 min and failed). Replayed through the API on the e2e seed, every step
+  works. The cause, as P7a2-x33 found: the demo phones' sign-in codes, 5 per 15 minutes, counted
+  even when the 1-minute cooldown refuses one; both specs signed the same guardian in, so the
+  later sign-ins waited out the window. Two more risks of this spec, fixed with it: a staff
+  `passwordLogin` followed at once by a `goto` can be cut off (the race of P7a2-x29), and sharing
+  Tahmid (`SHS-2026-0002`) took one of his three owed dues per attempt, where payments.spec needs
+  two. Now:
+  - its own child, Rakib (`SHS-2026-0104`, `DEMO.rakibGuardian`: no other spec signs in as his
+    father), the money applied to a month ahead (his own dues stay), the items picked by their
+    intent id, a payment left at the gateway continued;
+  - one sign-in per person for the file, in `beforeAll`, on pages its two tests share (serial),
+    each staff sign-in awaited on the dashboard; the counter's calls use the accountant page's
+    own token. Across both payment specs no phone signs in more than 4 times (the owner 4, by
+    password; the admin 2; the accountant 2; Rakib's father once);
+  - `afterAll` gives up any payment left in progress with the guardian page's token;
+  - every action, navigation and wait bounded at 30 s; an API test replays the flow. Playwright
+    was not run locally (its ports are the developer's).
+- **P7b-x34. P7a2's round 2, merged: reconciliation follows x26 and x30 to x32.**
+  - The `val_id`s it validates come from its own query, so they are trusted (x30: only forgeable
+    signals leave a payment open).
+  - Steps 1–3 close an open payment past its hour only when every listed attempt ended unpaid
+    and one is FAILED or CANCELLED (`FAILED`, else `CANCELLED`), as `confirm` closes (x26). A
+    session listed only as UNATTEMPTED or EXPIRED is left to a fail or cancel signal (`confirm`
+    closes it past `expires_at`, in the signal's word, x31) or to step 4's expiry. Before (P7b-x11)
+    they closed it too, as `FAILED`, and P7a2's x31 test caught the race: an intent initialised an
+    hour after its creation runs steps 1 and 2 at once, and they closed it before the payer's
+    cancel return could.
+  - Its `QUERY` event lists the statuses in P7a2's fixed order (the payment page reads the latest
+    query, x31).
+  - Its queries neither wait for nor take `confirm`'s 10 s slot (x32): its schedule bounds them
+    (four steps, +7 days, "check now" once a minute per payment, the heal once a minute per
+    institute), and a `confirm` is never held back by a scheduled query.
+
+Recorded, review round 1 (not changed):
+
+- **(a) Tests the reviewer named, passing as the code stands** (`payments-review.e2e-spec.ts`):
+  apply and the counter on one due at once (one is recorded; the other finds the due paid, a 404
+  `Due not found` from either side, as the counter answers today); a void and a second apply at
+  once (never two live payments); a dismissal and a late payment at once (never dismissed with
+  money); a refund of an item while its twin is dismissed (one refund, one repeat); `TRX_ID_USED`,
+  `AMOUNT_UNKNOWN` (then refunded with no amount) and `TRX_ID_UNUSABLE`; another child's due
+  (404, nothing recorded). The report with an apply that has a refund part, and with refunded
+  items, is tested with x24 and x31.
+- **(b) Steps 1–3 and `confirm` close on the same statuses** since P7a2's round 2 (P7b-x34):
+  nothing is left of the difference this note recorded in round 1.
+- **(c) The loser of apply against the counter gets 404** (`openDues` finds the due paid), not
+  409 `DUES_CHANGED`; the page reloads the item either way. A clearer answer is a fee-module change
+  for later.
+
+### P7b after the review (round 2)
+
+The security review's second round (fresh) found no must-fix. Fixed, each with a failing test
+first (the reviewer's probes A to F as tests), taken alone during the run (owner away), each the
+safer option:
+
+- **P7b-x35. ৳0.00 validated is an unknown amount** (should-fix 1, probe F). SSLCommerz answering
+  VALID with `amount` "0.00" left an intent in review that could never leave it: refunded outside
+  answered 500 (the CHECK that a refund records the validated amount wanted 0, the one that a
+  refund is at least 1 paisa refused it), dismiss `HAS_MONEY`, apply `AMOUNT_EXCEEDS_MONEY`. Now
+  `settle` records a non-positive validated amount as NULL (and the store amount with it), as
+  hardening b does for money items, and the database refuses 0
+  (`payment_intents_validated_amount`). Such money follows P7b-x3: refunded outside with no amount,
+  never applied (`AMOUNT_UNKNOWN`) or dismissed. It is still `AMOUNT_MISMATCH`.
+- **P7b-x36. The nightly run lists posted payments of the last 72 hours** whose +25 h query has
+  not run (was 26; should-fix 2, probe C). The run may come up to 24 hours after a Redis loss, so a
+  payment whose +25 h step fell due in between is up to 49 hours old then, and a second payment
+  whose IPN was also lost was never seen. 72 hours also covers a missed night; the
+  `last_checked_at` filter keeps the list to payments never asked at +25 h.
+- **P7b-x37. A listed success whose money is accounted for elsewhere is not this payment's**
+  (should-fix 3, probe B). When SSLCommerz lists a payment under our `tran_id` and its validation
+  names another, the intent goes to review (`TRAN_ID_MISMATCH`, no money) and the money becomes a
+  money item; every later check found it again (`SUCCESS_FOUND`), so the dismissal stayed
+  `CHECK_FIRST` while refund and apply said `NO_MONEY`. A check now leaves out of its outcome every
+  listed success whose `val_id` a money item records (a `VALIDATE` event with a review reason) or
+  another intent holds; the item stays in the queue until a person decides it. "Another intent
+  holds it" was added to the reviewer's rule: that money is decided on that intent. Validations
+  are unchanged and the `QUERY` event still lists every status. An open payment whose query lists
+  only such a success is now expired at +25 h (or closed by steps 1–3 when a failed or cancelled
+  attempt is listed too) instead of staying open: its money is recorded and decided elsewhere.
+- **P7b-x38. Apply replays a request only while its payment stands** (note A, probe A): a retried
+  `clientRequestId` after a void answered 201 with the voided receipt (`replayed`, status `VOID`)
+  while nothing was applied. Now only a payment still `ACTIVE`, with the intent `PAID` with it, is
+  replayed; otherwise 409 `PAYMENT_VOIDED` (before or after the money is applied again with a new
+  request). The dialog says so, reloads and closes.
+- **P7b-x39. Money refunded outside as an item is never an intent's too** (note E, probe E): the
+  rule "refunded once per `val_id`" was checked only from the item's side. P7b's migration adds
+  `payment_intents_refunded_item_check` (deferred, on an update of `val_id` or `status`, under the
+  money's advisory lock): an intent holding a `val_id` that an item recorded as refunded outside is
+  refused at commit; undecided or dismissed records do not block. `settle` (P7a2's code, changed
+  here only for this) reads the same under that lock for an intent holding no money: such money
+  sends the intent to review as `DUPLICATE` (and `LATE_SUCCESS` if it had closed) without being
+  recorded on it, and is never posted; with x37 a check then finds nothing of its own and the
+  intent can be dismissed. No new review reason (no enum migration): `DUPLICATE` reads "money for
+  this payment arrived twice".
+- **P7b-x40. The report counts each payment once, where it stands now** (note D, probe D):
+  "refunded outside" counts payments refunded outside only; a payment applied with a refund part
+  is paid, one voided back with its refund kept is in review. The amount refunded outside still
+  includes both refunds. For payments the status columns add up to started again (P7b-x16);
+  money items (x31) add to in review and refunded outside.
+- **P7b-x41. Apply that loses to the counter answers 409 `DUE_COLLECTED { dueIds }`** (note 7):
+  "this due was just collected; reload". The test showed the loser's answer was 409 `DUES_CHANGED
+{ outstandingPaisa: 0 }`, not the 404 recorded in round 1's note (c): a paid due stays `OPEN`
+  owing nothing, and the page then offered "confirm again". Now apply refuses any chosen due (or
+  period ahead) that owes nothing on the payment day; the dialog says so and loads the dues again.
+  The counter's own loser still answers `DUES_CHANGED` (a fee-module answer, unchanged).
+
+Recorded, review round 2 (not changed):
+
+- **(a) The check that first finds such a payment still says `SUCCESS_FOUND`** (x37): the
+  outcome is taken when the query is answered, before its validations record the item; the next
+  check ("check now", or the next step) says `NO_SUCCESS`.
+- **(b) A money item reported at ৳0.00** shows ৳0 on its card and is refunded with no amount
+  (hardening b, unchanged); only an intent's validated amount is NULL in the row (x35).
+- **(c) Round 1's note (c) is superseded by x41.** The concurrent apply-and-counter test still
+  accepts either side winning; the loser answers 409.
+- **(d) Playwright was not run locally** (its ports are the developer's). The web changes are
+  the two new error messages and the apply dialog's handling of them; web lint, typecheck and
+  build pass. Nothing called SSLCommerz: every test used the fake.

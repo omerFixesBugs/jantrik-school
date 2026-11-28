@@ -601,6 +601,31 @@ function takaBn(paisa: number): string {
 // ───────────── Values the browser uses (fees-api.ts holds the schemas) ─────────────
 
 /** Manual bKash/Nagad: the methods and the kinds of the institute's own numbers. */
+/** CASH at the counter, BKASH and NAGAD (manual or online), the rest online only (S21). */
+export const FEE_PAYMENT_METHODS = [
+  'CASH',
+  'BKASH',
+  'NAGAD',
+  'ROCKET',
+  'CARD',
+  'OTHER_ONLINE',
+] as const;
+export type FeePaymentMethod = (typeof FEE_PAYMENT_METHODS)[number];
+
+/** The counter, a manual bKash/Nagad transfer checked by staff, or the gateway (P7a2). */
+export const FEE_PAYMENT_CHANNELS = ['COUNTER', 'MOBILE_MANUAL', 'GATEWAY'] as const;
+export type FeePaymentChannel = (typeof FEE_PAYMENT_CHANNELS)[number];
+
+/** Method names for exports (CSV); the web app has the same in its messages. */
+export const FEE_PAYMENT_METHOD_LABELS: Record<FeePaymentMethod, { bn: string; en: string }> = {
+  CASH: { bn: 'নগদ', en: 'Cash' },
+  BKASH: { bn: 'বিকাশ', en: 'bKash' },
+  NAGAD: { bn: 'নগদ (মোবাইল)', en: 'Nagad' },
+  ROCKET: { bn: 'রকেট', en: 'Rocket' },
+  CARD: { bn: 'কার্ড', en: 'Card' },
+  OTHER_ONLINE: { bn: 'অন্যান্য অনলাইন', en: 'Other online' },
+};
+
 export const FEE_MOBILE_METHODS = ['BKASH', 'NAGAD'] as const;
 export type FeeMobileMethod = (typeof FEE_MOBILE_METHODS)[number];
 export const FEE_MOBILE_ACCOUNT_KINDS = ['PERSONAL', 'MERCHANT', 'AGENT'] as const;

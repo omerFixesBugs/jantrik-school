@@ -80,7 +80,10 @@
       },
       "waivers": "জরিমানা মওকুফ",
       "waiverAll": "পুরো জরিমানা",
-      "waiverOf": "{head}, {period}"
+      "waiverOf": "{head}, {period}",
+      "previousYear": "আগের বছর ({year})",
+      "previousYearsTotal": "এর মধ্যে {amount} আগের বছরের।",
+      "onlinePending": "অনলাইনে পরিশোধ চলছে"
     },
     "collect": {
       "selected": "{count}টি খাত বাছাই করা",
@@ -172,6 +175,9 @@
       "voidedList": "এই দিনে বাতিল হওয়া রসিদ",
       "voidedOf": "{date}-এর রসিদ",
       "total": "সবার মোট",
+      "online": "অনলাইনে (SSLCommerz)",
+      "onlineHint": "অভিভাবকেরা অনলাইনে দিয়েছেন: কোনো আদায়কারীর নামে নয়, হাতে নগদের হিসাবেও নয়",
+      "onlineNetHint": "জমা থেকে বাতিল বাদে; টাকা আছে SSLCommerz অ্যাকাউন্টে",
       "emptyTitle": "এই দিনে কোনো টাকা আদায় হয়নি",
       "emptyToday": "আজ এখনো কোনো টাকা আদায় হয়নি",
       "emptyText": "অন্য তারিখ বেছে দেখুন।",

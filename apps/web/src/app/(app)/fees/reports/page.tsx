@@ -5,11 +5,13 @@ import { Suspense } from 'react';
 import { FeesTabs } from '@/components/fees/fees-tabs';
 import { CollectionsReport } from '@/components/fees/reports/collections';
 import { DueListReport } from '@/components/fees/reports/due-list';
+import { LeaversReport } from '@/components/fees/reports/leavers';
+import { OnlineReport } from '@/components/fees/reports/online';
 import { PageGate } from '@/components/page-gate';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useUrlParams } from '@/lib/view-state';
 
-const TABS = ['dues', 'defaulters', 'collections'] as const;
+const TABS = ['dues', 'defaulters', 'collections', 'online', 'leavers'] as const;
 type Tab = (typeof TABS)[number];
 
 export default function FeeReportsPage() {
@@ -37,6 +39,8 @@ function Reports() {
     dues: t('tabDues'),
     defaulters: t('tabDefaulters'),
     collections: t('tabCollections'),
+    online: t('tabOnline'),
+    leavers: t('tabLeavers'),
   };
   return (
     <div className="flex flex-col gap-(--section-gap)" data-testid="fees-reports">
@@ -49,13 +53,16 @@ function Reports() {
         }
         className="gap-(--section-gap)"
       >
-        <TabsList aria-label={t('tabsLabel')} className="max-w-full print:hidden">
-          {TABS.map((key) => (
-            <TabsTrigger key={key} value={key} data-testid={`reports-tab-${key}`}>
-              {labels[key]}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        {/* Five tabs: on a phone they scroll sideways instead of running off the screen. */}
+        <div className="max-w-full overflow-x-auto print:hidden">
+          <TabsList aria-label={t('tabsLabel')} className="w-max">
+            {TABS.map((key) => (
+              <TabsTrigger key={key} value={key} data-testid={`reports-tab-${key}`}>
+                {labels[key]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
         <TabsContent value="dues" className="text-base">
           <DueListReport mode="dues" />
         </TabsContent>
@@ -64,6 +71,12 @@ function Reports() {
         </TabsContent>
         <TabsContent value="collections" className="text-base">
           <CollectionsReport />
+        </TabsContent>
+        <TabsContent value="online" className="text-base">
+          <OnlineReport />
+        </TabsContent>
+        <TabsContent value="leavers" className="text-base">
+          <LeaversReport />
         </TabsContent>
       </Tabs>
     </div>

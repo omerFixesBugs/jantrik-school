@@ -26,7 +26,10 @@ import { HealthModule } from './health/health.module.js';
 import { ImportsModule } from './imports/imports.module.js';
 import { InstituteProfileModule } from './institute/institute-profile.module.js';
 import { MeModule } from './me/me.module.js';
+import { NoticesModule } from './notices/notices.module.js';
+import { PaymentsModule } from './payments/payments.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { PromotionModule } from './promotion/promotion.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { SmsModule } from './sms/sms.module.js';
 import { SetupModule } from './setup/setup.module.js';
@@ -79,7 +82,10 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor.j
     DevicesModule,
     StaffAttendanceModule,
     FeesModule,
+    PaymentsModule,
     ExamsModule,
+    PromotionModule,
+    NoticesModule,
     PlatformModule,
   ],
   providers: [

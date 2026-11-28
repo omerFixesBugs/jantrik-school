@@ -1,16 +1,21 @@
 'use client';
 
+import { useQuery } from '@tanstack/react-query';
+import { formatCount } from '@jantrik/shared';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
+import type { Locale } from '@/i18n/config';
+import { useAuth } from '@/lib/auth/auth-provider';
 import { useFeeRoles } from '@/lib/fees';
 import { cn } from '@/lib/utils';
 
-type FeeTab = 'counter' | 'submissions' | 'closing' | 'reports' | 'reminders' | 'setup';
+type FeeTab = 'counter' | 'submissions' | 'online' | 'closing' | 'reports' | 'reminders' | 'setup';
 
 const TABS: { key: FeeTab; href: string; managersOnly?: boolean }[] = [
   { key: 'counter', href: '/fees' },
   { key: 'submissions', href: '/fees/submissions' },
+  { key: 'online', href: '/fees/online-payments' },
   { key: 'closing', href: '/fees/closing' },
   { key: 'reports', href: '/fees/reports' },
   { key: 'reminders', href: '/fees/reminders', managersOnly: true },
@@ -23,8 +28,19 @@ const TABS: { key: FeeTab; href: string; managersOnly?: boolean }[] = [
  */
 export function FeesTabs() {
   const t = useTranslations('fees.common.tabs');
+  const locale = useLocale() as Locale;
   const pathname = usePathname();
-  const { manages } = useFeeRoles();
+  const { manages, collects } = useFeeRoles();
+  const { client, session } = useAuth();
+  // Online payments waiting for a person (P7b-M): a badge on their tab, refreshed with every fee
+  // query (the key starts with 'fees').
+  const toCheck = useQuery({
+    queryKey: ['fees', 'online', session?.tenant?.id, 'count'],
+    queryFn: () => client.api<{ count: number }>('/fees/online-payments/review/count'),
+    enabled: collects,
+    staleTime: 60_000,
+  });
+  const waiting = toCheck.data?.count ?? 0;
   const current = (href: string) =>
     href === '/fees'
       ? pathname === '/fees' ||
@@ -53,6 +69,15 @@ export function FeesTabs() {
               )}
             >
               {t(tab.key)}
+              {tab.key === 'online' && waiting > 0 && (
+                <span
+                  className="bg-warning-soft text-warning ms-2 rounded-full px-2 text-xs leading-5 font-semibold"
+                  data-testid="fees-tab-online-count"
+                >
+                  <span className="sr-only">{t('onlineWaiting')} </span>
+                  {formatCount(waiting, locale)}
+                </span>
+              )}
             </Link>
           </li>
         ))}

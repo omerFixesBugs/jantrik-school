@@ -24,19 +24,20 @@ the template.
 
 ## Database roles
 
-| Role                   | Used by                                                          | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ---------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `postgres`             | Docker admin only                                                | Superuser. Only the init script uses it.                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `jantrik_owner`        | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`)       | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                                                                                                                                                                         |
-| `jantrik_app`          | API runtime, demo seed (`DATABASE_URL`)                          | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                                                                                                                                                                                        |
-| `jantrik_auth`         | Owner of the auth `SECURITY DEFINER` functions                   | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything).                                                                                                                                                          |
-| `jantrik_search`       | Owner of `search_student_ids()`                                  | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                                                                                                                                                                          |
-| `jantrik_platform`     | Owner of the `platform_*` functions (Jantrik's own admins)       | Same rules as `jantrik_auth`. Grants on the platform tables and explicit `TO jantrik_platform` policies for institute metadata only, never student/guardian/attendance rows. See [platform.md](platform.md).                                                                                                                                                                                                                                |
-| `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)              | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                                                                                                                                                                                        |
-| `jantrik_ingest`       | Owner of the `ingest_*` functions (the ZKTeco device receiver)   | Same rules as `jantrik_auth`, with `TO jantrik_ingest` policies on the device tables and by column on tenants, modules and attendance settings. See "Devices (step 11)" below.                                                                                                                                                                                                                                                              |
-| `jantrik_ingest_app`   | The device receiver (`DATABASE_INGEST_URL`)                      | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the four `ingest_*` functions (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants. Its statements stop after 5 s (`statement_timeout`, decision #79): set on the role and sent by the receiver's pool.                                                                                              |
-| `jantrik_admission`    | Owner of the `admission_*` functions (the public admission form) | Same rules as `jantrik_auth`, with `TO jantrik_admission` policies and column grants on tenants, institute profiles, years, classes, groups and the admission tables only (pinned by `schema-safety.test.ts`). `jantrik_app` may run its three functions but is **not** a member. Sprint 1 P3b.                                                                                                                                             |
-| `jantrik_login_app`    | The password login (`DATABASE_LOGIN_URL`, P1-J)                  | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on `auth_find_user_for_password_login`, the one way to a password hash (`jantrik_app` has none), and on `auth_context_key()` (P1-J8, the request context key, read once at start-up), and that is all it has: a member of no role, no table, column or sequence grants. Used by `AuthService.loginWithPassword` and the key load only (`LoginPrismaService`). |
+| Role                   | Used by                                                          | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres`             | Docker admin only                                                | Superuser. Only the init script uses it.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `jantrik_owner`        | `prisma migrate`, template seed (`DATABASE_MIGRATION_URL`)       | Owns all tables. **Not** a superuser, so `FORCE ROW LEVEL SECURITY` applies to it too. Has `CREATEDB` for Prisma's shadow database.                                                                                                                                                                                                                                                                                                                                                |
+| `jantrik_app`          | API runtime, demo seed (`DATABASE_URL`)                          | `NOSUPERUSER NOBYPASSRLS`, owns nothing. Gets only the grants written in migrations.                                                                                                                                                                                                                                                                                                                                                                                               |
+| `jantrik_auth`         | Owner of the auth `SECURITY DEFINER` functions                   | `NOLOGIN`, **not** BYPASSRLS: sees rows only through explicit `TO jantrik_auth` policies on users, memberships, tenants, sessions, refresh_tokens. `jantrik_owner` may `SET ROLE` to it but does **not inherit** it (otherwise those policies would let the owner see everything).                                                                                                                                                                                                 |
+| `jantrik_search`       | Owner of `search_student_ids()`                                  | Same rules as `jantrik_auth`, with SELECT-only `TO jantrik_search` policies on students, guardians, student_guardians. See "Student search" below.                                                                                                                                                                                                                                                                                                                                 |
+| `jantrik_platform`     | Owner of the `platform_*` functions (Jantrik's own admins)       | Same rules as `jantrik_auth`. Grants on the platform tables and explicit `TO jantrik_platform` policies for institute metadata only, never student/guardian/attendance rows. See [platform.md](platform.md).                                                                                                                                                                                                                                                                       |
+| `jantrik_platform_app` | The API's platform module (`DATABASE_PLATFORM_URL`)              | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the `platform_*` functions (`jantrik_app` has none), and that is all it has: not a member of `jantrik_app`, no table grants, so it never reads an institute's rows.                                                                                                                                                                                                                               |
+| `jantrik_ingest`       | Owner of the `ingest_*` functions (the ZKTeco device receiver)   | Same rules as `jantrik_auth`, with `TO jantrik_ingest` policies on the device tables and by column on tenants, modules and attendance settings. See "Devices (step 11)" below.                                                                                                                                                                                                                                                                                                     |
+| `jantrik_ingest_app`   | The device receiver (`DATABASE_INGEST_URL`)                      | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on the four `ingest_*` functions (`jantrik_app` has none), and that is all it has: a member of no role, no table, column or sequence grants. Its statements stop after 5 s (`statement_timeout`, decision #79): set on the role and sent by the receiver's pool.                                                                                                                                     |
+| `jantrik_admission`    | Owner of the `admission_*` functions (the public admission form) | Same rules as `jantrik_auth`, with `TO jantrik_admission` policies and column grants on tenants, institute profiles, years, classes, groups and the admission tables only (pinned by `schema-safety.test.ts`). `jantrik_app` may run its three functions but is **not** a member. Sprint 1 P3b.                                                                                                                                                                                    |
+| `jantrik_payments`     | Owner of `payment_signal_record` (the gateway's return and IPN)  | Same rules as `jantrik_auth`, with `TO jantrik_payments` policies and column grants on `tenants (id, slug)`, `payment_intents (tenant_id, id, student_id, tran_id)` (read) and RETURN/IPN rows of `payment_gateway_events` (insert) only, and may run `app_verified_context()` (an INSERT checks the `tenant_isolation` policy too; it answers "no institute") (pinned by `schema-safety.test.ts`). `jantrik_app` may run its one function but is **not** a member. Sprint 1 P7a2. |
+| `jantrik_login_app`    | The password login (`DATABASE_LOGIN_URL`, P1-J)                  | LOGIN, NOSUPERUSER, NOBYPASSRLS, owns nothing. The **only** role with EXECUTE on `auth_find_user_for_password_login`, the one way to a password hash (`jantrik_app` has none), and on `auth_context_key()` (P1-J8, the request context key, read once at start-up), and that is all it has: a member of no role, no table, column or sequence grants. Used by `AuthService.loginWithPassword` and the key load only (`LoginPrismaService`).                                        |
 
 **Every running service checks its login at start-up** (`readLoginPrivileges` in
 [`packages/db/src/login-privileges.ts`](../packages/db/src/login-privileges.ts)): the API and the
@@ -73,6 +74,8 @@ docker compose exec postgres psql -U postgres \
   -c "CREATE ROLE jantrik_login_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'login_dev_password'" \
   -c "CREATE ROLE jantrik_admission NOLOGIN NOSUPERUSER NOBYPASSRLS" \
   -c "GRANT jantrik_admission TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
+  -c "CREATE ROLE jantrik_payments NOLOGIN NOSUPERUSER NOBYPASSRLS" \
+  -c "GRANT jantrik_payments TO jantrik_owner WITH INHERIT FALSE, SET TRUE" \
   -c "CREATE DATABASE jantrik_e2e OWNER jantrik_owner"
 # A volume that already granted jantrik_app to jantrik_platform_app (early step 8): take it back.
 docker compose exec postgres psql -U postgres -c "REVOKE jantrik_app FROM jantrik_platform_app"
@@ -659,6 +662,17 @@ wrapped and composite foreign keys `ON UPDATE/DELETE RESTRICT`:
   live in the API). What it can reach is what the form can: submit an application (the duplicate
   and per-phone rules still hold) or read the status of an application whose number and phone it
   already knows. `p_now` stays a parameter so tests can move time (decision P3-b13).
+- **The admission test** (P4): new columns on the three admission tables, UPDATE granted by
+  column; CHECKs with `IS [NOT] NULL` first (a waitlist position needs a `WAITLISTED` draft; a
+  published version needs its time and full marks; the published snapshot only with a version);
+  one roll per class (a partial unique index); two invoker triggers with a pinned `search_path`:
+  `test_score_within_full_marks` (a score needs its class's full marks and stays within them) and
+  `full_marks_keep_test_scores` (full marks never drop below or away from a score). Not named
+  `admission_*`: that prefix is the definer functions'. `admission_lookup` was replaced in
+  `20261117300200` under `SET ROLE jantrik_admission` with `CREATE` on `public` granted back for
+  that migration only; `jantrik_admission` gained `SELECT (test_roll, result_version,
+result_merit_position, result_waitlist_position, result_score_h, result_absent)` and never the
+  draft columns or a live score.
 
 ### Files and the institute profile (sprint 1 P2)
 
@@ -694,6 +708,209 @@ RESTRICT`) and unique. The kind column is fixed by a CHECK (`students.photo_file
   `seal_file_kind` = `LOGO`, `SIGNATURE`, `SEAL`). So a row can only point at its own institute's
   file of the right kind, a file is used in one place, and a file still in use cannot be deleted.
 - Isolation, grants, CHECKs and keys: `packages/db/test/files-rls.test.ts`.
+
+### Promotion (sprint 1 P5)
+
+Rules: [promotion.md](promotion.md). Two tenant tables (forced RLS, composite keys, every foreign
+key `ON UPDATE RESTRICT`), and two columns on `students`:
+
+- **`students.left_on`, `leave_reason`** (leaving is a status, not a deletion). CHECKs: no
+  `left_on` while `status = 'ACTIVE'`; a reason needs a date; at most 500 characters. The
+  app's table-level grants on `students` cover them.
+- **`promotion_runs`** (S I, column-level U): one per `(from_year_id, to_year_id,
+class_level_id)`. No DELETE (history; a draft is emptied, not deleted). The merit exam is
+  checked against the from-year by `(tenant_id, merit_exam_id, from_year_id) → exams (tenant_id,
+id, academic_year_id)` (a new unique index on `exams`). CHECKs: the years differ; MERIT needs
+  an exam; `(status = 'APPLIED') = (applied_at IS NOT NULL)`; a run past DRAFT has who and when;
+  `last_error` is a code (`^[A-Z_]{1,40}$`).
+- **`promotion_run_students`** (S I D, column-level U): one per run and student, and one per
+  to-year and student (a student is in at most one run into a year). A row carries its run's
+  `to_year_id` (`(tenant_id, run_id, to_year_id) → promotion_runs (tenant_id, id, to_year_id)`)
+  so its target section is checked by `(tenant_id, target_section_id, to_year_id,
+target_class_level_id) → sections (tenant_id, id, academic_year_id, class_level_id)` (a new
+  unique index on `sections`): a target can never be a section of another year or class.
+  CHECKs for LEAVE (status not ACTIVE, a date, no target) and PROMOTE/REPEAT (a class, no leaving
+  fields), outcome only with `applied_at`, an enrolment only with an enrolling outcome.
+- **Applied rows never change:** two restrictive policies, `promotion_rows_update_pending` (FOR
+  UPDATE USING `applied_at IS NULL` WITH CHECK `true`, so applying a pending row can still set
+  `applied_at`) and `promotion_rows_delete_pending`. The student, run and snapshot columns have
+  no UPDATE grant at all (the merit exam's figures may be taken again while pending).
+- The policies call the context function wrapped, `(SELECT app_current_tenant_id())`, so it runs
+  once per statement.
+- A row's from- and to-enrolment are its own student's, the new one in its run's to-year:
+  `(tenant_id, from_enrolment_id, student_id)` and `(tenant_id, to_enrolment_id, student_id,
+to_year_id)` → `enrolments` (two unique indexes on enrolments, supersets of the key; migration
+  `20261117200200_promotion_review`).
+- A run may be deleted only while none of its rows is applied: DELETE grant plus the restrictive
+  policy `promotion_runs_delete_unapplied` (the service deletes the pending rows first).
+- Deleting a year, class, section or study group that a promotion row still names answers
+  `409 REFERENCE_CONFLICT` (the foreign keys restrict); deleting the run first frees them.
+- Tests: `packages/db/test/promotion-rls.test.ts`, `students-leaving.test.ts`.
+
+### Notices (sprint 1 P6, docs/notices.md)
+
+- **`notices`** (tenant table): title (1–150 after trimming), body (1–5 000), `audience`
+  (`ALL`, `STAFF`, `GUARDIANS`), `status` (`DRAFT`, `PUBLISHED`, `WITHDRAWN`; "scheduled" is a
+  published notice whose `publish_at` is ahead, so no job flips it), `publish_at`, `expires_at`,
+  `pinned`, who created, published and withdrew it, `withdrawn_reason` (≤ 300), `edited_at`.
+  Grants SELECT, INSERT and UPDATE by column (not `created_by_id`); **no DELETE**: a notice is
+  withdrawn, never deleted. CHECKs: the lengths, published ⇒ `publish_at` and who, withdrawn ⇒
+  when and who, expiry after publishing.
+- **`notice_targets`** (tenant table): `(notice_id, class_level_id, section_id?)`, composite keys
+  to the notice, the class and `sections (tenant_id, id, class_level_id)` (a section of that
+  class). Targets narrow only the guardians part. Grants SELECT, INSERT, DELETE: the service
+  replaces a notice's targets whole, so there is no UPDATE.
+- **`notice_reads`** (tenant table): one row per notice and person (unique), **only for oneself**: a
+  restrictive policy `notice_reads_own_insert` checks `user_id = (SELECT app_current_user_id())`
+  on INSERT. SELECT stays institute-wide (the admin's read counts). Grants SELECT, INSERT: history,
+  no UPDATE, no DELETE.
+- Isolation, grants, the own-read policy and the CHECKs: `packages/db/test/notices-rls.test.ts`.
+- **`sms_broadcasts`** (tenant table, P6b): the text (1–480 characters; 1–3 segments in code),
+  `recipients`, `status` (`DRAFT`, `SCHEDULED`, `SENT`, `CANCELLED`, `FAILED_OVER_CAP`), the
+  time, the confirmed count, segments, the estimated cost, the queued count and the institute's
+  day, who created, scheduled and cancelled it, the cancel reason and the failure. Grants SELECT,
+  INSERT and UPDATE on every column but the id, the institute, who created it and when; **no
+  DELETE** (money history). CHECKs: scheduled ⇒ time and who; sent ⇒ when, count and day;
+  cancelled ⇒ when and a reason (`BY_ADMIN`, `ACTOR_NOT_ADMIN`); failed ⇒ the failure; counts
+  ≥ 0; 1–3 segments. **`scheduled_by_id` is the send job's person** (it signs its context as
+  them), so two triggers (`sms_broadcasts_scheduler`, `sms_broadcast_targets_scheduler`, P6-b21)
+  hold for a request: a row it leaves `SCHEDULED` is scheduled by its own signed person, it sets
+  the scheduler only to itself or clears it, and it changes a `SCHEDULED` broadcast's targets only
+  if it scheduled it. A context with no person (the worker) is not checked. The same rule as
+  `student_imports.created_by_id` (P1-J8k).
+- **`sms_broadcast_targets`** (tenant table): as `notice_targets`, for a broadcast's guardians.
+- `sms_purpose` has `BROADCAST` (its own migration). Isolation, grants and CHECKs:
+  `packages/db/test/broadcasts-rls.test.ts`.
+
+### Online payments (sprint 1 P7a, docs/payments.md)
+
+- **`payment_gateway_accounts`** (P7a1): an institute's SSLCommerz account, one per provider
+  (UNIQUE `(tenant_id, provider)`, enum `payment_provider`: `SSLCOMMERZ`). Forced RLS. `jantrik_app`:
+  SELECT, INSERT, and UPDATE on the changeable columns only (never the institute, the provider or
+  the mode); no DELETE: an account is switched off, never removed.
+  - CHECKs (null-safe): `mode = 'SANDBOX'`; on only with credentials and a last test of `OK`;
+    the ciphertext's format (`v1.` + base64url, 43 to 2003 characters: a regular expression may
+    repeat at most 255 times, so the length is its own test); the hint (1 to 4 of
+    `[A-Za-z0-9_-]`); credentials with their hint and the time they were saved (a person only
+    with a time: a command that loaded them names nobody); a test with its time and one of the five
+    results; a job failure as a fixed code with its time; `key_version` 1 to 100;
+    `credentials_version` not negative.
+  - `credentials_ciphertext` is AES-256-GCM bound to the row and to `credentials_version` (the
+    API encrypts it). Every client leaves it out of its reads unless a query names it
+    (`CLIENT_OMIT` in `src/client.ts`, like `users.password_hash`), and only the API's
+    `PaymentCredentialsService` names it (a code scan checks).
+  - `credentials_version` (P7a1-x20, migration `20261117500100_payment_credentials_version`): the
+    trigger `payment_gateway_accounts_credentials_version` (BEFORE INSERT OR UPDATE, function
+    `app_payment_credentials_version()`) alone sets it: on INSERT 0 without a ciphertext and 1
+    with one, whatever the INSERT names; on UPDATE one up when the ciphertext changes, else the old
+    value. No UPDATE grant. The ciphertext's AAD names it, so an older ciphertext of the row put
+    back (by an SQL injection inside the institute) never decrypts again.
+- **`payment_intents`** (P7a2): one online payment attempt by a guardian for chosen dues of one
+  child, paid in full (S22). Forced RLS; `jantrik_app` SELECT, INSERT and UPDATE by column: never
+  the amount, our `tran_id`, the child, the payer, the account, `priced_on`, the request id or the
+  expiry. No DELETE.
+  - CHECKs (null-safe): ৳10 to ৳5 lakh; BDT; our `tran_id` format (`^JS[0-9A-HJKMNP-TV-Z]{26}$`,
+    UNIQUE per institute); `PAID` exactly when it holds a payment, and only with the validated
+    money; `NEEDS_REVIEW` with at least one reason and its time; `REDIRECTED` with the session;
+    `closed_at` exactly when it left `CREATED`/`REDIRECTED`; `expires_at > created_at`; the
+    payer page https (plain http only on `127.0.0.1`/`localhost`, the fake); the money facts
+    only with the `val_id` they were validated under, in their formats.
+  - Trigger `payment_intents_guard` (BEFORE UPDATE, invoker, pinned `search_path`): the state
+    moves only along the table in [payments.md](payments.md) → States; once `val_id` is set none
+    of the money facts changes (the money an intent stands for never changes); the payment is set
+    only as it becomes `PAID` and cleared only by `PAID` → `NEEDS_REVIEW` with `VOIDED`.
+    `payment_intents_insert_created`: created `CREATED`, empty.
+  - Deferred constraint triggers (checked at commit, the rows read again then): a `PAID` intent
+    holds a live `GATEWAY` payment that names it, and a live payment that names an intent is the
+    one that intent holds as `PAID`, so only the void lets it go (`payment_intents_paid_check`,
+    P7a2-x25); an intent's dues add up to its amount (`payment_intent_dues_sum`, also on the
+    intent's own insert, so one with no dues is refused).
+- **`payment_intent_dues`** (P7a2, S I): the dues an intent pays with what each owed on
+  `priced_on` (the snapshot); composite keys `(tenant_id, intent_id, student_id)` and
+  `(tenant_id, due_id, student_id)`, so only the child's own dues; UNIQUE per intent and due.
+- **`payment_gateway_events`** (P7a2, S I for `jantrik_app`; no UPDATE or DELETE for anyone):
+  everything the gateway told us or we asked it. `fields` is checked by the IMMUTABLE function
+  `payment_event_fields_ok` (an object of the whitelisted keys, string values of at most 100
+  characters, 4000 bytes in all; EXECUTE for `jantrik_app` and `jantrik_payments`, who insert);
+  `tran_id`/`val_id` `^[A-Za-z0-9_.-]{1,50}$`; a review reason (`UNMATCHED`, `DUPLICATE`) only on a
+  VALIDATE row; a RETURN always names an intent; `source_listed` only on RETURN/IPN.
+- **`fee_payments`** (P7a2): `payment_intent_id` (composite key `(tenant_id, payment_intent_id,
+student_id)`), set on a `GATEWAY` payment only (the channel CHECK: a gateway method, a TrxID,
+  no sender, an intent; the counter's and a manual transfer's never name one); a gateway TrxID is
+  `^[A-Za-z0-9._-]{6,80}$` (SSLCommerz's `bank_tran_id`, P7a-I), the manual rule unchanged; one
+  live payment per intent (partial unique `fee_payments_live_intent`); a deferred constraint
+  trigger checks at commit that a live gateway payment's intent is `PAID` with it and that the
+  payment is that intent's money (its `amount_paisa`, its `bank_tran_id` as `trx_id`, `paid_on`
+  its `priced_on`, P7a2-x28), and that a voided one's intent no longer holds it. Enum values `GATEWAY`, `ROCKET`, `CARD`,
+  `OTHER_ONLINE` came in a migration of their own (a new value cannot be used in the transaction
+  that adds it).
+- **The signal function and its role** (P7a2, decision P7a-B): `payment_signal_record` is a
+  definer function owned by the NOLOGIN `jantrik_payments`, run by `jantrik_app` only, before any
+  context: it resolves the institute from the slug and the intent from our `tran_id` inside that
+  institute, and inserts RETURN/IPN events ([payments.md](payments.md) → Signals). The role is
+  created outside migrations (`01-roles.sh`, `create-roles.sh`, the commands above); the access
+  migration stops with the exact command when it is missing; `CREATE` on `public` is granted only
+  for the hand-over and revoked in the same migration. `schema-safety.test.ts` pins the role's
+  grants, policies and memberships and the function's owner and runners. **What an SQL injection
+  running as `jantrik_app` can do with it:** store a signal for any institute's slug (which the
+  public route already allows) and learn whether a `tran_id` names an intent there and that
+  intent's child id; nothing it stores is trusted (only SSLCommerz's validation API decides).
+- **The review decisions** (P7b, migration `20261117520000_payment_reviews`):
+  - `payment_intents` gains a person's decision: `resolved_by_id` (→ `users`), `resolved_at`,
+    `resolution_note` (3 to 500), `applied_paisa`, `refunded_outside_paisa`, `refund_reference`
+    (`^[A-Za-z0-9._/-]{1,100}$`), and the last check by `tran_id` (`last_checked_at`,
+    `last_check_outcome`: an upper-case word or code, both or neither). `jantrik_app` may UPDATE
+    these columns. CHECKs (null-safe; PostgreSQL tests them in the order of their names):
+    who, when and why together, only on a decided intent (`PAID` by a decision exactly when it has
+    an applied amount; `REFUNDED_OUTSIDE` and `DISMISSED` always decided); refunded outside: the
+    whole validated money (`refunded_outside_paisa IS NOT DISTINCT FROM validated_amount_paisa`: an
+    amount that was not well-formed stays unknown) and nothing applied; **dismissed: no validated
+    money** (`val_id IS NULL`; money is never dismissed, P7b-E); applied ≥ 1 and applied +
+    refunded outside = the validated amount; a refund outside only on a `PAID` (applied) or
+    `REFUNDED_OUTSIDE` intent, or on one back in review below its validated amount (kept from a
+    voided apply, P7b-x24); a refund reference only with a refund; a validated amount unknown
+    (NULL) or at least 1 paisa (`payment_intents_validated_amount`: SSLCommerz's `0.00` is
+    recorded as unknown, which can be refunded outside; P7b-x35).
+  - Trigger `payment_intents_resolution_guard` (BEFORE UPDATE, invoker, pinned `search_path`,
+    beside P7a2's `payment_intents_guard`, which runs first): only a person's decision moves an
+    intent out of `NEEDS_REVIEW` (S23: no job ever does), and the decision is written exactly then;
+    `NEEDS_REVIEW` → `PAID` brings a payment, `PAID` → `NEEDS_REVIEW` drops it; when an intent
+    comes back to review (a void, a success after a dismissal) its decision is cleared from the row
+    (the audit log keeps it) except `refunded_outside_paisa` and `refund_reference`, which stay
+    ("refunded outside" is final, P7b-N) and, as it leaves review again, never shrink or lose the
+    reference (P7b-x24). When the context signs a person, the decider (`resolved_by_id`) must be
+    that person (P7b-x27, as P1-J8k); a context with no person is not checked.
+  - **A live gateway payment matches its `PAID` intent**, at commit and from both sides
+    (`fee_payments_gateway_check`, redefined here, and `payment_intents_payment_match`): the TrxID
+    is the intent's `bank_tran_id`; posted by `settle`, the intent's amount on its checkout day
+    (P7a2-x28's rule); applied from review, the applied amount on a day from the checkout day to
+    the day recorded, in taka (`validated_currency = 'BDT'`, P7b-x29). The redefinition is the
+    stricter union of P7a2's function and P7b's applied branch (P7b-x23); P7a2's
+    `payment_intents_paid_check` (an intent never lets go of a live payment) stands and also
+    refuses a live payment detached from its intent (P7b-x26).
+  - **`payment_signal_reviews`** (P7b-C; S I for `jantrik_app`, no UPDATE or DELETE: history):
+    the one final decision on a money item (UNIQUE `(tenant_id, event_id)`, composite key to
+    `payment_gateway_events`): `REFUNDED_OUTSIDE` (with the event's amount when well-formed, an
+    optional reference) or `DISMISSED`; a note (3 to 500); who and when (the signed person when
+    the context has one: trigger `payment_signal_reviews_decider`, P7b-x27). Forced RLS,
+    `tenant_isolation`, index `(tenant_id, resolved_at)`. A deferred constraint trigger
+    (`payment_review_event_check`) checks at commit that the event is a `VALIDATE` with a review
+    reason; that a refund records the event's validated amount (its `amount` read as the API
+    reads it, else NULL; P7b-x28); that money is refunded once (not when another record of the
+    `val_id` was refunded, nor when an intent holds it; P7b-x25); and that a dismissal is only of
+    a repeat record (an intent holds the same `val_id`, or another review event records it and
+    was not itself dismissed). It first takes an advisory lock on `(tenant, val_id)` (the API takes
+    the same one before it inserts, and before it gives a new `VALIDATE` event a review reason), so
+    two decisions on the records of one payment cannot both pass (the second waits and reads the
+    first's commit).
+  - **The same "refunded once" from the intent's side** (P7b-x39): the deferred constraint
+    trigger `payment_intents_refunded_item_check` (on an update of `val_id` or `status`, when the
+    intent holds a `val_id`) refuses at commit an intent holding money that a money item recorded
+    as refunded outside, under the same advisory lock, so a refund of the item and an intent
+    taking that money at once never both pass.
+- Tests: `packages/db/test/payments-rls.test.ts`, `payments-secrets.test.ts`,
+  `payments-intents.test.ts`, `payments-function.test.ts`, `payments-reviews.test.ts` (P7b),
+  `schema-safety.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 

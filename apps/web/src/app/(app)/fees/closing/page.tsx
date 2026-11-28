@@ -5,7 +5,11 @@ import { formatDate, type FeeClosing } from '@jantrik/shared';
 import { CoinsIcon, PrinterIcon } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Suspense } from 'react';
-import { ClosingCollectorCard, ClosingTotals } from '@/components/fees/counter/closing-card';
+import {
+  ClosingCollectorCard,
+  ClosingOnlineCard,
+  ClosingTotals,
+} from '@/components/fees/counter/closing-card';
 import { EmptyState, feeKeys, LoadError } from '@/components/fees/counter/kit';
 import { FeesTabs } from '@/components/fees/fees-tabs';
 import { SelectField, TextField } from '@/components/form-kit';
@@ -65,6 +69,11 @@ function Closing() {
   const all = data?.collectors ?? [];
   const chosen = collectorId ? all.find((c) => c.collector.id === collectorId) : undefined;
   const shown = chosen ? [chosen] : all;
+  // Online money of the day (OWNER/ADMIN, everyone): a card of its own when anything happened.
+  const online =
+    !chosen && data?.online && (data.online.count > 0 || data.online.voided.length > 0)
+      ? data.online
+      : null;
   const name = (c: (typeof all)[number]) =>
     pick(locale, { nameBn: c.collector.nameBn, nameEn: c.collector.name }) || '—';
 
@@ -97,7 +106,7 @@ function Closing() {
         <Button
           variant="outline"
           onClick={() => window.print()}
-          disabled={shown.length === 0}
+          disabled={shown.length === 0 && !online}
           className="sm:ms-auto"
           data-testid="closing-print"
         >
@@ -120,7 +129,7 @@ function Closing() {
           }
           onRetry={() => void closing.refetch()}
         />
-      ) : shown.length === 0 ? (
+      ) : shown.length === 0 && !online ? (
         <EmptyState
           icon={CoinsIcon}
           title={date === today ? t('emptyToday') : t('emptyTitle')}
@@ -142,8 +151,11 @@ function Closing() {
             {shown.map((c) => (
               <ClosingCollectorCard key={c.collector.id} entry={c} />
             ))}
+            {online && <ClosingOnlineCard online={online} />}
           </div>
-          {!chosen && all.length > 1 && data && <ClosingTotals total={data.total} />}
+          {!chosen && all.length + (online ? 1 : 0) > 1 && data && (
+            <ClosingTotals total={data.total} />
+          )}
         </div>
       )}
     </div>

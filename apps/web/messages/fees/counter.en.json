@@ -80,7 +80,10 @@
       },
       "waivers": "Fines waived",
       "waiverAll": "The whole fine",
-      "waiverOf": "{head}, {period}"
+      "waiverOf": "{head}, {period}",
+      "previousYear": "Previous year ({year})",
+      "previousYearsTotal": "{amount} of it is from previous years.",
+      "onlinePending": "Online payment in progress"
     },
     "collect": {
       "selected": "{n, plural, one {{count} fee chosen} other {{count} fees chosen}}",
@@ -172,6 +175,9 @@
       "voidedList": "Receipts voided this day",
       "voidedOf": "receipt of {date}",
       "total": "Everyone together",
+      "online": "Online (SSLCommerz)",
+      "onlineHint": "Paid by guardians online: under no collector, never cash in hand",
+      "onlineNetHint": "Recorded less voided; the money is in the SSLCommerz account",
       "emptyTitle": "Nothing was collected this day",
       "emptyToday": "Nothing collected yet today",
       "emptyText": "Choose another date to look.",

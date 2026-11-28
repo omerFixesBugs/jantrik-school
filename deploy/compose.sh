@@ -93,7 +93,7 @@ while IFS= read -r line || [ -n "$line" ]; do
       passwords="$passwords$value
 "
       ;;
-    JWT_ACCESS_SECRET | OTP_PEPPER | PLATFORM_TOTP_KEY)
+    JWT_ACCESS_SECRET | OTP_PEPPER | PLATFORM_TOTP_KEY | PAYMENT_CREDENTIALS_KEY)
       if is_example "$value"; then add "$key is an example value"; fi
       ;;
   esac

@@ -3,19 +3,25 @@
     "tabs": {
       "counter": "Collect",
       "submissions": "bKash/Nagad",
+      "online": "Online payments",
       "closing": "Daily closing",
       "reports": "Reports",
       "reminders": "Reminders",
-      "setup": "Setup"
+      "setup": "Setup",
+      "onlineWaiting": "to check:"
     },
     "method": {
       "CASH": "Cash",
       "BKASH": "bKash",
-      "NAGAD": "Nagad"
+      "NAGAD": "Nagad",
+      "ROCKET": "Rocket",
+      "CARD": "Card",
+      "OTHER_ONLINE": "Other online"
     },
     "channel": {
       "COUNTER": "Counter",
-      "MOBILE_MANUAL": "Mobile banking"
+      "MOBILE_MANUAL": "Mobile banking",
+      "GATEWAY": "Online (SSLCommerz)"
     },
     "status": {
       "ACTIVE": "Active",
@@ -81,7 +87,12 @@
       "print": "Print receipt",
       "paper": "Paper",
       "paperA5": "A5",
-      "paper80": "Thermal 80 mm"
+      "paper80": "Thermal 80 mm",
+      "gateway": {
+        "bankTranId": "Bank transaction ID",
+        "tranId": "Transaction ID",
+        "paidOnline": "Paid online"
+      }
     }
   }
 }

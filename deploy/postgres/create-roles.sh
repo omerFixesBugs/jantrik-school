@@ -112,7 +112,7 @@ SELECT format('CREATE ROLE jantrik_login_app LOGIN NOSUPERUSER NOBYPASSRLS NOCRE
 -- otherwise show the owner every row.
 SELECT format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS', r)
   FROM unnest(ARRAY['jantrik_auth', 'jantrik_search', 'jantrik_platform', 'jantrik_ingest',
-                     'jantrik_admission']) AS r
+                     'jantrik_admission', 'jantrik_payments']) AS r
  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r) \gexec
 GRANT jantrik_auth TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 GRANT jantrik_search TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
@@ -120,6 +120,8 @@ GRANT jantrik_platform TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 -- The public admission form's three functions (sprint 1 P3b, docs/admission.md).
 GRANT jantrik_admission TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
+-- The gateway's public return and IPN routes: one function (sprint 1 P7a2, docs/payments.md).
+GRANT jantrik_payments TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 
 -- An admin that is not a superuser (a managed Postgres) must be able to act as the owner to
 -- create its database and set it up. SET only: it never inherits the owner's rights.
@@ -135,7 +137,8 @@ BEGIN
   SELECT string_agg(r, ', ') INTO missing
     FROM unnest(ARRAY['jantrik_owner', 'jantrik_app', 'jantrik_auth', 'jantrik_search',
                       'jantrik_platform', 'jantrik_platform_app', 'jantrik_ingest',
-                      'jantrik_ingest_app', 'jantrik_login_app']) AS r
+                      'jantrik_ingest_app', 'jantrik_login_app', 'jantrik_admission',
+                      'jantrik_payments']) AS r
    WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r);
   IF missing IS NOT NULL THEN
     RAISE EXCEPTION 'roles missing: %', missing;
@@ -148,7 +151,8 @@ BEGIN
   END IF;
 
   SELECT string_agg(rolname, ', ') INTO bad FROM pg_roles
-   WHERE (rolname IN ('jantrik_auth', 'jantrik_search', 'jantrik_platform', 'jantrik_ingest')
+   WHERE (rolname IN ('jantrik_auth', 'jantrik_search', 'jantrik_platform', 'jantrik_ingest',
+                      'jantrik_admission', 'jantrik_payments')
           AND rolcanlogin)
       OR (rolname IN ('jantrik_owner', 'jantrik_app', 'jantrik_platform_app', 'jantrik_ingest_app',
                       'jantrik_login_app')
@@ -171,7 +175,7 @@ BEGIN
   SELECT string_agg(pg_get_userbyid(roleid)::text, ', ') INTO bad FROM pg_auth_members
    WHERE member = 'jantrik_owner'::regrole::oid
      AND pg_get_userbyid(roleid) IN ('jantrik_auth', 'jantrik_search', 'jantrik_platform',
-                                     'jantrik_ingest')
+                                     'jantrik_ingest', 'jantrik_admission', 'jantrik_payments')
      AND (inherit_option OR NOT set_option);
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'jantrik_owner must hold these with INHERIT FALSE, SET TRUE: %', bad;

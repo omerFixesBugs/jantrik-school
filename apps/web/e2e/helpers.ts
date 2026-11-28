@@ -23,6 +23,10 @@ export const DEMO = {
   arifGuardian: '01811000702',
   sumaiyaGuardian: '01811000703',
   rafiGuardian: '01611000301',
+  // Only payments-review.spec logs in as Rakib's father (6 ক, roll 4, SHS-2026-0104), and only it
+  // pays his dues: the review flow takes dues at the counter and applies money, so it leaves
+  // Tahmid's dues and his father's OTP budget to payments.spec (P7a2).
+  rakibGuardian: '01811000704',
   // Only password.spec signs in as these two: it changes the teacher's password (and signs out
   // her other sessions), and checks the guardian has no password page. Arpita's father.
   aloTeacher: '01511000002',

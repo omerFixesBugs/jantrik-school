@@ -58,6 +58,8 @@ export const ROUTE_MESSAGES = {
     'fees.guardian.submissions.status',
     'fees.guardian.summary',
     'guardian',
+    'notices.board',
+    'notices.broadcasts.dashboard',
     'reports',
     'students',
   ],
@@ -85,6 +87,8 @@ export const ROUTE_MESSAGES = {
   feeLedger: ['dashboard'],
   feeSetup: ['fees.setup'],
   feeReports: ['fees.reports'],
+  /** Online payments for staff and their review queue (sprint 1 P7b). */
+  feeOnline: ['fees.online', 'fees.review'],
 
   exams: [
     'exams.common',
@@ -119,6 +123,8 @@ export const ROUTE_MESSAGES = {
   account: ['account'],
 
   setup: ['appearance', 'setup'],
+  /** The new-year wizard and a promotion run (P5). */
+  newYear: ['promotion'],
   setupWelcome: ['attendanceSettings', 'dashboard', 'onboarding', 'staff'],
   staff: ['setup', 'staff'],
   /** Admission for staff (sprint 1 P3a): cycles, applications, approval. */
@@ -133,6 +139,11 @@ export const ROUTE_MESSAGES = {
     'enums',
     'setup',
   ],
+
+  /** The notice board (every member) and its management (OWNER/ADMIN). */
+  notices: ['notices.board', 'setup'],
+  noticesManage: ['notices.manage'],
+  broadcasts: ['notices.broadcasts', 'setup'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type RouteArea = keyof typeof ROUTE_MESSAGES;

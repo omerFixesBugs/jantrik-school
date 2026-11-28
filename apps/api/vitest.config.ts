@@ -63,6 +63,10 @@ export default defineConfig({
       JWT_ACCESS_SECRET: 'test-only-access-secret-0123456789abcdefghij',
       OTP_PEPPER: 'test-only-otp-pepper-0123456789abcdefghijklm',
       SMS_PROVIDER: 'memory',
+      // Online payments: SSLCommerz is an address nothing listens on, so no test can reach the
+      // real one (sandbox included); a test that needs it starts the fake SSLCommerz and passes
+      // its address to createHarness (test/support/fake-sslcommerz.ts).
+      SSLCOMMERZ_BASE_URL: 'http://127.0.0.1:9',
       // The public admission form's Turnstile check, without Cloudflare (docs/admission.md).
       TURNSTILE_PROVIDER: 'fake',
       COOKIE_SECURE: 'true',

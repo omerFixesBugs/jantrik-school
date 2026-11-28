@@ -3,19 +3,25 @@
     "tabs": {
       "counter": "আদায়",
       "submissions": "বিকাশ/নগদ যাচাই",
+      "online": "অনলাইন পেমেন্ট",
       "closing": "দিনের হিসাব",
       "reports": "রিপোর্ট",
       "reminders": "রিমাইন্ডার",
-      "setup": "সেটআপ"
+      "setup": "সেটআপ",
+      "onlineWaiting": "যাচাই বাকি:"
     },
     "method": {
       "CASH": "নগদ",
       "BKASH": "বিকাশ",
-      "NAGAD": "নগদ (মোবাইল)"
+      "NAGAD": "নগদ (মোবাইল)",
+      "ROCKET": "রকেট",
+      "CARD": "কার্ড",
+      "OTHER_ONLINE": "অন্যান্য অনলাইন"
     },
     "channel": {
       "COUNTER": "কাউন্টার",
-      "MOBILE_MANUAL": "মোবাইল ব্যাংকিং"
+      "MOBILE_MANUAL": "মোবাইল ব্যাংকিং",
+      "GATEWAY": "অনলাইনে (SSLCommerz)"
     },
     "status": {
       "ACTIVE": "সক্রিয়",
@@ -81,7 +87,12 @@
       "print": "রসিদ প্রিন্ট",
       "paper": "কাগজ",
       "paperA5": "A5",
-      "paper80": "থার্মাল ৮০ মিমি"
+      "paper80": "থার্মাল ৮০ মিমি",
+      "gateway": {
+        "bankTranId": "ব্যাংক লেনদেন আইডি",
+        "tranId": "লেনদেন আইডি",
+        "paidOnline": "অনলাইনে পরিশোধিত"
+      }
     }
   }
 }

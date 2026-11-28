@@ -4,11 +4,16 @@ import {
   dateFromDb,
   dateToDb,
   daysBetween,
+  FEE_PAYMENT_METHOD_LABELS,
   maskPhone,
   toCsv,
+  type FeePaymentMethod,
   type FeeCollections,
   type FeeDueList,
   type FeeDueListRow,
+  type FeeLeaverKind,
+  type FeeLeaverRow,
+  type FeeLeaversReport,
   type FeeSummary,
   type IsoDate,
 } from '@jantrik/shared';
@@ -18,7 +23,12 @@ import { staffNames } from '../../staff/staff.module.js';
 import { Db } from '../../tenancy/db.service.js';
 import { balanceOf } from '../due-balance.js';
 import { FeeDuesService } from '../dues/fee-dues.service.js';
+import { FeeOnlineHooks } from '../fee-online-hooks.js';
 import { FeeStudentsService } from '../fee-students.service.js';
+
+/** The collections report's line for online payments (grouped by collector). */
+const ONLINE_KEY = 'ONLINE';
+const ONLINE_NAME = { nameBn: 'অনলাইনে (SSLCommerz)', nameEn: 'Online (SSLCommerz)' };
 
 type DueListQuery = z.output<typeof feeDueListQuerySchema>;
 type CollectionsQuery = z.output<typeof feeCollectionsQuerySchema>;
@@ -46,6 +56,7 @@ export class FeeReportsService {
     private readonly db: Db,
     private readonly dues: FeeDuesService,
     private readonly students: FeeStudentsService,
+    private readonly online: FeeOnlineHooks,
   ) {}
 
   async dueList(q: DueListQuery): Promise<FeeDueList> {
@@ -58,7 +69,14 @@ export class FeeReportsService {
       return {
         today,
         rows: [],
-        totals: { students: 0, principalPaisa: 0, finePaisa: 0, totalPaisa: 0, overduePaisa: 0 },
+        totals: {
+          students: 0,
+          principalPaisa: 0,
+          finePaisa: 0,
+          totalPaisa: 0,
+          overduePaisa: 0,
+          previousYearsPaisa: 0,
+        },
       };
     }
     const enrolments = await tx.enrolment.findMany({
@@ -99,6 +117,7 @@ export class FeeReportsService {
       let principal = 0;
       let fine = 0;
       let overdue = 0;
+      let previous = 0;
       let open = 0;
       let oldest: IsoDate | null = null;
       for (const d of byStudent.get(e.student.id) ?? []) {
@@ -108,6 +127,8 @@ export class FeeReportsService {
         open++;
         principal += b.principal;
         fine += b.fine;
+        // S17: dues of other years stay where they are, shown as previous years.
+        if (d.academicYearId !== ctx.year.id) previous += b.total;
         if (dueDate < overdueBefore) {
           overdue += b.total;
           if (!oldest || dueDate < oldest) oldest = dueDate;
@@ -139,6 +160,7 @@ export class FeeReportsService {
         finePaisa: fine,
         totalPaisa: total,
         overduePaisa: overdue,
+        previousYearsPaisa: previous,
         oldestOverdue: oldest,
         sort: [
           e.classLevel.sortOrder,
@@ -156,8 +178,9 @@ export class FeeReportsService {
         a.sort[3].localeCompare(b.sort[3]),
     );
     const clean = rows.map(({ sort: _sort, ...r }) => r);
-    const sum = (k: 'principalPaisa' | 'finePaisa' | 'totalPaisa' | 'overduePaisa') =>
-      clean.reduce((s, r) => s + r[k], 0);
+    const sum = (
+      k: 'principalPaisa' | 'finePaisa' | 'totalPaisa' | 'overduePaisa' | 'previousYearsPaisa',
+    ) => clean.reduce((s, r) => s + r[k], 0);
     return {
       today,
       rows: clean,
@@ -167,6 +190,7 @@ export class FeeReportsService {
         finePaisa: sum('finePaisa'),
         totalPaisa: sum('totalPaisa'),
         overduePaisa: sum('overduePaisa'),
+        previousYearsPaisa: sum('previousYearsPaisa'),
       },
     };
   }
@@ -190,6 +214,7 @@ export class FeeReportsService {
           'জরিমানা (টাকা)',
           'মোট (টাকা)',
           'মেয়াদোত্তীর্ণ (টাকা)',
+          'আগের বছরের (টাকা)',
           'পুরোনো বকেয়ার তারিখ',
         ]
       : [
@@ -205,6 +230,7 @@ export class FeeReportsService {
           'Fine (Tk)',
           'Total (Tk)',
           'Overdue (Tk)',
+          'Previous years (Tk)',
           'Oldest overdue',
         ];
     const rows = list.rows.map((r) => [
@@ -220,6 +246,7 @@ export class FeeReportsService {
       taka(r.finePaisa),
       taka(r.totalPaisa),
       taka(r.overduePaisa),
+      taka(r.previousYearsPaisa),
       r.oldestOverdue ?? '',
     ]);
     const t = list.totals;
@@ -236,10 +263,207 @@ export class FeeReportsService {
       taka(t.finePaisa),
       taka(t.totalPaisa),
       taka(t.overduePaisa),
+      taka(t.previousYearsPaisa),
       '',
     ];
     return {
       filename: `${q.overdueOnly ? 'defaulters' : 'dues'}-${list.today}.csv`,
+      csv: toCsv([header, ...rows, total]),
+    };
+  }
+
+  /**
+   * P5-K: everyone who still owes but is not on the due list: leavers (not ACTIVE, not deleted),
+   * ACTIVE students without an enrolment in the current year ("not carried over"), and
+   * deactivated students, each with the balance of all their open dues (every year).
+   */
+  async leaversWithDues(): Promise<FeeLeaversReport> {
+    const tx = this.db.tx;
+    const ctx = await this.dues.planContext();
+    const today = ctx.today;
+    const full = await this.students.seesPhones();
+    const yearId = ctx.year?.id ?? NIL_UUID;
+    const owing = await tx.feeDue.groupBy({
+      by: ['studentId'],
+      where: {
+        status: 'OPEN',
+        student: {
+          OR: [
+            { deletedAt: { not: null } },
+            { status: { not: 'ACTIVE' } },
+            { enrolments: { none: { academicYearId: yearId } } },
+          ],
+        },
+      },
+    });
+    const ids = owing.map((o) => o.studentId);
+    if (ids.length === 0)
+      return { today, rows: [], totals: { students: 0, totalPaisa: 0, overduePaisa: 0 } };
+    const [students, dues] = await Promise.all([
+      tx.student.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          studentCode: true,
+          nameBn: true,
+          nameEn: true,
+          status: true,
+          leftOn: true,
+          deletedAt: true,
+          guardians: {
+            where: { isPrimary: true },
+            select: { guardian: { select: { nameBn: true, nameEn: true, phone: true } } },
+          },
+          enrolments: {
+            orderBy: { academicYear: { startDate: 'desc' } },
+            take: 1,
+            select: {
+              roll: true,
+              academicYear: { select: { id: true, name: true } },
+              classLevel: { select: { id: true, nameBn: true, nameEn: true, sortOrder: true } },
+              section: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+      tx.feeDue.findMany({ where: { status: 'OPEN', studentId: { in: ids } } }),
+    ]);
+    const rows: FeeLeaverRow[] = [];
+    for (const st of students) {
+      let total = 0;
+      let overdue = 0;
+      let open = 0;
+      for (const d of dues.filter((x) => x.studentId === st.id)) {
+        const b = balanceOf(d, today);
+        if (b.total === 0) continue;
+        open++;
+        total += b.total;
+        if (dateFromDb(d.dueDate) < today) overdue += b.total;
+      }
+      if (total === 0) continue;
+      const kind: FeeLeaverKind = st.deletedAt
+        ? 'DEACTIVATED'
+        : st.status !== 'ACTIVE'
+          ? 'LEFT'
+          : 'NOT_CARRIED_OVER';
+      const e = st.enrolments[0];
+      const g = st.guardians[0]?.guardian;
+      rows.push({
+        student: { id: st.id, studentCode: st.studentCode, nameBn: st.nameBn, nameEn: st.nameEn },
+        kind,
+        status: st.status,
+        leftOn: st.leftOn ? dateFromDb(st.leftOn) : null,
+        deactivated: st.deletedAt !== null,
+        lastYear: e?.academicYear ?? null,
+        classLevel: e
+          ? { id: e.classLevel.id, nameBn: e.classLevel.nameBn, nameEn: e.classLevel.nameEn }
+          : null,
+        section: e?.section ?? null,
+        roll: e?.roll ?? null,
+        guardian: g
+          ? { nameBn: g.nameBn, nameEn: g.nameEn, phone: full ? g.phone : maskPhone(g.phone) }
+          : null,
+        openDues: open,
+        totalPaisa: total,
+        overduePaisa: overdue,
+      });
+    }
+    const order: Record<FeeLeaverKind, number> = { LEFT: 0, NOT_CARRIED_OVER: 1, DEACTIVATED: 2 };
+    rows.sort(
+      (a, b) =>
+        order[a.kind] - order[b.kind] ||
+        (a.lastYear?.name ?? '').localeCompare(b.lastYear?.name ?? '') ||
+        a.student.studentCode.localeCompare(b.student.studentCode),
+    );
+    return {
+      today,
+      rows,
+      totals: {
+        students: rows.length,
+        totalPaisa: rows.reduce((s, r) => s + r.totalPaisa, 0),
+        overduePaisa: rows.reduce((s, r) => s + r.overduePaisa, 0),
+      },
+    };
+  }
+
+  async leaversCsv(locale: 'bn' | 'en'): Promise<{ filename: string; csv: string }> {
+    const report = await this.leaversWithDues();
+    const bn = locale === 'bn';
+    const name = (r: { nameBn: string | null; nameEn: string | null }) =>
+      (bn ? (r.nameBn ?? r.nameEn) : (r.nameEn ?? r.nameBn)) ?? '';
+    const kinds: Record<FeeLeaverKind, [string, string]> = {
+      LEFT: ['প্রতিষ্ঠান ছেড়েছে', 'Left'],
+      NOT_CARRIED_OVER: ['নতুন বছরে ভর্তি হয়নি', 'Not carried over'],
+      DEACTIVATED: ['নিষ্ক্রিয়', 'Deactivated'],
+    };
+    const header = bn
+      ? [
+          'আইডি',
+          'নাম',
+          'অবস্থা',
+          'অবস্থা (কোড)',
+          'ছেড়েছে',
+          'শেষ বছর',
+          'শ্রেণি',
+          'শাখা',
+          'রোল',
+          'অভিভাবক',
+          'ফোন',
+          'বকেয়া ফি (সংখ্যা)',
+          'মোট (টাকা)',
+          'মেয়াদোত্তীর্ণ (টাকা)',
+        ]
+      : [
+          'ID',
+          'Name',
+          'Kind',
+          'Status',
+          'Left on',
+          'Last year',
+          'Class',
+          'Section',
+          'Roll',
+          'Guardian',
+          'Phone',
+          'Open dues',
+          'Total (Tk)',
+          'Overdue (Tk)',
+        ];
+    const rows = report.rows.map((r) => [
+      r.student.studentCode,
+      name(r.student),
+      kinds[r.kind][bn ? 0 : 1],
+      r.status,
+      r.leftOn ?? '',
+      r.lastYear?.name ?? '',
+      r.classLevel ? name(r.classLevel) : '',
+      r.section?.name ?? '',
+      r.roll,
+      r.guardian ? name(r.guardian) : '',
+      r.guardian?.phone ?? '',
+      r.openDues,
+      taka(r.totalPaisa),
+      taka(r.overduePaisa),
+    ]);
+    const t = report.totals;
+    const total = [
+      bn ? 'মোট' : 'Total',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      t.students,
+      taka(t.totalPaisa),
+      taka(t.overduePaisa),
+    ];
+    return {
+      filename: `leavers-with-dues-${report.today}.csv`,
       csv: toCsv([header, ...rows, total]),
     };
   }
@@ -273,9 +497,11 @@ export class FeeReportsService {
           GROUP BY 1 ORDER BY 1`;
         break;
       case 'collector':
+        // Online payments were paid by guardians, not collected by staff: one line of their own
+        // (P7a-V), never a guardian as a collector.
         rows = await tx.$queryRaw<Row[]>`
-          SELECT collected_by_id::text AS key, count(*)::bigint AS count,
-                 sum(amount_paisa)::bigint AS amount
+          SELECT CASE WHEN channel = 'GATEWAY' THEN ${ONLINE_KEY} ELSE collected_by_id::text END AS key,
+                 count(*)::bigint AS count, sum(amount_paisa)::bigint AS amount
           FROM fee_payments WHERE status = 'ACTIVE' AND recorded_on BETWEEN ${from} AND ${to}
           GROUP BY 1 ORDER BY 3 DESC`;
         break;
@@ -304,9 +530,17 @@ export class FeeReportsService {
     } else if (q.groupBy === 'collector') {
       const staff = await staffNames(
         tx,
-        rows.map((r) => r.key),
+        rows.map((r) => r.key).filter((key) => key !== ONLINE_KEY),
       );
       names = new Map([...staff].map(([id, n]) => [id, { nameBn: n.nameBn, nameEn: n.name }]));
+      names.set(ONLINE_KEY, ONLINE_NAME);
+    } else if (q.groupBy === 'method') {
+      names = new Map(
+        rows.map((r) => {
+          const label = FEE_PAYMENT_METHOD_LABELS[r.key as FeePaymentMethod];
+          return [r.key, { nameBn: label?.bn ?? null, nameEn: label?.en ?? null }] as const;
+        }),
+      );
     }
     return {
       from: q.from,
@@ -372,6 +606,7 @@ export class FeeReportsService {
       }),
       tx.feeMobileSubmission.count({ where: { status: 'PENDING' } }),
     ]);
+    const onlineToReview = await this.online.toReviewCount();
     let overdue = 0;
     const students = new Set<string>();
     for (const d of overdueDues) {
@@ -387,6 +622,7 @@ export class FeeReportsService {
       previousMonthToDate: { collectedPaisa: previous.amount },
       overdue: { paisa: overdue, students: students.size },
       pendingSubmissions: pending,
+      onlineToReview,
     };
   }
 }

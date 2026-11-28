@@ -76,7 +76,8 @@ sql() {
 
 missing=$(sql -d postgres -c "SELECT string_agg(r, ', ') FROM unnest(ARRAY['jantrik_owner',
   'jantrik_app', 'jantrik_auth', 'jantrik_search', 'jantrik_platform', 'jantrik_platform_app',
-  'jantrik_ingest', 'jantrik_ingest_app', 'jantrik_login_app', 'jantrik_admission']) AS r WHERE NOT EXISTS
+  'jantrik_ingest', 'jantrik_ingest_app', 'jantrik_login_app', 'jantrik_admission',
+  'jantrik_payments']) AS r WHERE NOT EXISTS
   (SELECT FROM pg_roles WHERE rolname = r)")
 [ -z "$missing" ] \
   || die "roles missing ($missing): run deploy/postgres/create-roles.sh first (roles are not in a backup)"

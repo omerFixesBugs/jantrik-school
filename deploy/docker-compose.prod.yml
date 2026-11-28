@@ -38,6 +38,10 @@ x-api-env: &api-env
   JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?}
   OTP_PEPPER: ${OTP_PEPPER:?}
   PLATFORM_TOTP_KEY: ${PLATFORM_TOTP_KEY:?}
+  # Online fee payments (docs/payments.md): the key of the institutes' SSLCommerz credentials, and
+  # the API's own address, the base of the return and IPN addresses SSLCommerz is given.
+  PAYMENT_CREDENTIALS_KEY: ${PAYMENT_CREDENTIALS_KEY:?}
+  API_PUBLIC_URL: https://${API_DOMAIN:?}
   # The public admission form (docs/admission.md): Cloudflare Turnstile's secret and the web
   # app's address (the status page link in the "application received" SMS).
   TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:?}

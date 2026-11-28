@@ -158,3 +158,25 @@ export function staffApplicationBody(cycleClassId: string, over: Record<string, 
     ...over,
   };
 }
+
+/** Sprint 1 P4: an opened cycle with an admission test, its class-6 class and `n` walk-ins. */
+export async function testClass(
+  h: Harness,
+  s: AdmissionSchool,
+  n: number,
+  over: (i: number) => Record<string, unknown> = () => ({}),
+): Promise<{ cycle: AdmissionCycleView; cc: string; apps: AdmissionApplicationDetail[] }> {
+  const cycle = await admissionCycle(h, s, { requiresTest: true });
+  const cc = cycle.classes.find((c) => c.classLevel.id === s.class6)!.id;
+  const apps: AdmissionApplicationDetail[] = [];
+  for (let i = 0; i < n; i++) {
+    apps.push(
+      await staffApplication(h, s, cc, {
+        nameEn: `Applicant ${i + 1}`,
+        nameBn: `প্রার্থী ${i + 1}`,
+        ...over(i),
+      }),
+    );
+  }
+  return { cycle, cc, apps };
+}

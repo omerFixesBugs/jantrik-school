@@ -24,6 +24,8 @@ import {
   type FeeFrequency,
   type FeeHeadKind,
   type FeeMobileMethod,
+  type FeePaymentChannel,
+  type FeePaymentMethod,
 } from './fees.js';
 
 const nameSchema = z.string().trim().min(1).max(100);
@@ -407,6 +409,11 @@ export interface FeeDueView {
   cancelReason: string | null;
   /** Past its due date with something still owed. */
   overdue: boolean;
+  /**
+   * An online payment that names this due is in progress (open, not expired): the counter shows
+   * it and still takes cash; the online money then waits for review (P7a2, review focus 2).
+   */
+  onlinePending: boolean;
 }
 
 /** A period not generated yet that can be paid ahead (current year only). */
@@ -432,6 +439,8 @@ export interface FeeWaiverView {
 export interface FeeLedger {
   /** Today in the institute's timezone. */
   today: IsoDate;
+  /** The current academic year: dues of other years are "previous year" (P5, S17). */
+  currentYearId: string | null;
   student: FeeStudentHit;
   family: { groupId: string; rank: number } | null;
   /** Every due (earlier years' arrears too), oldest first; cancelled ones stay visible. */
@@ -445,9 +454,6 @@ export interface FeeLedger {
 }
 
 // ─────────────────────────── Collection, receipts, void, closing ───────────────────────────
-
-export const FEE_PAYMENT_METHODS = ['CASH', 'BKASH', 'NAGAD'] as const;
-export type FeePaymentMethod = (typeof FEE_PAYMENT_METHODS)[number];
 
 /** POST /fees/payments (OWNER/ADMIN/ACCOUNTANT): cash at the counter for one student. */
 export const collectFeeSchema = z
@@ -499,8 +505,14 @@ export interface FeeReceipt {
     by: { id: string; name: string; nameBn: string | null };
   } | null;
   method: FeePaymentMethod;
-  channel: 'COUNTER' | 'MOBILE_MANUAL';
+  channel: FeePaymentChannel;
+  /** COUNTER: none; MOBILE_MANUAL: the guardian's TrxID; GATEWAY: the gateway's bank_tran_id. */
   trxId: string | null;
+  /**
+   * A gateway payment (channel GATEWAY): our transaction ID, the gateway's own, and the instrument
+   * as the gateway named it (e.g. "BKASH-BKash"). All ASCII identifiers.
+   */
+  online: { tranId: string; bankTranId: string; instrument: string | null } | null;
   /** The sender's number, masked. */
   senderPhone: string | null;
   amountPaisa: number;
@@ -514,6 +526,7 @@ export interface FeeReceipt {
     roll: number | null;
   };
   lines: FeeReceiptLine[];
+  /** Who took the cash or checked the transfer; null for an online payment (paid online). */
   collectedBy: { id: string; name: string; nameBn: string | null } | null;
   /** The student's balance today (not at the time of the receipt). */
   balanceTodayPaisa: number;
@@ -563,7 +576,22 @@ export interface FeeClosingCollector {
 export interface FeeClosing {
   date: IsoDate;
   collectors: FeeClosingCollector[];
+  /**
+   * Online payments (SSLCommerz, P7b-L): under no collector, in the whole-institute closing only
+   * (OWNER/ADMIN, no collector chosen); null otherwise. Counted in collected and net, never in
+   * cash in hand.
+   */
+  online: FeeClosingOnline | null;
   total: { collectedPaisa: number; voidedPaisa: number; netPaisa: number; cashInHandPaisa: number };
+}
+
+/** The daily closing's online line: payments recorded that day, voids made that day. */
+export interface FeeClosingOnline {
+  count: number;
+  amountPaisa: number;
+  byMethod: { method: FeePaymentMethod; count: number; amountPaisa: number }[];
+  voided: FeeClosingCollector['voided'];
+  netPaisa: number;
 }
 
 // ─────────────────────────── Manual bKash/Nagad ───────────────────────────
@@ -671,6 +699,17 @@ export interface FeeSubmissionView {
   createdAt: string;
 }
 
+/** Online payment for a guardian (P7a2): whether it is on, and the child's payment in progress. */
+export interface FeeGuardianOnline {
+  /** The institute's SSLCommerz account is on and the server has its public addresses. */
+  available: boolean;
+  /**
+   * The child's online payment started less than an hour ago and not finished: another checkout
+   * waits for it. `mine`: this guardian started it (no name of whoever else did).
+   */
+  inProgress: { intentId: string; mine: boolean; createdAt: string } | null;
+}
+
 /** GET /me/children/:id/fees: a guardian's view of one child's fees. */
 export interface FeeGuardianView {
   today: IsoDate;
@@ -678,6 +717,7 @@ export interface FeeGuardianView {
   submissions: FeeSubmissionView[];
   /** Where to send money: the institute's active numbers. */
   accounts: Pick<FeeMobileAccountView, 'id' | 'method' | 'phone' | 'kind' | 'label'>[];
+  online: FeeGuardianOnline;
 }
 
 // ─────────────────────────── Reports, reminders, dashboard ───────────────────────────
@@ -710,6 +750,8 @@ export interface FeeDueListRow {
   finePaisa: number;
   totalPaisa: number;
   overduePaisa: number;
+  /** Of totalPaisa: the balance of dues of earlier years than the current one (P5, S17). */
+  previousYearsPaisa: number;
   oldestOverdue: IsoDate | null;
 }
 
@@ -722,7 +764,53 @@ export interface FeeDueList {
     finePaisa: number;
     totalPaisa: number;
     overduePaisa: number;
+    previousYearsPaisa: number;
   };
+}
+
+/**
+ * GET /fees/reports/leavers-with-dues (P5-K): students who still owe but are not on the due list:
+ * leavers (GRADUATED, TRANSFERRED, DROPPED_OUT, INACTIVE), ACTIVE students not enrolled in the
+ * current year ("not carried over"), and deactivated students.
+ */
+export const FEE_LEAVER_KINDS = ['LEFT', 'NOT_CARRIED_OVER', 'DEACTIVATED'] as const;
+export type FeeLeaverKind = (typeof FEE_LEAVER_KINDS)[number];
+
+export interface FeeLeaverRow {
+  student: FeeStudentRef;
+  kind: FeeLeaverKind;
+  status: 'ACTIVE' | 'INACTIVE' | 'GRADUATED' | 'TRANSFERRED' | 'DROPPED_OUT';
+  leftOn: IsoDate | null;
+  deactivated: boolean;
+  /** Their latest enrolment. */
+  lastYear: { id: string; name: string } | null;
+  classLevel: { id: string; nameBn: string; nameEn: string } | null;
+  section: { id: string; name: string } | null;
+  roll: number | null;
+  /** Primary guardian; the phone masked for the accountant. */
+  guardian: { nameBn: string | null; nameEn: string | null; phone: string } | null;
+  openDues: number;
+  totalPaisa: number;
+  overduePaisa: number;
+}
+
+export interface FeeLeaversReport {
+  today: IsoDate;
+  rows: FeeLeaverRow[];
+  totals: { students: number; totalPaisa: number; overduePaisa: number };
+}
+
+export const feeLeaversQuerySchema = z.object({
+  locale: z.enum(['bn', 'en']).default('bn'),
+});
+
+/** POST /fees/terms/copy and /fees/concessions/copy (P5, S16). */
+export interface FeeCopyResult {
+  copied: number;
+  /** Already there (a term of that name, a concession on that head), so not copied again. */
+  skipped: number;
+  /** Terms only: copied with a date outside the new year (P5-M). */
+  outsideYear?: number;
 }
 
 /** GET /fees/reports/collections: money kept (void payments left out), recorded in a range. */
@@ -806,4 +894,6 @@ export interface FeeSummary {
   previousMonthToDate: { collectedPaisa: number };
   overdue: { paisa: number; students: number };
   pendingSubmissions: number;
+  /** Online payments waiting for a person: intents in review and money items (P7b). */
+  onlineToReview: number;
 }

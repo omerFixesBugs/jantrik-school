@@ -3,6 +3,7 @@
 import {
   BadgePercentIcon,
   CalendarRangeIcon,
+  CreditCardIcon,
   HandCoinsIcon,
   LockIcon,
   SlidersHorizontalIcon,
@@ -24,9 +25,18 @@ import { useMeContext } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 
 export type FeeSetupTab =
-  'general' | 'heads' | 'amounts' | 'terms' | 'concessions' | 'siblings' | 'numbers' | 'collectors';
+  | 'general'
+  | 'heads'
+  | 'amounts'
+  | 'terms'
+  | 'concessions'
+  | 'siblings'
+  | 'numbers'
+  | 'online'
+  | 'collectors';
 
-const TABS: { key: FeeSetupTab; href: string; icon: LucideIcon }[] = [
+/** `owner`: shown to the owner only (where money goes). */
+const TABS: { key: FeeSetupTab; href: string; icon: LucideIcon; owner?: true }[] = [
   { key: 'general', href: '/fees/setup', icon: SlidersHorizontalIcon },
   { key: 'heads', href: '/fees/setup/heads', icon: TagsIcon },
   { key: 'amounts', href: '/fees/setup/amounts', icon: TableIcon },
@@ -34,6 +44,7 @@ const TABS: { key: FeeSetupTab; href: string; icon: LucideIcon }[] = [
   { key: 'concessions', href: '/fees/setup/concessions', icon: BadgePercentIcon },
   { key: 'siblings', href: '/fees/setup/siblings', icon: UsersIcon },
   { key: 'numbers', href: '/fees/setup/numbers', icon: SmartphoneIcon },
+  { key: 'online', href: '/fees/setup/online-payments', icon: CreditCardIcon, owner: true },
   { key: 'collectors', href: '/fees/setup/collectors', icon: HandCoinsIcon },
 ];
 
@@ -69,6 +80,7 @@ export function FeeSetupFrame({ tab, children }: { tab: FeeSetupTab; children: R
 
 function SetupNav({ active }: { active: FeeSetupTab }) {
   const t = useTranslations('fees.setup');
+  const { isOwner } = useFeeRoles();
   const current = useRef<HTMLAnchorElement>(null);
   // On a phone the row scrolls sideways: bring the open section into view (once, sideways only).
   useEffect(() => {
@@ -80,7 +92,7 @@ function SetupNav({ active }: { active: FeeSetupTab }) {
   return (
     <nav aria-label={t('nav')} className="min-w-0 lg:sticky lg:top-[calc(var(--topbar-h)+1rem)]">
       <ul className="-mx-1 flex gap-1 overflow-x-auto border-b px-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:border-b-0 lg:px-0">
-        {TABS.map(({ key, href, icon: Icon }) => {
+        {TABS.filter((tab) => !tab.owner || isOwner).map(({ key, href, icon: Icon }) => {
           const on = key === active;
           return (
             <li key={key} className="shrink-0">

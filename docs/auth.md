@@ -476,6 +476,20 @@ with no institute and no person (`withContext({})`). A code-scan test keeps `Db`
 - **Turnstile** guards every code and every submit; a form ticket (its own HKDF key) dates the
   form for the 15 s / 2 h rule. Both fail closed.
 
+## The gateway's return and IPN (no login)
+
+SSLCommerz sends the payer's browser back, and posts its notification (IPN), to
+`/public/payments/sslcommerz/:slug/...` (sprint 1 P7a2, [payments.md](payments.md) → Signals).
+Both are `@Public()` and `@NoRateLimit()` (every IPN comes from one or two SSLCommerz addresses)
+with limits of their own, and never open an institute's transaction: one `SECURITY DEFINER`
+function (owned by the NOLOGIN `jantrik_payments`) stores the signal inside a transaction with no
+institute and no person (`withContext({})`), and a job running as the institute asks SSLCommerz
+whether it is true. A code-scan test keeps `Db`, `TenantJobRunner`, the fee services and the
+credentials service out of `apps/api/src/payments/public/`. The bodies are read by the module's
+own reader (a flat form of at most 16 KB) before the app's parsers, and nothing in them is
+trusted or logged. The payer comes back with a 303 to the web app; the `SameSite=Lax` hint cookie
+travels with that top-level navigation, and the page then refreshes its session as usual.
+
 ## The device receiver (no login)
 
 ZKTeco attendance devices cannot log in: the protocol sends only a serial number, over plain

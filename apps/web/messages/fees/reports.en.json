@@ -17,7 +17,9 @@
       "copied": "TrxID copied",
       "copyFailed": "Could not copy. Select the TrxID and copy it.",
       "managersOnlyTitle": "For the owner and admins",
-      "managersOnlyText": "Reminder SMS cost the institute money, so the owner or an admin sends them."
+      "managersOnlyText": "Reminder SMS cost the institute money, so the owner or an admin sends them.",
+      "previousYears": "Previous years",
+      "cardPreviousYears": "{amount} from previous years"
     },
     "submissions": {
       "title": "bKash/Nagad payments to check",
@@ -121,6 +123,7 @@
       "tabDues": "Dues",
       "tabDefaulters": "Defaulters",
       "tabCollections": "Collections",
+      "tabOnline": "Online payments",
       "duesIntro": "Who owes what, with fines up to today.",
       "defaultersIntro": "Students with overdue dues: for how long and how much.",
       "minAmount": "Overdue amount at least",
@@ -148,7 +151,8 @@
       "cardDays": "{n, plural, one {for {count} day} other {for {count} days}}",
       "cardFine": "{amount} fine",
       "cardOpenDues": "{n, plural, one {{count} fee owed} other {{count} fees owed}}",
-      "remind": "Send reminder SMS"
+      "remind": "Send reminder SMS",
+      "tabLeavers": "Leavers with dues"
     },
     "collections": {
       "intro": "Money collected in a period, void receipts left out.",
@@ -184,6 +188,25 @@
       "printTitle": "Collections, {from} to {to}",
       "headNote": "A receipt that paid several fees counts under each of them, so the total receipts can be fewer than the sum of the rows.",
       "unknownCollector": "No name"
+    },
+    "online": {
+      "intro": "Every online payment started in the period, by the day it was started and where it stands now, with what SSLCommerz confirmed and kept as its charges.",
+      "from": "From",
+      "to": "To",
+      "rangeBackwards": "The end cannot be before the start.",
+      "rangeTooLong": "At most a year at a time.",
+      "day": "Started on",
+      "started": "Started",
+      "paid": "Paid",
+      "review": "To check",
+      "unpaid": "Not paid",
+      "refunded": "Refunded outside",
+      "charges": "SSLCommerz charges",
+      "totalRow": "Total",
+      "printTitle": "Online payments, {from} to {to}",
+      "empty": "No online payment was started in this period.",
+      "emptyHint": "Choose other dates to look.",
+      "received": "SSLCommerz confirmed {amount} in all; {store} reached the store and {charges} were its charges."
     },
     "reminders": {
       "title": "Due reminder SMS",
@@ -235,6 +258,23 @@
         "CANCELLED": "Skipped",
         "EXPIRED": "Expired"
       }
+    },
+    "leavers": {
+      "intro": "Students who still owe but are not on the due list: those who left, those not enrolled in the current year, and deactivated students. Their dues stay where they are.",
+      "student": "Student",
+      "why": "Why",
+      "lastYear": "Last year",
+      "guardian": "Guardian",
+      "total": "Total owed",
+      "overdue": "Overdue",
+      "leftOn": "{status} on {date}",
+      "kind": {
+        "NOT_CARRIED_OVER": "Not enrolled this year",
+        "DEACTIVATED": "Deactivated"
+      },
+      "totalRow": "Total, {n, plural, one {{count} student} other {{count} students}}",
+      "empty": "No one who left owes anything.",
+      "emptyHint": "Students who leave with dues, or are not carried over into the new year, appear here."
     }
   }
 }

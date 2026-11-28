@@ -5,6 +5,7 @@ import type { Redis } from 'ioredis';
 import { REDIS } from '../../redis/redis.constants.js';
 import { TenantAccessService } from '../../tenancy/tenant-access.service.js';
 import { TenantJobRunner } from '../../tenancy/tenant-job-runner.service.js';
+import { FeeOnlineHooks } from '../fee-online-hooks.js';
 import {
   FeeRemindersService,
   SEND_REMINDERS_JOB,
@@ -37,6 +38,7 @@ export class FeeDuesProcessor extends WorkerHost {
     private readonly dues: FeeDuesService,
     private readonly access: TenantAccessService,
     private readonly reminders: FeeRemindersService,
+    private readonly online: FeeOnlineHooks,
     @Inject(REDIS) private readonly redis: Redis,
   ) {
     super();
@@ -121,6 +123,13 @@ export class FeeDuesProcessor extends WorkerHost {
 
   async generateAll(): Promise<void> {
     for (const tenantId of await this.redis.zrange(FEES_TENANTS_KEY, 0, -1)) {
+      // Online payments are reconciled whatever happened since (validated money is posted even
+      // with fees off, P7a-O): their steps are listed again first, in the institute's own context.
+      try {
+        await this.online.nightly(tenantId);
+      } catch (error) {
+        this.logger.error(`Payments re-queue failed for ${tenantId}: ${(error as Error).name}`);
+      }
       try {
         if (!(await this.access.getEnabledModules(tenantId)).includes('FEES')) continue;
         const ids = await this.jobs.run(tenantId, async () =>
