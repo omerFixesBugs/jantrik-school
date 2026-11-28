@@ -5,6 +5,7 @@ import type { Prisma } from '@jantrik/db';
 import {
   dateFromDb,
   dateToDb,
+  duesAdmissionDate,
   planStudentDues,
   siblingRanks,
   todayIn,
@@ -211,6 +212,8 @@ export class FeeDuesService implements OnModuleInit {
             where: { academicYearId: year.id },
             select: { classLevelId: true, studyGroupId: true },
           },
+          // The admission date recorded for a December admission (duesAdmissionDate, P3-K).
+          admissionDateForDues: true,
         },
       }),
       tx.feeConcession.findMany({
@@ -231,7 +234,13 @@ export class FeeDuesService implements OnModuleInit {
         amounts: ctx.amounts,
         student: {
           id: s.id,
-          admittedOn: todayIn(ctx.timezone, s.createdAt),
+          admittedOn: duesAdmissionDate({
+            createdOn: todayIn(ctx.timezone, s.createdAt),
+            admissionDateForDues: s.admissionDateForDues
+              ? dateFromDb(s.admissionDateForDues)
+              : null,
+            yearStart: year.startDate,
+          }),
           classLevelId: s.enrolments[0]!.classLevelId,
           studyGroupId: s.enrolments[0]!.studyGroupId,
           siblingRank: ranks.get(s.id) ?? null,
