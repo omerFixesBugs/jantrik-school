@@ -184,7 +184,8 @@ describe('fees: the admission date of a child admitted before the year starts', 
       await tx.academicYear.updateMany({ data: { isCurrent: false } });
       await tx.academicYear.update({ where: { id: t.nextYearId }, data: { isCurrent: true } });
     });
-    clock.set('2026-12-10T06:00:00.000Z');
+    // December of the school's current year, before the next one (t.year + 1) starts.
+    clock.set(`${t.year}-12-10T06:00:00.000Z`);
     try {
       const c = await admissionCycle(h, t);
       const cc = c.classes.find((x) => x.classLevel.id === t.class6)!.id;
@@ -200,7 +201,7 @@ describe('fees: the admission date of a child admitted before the year starts', 
           select: { admissionDateForDues: true },
         }),
       );
-      expect(row.admissionDateForDues).toEqual(dateToDb('2027-01-01'));
+      expect(row.admissionDateForDues).toEqual(dateToDb(`${t.year + 1}-01-01`));
     } finally {
       clock.set(new Date());
     }

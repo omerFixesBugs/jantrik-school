@@ -25,8 +25,8 @@ describe('exams: setup, rosters, admit cards and seats', () => {
         kind: 'HALF_YEARLY',
         nameBn: 'অর্ধবার্ষিক পরীক্ষা',
         nameEn: 'Half-yearly exam',
-        startsOn: '2026-06-01',
-        endsOn: '2026-06-15',
+        startsOn: `${s.year}-06-01`,
+        endsOn: `${s.year}-06-15`,
         resultMode: 'GPA',
         ...body,
       });
@@ -49,8 +49,8 @@ describe('exams: setup, rosters, admit cards and seats', () => {
   it('creates an exam with default merit order and attendance window; staff only', async () => {
     await newExam({}, s.tokens.teacher).expect(403);
     await newExam({}, s.tokens.accountant).expect(403);
-    await newExam({ endsOn: '2026-05-01' }).expect(400);
-    const outside = await newExam({ startsOn: '2025-12-20' }).expect(422);
+    await newExam({ endsOn: `${s.year}-05-01` }).expect(400);
+    const outside = await newExam({ startsOn: `${s.year - 1}-12-20` }).expect(422);
     expect(outside.body.code).toBe('OUTSIDE_YEAR');
     const exam = (await newExam().expect(201)).body as ExamDetail;
     expect(exam).toMatchObject({
@@ -58,7 +58,7 @@ describe('exams: setup, rosters, admit cards and seats', () => {
       resultMode: 'GPA',
       meritOrder: ['GPA', 'TOTAL_MARKS', 'ROLL'],
       failedRanking: 'AFTER_PASSED',
-      attendance: { from: '2026-01-01', to: '2026-06-15' },
+      attendance: { from: `${s.year}-01-01`, to: `${s.year}-06-15` },
       classes: [],
     });
     // The next GPA exam starts its window the day after this one, and copies its merit order.
@@ -72,20 +72,20 @@ describe('exams: setup, rosters, admit cards and seats', () => {
         kind: 'ANNUAL',
         nameBn: 'বার্ষিক',
         nameEn: 'Annual',
-        startsOn: '2026-11-01',
-        endsOn: '2026-11-20',
+        startsOn: `${s.year}-11-01`,
+        endsOn: `${s.year}-11-20`,
       }).expect(201)
     ).body as ExamDetail;
     expect(annual).toMatchObject({
       meritOrder: ['GPA', 'FEWER_FAILED_SUBJECTS', 'TOTAL_MARKS', 'ROLL'],
-      attendance: { from: '2026-06-16', to: '2026-11-20' },
+      attendance: { from: `${s.year}-06-16`, to: `${s.year}-11-20` },
     });
     const test = (
       await newExam({
         kind: 'CLASS_TEST',
         resultMode: 'MARKS',
-        startsOn: '2026-07-10',
-        endsOn: '2026-07-10',
+        startsOn: `${s.year}-07-10`,
+        endsOn: `${s.year}-07-10`,
         attendance: null,
       }).expect(201)
     ).body as ExamDetail;
@@ -116,7 +116,7 @@ describe('exams: setup, rosters, admit cards and seats', () => {
       .put(`/exams/${exam.id}/subjects/${phy.id}`)
       .set(bearer(s.tokens.admin))
       .send({
-        examDate: '2026-06-03',
+        examDate: `${s.year}-06-03`,
         startTime: '10:00',
         passRule: 'PER_COMPONENT',
         components: [
@@ -127,7 +127,7 @@ describe('exams: setup, rosters, admit cards and seats', () => {
       })
       .expect(200);
     expect(edited.body).toMatchObject({
-      examDate: '2026-06-03',
+      examDate: `${s.year}-06-03`,
       startTime: '10:00',
       fullMarks: 100,
     });
@@ -211,8 +211,8 @@ describe('exams: setup, rosters, admit cards and seats', () => {
           kind: 'TEST',
           nameBn: 'পরীক্ষা',
           nameEn: 'Test',
-          startsOn: '2026-08-01',
-          endsOn: '2026-08-05',
+          startsOn: `${s.year}-08-01`,
+          endsOn: `${s.year}-08-05`,
           resultMode: 'GPA',
         })
         .expect(201)
@@ -283,8 +283,8 @@ describe('exams: setup, rosters, admit cards and seats', () => {
     await setClasses(exam.id, [s.class6, s.class9]).expect(200);
     const nine = (await detail(exam.id)).classes.find((c) => c.classLevel.code === 'CLASS_9')!;
     for (const [code, date] of [
-      ['PHY', '2026-06-03'],
-      ['ACC', '2026-06-04'],
+      ['PHY', `${s.year}-06-03`],
+      ['ACC', `${s.year}-06-04`],
     ] as const) {
       const sub = nine.subjects.find((x) => x.subject.code === code)!;
       await http(h)
@@ -348,7 +348,7 @@ describe('exams: setup, rosters, admit cards and seats', () => {
     expect(codes).toContain('PHY');
     expect(codes).not.toContain('ACC');
     expect(science.routine.find((r) => r.subject.code === 'PHY')).toMatchObject({
-      examDate: '2026-06-03',
+      examDate: `${s.year}-06-03`,
       startTime: '10:00',
     });
     const text = JSON.stringify(cards);

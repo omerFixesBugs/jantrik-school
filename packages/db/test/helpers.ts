@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { todayIn } from '@jantrik/shared';
 import {
   createPrismaClient,
   hashPlatformToken,
@@ -95,6 +96,20 @@ export async function newPlatformSession(
 export const singleConnectionAppClient = (): PrismaClient =>
   createPrismaClient(APP_URL, { max: 1 });
 
+/**
+ * The test year: the calendar year of today in Asia/Dhaka (`todayIn`; these tests have no clock).
+ * Every test institute's current academic year is this year, so tests take their dates from it
+ * and never hard-code a year that will pass.
+ */
+export const testYear = (): number => Number(todayIn('Asia/Dhaka').slice(0, 4));
+
+/** A calendar year as an academic year: named after it, 1 January to 31 December. */
+export const yearRange = (year: number) => ({
+  name: String(year),
+  startDate: new Date(`${year}-01-01`),
+  endDate: new Date(`${year}-12-31`),
+});
+
 export async function createTenant(
   app: PrismaClient,
   overrides: Partial<ProvisionTenantInput> = {},
@@ -103,11 +118,7 @@ export async function createTenant(
     slug: `t-${randomUUID().slice(0, 8)}`,
     name: 'Test Institute',
     instituteTypeKey: 'NCTB_SCHOOL_BN',
-    academicYear: {
-      name: '2026',
-      startDate: new Date('2026-01-01'),
-      endDate: new Date('2026-12-31'),
-    },
+    academicYear: yearRange(testYear()),
     ...overrides,
   });
 }

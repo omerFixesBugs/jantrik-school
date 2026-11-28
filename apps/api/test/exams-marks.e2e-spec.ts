@@ -9,7 +9,7 @@ import type {
   MySheet,
   SaveMarkSheetResult,
 } from '@jantrik/shared';
-import { bearer, createHarness, http, type Harness } from './support/harness.js';
+import { bearer, createHarness, http, yearRange, type Harness } from './support/harness.js';
 import { examsSchool, type ExamsSchool } from './support/exams.js';
 
 describe('marks entry: subject teachers, drafts, submit, lock and corrections', () => {
@@ -75,8 +75,8 @@ describe('marks entry: subject teachers, drafts, submit, lock and corrections', 
           kind: 'HALF_YEARLY',
           nameBn: 'অর্ধবার্ষিক',
           nameEn: 'Half-yearly',
-          startsOn: '2026-06-01',
-          endsOn: '2026-06-15',
+          startsOn: `${s.year}-06-01`,
+          endsOn: `${s.year}-06-15`,
           resultMode: 'GPA',
         })
         .expect(201)
@@ -375,7 +375,7 @@ describe('marks entry: subject teachers, drafts, submit, lock and corrections', 
       .put(`/exams/${exam.id}/subjects/${ban}`)
       .set(bearer(s.tokens.admin))
       .send({
-        examDate: '2026-06-02',
+        examDate: `${s.year}-06-02`,
         startTime: '10:00',
         passRule: 'PER_COMPONENT',
         components: view.examSubject.components.map((c) => ({ ...c, fullMarks: 50 })),
@@ -396,12 +396,7 @@ describe('marks entry: subject teachers, drafts, submit, lock and corrections', 
   it("a section of another year is not this exam's sheet", async () => {
     const oldSection = await withTenant(h.prisma, s.tenantId, async (tx) => {
       const year = await tx.academicYear.create({
-        data: {
-          tenantId: s.tenantId,
-          name: '2025',
-          startDate: new Date('2025-01-01'),
-          endDate: new Date('2025-12-31'),
-        },
+        data: { tenantId: s.tenantId, ...yearRange(s.year - 1) },
       });
       return tx.section.create({
         data: { tenantId: s.tenantId, academicYearId: year.id, classLevelId: s.class6, name: 'ক' },

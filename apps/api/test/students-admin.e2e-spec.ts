@@ -13,6 +13,7 @@ import {
   http,
   otpLogin,
   randomPhone,
+  yearRange,
   type Harness,
 } from './support/harness.js';
 
@@ -25,6 +26,8 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
   let admin: string;
   let teacher: string;
   let yearId: string;
+  /** The current year's calendar year (the test year): the {YEAR} of student codes. */
+  let thisYear: number;
   let classLevelId: string;
   let otherClassLevelId: string;
   let sectionA: string;
@@ -63,6 +66,7 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
         });
       return {
         year: year.id,
+        yearNo: year.startDate.getUTCFullYear(),
         c1: c1!.id,
         c2: c2!.id,
         a: (await mk('A')).id,
@@ -70,6 +74,7 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
       };
     });
     yearId = ids.year;
+    thisYear = ids.yearNo;
     classLevelId = ids.c1;
     otherClassLevelId = ids.c2;
     sectionA = ids.a;
@@ -90,7 +95,7 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
       enrolment: { academicYearId: yearId, classLevelId, sectionId: sectionA, roll: bn('7') },
     });
     const p = (await admit(body).expect(201)).body as StudentProfile;
-    expect(p.studentCode).toBe('TST-2026-0001');
+    expect(p.studentCode).toBe(`TST-${thisYear}-0001`);
     expect(p.enrolments).toMatchObject([{ section: { id: sectionA }, roll: 7 }]);
     expect(p.guardians).toMatchObject([{ relation: 'FATHER', isPrimary: true, canLogIn: true }]);
     const phone = (body.guardians as { phone: string }[])[0]!.phone;
@@ -103,7 +108,7 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
     // Settings show the next code.
     const s = (await http(h).get('/students/settings').set(bearer(admin)).expect(200))
       .body as StudentSettings;
-    expect(s.example).toBe('TST-2026-0002');
+    expect(s.example).toBe(`TST-${thisYear}-0002`);
   });
 
   it('teachers can read profiles but not admit or change', async () => {
@@ -232,7 +237,7 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
     await admit(admission({ birthRegistrationNo: reg })).expect(201);
     const dup = await admit(admission({ birthRegistrationNo: reg })).expect(409);
     expect(dup.body).toMatchObject({ code: 'DUPLICATE', field: 'birthRegistrationNo' });
-    await admit(admission({ studentCode: 'TST-2026-0001' })).expect(409);
+    await admit(admission({ studentCode: `TST-${thisYear}-0001` })).expect(409);
     const mismatch = await admit(
       admission({
         enrolment: { academicYearId: yearId, classLevelId: otherClassLevelId, sectionId: sectionA },
@@ -409,12 +414,7 @@ describe('students: admission, profile, guardians, transfer, deactivate', () => 
     // An enrolment in an older year keeps its roll when the student is deactivated.
     const old = await withTenant(h.prisma, tenantId, async (tx) => {
       const y = await tx.academicYear.create({
-        data: {
-          tenantId,
-          name: '2025',
-          startDate: new Date('2025-01-01'),
-          endDate: new Date('2025-12-31'),
-        },
+        data: { tenantId, ...yearRange(thisYear - 1) },
       });
       const sec = await tx.section.create({
         data: { tenantId, academicYearId: y.id, classLevelId, name: 'Old' },

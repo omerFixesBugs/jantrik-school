@@ -20,6 +20,8 @@ export interface ExamStudent {
 export interface ExamsSchool {
   tenantId: string;
   yearId: string;
+  /** The current year's calendar year: the test year (`testYear`) when the school was made. */
+  year: number;
   class6: string;
   class9: string;
   groups: { science: string; business: string };
@@ -108,6 +110,7 @@ export async function examsSchool(
       );
     return {
       yearId: year.id,
+      year: year.startDate.getUTCFullYear(),
       class6: class6.id,
       class9: class9.id,
       groups: { science: science.id, business: business.id },

@@ -9,7 +9,9 @@ import {
   http,
   otpLogin,
   randomIp,
+  testYear,
   waitForOtp,
+  yearRange,
   type Harness,
 } from './support/harness.js';
 
@@ -38,11 +40,7 @@ describe('staff set their own password', () => {
       instituteTypeKey: 'NCTB_SCHOOL_BN',
       status: 'ACTIVE',
       modules: [],
-      academicYear: {
-        name: '2026',
-        startDate: new Date('2026-01-01'),
-        endDate: new Date('2026-12-31'),
-      },
+      academicYear: yearRange(testYear(h)),
     });
 
   const status = (token: string) => http(h).get('/me/password').set(bearer(token));

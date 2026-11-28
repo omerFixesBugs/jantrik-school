@@ -8,7 +8,7 @@ import type {
   ReportCards,
   Tabulation,
 } from '@jantrik/shared';
-import { bearer, createHarness, http, type Harness } from './support/harness.js';
+import { bearer, createHarness, http, testToday, type Harness } from './support/harness.js';
 import { examsSchool, type ExamsSchool } from './support/exams.js';
 import { fillAndLock } from './support/exam-marks.js';
 
@@ -51,6 +51,9 @@ describe('results: publish, tabulation, report cards, remarks', () => {
   beforeAll(async () => {
     h = await createHarness();
     s = await examsSchool(h);
+    // The exam is held today and its register taken today: attendance cannot be taken for a
+    // future date, and only today lies inside the year on every day of it (1 January too).
+    const today = testToday(h);
     await withTenant(h.prisma, s.tenantId, async (tx) => {
       await tx.student.update({
         where: { id: s.students.six[0]!.id },
@@ -66,8 +69,8 @@ describe('results: publish, tabulation, report cards, remarks', () => {
           kind: 'HALF_YEARLY',
           nameBn: 'অর্ধবার্ষিক',
           nameEn: 'Half-yearly',
-          startsOn: '2026-06-01',
-          endsOn: '2026-06-15',
+          startsOn: today,
+          endsOn: today,
           resultMode: 'GPA',
         })
         .expect(201)
@@ -86,7 +89,9 @@ describe('results: publish, tabulation, report cards, remarks', () => {
       .set(bearer(s.tokens.admin))
       .send({
         sectionId: s.sections.six,
-        date: '2026-06-10',
+        date: today,
+        // Today may be the weekly off day; an admin may still take a register then.
+        allowNonWorkingDay: true,
         baseVersion: 0,
         submissionId: randomUUID(),
         records: s.students.six.map((st, i) => ({
@@ -367,8 +372,8 @@ describe('results: publish, tabulation, report cards, remarks', () => {
           kind: 'MODEL_TEST',
           nameBn: 'মডেল টেস্ট',
           nameEn: 'Model test',
-          startsOn: '2026-07-01',
-          endsOn: '2026-07-01',
+          startsOn: `${t.year}-07-01`,
+          endsOn: `${t.year}-07-01`,
           resultMode: 'MARKS',
         })
         .expect(201)
@@ -446,8 +451,8 @@ describe('results: publish, tabulation, report cards, remarks', () => {
           kind: 'ANNUAL',
           nameBn: 'বার্ষিক',
           nameEn: 'Annual',
-          startsOn: '2026-11-01',
-          endsOn: '2026-11-20',
+          startsOn: `${t.year}-11-01`,
+          endsOn: `${t.year}-11-20`,
           resultMode: 'GPA',
         })
         .expect(201)

@@ -109,6 +109,10 @@ function Ledger() {
   const data = ledger.data;
   const taka = (paisa: number) => formatTaka(paisa, locale);
   const open = data.dues.filter(owing);
+  // S17: what earlier years still owe (shown, never moved).
+  const previousYears = open
+    .filter((d) => data.currentYearId !== null && d.academicYear.id !== data.currentYearId)
+    .reduce((sum, d) => sum + d.balance.total, 0);
   const settled = data.dues.filter((d) => !owing(d));
   const chosen = new Set(picked ?? open.filter((d) => d.overdue).map((d) => d.id));
   // Only what is still owed counts: a reload may have paid or cancelled something chosen.
@@ -229,7 +233,13 @@ function Ledger() {
             <Panel
               id="fees-dues"
               title={t('ledger.dues')}
-              hint={t('ledger.duesHint')}
+              hint={
+                previousYears > 0
+                  ? `${t('ledger.duesHint')} ${t('ledger.previousYearsTotal', {
+                      amount: formatTaka(previousYears, locale),
+                    })}`
+                  : t('ledger.duesHint')
+              }
               actions={
                 <Button
                   variant="ghost"
@@ -258,6 +268,9 @@ function Ledger() {
                     onToggle={(on) => choose(d.id, on)}
                     manages={manages}
                     onAction={(kind) => setAction({ kind, due: d })}
+                    previousYear={
+                      data.currentYearId !== null && d.academicYear.id !== data.currentYearId
+                    }
                   />
                 ))}
               </ul>

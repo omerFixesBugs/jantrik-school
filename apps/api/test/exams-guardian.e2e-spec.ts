@@ -64,10 +64,11 @@ describe('published results: guardians, result SMS, dashboard', () => {
           kind: 'ANNUAL',
           nameBn: 'বার্ষিক পরীক্ষা',
           nameEn: 'Annual exam',
-          startsOn: '2026-11-01',
+          startsOn: `${s.year}-11-01`,
           // The last day of the test year: 'upcoming' lists exams not yet ended, by today's real
-          // date, so a fixed day in November made this test fail from 21 Nov 2026.
-          endsOn: '2026-12-31',
+          // date (a fixed day in November made this test fail from 21 Nov 2026). The test year is
+          // today's year, so its last day is never past.
+          endsOn: `${s.year}-12-31`,
           resultMode: 'GPA',
         })
         .expect(201)

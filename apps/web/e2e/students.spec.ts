@@ -59,6 +59,38 @@ test('admission with Bangla digits → profile → deactivate', async ({ page })
   await expect(page.getByTestId('enrolment-row').first()).not.toContainText('রোল');
 });
 
+test('a student leaves (transferred) and comes back; nothing is deleted (P5)', async ({ page }) => {
+  await passwordLogin(page, DEMO.shaplaOwner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.goto('/students/new');
+  await page.locator('#st-name-bn').fill('সাকিব হাসান');
+  await page.locator('#enrol-class').selectOption({ label: 'নবম শ্রেণি' });
+  const guardian = page.getByTestId('guardian-row').first();
+  await guardian.getByLabel(/^মোবাইল নম্বর/).fill('০১৮১১০০০৭৭৭');
+  await guardian.getByLabel('নাম (বাংলায়)').fill('হাসান আলী');
+  await page.getByTestId('admit').tap();
+  const profile = page.getByTestId('student-profile');
+  await expect(profile).toContainText('সাকিব হাসান');
+
+  await page.getByTestId('leave-student').tap();
+  const dialog = page.getByTestId('leave-dialog');
+  await expect(dialog).toBeVisible();
+  await dialog.locator('#leave-status').selectOption('TRANSFERRED');
+  await dialog.locator('#leave-reason').fill('চট্টগ্রামে চলে গেছে');
+  await expectClean(page, 'leave dialog');
+  await dialog.getByRole('button', { name: 'প্রতিষ্ঠান ছাড়ছে' }).tap();
+  await expect(page.getByTestId('left-notice')).toContainText('বদলি');
+  await expect(page.getByTestId('left-notice')).toContainText('চট্টগ্রামে চলে গেছে');
+  // Not deleted: still editable, and can come back.
+  await expect(page.getByTestId('edit-student')).toBeVisible();
+  await expectClean(page, 'left profile');
+
+  await page.getByTestId('return-student').tap();
+  await page.getByTestId('confirm-dialog').getByRole('button', { name: 'ফিরে এসেছে' }).tap();
+  await expect(page.getByTestId('left-notice')).toHaveCount(0);
+  await expect(page.getByTestId('leave-student')).toBeVisible();
+});
+
 test('a sibling: the known guardian phone shows the existing guardian to pick', async ({
   page,
 }) => {

@@ -1071,3 +1071,434 @@ After the security review of P3b (round 1):
   codes and tokens are never logged (only error names are). Per-address limits are generous on
   purpose: many guardians share one address behind mobile carriers' NAT (CGNAT); the per-phone and
   per-institute limits are the real bounds.
+
+## Sprint 1, P5: promotion and new session (2026-11-17)
+
+**Built (day run 2026-11-17), for the owner's review with its PRs; nothing merged.** Plan:
+`docs/plans/sprint-1-p5-promotion.md` (PR #15, not approved yet). Built with the plan's
+recommended defaults for P5-A to P5-Q and its split: **P5a** (this PR: leaving, runs, apply and
+resume, numbering, the switch check, leave/return on the student page) and **P5b** (stacked on it:
+fee and teacher copies, previous-year dues markers, the leavers report, the new-year wizard).
+Rules as built: [promotion.md](promotion.md).
+
+Where the plan and the code disagreed (the code wins; recorded here):
+
+- **No P3 yet.** Built on `integration/sprint-1` (main + #16, #18, #17) without online admission:
+  new admits for the new year come from staff admission only, and numbering treats every
+  enrolment no run created as a new admit.
+- **The student list has no default ACTIVE filter** (the plan assumed one). Leavers stay in the
+  list, marked with their status; the status filter shows one kind at a time. Not changed (a
+  product decision: hide leavers by default?).
+- **Validation errors answer 400**, as everywhere in this API (zod), not 422: a leaving row
+  without a date, two equal numbers in one numbering request.
+
+Decided alone, each the safer option:
+
+- **P5-a1. A failed student of the top class repeats** instead of graduating (the plan: the top
+  class leaves as GRADUATED). Repeating keeps them; graduating someone by mistake removes them
+  from attendance and dues at apply.
+- **P5-a2. Leaving keeps the rolls** (one student's leave and the run's leavers alike): history,
+  and a return finds them in place. The plan said this for apply only.
+- **P5-a3. A new apply outcome, `SKIPPED_LEFT`:** a student who left another way after the run
+  was made is not enrolled into the new year (the plan only knew `SKIPPED_DEACTIVATED`).
+- **P5-a4. The roll strategy is optional when a run is made:** MERIT when a merit exam is found,
+  NAME_BN otherwise. MERIT without a published exam answers `422 MERIT_NEEDS_EXAMS` with
+  `reason: NO_EXAM` (`MODULE` without EXAMS); a given exam that is not published for that class
+  and year answers `422 MERIT_EXAM_INVALID` (new code).
+- **P5-a5. Permanent stops are not retried:** `SECTION_FULL`, `TARGET_INVALID` and
+  `ACTOR_NOT_ADMIN` end the job at once (BullMQ `UnrecoverableError`; the run stays APPLYING
+  with the code); other errors are retried 5 times with backoff, as planned.
+- **P5-a6. Resume is refused while the job is still in the queue** (`409 RUN_APPLYING`); a
+  finished or failed job of the same id is removed before the new one is queued (BullMQ would
+  ignore a second job with the same id).
+- **P5-a7. The apply-check `version` also covers the target sections' capacities and
+  enrolments**, so a run being applied into the same sections makes another admin check again
+  (`409 PREVIEW_CHANGED`) instead of applying on stale capacity figures.
+- **P5-a8. PROMOTE may go into any other active class** (skipping a class too); REPEAT must stay
+  in the run's class. Rows into a class or section deactivated since are refused at apply
+  (`422 TARGET_INVALID`).
+- **P5-a9. Numbering's PROMOTED strategy** is that of the run that promoted most of the class's
+  students (normally the class below); REPEATER: the class's own run; NEW: Bangla name.
+- **P5-a10. The study group is kept only while it is active.** Changing the merit exam takes the
+  results of pending rows again but never changes a decision.
+- **P5-a11. Audit names:** runs and their steps under `promotion_run` (create, rows, refresh,
+  apply, resume, each apply section, APPLIED); numbering under `class_level` (`step:
+number_rolls`); each leaver under `student` (old and new status).
+- **P5-a12. Setup's "in use" counts do not include promotion rows:** deleting a year, class,
+  section or group a row names answers `409 REFERENCE_CONFLICT` (the foreign key), as for other
+  references the counts do not list.
+
+### P5a after the review (round 1)
+
+What changed is listed in the PR's review comment. Decided alone:
+
+- **P5-a13. No removal of a run-created enrolment.** Correcting a placement (class, section,
+  group) covers a promotion or repeat applied by mistake; leave and return cover someone who
+  should have left. Removing the enrolment would leave its applied row (immutable history,
+  `ENROLLED`) pointing at nothing.
+- **P5-a14. Registers:** a student not ACTIVE without a leaving date (only possible for data set
+  before P5) stays on registers as before; only a leaving date takes someone off, from that day.
+- **P5-a15. A placement change is refused once that year has attendance, an exam roster or fee
+  dues for the student.** The fee dues are counted from the students module (a read of the fees
+  module's table, like the student limit's read of the subscription).
+- **P5-a16. Numbering while runs into the class are not applied** needs an explicit `force` (the
+  wizard asks).
+- **P5-a17. The CI checks job may take 20 minutes** (it takes 8–10 now; at 10 it was cancelled).
+- **P5-a18. Subject choices** are copied and removed through `SubjectChoicesModule` (exams), a
+  module with no imports, so students and promotion can both use it without a cycle.
+
+### P5a after the review (round 2)
+
+Decided alone:
+
+- **P5-a19. `left_on` is the last day on the register** (a leaver is marked that day and gone from
+  the next). The run's default leaving date stays the old year's last day, so graduates are on its
+  register; a leave today keeps the student on today's register.
+- **P5-a20. Roll groups follow the current class:** a row's student now in its run's own class is a
+  repeater, in any other class promoted (S15's "promoted" covers everyone who came up from another
+  class); old roll and merit place only within the run that orders the group.
+- **P5-a21. Capacity counts only students still here.** A student who returns is not checked
+  against the section's capacity again (return checks the student limit only), so a return can
+  take a section over its capacity; the apply-check and the next admission see it.
+- **P5-a22. The device day** uses the same register filter as the daily register (`on-register.ts`)
+  and is covered by the existing device-register tests; no separate leaver test there.
+- **P5-a23. "In use" readers** (`AttendanceUsage`, `ExamUsage`, `FeeUsage`) live in their modules,
+  each a module with no imports, so students reads them without a cycle.
+
+### P5b: the wizard, copies and dues markers (stacked PR)
+
+Built in `feature/sprint-1-p5b-promotion-wizard` (on top of P5a). Decided alone:
+
+- **P5-b1. Teacher copy:** "class teachers" copies every section teacher of a section (the class
+  teacher and the others), keeping the class-teacher flag unless the new section already has one.
+  Staff counted: ACTIVE OWNER, ADMIN, TEACHER or ACCOUNTANT memberships.
+- **P5-b2. Concession copy** also skips students who left (only ACTIVE students enrolled in the new
+  year), and one already on that head in the new year, ended or not.
+- **P5-b3. Term copy** matches existing terms by Bangla name (the table's unique key).
+- **P5-b4. The leavers report** sums every open due of every year (not only earlier years), with
+  fines up to today, and lists each student's latest enrolment.
+- **P5-b5. Phones (P5-Q):** the decision grid stacks each row's controls instead of a sheet per row
+  (one layout for every width; checked at 390 px in Playwright).
+- **P5-b6. The wizard never switches the year by itself**, and its Playwright spec does not switch
+  either (the specs after it live in the seeded current year).
+
+After the review (round 1), decided alone:
+
+- **P5-b7. Teacher copy uses the assignment paths' rule:** an ACTIVE OWNER, ADMIN or TEACHER
+  membership and a staff profile (P5-b1 counted accountants and skipped the profile check).
+- **P5-b8. Fee copies only go forward in time** (`422 YEAR_ORDER` when the target year does not
+  start after the source year). Two concession copies at once never double a concession (the
+  second skips what the first made); the audit row lists the copied student and head pairs, the
+  term copy the copied term names.
+- **P5-b9. A concession that ends after the new year's first day is copied with its end date**
+  (and who ended it, and why); one ending on or before that day is not copied (it does not run in
+  the new year).
+- **P5-b10. The run page's "leaves" defaults the date to the old year's last day.**
+
+After the review (round 2), decided alone:
+
+- **P5-b11. A copied concession that ends in the new year keeps who ended it and why** (the
+  original's `ended_by`/`ended_reason`): the end date was their decision; the copy's own audit
+  row names the admin who copied it.
+- **P5-b12. Terms and concessions copy only from the year just before the target** (`422
+YEAR_ORDER`); amounts from any earlier year (they carry no dates). The wizard copies from the
+  new year's previous year.
+- **P5-b13. Concession copies into one year take turns** (an advisory lock per target year):
+  only open concessions are unique, so two copies at once could each add an ended one. No test
+  forces the race.
+- **P5-b14. The teacher copy follows each assignment path's own rule** (instead of making the
+  section-teacher route stricter): a section teacher needs an ACTIVE OWNER, ADMIN or TEACHER
+  membership, legacy teachers without a staff profile included, as
+  `PUT /attendance/sections/:id/teachers` allows and its tests rely on; a subject teacher also a
+  staff profile, as the exams setup requires. P5-b7's single rule (profile for both) dropped
+  legacy class teachers.
+- **P5-b15. The run page lets a stopped run be fixed** (APPLYING with an error): rows edited,
+  refreshed, the run deleted when nothing is applied; the API refuses while a retry is queued.
+
+## Sprint 1, P4: admission test and merit list (2026-11-18)
+
+Built on P3b (`feature/sprint-1-p3b-admission-public` at `faefd06e`, stacked: PR #24). The plan's
+recommended defaults **P4-A to P4-N are adopted as written** (tie-break `OLDER_FIRST` default with
+`YOUNGER_FIRST` and `NONE`; everyone tied on the last seat selected with a warning; rolls for
+SUBMITTED and SHORTLISTED by application number, never renumbered; absent and below the pass marks
+unranked; statuses change only at publish; republish allowed, ADMITTED never demoted; move-up a
+staff action; the SMS without the score; hundredths up to 1 000 full marks; scores editable after
+publish, audited; the fixed admit card; OWNER/ADMIN only; nothing but the test's details before
+publish; staff print the cards). Decisions taken alone, and where the code differs from the plan:
+
+- **P4-a1 (privacy). A published snapshot, separate from the draft.** The plan wrote the draft's
+  places on the same columns the status page would read, so a rebuild (or a score edited after
+  publish) would have shown before republishing, against its own test ("a correction built but not
+  republished: still version 1's values"). Now a build writes the draft (`test_result`,
+  `merit_position`, `waitlist_position`) and a publish copies the snapshot (`result_*`, and
+  `results_full_marks` on the class). The lookup reads only the snapshot and the roll; the role
+  cannot even read the draft or a live score.
+- **P4-a2. The lookup replaced with P3-b19's recipe:** `GRANT CREATE ON SCHEMA public TO
+jantrik_admission; SET ROLE jantrik_admission; CREATE OR REPLACE …; RESET ROLE; REVOKE CREATE`
+  (same signature, grants kept). Classes were already readable as a whole by the role (P3b), so the
+  plan's column grants on classes were not needed.
+- **P4-a3. A build is stale when anything it read changed:** a hash of the settings, the
+  tie-break and each ranked applicant's score, absence, date of birth and submission time
+  (`merit_inputs_hash`), plus the `builtAt` the admin saw. The plan's `scores_changed_at` alone
+  missed a withdrawal, a corrected date of birth or a changed seat count; it is kept for "changed
+  since publish" (P4-J).
+- **P4-a4. Who is in the list:** a roll and SUBMITTED, SHORTLISTED, SELECTED, WAITLISTED or
+  ADMITTED, or REJECTED by an earlier publish (reason NOT_SELECTED, FAILED or ABSENT, so a
+  correction can move them up). Withdrawn applicants and those rejected by staff for another
+  reason are left out (and keep their old result version, so the status page shows no result).
+- **P4-a5. Who gets a result SMS** is read from the SMS log: the status each application was last
+  told is in the dedupe key (`admission-result:<class>:v<version>:<application>:<status>`), so a
+  move-up within a version is a new SMS; an SMS still waiting is cancelled when its version is no
+  longer published or the status moved on. Its own queue `admission-results` (two processors on
+  one queue would drop each other's jobs).
+- **P4-a6. An application with a test roll stays in its class** (409 `HAS_TEST_ROLL`): a roll
+  belongs to its class's sequence.
+- **P4-a7. Move-up:** everyone sharing the first waitlist position moves together (ties exist
+  only with `NONE`; a tie is never split, as P4-B); the rest renumber from 1. No SMS of its own:
+  the moved applicant appears in the result SMS preview (count 1 when nobody else changed), the
+  plan's "optional single SMS".
+- **P4-a8. The waitlist boundary under `NONE`:** everyone tied on the last waitlisted place is
+  waitlisted, at a shared position (`waitlistTie` warning), as P4-B for the seats.
+- **P4-a9. Rolls need only a test cycle** (no other setting); the first roll is 1 unless
+  `startAt` is given; 422 `ROLLS_EXHAUSTED` above 999 999.
+- **P4-a10. Scores:** typing `a`/`অ` marks absent (the exams' `parseMarks`); a score with absent
+  ticked is 422 `SCORE_AND_ABSENT`; scores need the full marks (422 `TEST_NOT_CONFIGURED`).
+- **P4-a11 (owner, SMS). The result SMS share the institute's daily cap** (2 × active students
+  unless set in the attendance settings): an institute admitting its first students has a cap of
+  0, so every result SMS is skipped until it sets a cap; the preview says "0 left today" and how
+  many would be skipped. Not changed here (the cap is the owner's money rule).
+- **P4-a12. Withdrawing** is P3's status route (`WITHDRAWN` with a reason); no new route.
+- **P4-a13. Publish** sets `status_by`/`status_at` and clears an approval problem only on rows
+  whose status or reason changes; one audit row with the version, counts, the ids by outcome and
+  the flagged ones.
+- **P4-a14. The trigger functions are not named `admission_*`** (`test_score_within_full_marks`,
+  `full_marks_keep_test_scores`): P3b's safety test reserves that prefix for the definer functions.
+- **P4-a15. Not done here:** the bn screenshots at 390 px and the admit card's print check run in
+  CI's Playwright only (this run starts no servers); per-subject marks stay for later (S12).
+- **P4-a16 (review M1). Publish locks before it reads:** every applicant of the class with a roll,
+  in id order (as move-up), then the inputs are checked under the locks; its UPDATE also requires
+  the status it read (409 `MERIT_STALE` otherwise, nothing published). A withdrawal that commits
+  while it waits makes the publish stale; an approval is kept (ADMITTED, flagged if needed).
+- **P4-a17 (review S1, N3). Told = SENT, or QUEUED of the published version.** A result SMS
+  cancelled by a republish or failed told nobody and is owed again; the dedupe key carries the run
+  (`…:<status>:<run id>`), so the resend is a new SMS; a run takes the SMS writers' lock and checks
+  who is still owed before queueing, so two runs never send one SMS twice.
+- **P4-a18 (review S2). A build is published once** (`results_built_at`, 409 `ALREADY_PUBLISHED`,
+  the button off): republishing needs a new build.
+- **P4-a19 (review N1, N2, N4, N5, N6).** Rolls go only to the rows locked and still eligible, and
+  the audit lists what was written; a renumbered waitlist position is audited; the preview's
+  segments and cost count only what the cap lets through; the merit view's counts and warnings
+  leave withdrawn applicants out at once; a safety test pins that `jantrik_admission` has no
+  `CREATE` on `public` after the migrations.
+- **P4-a20 (review round 2). No lock blocks a foreign key:** the class row and the applicant rows
+  P4 locks are taken `FOR NO KEY UPDATE`, so a new application (its foreign key's KEY SHARE on the
+  class) never waits on a test operation; that removed a three-way lock cycle with P3's phone
+  lock (a 500 from a deadlock). A deadlock (`40P01`) or serialization failure (`40001`) anywhere in
+  the API now answers 409 `BUSY` with Retry-After (the lock timeout's answer).
+- **P4-a21 (review round 2 N1). A published result is not put back by hand** to SUBMITTED or
+  SHORTLISTED (409 `TEST_RESULT_PUBLISHED`): the next rebuild would undo a move-up the applicant
+  may already have been told about. Withdraw, reject and approve stay allowed.
+- **P4-a22 (review round 2 N2, recorded, not changed).** An SMS the worker has taken (passed its
+  relevance check, provider call in flight) is still QUEUED; if a republish keeps the status and a
+  new run starts in that window, the applicant can get the same result twice. Closing it needs a
+  SENDING state in the shared SMS pipeline (all purposes), which is beyond P4: a rare duplicate
+  of the same news.
+- **P4-a23 (review round 2 N3, N4).** The rolls' audit lists `{applicationId, roll}` in roll order;
+  a run's `skipped` means "not queued": over the cap, or no longer owed when the run reached them.
+- **P4-a24. The migration `20261117300100_admission_test` was edited in place** after the first
+  review (`results_built_at`). No database outside scratch and CI ever applied it; any that applied
+  the earlier version must be recreated (Prisma would refuse the changed checksum).
+
+## Sprint 1, P6: notices and broadcast (2026-11-17)
+
+Built during the unattended day run of 2026-11-17 from the P6 plan (PR #15,
+`docs/plans/sprint-1-p6-notices.md`) with its recommended defaults P6-A to P6-N and its split
+(P6a notices, P6b broadcasts). Decisions taken alone, each the safest option:
+
+- **P6-a1. Notices have no `SCHEDULED` status** (P6-A as recommended): visibility is computed
+  from `status`, `publish_at` and `expires_at` when read; no job. Publishing again moves a
+  scheduled notice's time; a live notice cannot be "published" again (409 `NOT_EDITABLE`).
+- **P6-a2. A publish time more than a minute in the past is refused** (422
+  `SCHEDULE_OUT_OF_RANGE`), not treated as "now": a past date is a mistake in the form.
+- **P6-a3. Targets on a `STAFF` notice are refused** (422 `TARGET_INVALID`) rather than ignored,
+  and a target section must be a current-year section of the target class (sections belong to a
+  year; one of another year would match no child).
+- **P6-a4. The expiry is a last day** in the form (the notice leaves the board at the end of that
+  day, Asia/Dhaka); the API stores the instant. It must be after the publish time (422
+  `EXPIRY_INVALID`); an unchanged past expiry does not block other edits.
+- **P6-a5. Only ACTIVE, not deleted children count** for a guardian's targeted notices and for the
+  read counts (a child who left no longer brings their class's notices).
+- **P6-a6. Audit entries hold the body's length, not the body** (a notice can be 5 000
+  characters; the title, audience, targets, pin and expiry are recorded).
+- **P6-a7. The dashboard card shows for staff and guardians** below the role's own cards, from
+  the same query as the board (no extra request when both are open).
+- **P6-a8. The Playwright spec signs in staff only** (owner and teacher by password): the demo
+  guardians' OTP budget (one code a minute, 5 per 15 minutes) is already shared by other specs.
+  Guardian visibility is covered by the API tests.
+- **Plan and code differences:** the plan's `/notices/new` and `/notices/[id]/edit` live under
+  `/notices/manage/` (one layout sends the management texts only to OWNER/ADMIN pages); the
+  manage page lists notices as rows rather than a table (it works at 390 px without scrolling
+  sideways).
+
+Changed after the review of #25 (round 1, nits only):
+
+- **P6-a9. The unread count's cache has a per-person read version** bumped after a read commits,
+  instead of deleting the entry (a count computed just before the read could otherwise be cached
+  again, stale, for 2 minutes).
+- **P6-a10. An edit keeps the targets the notice already had** without the current-year check; new
+  targets are still checked. An edit locks the notice before reading what the audit records.
+- **P6-a11. The board excerpt is cut at 200 characters as people see them** (grapheme clusters:
+  a Bangla conjunct or a multi-code-point emoji is never split; round 2).
+- **P6-a12. The per-person read version expires after an hour** (set with the increment), longer
+  than any count cached under it (round 2).
+
+P6b (SMS broadcasts), taken alone:
+
+- **P6-b1. Editing a scheduled broadcast puts it back to DRAFT** (its job stops by itself): the
+  admin previews and schedules again, so the cap, the count and quiet hours are all checked again.
+- **P6-b2. A draft can be cancelled too** (status CANCELLED): broadcasts are never deleted, so this
+  is how an admin tidies one away.
+- **P6-b3. A job that runs early or inside quiet hours delays itself** (BullMQ `moveToDelayed`
+  on the same job id) and moves `scheduled_at` and the `notices:due` score to the new time; the
+  sweep remains the safety net.
+- **P6-b4. Who is "without phone":** a student with no guardian phone of the chosen kind (no
+  primary guardian phone for `PRIMARY_GUARDIANS`), or a staff member with no login phone.
+- **P6-b5. The relevance check sends a queued broadcast SMS only while the broadcast is `SENT`**
+  (P6-L is ready: a later "stop" only has to change the status).
+- **P6-b6. The composer's prefix is the institute's registered name** (`MeContext.tenant.name`),
+  not the profile's short name (P2): the name is always there, and the admin may edit it.
+- **P6-b7. The Playwright spec composes and previews but does not send:** CI runs at any hour, and
+  inside Dhaka's quiet hours a send is refused by design. Sending, the cap, quiet hours and the
+  job are covered by the API tests with a fake clock.
+
+Changed after the review of #26 (round 1; each must/should fix with a test seen failing first):
+
+- **P6-b8. The preview's token is what the admin confirms (must-fix B1).** It hashes the text, the
+  recipient kind, the targets, the notice, the recipient count, the segments and the cost; send
+  and schedule must present it with the count, and anything changed since (another tab, another
+  admin, a new rate) is 409 `PREVIEW_CHANGED` with the new segments and cost. Before, only the
+  count was compared: a draft edited after its preview could go out at three times the cost.
+- **P6-b9. A broadcast found more than 3 hours late expires instead of sending (B3)**, measured from
+  its stored time (a quiet-hours wait moves that to 08:00): new status `EXPIRED` with
+  `{lateMinutes}`, on the OWNER/ADMIN dashboard for 3 days; a new preview and send is needed.
+  The sweep and heal-on-read still re-add such jobs; the job then expires them.
+- **P6-b10. Lost SMS jobs of a sent broadcast are re-added (B4):** after a send, and whenever its
+  job runs again, the jobs of its QUEUED SMS are re-added (job id = the SMS id, so existing jobs
+  are untouched) before its due entry is dropped; a failure keeps the entry and retries. Not
+  built: a general sweep for QUEUED SMS of other purposes whose job was lost (single SMS rely on
+  the after-commit add, as before P6); a follow-up if wanted.
+- **P6-b11. Broadcast SMS have a lower queue priority (B5):** BullMQ takes jobs without a priority
+  (login codes, receipts, absent SMS) before prioritised ones, so a large broadcast never delays a
+  login code.
+- **P6-b12. Quiet hours hold each broadcast SMS too (B8):** an SMS still waiting at 21:00 is delayed
+  (still QUEUED) until 08:00 by the SMS worker, never cancelled. Other purposes are unchanged.
+- **P6-b13. The send job retries with backoff; the sweep replaces a failed job (B2); the due entry is
+  dropped only if no new schedule changed it meanwhile (compare-and-delete on its score, B7).**
+  B7's race is narrow and has no deterministic test.
+- **P6-b14. One grouped query counts the SMS of a page of broadcasts, with an index on
+  `sms_logs (tenant_id, related_id)` (B6).**
+- **P6-b15. Segment counts never split a character (N3).** `smsLength` (shared by every SMS cost)
+  now counts parts the way gateways split them: a GSM-7 extension character or an emoji at a part's
+  end starts the next part. In that rare case the count (and the cost shown in fee reminders and
+  exam results too) is one higher than before; otherwise unchanged.
+- **Small ones:** a text of spaces only is 422 `SMS_EMPTY` (N1); the job re-reads who scheduled it
+  under the row lock and runs again for a new scheduler (N2); dashboard snippets are cut at whole
+  characters (N4).
+- **The migration `20261117410100_sms_broadcasts` was edited in place** (the `EXPIRED` value, its
+  CHECKs, the index). Only scratch and CI databases had applied it.
+
+Changed after the review of #26, round 2 (each should-fix with a test seen failing first):
+
+- **P6-b16. A scheduled broadcast is not sent when it became much dearer (SF1, money; for you to
+  confirm).** The audience is resolved again at send time (S19), so the confirmed token cannot
+  cover it: when the real cost exceeds the confirmed one by more than 10% and by more than one SMS,
+  nothing is sent (`COST_CHANGED`, on the dashboard; a new preview and confirmation is needed).
+  Within that margin it is sent and its real cost is stored and shown next to the previewed one.
+  Alternative: always send (as before) and only show the difference.
+- **P6-b17. The lateness limit counts from the time the admin chose (SF2).** A wait for quiet hours
+  no longer overwrites it; a broadcast that would go out more than 3 hours late expires instead.
+  With 3 hours and quiet hours of 11, every quiet-hours wait now expires (a job found at 23:20 for
+  20:30 is not sent the next morning); the early-run wait is unchanged.
+- **P6-b18. A broadcast that was never sent can be edited back into a draft (N-a)**, rather than a
+  "copy to a new draft" action: simpler, and nothing was sent, so no money history is lost (the
+  audit keeps the old status and reason).
+- **P6-b19. Opening the broadcasts list re-adds the jobs of sent broadcasts' SMS still QUEUED 10
+  minutes later, outside quiet hours (N-c).** Stopping a sent broadcast is a follow-up (P6-L).
+- **P6-b20. Fee reminders and exam result SMS get the bulk priority too (N-d):** they still queue
+  one by one with the same rules; only their place behind single SMS changes.
+- **P6-b21. The send job's person cannot be chosen by the app login (found by the merge check
+  with P1-J8, fixed at the rebase, 2026-11-27).** The job signs its context as
+  `sms_broadcasts.scheduled_by_id` and checks that person's roles; `jantrik_app` could write that
+  column, so an SQL injection in one person's request could have a broadcast sent as another admin
+  of the institute. Now two triggers (migration `20261117410200`) hold, for a request (a signed
+  person): a row it leaves `SCHEDULED` is scheduled by that person; it sets the scheduler only to
+  itself or clears it; it changes a `SCHEDULED` broadcast's targets only if it scheduled it. So an
+  injection can neither name someone else nor edit, retarget or bring back (UPDATE, or INSERT … ON
+  CONFLICT) a broadcast another person scheduled (the review's round 1 found the first trigger
+  covered only writes of the column itself). Every app path already works this way: scheduling and
+  send now set the caller; editing goes back to `DRAFT` before the targets change; cancelling and
+  the job's outcomes leave `SCHEDULED`. The approach of P1-J8k (`student_imports.created_by_id`):
+  no new role, no `.env` line, no API change. Like P1-J8k, a context with no person (only the
+  worker and server code sign one) is not checked.
+  - **Review round 2 (must-fix, fixed with a two-connection test):** the targets check locks the
+    broadcast `FOR SHARE` by its id, so a target change racing the scheduling transaction waits
+    for it and is then refused, instead of changing the audience of a broadcast its scheduler
+    already confirmed. An API test now has a second admin cancel, edit and send a broadcast the
+    first admin scheduled.
+  - **Recorded (review round 2):** the platform routes (`InstituteProvisioning.inTenant`) and the
+    fallback of `TenantAccessService.inTenant` run as `jantrik_app` with an institute and no
+    person, so an injection there would not be checked by these triggers (P1-J8k has the same
+    gap; none of those paths builds SQL from request input). The job also reads the audience at
+    send time (enrolments, guardian phones, the current year, memberships), which `jantrik_app`
+    can write: an injection could redirect a scheduled text to other phones within the 10 %
+    cost check (S19 resolves the audience at send time; P1-J10).
+  - **Only with #20:** before P1-J8, an injection can still set `app.user_id` itself, so the
+    triggers are a barrier only once #20 is merged. The merge order already puts #20 first; #26
+    must not go to production before #20.
+  - **Recorded, not changed (P1-J10):** `cancelled_by_id`, `created_by_id` and the Redis due set
+    give no such power (nothing acts as those people; only the API writes Redis). Inside its own
+    institute, `jantrik_app` can still insert `memberships`, `audit_logs` and `sms_logs`, so this
+    protects whom the job acts as, not SMS sending as such. P1-J8k has the same editing gap: a
+    colleague can still change the rows, mapping and status of an import that runs as its uploader
+    (already recorded under P1-J8q).
+- **Recorded only (N-e, N-f):** the edited migration `20261117410100_sms_broadcasts` needs fresh
+  databases wherever its earlier version was applied (only scratch and CI here); its new index on
+  `sms_logs` is created without `CONCURRENTLY`, fine before launch.
+
+## Test year from the test clock (day run 2026-11-27)
+
+Branch `test/test-year-from-clock`, one PR, test-only. Decided by the agent alone (the owner was
+away); each can be changed in review.
+
+TY-1. **The test year is the test clock's calendar year, taken when the institute is made.** The
+API's `createTenant`/`school` and the db package's `createTenant` give the institute the
+calendar year of today in Asia/Dhaka: the FakeClock's date when the test installed one
+(`createHarness({ clock })`), otherwise `todayIn` (the db tests have no clock). A FakeClock test
+that makes an institute with its clock moved gets that day's year (devices-retention makes its
+institutes with the clock 800 days back). A test with a fixed clock of its own
+(admission-functions' `p_now`) takes its years from that clock. The next, last and other years a
+test creates are counted from the institute's year (a leap year at least two years on, +10, +14),
+so they never meet it. To change: take the year once per harness instead.
+
+TY-2. **Reports that never look back before the year's start get a year that began months ago.**
+The attendance trend and absence streaks stop at the current year's start (product behaviour,
+kept). With a calendar year their tests fail from 1 to about 30 January, so they use
+`school(h, { yearAroundToday: true })`: the year begins on the 1st of the month three months back
+and lasts a year, as `feesSchool`'s always has. To change: move those tests onto a FakeClock.
+
+TY-3. **Dates that depend on neither the year nor today are left as written:** holidays, the
+admission test's date, birth dates, the rows of the db RLS and constraint tests, format checks
+such as `'31/12/2026'`, and years that are never created (2029/2030 in a refused range, 2050 in a
+refused copy).
+
+TY-4. **Not changed: the test phones run out in about May 2028 (F-6).** The counter of unique test
+phones never goes behind a clock that started on 1 November 2026 at one number a second, so the
+clock alone uses up the 49 million numbers around 21 May 2028. From then every test that makes a
+user stops with F-6's message (recreate the test database and move the start date). It is the one
+way left for the suites to fail as dates pass; changing it changes how test phones stay unique,
+so it is left for the owner. Suggested: move `EPOCH_MS` forward with a fresh test database, or
+count from the database's highest test phone instead of the clock.
+
+TY-5. **The date simulation is not part of the repo.** The "as if it were that date" runs (a
+Postgres under libfaketime, Node's `Date` moved by the same offset) used the coordinator's scratch
+tools; the PR says how to run them. Committing them would add tooling to a test-only change.

@@ -18,7 +18,7 @@ import { AttendanceSettingsService } from '../../attendance/attendance-settings.
 import { AuditService } from '../../audit/audit.module.js';
 import { apiError } from '../../common/api-error.js';
 import { RequestContext } from '../../common/request-context.js';
-import { TenantSmsService } from '../../sms/tenant-sms.service.js';
+import { BULK_SMS_PRIORITY, TenantSmsService } from '../../sms/tenant-sms.service.js';
 import { Db } from '../../tenancy/db.service.js';
 import { balanceOf } from '../due-balance.js';
 import { FEES_QUEUE, FeeDuesService } from '../dues/fee-dues.service.js';
@@ -213,6 +213,7 @@ export class FeeRemindersService implements OnModuleInit {
     for (const c of await this.candidates(filter, studentIds)) {
       if (!c.phone) continue;
       await this.sms.queue({
+        priority: BULK_SMS_PRIORITY,
         purpose: 'FEE_REMINDER',
         phone: c.phone,
         body: reminderSmsText({

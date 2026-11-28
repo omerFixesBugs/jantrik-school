@@ -164,6 +164,7 @@ export class FeeLedgerService {
         : null;
     return {
       today,
+      currentYearId: ctx.year?.id ?? null,
       student,
       family: membership && rank ? { groupId: membership.groupId, rank } : null,
       dues,

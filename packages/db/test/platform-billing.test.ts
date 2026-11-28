@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { addMonths, todayIn } from '@jantrik/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   withPlatformSession,
@@ -21,11 +22,11 @@ import {
 
 const DENIED = /permission denied/i;
 const iso = (d: Date) => d.toISOString().slice(0, 10);
-/** The first day of the month `delta` months from now (UTC is fine for these dates). */
-const month = (delta: number) => {
-  const d = new Date();
-  return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + delta, 1)));
-};
+/**
+ * The first day of the month `delta` months from this month in Asia/Dhaka, as the platform
+ * functions count months (the UTC month is the one before until 06:00 on every 1st).
+ */
+const month = (delta: number) => `${addMonths(todayIn('Asia/Dhaka').slice(0, 7), delta)}-01`;
 
 interface Plan {
   pricing?: 'PER_STUDENT' | 'FLAT';

@@ -72,7 +72,12 @@ describe('institute setup', () => {
       ).body as SetupSection;
 
       const next = suggestNextYear(year!);
-      expect(next).toMatchObject({ name: '2027', startDate: '2027-01-01', endDate: '2027-12-31' });
+      const y = Number(year!.startDate.slice(0, 4)) + 1;
+      expect(next).toMatchObject({
+        name: String(y),
+        startDate: `${y}-01-01`,
+        endDate: `${y}-12-31`,
+      });
       const created = (
         await http(h)
           .post('/setup/academic-years')
@@ -113,11 +118,13 @@ describe('institute setup', () => {
         .set(bearer(admin))
         .expect(409);
       expect(r.body.code).toBe('IN_USE');
+      // A year far from the institute's two (this year and next).
+      const far = Number(year!.startDate.slice(0, 4)) + 14;
       const empty = (
         await http(h)
           .post('/setup/academic-years')
           .set(bearer(admin))
-          .send({ name: '2040', startDate: '2040-01-01', endDate: '2040-12-31' })
+          .send({ name: String(far), startDate: `${far}-01-01`, endDate: `${far}-12-31` })
           .expect(201)
       ).body as SetupAcademicYear;
       await http(h).delete(`/setup/academic-years/${empty.id}`).set(bearer(admin)).expect(204);

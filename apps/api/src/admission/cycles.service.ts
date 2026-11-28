@@ -33,6 +33,7 @@ const CYCLE_SELECT = {
   requiresTest: true,
   collectPhoto: true,
   fields: true,
+  meritTieBreak: true,
   academicYear: { select: { id: true, name: true, startDate: true } },
   classes: {
     orderBy: [{ classLevel: { sortOrder: 'asc' } }, { createdAt: 'asc' }],
@@ -40,6 +41,7 @@ const CYCLE_SELECT = {
       id: true,
       seats: true,
       isOpen: true,
+      resultsVersion: true,
       classLevel: { select: NAMED },
       studyGroup: { select: NAMED },
     },
@@ -135,6 +137,17 @@ export class AdmissionCyclesService {
         );
       }
     }
+    // The order of a published merit list never changes under it (sprint 1 P4).
+    if (input.meritTieBreak !== undefined && input.meritTieBreak !== old.meritTieBreak) {
+      const published = await tx.admissionCycleClass.count({
+        where: { cycleId: id, resultsVersion: { gt: 0 } },
+      });
+      if (published > 0) {
+        throw apiError(409, 'RESULTS_PUBLISHED', 'A merit list of this cycle is published', {
+          field: 'meritTieBreak',
+        });
+      }
+    }
     if (input.academicYearId !== undefined && input.academicYearId !== old.academicYearId) {
       const year = await tx.academicYear.findUnique({
         where: { id: input.academicYearId },
@@ -165,6 +178,7 @@ export class AdmissionCyclesService {
     set('requiresTest', input.requiresTest);
     set('collectPhoto', input.collectPhoto);
     set('fields', input.fields);
+    set('meritTieBreak', input.meritTieBreak);
     set('academicYearId', input.academicYearId);
     if (Object.keys(changed).length > 0) {
       await tx.admissionCycle.update({
@@ -411,6 +425,7 @@ export class AdmissionCyclesService {
         requiresTest: r.requiresTest,
         collectPhoto: r.collectPhoto,
         fields: (r.fields ?? {}) as Partial<AdmissionFieldSettings>,
+        meritTieBreak: r.meritTieBreak,
         takingApplications: r.status === 'OPEN' && r.opensAt <= now && now < r.closesAt,
         classes: r.classes.map((c) => {
           const mine = byClass.filter((g) => g.cycleClassId === c.id);
@@ -420,6 +435,7 @@ export class AdmissionCyclesService {
             studyGroup: c.studyGroup,
             seats: c.seats,
             isOpen: c.isOpen,
+            resultsVersion: c.resultsVersion,
             applications: mine
               .filter((g) => !NOT_IN_PLAY.includes(g.status))
               .reduce((n, g) => n + g._count._all, 0),

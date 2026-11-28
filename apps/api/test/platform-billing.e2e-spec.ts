@@ -1,11 +1,12 @@
 import { withTenant } from '@jantrik/db';
-import type {
-  BillingNotice,
-  PlatformGenerateResult,
-  PlatformInstituteDetail,
-  PlatformInstitutePage,
-  PlatformInvoiceDetail,
-  PlatformInvoicePage,
+import {
+  addMonths,
+  type BillingNotice,
+  type PlatformGenerateResult,
+  type PlatformInstituteDetail,
+  type PlatformInstitutePage,
+  type PlatformInvoiceDetail,
+  type PlatformInvoicePage,
 } from '@jantrik/shared';
 import {
   addMember,
@@ -15,6 +16,7 @@ import {
   createTenant,
   http,
   otpLogin,
+  testToday,
   type Harness,
 } from './support/harness.js';
 import { ownerClient, platform, platformAdminCookie } from './support/platform.js';
@@ -23,13 +25,11 @@ import { ownerClient, platform, platformAdminCookie } from './support/platform.j
 // overdue notice. See docs/platform.md.
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
-/** YYYY-MM, `delta` months from now. */
-const month = (delta: number) => {
-  const d = new Date();
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + delta, 1))
-    .toISOString()
-    .slice(0, 7);
-};
+/**
+ * YYYY-MM, `delta` months from this month in Asia/Dhaka, as the platform counts months (the UTC
+ * month is the one before until 06:00 on every 1st).
+ */
+const month = (delta: number) => addMonths(testToday().slice(0, 7), delta);
 const plan = (over: Record<string, unknown> = {}) => ({
   planName: 'Standard',
   pricing: 'PER_STUDENT',

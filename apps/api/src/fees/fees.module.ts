@@ -68,6 +68,9 @@ import {
   type FeeSiblingsView,
   type FeeStudentHit,
   type FeeTermView,
+  feeLeaversQuerySchema,
+  type FeeCopyResult,
+  type FeeLeaversReport,
 } from '@jantrik/shared';
 import { AttendanceModule } from '../attendance/attendance.module.js';
 import { RequireModule, Roles } from '../common/decorators.js';
@@ -118,6 +121,7 @@ class FeeSubmissionsQueryDto extends zodDto(feeSubmissionsQuerySchema) {}
 class VerifySubmissionDto extends zodDto(verifySubmissionSchema) {}
 class RejectSubmissionDto extends zodDto(rejectSubmissionSchema) {}
 class FeeDueListQueryDto extends zodDto(feeDueListQuerySchema) {}
+class FeeLeaversQueryDto extends zodDto(feeLeaversQuerySchema) {}
 class FeeCollectionsQueryDto extends zodDto(feeCollectionsQuerySchema) {}
 class FeeReminderFilterDto extends zodDto(feeReminderFilterSchema) {}
 class SendFeeRemindersDto extends zodDto(sendFeeRemindersSchema) {}
@@ -202,6 +206,20 @@ export class FeeSetupController {
   @HttpCode(200)
   copyAmounts(@Body() dto: CopyFeeAmountsDto): Promise<{ copied: number }> {
     return this.setup.copyAmounts(dto);
+  }
+
+  /** Terms moved one year (P5, S16). */
+  @Post('terms/copy')
+  @HttpCode(200)
+  copyTerms(@Body() dto: CopyFeeAmountsDto): Promise<FeeCopyResult> {
+    return this.setup.copyTerms(dto);
+  }
+
+  /** Concessions still running, for students enrolled in the new year (P5-N). */
+  @Post('concessions/copy')
+  @HttpCode(200)
+  copyConcessions(@Body() dto: CopyFeeAmountsDto): Promise<FeeCopyResult> {
+    return this.setup.copyConcessions(dto);
   }
 
   @Get('concessions')
@@ -394,6 +412,20 @@ export class FeeReportsController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<string> {
     return sendCsv(res, await this.reports.dueListCsv(q));
+  }
+
+  /** Students who owe but are not on the due list: leavers, not carried over, deactivated (P5-K). */
+  @Get('reports/leavers-with-dues')
+  leavers(): Promise<FeeLeaversReport> {
+    return this.reports.leaversWithDues();
+  }
+
+  @Get('reports/leavers-with-dues/csv')
+  async leaversCsv(
+    @Query() q: FeeLeaversQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    return sendCsv(res, await this.reports.leaversCsv(q.locale));
   }
 
   @Get('reports/collections')

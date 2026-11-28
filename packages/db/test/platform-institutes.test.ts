@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { dateToDb, todayIn } from '@jantrik/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withPlatformSession, withTenant, type PrismaClient, type TenantTx } from '../src/index.js';
 import {
@@ -222,7 +223,8 @@ describe('platform institute functions', () => {
           status: 'SENT',
           segments: 1,
           body: 'x',
-          localDate: new Date(),
+          // Today in the institute's timezone, as "this month" is counted (not the UTC date).
+          localDate: dateToDb(todayIn('Asia/Dhaka')),
         },
       });
     });
