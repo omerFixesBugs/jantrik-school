@@ -15,8 +15,10 @@ declare global {
 }
 
 export function Providers({ children }: { children: ReactNode }) {
-  // The platform area (Jantrik's own admins) has its own login; no institute session there.
-  const platform = usePathname()?.startsWith('/platform') ?? false;
+  // The platform area (Jantrik's own admins) has its own login, and the public admission form
+  // (/apply) needs none: no institute session is restored there (no /auth/refresh call).
+  const path = usePathname() ?? '';
+  const platform = path.startsWith('/platform') || path.startsWith('/apply');
   // The page is alive: tell the boot watchdog, and take down its banner if a slow start showed it.
   useEffect(() => {
     window.__jantrikHydrated = true;

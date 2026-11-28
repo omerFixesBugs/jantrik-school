@@ -49,5 +49,7 @@ export * from './password.js';
 export * from './password-schema.js';
 export * from './files.js';
 export * from './files-schema.js';
+export * from './admission.js';
+export * from './admission-schema.js';
 export * from './promotion.js';
 export * from './promotion-schema.js';

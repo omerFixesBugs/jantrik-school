@@ -3,12 +3,14 @@ import type { GuardianRelation, Prisma } from '@jantrik/db';
 import {
   dateFromDb,
   dateToDb,
+  todayAt,
   type IsoDate,
   type LeaveInput,
   type StudentProfile,
 } from '@jantrik/shared';
 import { AuditService } from '../audit/audit.module.js';
 import { apiError } from '../common/api-error.js';
+import { Clock } from '../common/clock.js';
 import { RequestContext } from '../common/request-context.js';
 import { AttendanceUsage } from '../attendance/attendance-usage.js';
 import { ExamUsage } from '../exams/setup/exam-usage.js';
@@ -103,6 +105,7 @@ export class StudentAdminService {
     private readonly codes: StudentCodesService,
     private readonly guardians: GuardianLinker,
     private readonly access: StudentAccess,
+    private readonly clock: Clock,
     private readonly choices: SubjectChoicesCopier,
     private readonly attendanceUsage: AttendanceUsage,
     private readonly examUsage: ExamUsage,
@@ -115,13 +118,31 @@ export class StudentAdminService {
 
   // ─────────────────────────── Admission ───────────────────────────
 
-  async admit(input: AdmissionData): Promise<StudentProfile> {
+  /**
+   * `fromApplication`: an approved admission application (sprint 1 P3a), always a new child, so the
+   * December rule below holds even when the institute already marked that year current (P3-a18).
+   */
+  async admit(
+    input: AdmissionData,
+    opts: { fromApplication?: boolean } = {},
+  ): Promise<StudentProfile> {
     const tx = this.db.tx;
     await this.assertStudentLimit();
     const { year } = await this.checkEnrolment(input.enrolment, null);
     await this.checkUnique(input.birthRegistrationNo ?? null, input.studentCode ?? null, null);
     const studentCode =
       input.studentCode ?? (await this.codes.next(year.startDate.getUTCFullYear()));
+    // A child admitted into a year that has not started and is not current yet (in December, for
+    // January) owes from that year's start (decision P3-K): recorded now, never derived later.
+    // A current year that has not started is an institute's first year (existing students typed
+    // in, P3-a10) or an early switch: only an approved application is known to be a new child.
+    const tenant = await tx.tenant.findFirstOrThrow({ select: { timezone: true } });
+    const yearStart = dateFromDb(year.startDate);
+    const admissionDateForDues =
+      (opts.fromApplication || !year.isCurrent) &&
+      yearStart > todayAt(tenant.timezone, this.clock.now())
+        ? year.startDate
+        : null;
 
     const student = await tx.student.create({
       data: {
@@ -129,6 +150,7 @@ export class StudentAdminService {
         ...pickStudent(input),
         studentCode,
         dateOfBirth: input.dateOfBirth ? dateToDb(input.dateOfBirth) : null,
+        admissionDateForDues,
       },
       select: { id: true },
     });
@@ -157,6 +179,7 @@ export class StudentAdminService {
         ...pickStudent(input),
         studentCode,
         dateOfBirth: input.dateOfBirth ?? null,
+        admissionDateForDues: admissionDateForDues ? yearStart : null,
         enrolmentId: enrolment.id,
         enrolment: { ...input.enrolment },
         guardians: linked,
@@ -192,7 +215,7 @@ export class StudentAdminService {
     const tx = this.db.tx;
     const year = await tx.academicYear.findUnique({
       where: { id: e.academicYearId },
-      select: { id: true, startDate: true },
+      select: { id: true, startDate: true, isCurrent: true },
     });
     if (!year) throw new NotFoundException('Academic year not found');
     const classLevel = await tx.classLevel.findUnique({

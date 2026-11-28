@@ -1,0 +1,192 @@
+import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Inject, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Queue } from 'bullmq';
+import type { Redis } from 'ioredis';
+import type { Env } from '../../config/env.js';
+import { RateLimiter } from '../../redis/rate-limiter.service.js';
+import { REDIS } from '../../redis/redis.constants.js';
+
+export const ADMISSION_SMS_QUEUE = 'admission-sms';
+export const ADMISSION_OTP_JOB = 'otp';
+export const ADMISSION_SUBMITTED_JOB = 'submitted';
+
+/** The code job: as the login code's, the code travels in the job (removed when done). */
+export interface AdmissionOtpJob {
+  tenantId: string;
+  phone: string;
+  code: string;
+  locale: 'bn' | 'en';
+}
+
+/** The "received" job: ids only; the worker reads the application in its institute's context. */
+export interface AdmissionSubmittedJob {
+  tenantId: string;
+  applicationId: string;
+  slug: string;
+}
+
+export const ADMISSION_OTP_TTL_SEC = 5 * 60;
+export const ADMISSION_OTP_MAX_ATTEMPTS = 5;
+/**
+ * The status page's codes have budgets of their own (review round 2, follow-up), which the form's
+ * code requests never read: per phone 5 a day across institutes, and a fixed fifth of the
+ * institute's ceiling (admissionOtpCeilings). Only a phone that made the application gets one.
+ */
+export const ADMISSION_STATUS_OTP_PER_PHONE_PER_DAY = 5;
+
+/** What a code is for: the form (a submit) or the status page (read the status). */
+export type AdmissionCodePurpose = 'form' | 'status';
+
+/**
+ * ADMISSION_OTP_PER_TENANT_PER_DAY caps all of an institute's codes in a day together (second
+ * follow-up): the status page gets a fixed fifth, the form the rest. Fixed shares, so neither side
+ * reads the other's counter (no oracle) and the two never add up to more than the setting.
+ */
+export function admissionOtpCeilings(total: number): Record<AdmissionCodePurpose, number> {
+  const status = Math.floor(total / 5);
+  return { form: total - status, status };
+}
+
+/** Each purpose has its own code and attempts: a status code never verifies as a form code. */
+const slot = (purpose: AdmissionCodePurpose) =>
+  purpose === 'status' ? 'otp:admission-status' : 'otp:admission';
+const codeKey = (purpose: AdmissionCodePurpose, tenantId: string, phone: string) =>
+  `${slot(purpose)}:${tenantId}:${phone}`;
+const attemptsKey = (purpose: AdmissionCodePurpose, tenantId: string, phone: string) =>
+  `${slot(purpose)}:attempts:${tenantId}:${phone}`;
+
+/**
+ * The applicant's phone code (sprint 1 P3b). Codes live only in Redis as
+ * HMAC-SHA256(OTP_PEPPER, "admission:<institute>:<phone>:<code>"), 5 minutes, 5 attempts, single
+ * use even under races (the delete wins), like the login code; but any valid Bangladeshi mobile may
+ * get one (applicants have no account). Limits (review focus 1): per phone one a minute and five a
+ * day, per address 20 an hour, and per institute ADMISSION_OTP_PER_TENANT_PER_DAY a day whatever
+ * the phones and addresses (both kinds of code together, admissionOtpCeilings). The caller checks
+ * Turnstile first, so a refused token uses no counter.
+ */
+@Injectable()
+export class AdmissionOtpService {
+  constructor(
+    @Inject(REDIS) private readonly redis: Redis,
+    private readonly limiter: RateLimiter,
+    private readonly config: ConfigService<Env, true>,
+    @InjectQueue(ADMISSION_SMS_QUEUE) private readonly queue: Queue<AdmissionOtpJob>,
+  ) {}
+
+  /**
+   * The attempt's own limits, counted for every attempt (refused ones too): per address 20 an
+   * hour, and one code per phone per institute a minute. Call first.
+   */
+  async limitAttempt(input: { tenantId: string; phone: string; ip: string }): Promise<void> {
+    await this.limiter.consume(
+      { key: `adm-otp-ip:${input.ip}`, limit: 20, windowSec: 3600 },
+      {
+        key: `adm-otp-phone-1m:${input.tenantId}:${input.phone}`,
+        limit: 1,
+        windowSec: this.config.get('ADMISSION_OTP_PHONE_COOLDOWN_SEC', { infer: true }),
+      },
+    );
+  }
+
+  /**
+   * Sends a code. The shared budgets (the phone's five a day across institutes, the institute's
+   * ceiling) are spent only by a code that is really sent: both are checked first and counted
+   * together, or neither (review of P3b, M1: refused requests used to exhaust the ceiling).
+   * A spent budget is 429 with Retry-After. A status-page code (`purpose: 'status'`) spends only
+   * the status budgets, never the form's, and a spent one sends nothing and answers false: no
+   * request can tell that a status code was or was not sent (review round 2 and its follow-up).
+   */
+  async issue(input: {
+    tenantId: string;
+    phone: string;
+    today: string;
+    locale: 'bn' | 'en';
+    purpose: AdmissionCodePurpose;
+  }): Promise<boolean> {
+    const { tenantId, phone, purpose } = input;
+    const ceiling = admissionOtpCeilings(
+      this.config.get('ADMISSION_OTP_PER_TENANT_PER_DAY', { infer: true }),
+    )[purpose];
+    if (purpose === 'status') {
+      const sent = await this.limiter.tryConsume(
+        {
+          key: `adm-otp-status-phone:${phone}`,
+          limit: ADMISSION_STATUS_OTP_PER_PHONE_PER_DAY,
+          windowSec: 86_400,
+        },
+        {
+          key: `adm-otp-status-tenant:${tenantId}:${input.today}`,
+          limit: ceiling,
+          windowSec: 86_400,
+        },
+      );
+      if (!sent) return false;
+    } else {
+      await this.limiter.consumeIfAllowed(
+        { key: `adm-otp-phone-day:${phone}`, limit: 5, windowSec: 86_400 },
+        { key: `adm-otp-tenant:${tenantId}:${input.today}`, limit: ceiling, windowSec: 86_400 },
+      );
+    }
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    await this.redis
+      .multi()
+      .set(
+        codeKey(purpose, tenantId, phone),
+        this.hmac(tenantId, phone, code),
+        'EX',
+        ADMISSION_OTP_TTL_SEC,
+      )
+      .del(attemptsKey(purpose, tenantId, phone))
+      .exec();
+    await this.queue.add(
+      ADMISSION_OTP_JOB,
+      { tenantId, phone, code, locale: input.locale },
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2_000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    );
+    return true;
+  }
+
+  /** True once for a correct code; every failure looks the same. */
+  async verify(input: {
+    tenantId: string;
+    phone: string;
+    code: string;
+    ip: string;
+    purpose: AdmissionCodePurpose;
+  }) {
+    const { tenantId, phone, purpose } = input;
+    const codeAt = codeKey(purpose, tenantId, phone);
+    const attemptsAt = attemptsKey(purpose, tenantId, phone);
+    await this.limiter.consume({ key: `adm-verify-ip:${input.ip}`, limit: 30, windowSec: 900 });
+    const stored = await this.redis.get(codeAt);
+    if (!stored) return false;
+    const attempts = await this.redis.incr(attemptsAt);
+    if (attempts === 1) await this.redis.expire(attemptsAt, ADMISSION_OTP_TTL_SEC);
+    if (attempts > ADMISSION_OTP_MAX_ATTEMPTS) {
+      await this.redis.del(codeAt, attemptsAt);
+      return false;
+    }
+    const expected = Buffer.from(stored, 'hex');
+    const actual = Buffer.from(this.hmac(tenantId, phone, input.code), 'hex');
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+      if (attempts >= ADMISSION_OTP_MAX_ATTEMPTS) await this.redis.del(codeAt, attemptsAt);
+      return false;
+    }
+    if ((await this.redis.del(codeAt)) !== 1) return false;
+    await this.redis.del(attemptsAt);
+    return true;
+  }
+
+  private hmac(tenantId: string, phone: string, code: string): string {
+    return createHmac('sha256', this.config.get('OTP_PEPPER', { infer: true }))
+      .update(`admission:${tenantId}:${phone}:${code}`)
+      .digest('hex');
+  }
+}
