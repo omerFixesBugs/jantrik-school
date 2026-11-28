@@ -122,6 +122,18 @@ export const ROUTE_MESSAGES = {
   setup: ['appearance', 'setup'],
   setupWelcome: ['attendanceSettings', 'dashboard', 'onboarding', 'staff'],
   staff: ['setup', 'staff'],
+  /** Admission for staff (sprint 1 P3a): cycles, applications, approval. */
+  admission: ['admission', 'admissions.staff', 'setup'],
+  /** The public admission form (sprint 1 P3b): no login, no app shell. */
+  apply: [
+    'admission',
+    'admissions.apply',
+    'admissions.staff.detail',
+    'admissions.staff.form',
+    'dateInput',
+    'enums',
+    'setup',
+  ],
 
   /** The notice board (every member) and its management (OWNER/ADMIN). */
   notices: ['notices.board', 'setup'],

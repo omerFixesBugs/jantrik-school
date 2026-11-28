@@ -1,6 +1,7 @@
 import type { MeContext, ModuleKey, Role } from '@jantrik/shared';
 import {
   BookOpenCheckIcon,
+  ClipboardPenLineIcon,
   CalendarCheckIcon,
   LayoutDashboardIcon,
   MegaphoneIcon,
@@ -12,7 +13,15 @@ import {
 } from 'lucide-react';
 
 export type NavKey =
-  'dashboard' | 'notices' | 'students' | 'attendance' | 'fees' | 'exams' | 'setup' | 'staff';
+  | 'dashboard'
+  | 'notices'
+  | 'students'
+  | 'admission'
+  | 'attendance'
+  | 'fees'
+  | 'exams'
+  | 'setup'
+  | 'staff';
 
 /** Sidebar groups, in display order. */
 export type NavGroup = 'overview' | 'academic' | 'accounts' | 'admin';
@@ -72,6 +81,14 @@ export const NAV_ITEMS: NavItem[] = [
     group: 'academic',
     module: 'CORE',
     roles: STAFF,
+  },
+  {
+    key: 'admission',
+    href: '/admission',
+    icon: ClipboardPenLineIcon,
+    group: 'academic',
+    module: 'CORE',
+    roles: ['OWNER', 'ADMIN'],
   },
   {
     key: 'attendance',

@@ -1,3 +1,4 @@
+import './context-key.js';
 import { randomBytes } from 'node:crypto';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { INestApplication } from '@nestjs/common';

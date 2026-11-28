@@ -30,6 +30,7 @@
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "dotenv": "18.0.8",
+    "pg": "8.23.1",
     "uuid": "14.0.3"
   },
   "devDependencies": {
@@ -37,6 +38,7 @@
     "@jantrik/shared": "workspace:*",
     "@jantrik/typescript-config": "workspace:*",
     "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
     "eslint": "9.39.5",
     "prisma": "7.10.1",
     "tsx": "4.23.15",

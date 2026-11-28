@@ -15,6 +15,9 @@ const DEVICE_AREAS = ['devices', 'people'] as const;
 /** Staff attendance likewise: messages/staff-attendance/<area>.<locale>.json, into `staffAttendance`. */
 const STAFF_ATTENDANCE_AREAS = ['common', 'day', 'month'] as const;
 
+/** Admission (sprint 1 P3) likewise: messages/admissions/<area>.<locale>.json, into `admissions`. */
+const ADMISSION_AREAS = ['staff', 'apply'] as const;
+
 /** The person's own account likewise: messages/account/<area>.<locale>.json, into `account`. */
 const ACCOUNT_AREAS = ['password'] as const;
 
@@ -50,6 +53,11 @@ export async function loadMessages(locale: Locale): Promise<Record<string, unkno
       async (area) => (await import(`../../messages/account/${area}.${locale}.json`)).default,
     ),
   );
+  const admissions = await Promise.all(
+    ADMISSION_AREAS.map(
+      async (area) => (await import(`../../messages/admissions/${area}.${locale}.json`)).default,
+    ),
+  );
   const notices = await Promise.all(
     NOTICE_AREAS.map(
       async (area) => (await import(`../../messages/notices/${area}.${locale}.json`)).default,
@@ -57,6 +65,7 @@ export async function loadMessages(locale: Locale): Promise<Record<string, unkno
   );
   return {
     ...base,
+    admissions: Object.assign({}, ...admissions),
     fees: Object.assign({}, ...fees),
     exams: Object.assign({}, ...exams),
     devices: Object.assign({}, ...devices),

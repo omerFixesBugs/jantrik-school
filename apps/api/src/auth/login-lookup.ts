@@ -52,7 +52,7 @@ export const inviteExpiry = (invitedAt: Date): Date =>
 
 const SELECTABLE_TENANT = new Set(['ACTIVE', 'TRIAL']);
 
-/** Memberships of the current user, grouped per tenant. Run with app.user_id set. */
+/** Memberships of the current user, grouped per tenant. Run in the person's signed context (withContext({ userId })). */
 export async function listMemberships(
   query: Pick<PrismaClient, '$queryRaw'>,
 ): Promise<MembershipSummary[]> {

@@ -1,5 +1,9 @@
 import { PrismaService } from '../src/prisma/prisma.service.js';
-import { rolesKey, rolesVersionKey } from '../src/tenancy/tenant-access.service.js';
+import {
+  modulesVersionKey,
+  rolesKey,
+  rolesVersionKey,
+} from '../src/tenancy/tenant-access.service.js';
 import {
   addMember,
   bearer,
@@ -36,6 +40,19 @@ describe('roles cache versioning', () => {
 
   afterAll(async () => {
     await h.close();
+  });
+
+  it('entries cached by the previous release (no generation in the key) are never read (P1-J8)', async () => {
+    // What an API of the previous release caches between `migrate` and its restart: it reads no
+    // institute data any more, so empty roles and modules, under the keys it knew.
+    const m = await addMember(h, tenantId, { roles: ['ADMIN'] });
+    const token = (await otpLogin(h, m.phone)).accessToken;
+    const rv = (await h.redis.get(rolesVersionKey(tenantId, m.userId))) ?? '0';
+    const mv = (await h.redis.get(modulesVersionKey(tenantId))) ?? '0';
+    await h.redis.set(`tenant:${tenantId}:user:${m.userId}:roles:v${rv}`, '[]', 'EX', 300);
+    await h.redis.set(`tenant:${tenantId}:modules:v${mv}`, '[]', 'EX', 300);
+    await adminOnly(token).expect(200);
+    await http(h).get('/students').set(bearer(token)).expect(200);
   });
 
   it('a demoted admin who is also a guardian loses ADMIN on the next request, despite a stale write', async () => {

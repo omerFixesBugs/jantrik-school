@@ -2,8 +2,11 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import {
   createPrismaClient,
-  loginPrivilegeProblems,
+  loadRequestContextKey,
+  loginStartupVerdict,
   readLoginPrivileges,
+  requestContextKey,
+  setRequestContextKeySource,
   type PrismaClient,
 } from '@jantrik/db';
 import {
@@ -21,11 +24,22 @@ import { PrismaService } from '../prisma/prisma.service.js';
  * API (jantrik_app) may not run that function, so an SQL injection in an ordinary request never
  * reaches a password hash. Used by AuthService.loginWithPassword only
  * (login-isolation.spec.ts checks who imports it). A small pool: one lookup per login.
+ *
+ * It also reads the request context key (P1-J8), the other thing only this login may read: every
+ * institute transaction of the API and the worker is signed with it (withContext, docs/auth.md →
+ * The request context). The source is registered when the service is built, so any module may
+ * open a context during start-up. The key is loaded at start-up. When it cannot be (the
+ * migrations have not run yet), production refuses to start; development and tests only log an
+ * error and load it on the first institute transaction (Playwright starts the API before its
+ * global setup migrates jantrik_e2e). Without a key no context can be signed, so every institute
+ * transaction fails: closed, and loud.
  */
 @Injectable()
 export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LoginPrismaService.name);
   readonly client: PrismaClient;
+  /** Production refuses to start without the request context key; elsewhere it only logs. */
+  private readonly production: boolean;
   /** Waits between failed start-up checks (about 3 minutes in all; tests shorten them). */
   retryDelaysMs: readonly number[] = STARTUP_RETRY_DELAYS_MS;
   /** How long one start-up check may take. */
@@ -38,6 +52,13 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
     this.client = createPrismaClient(config.get('DATABASE_LOGIN_URL', { infer: true }), {
       max: 4,
     });
+    this.production = config.get('NODE_ENV', { infer: true }) === 'production';
+    this.registerContextKeySource();
+  }
+
+  /** withContext reads the request context key through this login (once, then from memory). */
+  registerContextKeySource(): void {
+    setRequestContextKeySource(() => loadRequestContextKey(this.client));
   }
 
   /**
@@ -54,7 +75,8 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
     await runStartupCheck({
       run: () => readLoginPrivileges(this.client),
       verdict: (p) => {
-        const problems = loginPrivilegeProblems(p);
+        const { problems, warnings } = loginStartupVerdict(p, { production: this.production });
+        for (const w of warnings) this.logger.warn(w);
         return problems.length === 0
           ? true
           : `DATABASE_LOGIN_URL must use the password login's login (jantrik_login_app): ` +
@@ -67,6 +89,20 @@ export class LoginPrismaService implements OnModuleInit, OnModuleDestroy {
       unchecked: 'The password login does not start unchecked.',
       label: startupErrorLabel,
     });
+
+    // P1-J8: read the key now. Production refuses to start without it (the migrations run
+    // before the apps, docs/deploy.md). Elsewhere every institute transaction tries again and
+    // fails until it can (no key, no context), so an API started before its migrations
+    // (Playwright's global setup migrates after starting it) heals by itself.
+    try {
+      await requestContextKey();
+    } catch (error) {
+      const message =
+        'Could not read the request context key through DATABASE_LOGIN_URL ' +
+        `(${(error as Error).message}). Run the database migrations. See docs/auth.md.`;
+      if (this.production) throw new Error(message);
+      this.logger.error(`${message} Institute requests fail until the key can be read.`);
+    }
 
     const canRun = (client: PrismaClient) =>
       client.$queryRaw<{ ok: boolean }[]>`

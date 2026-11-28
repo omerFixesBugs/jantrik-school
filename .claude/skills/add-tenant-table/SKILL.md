@@ -58,20 +58,25 @@ pnpm db:migrate --create-only --name <snake_case_name>
 ALTER TABLE things ENABLE ROW LEVEL SECURITY;
 ALTER TABLE things FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON things
-  USING (tenant_id = app_current_tenant_id())
-  WITH CHECK (tenant_id = app_current_tenant_id());
+  USING (tenant_id = (SELECT app_current_tenant_id()))
+  WITH CHECK (tenant_id = (SELECT app_current_tenant_id()));
 GRANT SELECT, INSERT, UPDATE, DELETE ON things TO jantrik_app;
 
 ALTER TABLE things ADD CONSTRAINT things_x_range CHECK (x BETWEEN 0 AND 10);
 ```
 
 - No default privileges exist: without the GRANT the app gets "permission denied".
+- **Always wrap the context functions**, `(SELECT app_current_tenant_id())`, here and in any
+  function or raw SQL (P1-J8: they check a signature; wrapped they run once per statement, bare
+  once per row). schema-safety.test.ts fails on a bare call. A policy must not query its own table
+  in a subquery (42P17 "infinite recursion"): use a STABLE plpgsql function instead
+  (docs/database.md → Row-Level Security).
 - **Never backfill tenant rows here**: migrations run as `jantrik_owner`, and FORCE RLS hides every
   tenant row, so `INSERT … SELECT FROM tenants` inserts nothing. Use defaults in code, or
   `provisionTenant()` for new tenants.
 - No SECURITY DEFINER function unless unavoidable; if you add one, follow the definer rules in
   docs/database.md (owner `jantrik_auth`/`jantrik_search`, pinned `search_path`, REVOKE/GRANT
-  before `OWNER TO`, scoped by `app_current_tenant_id()`, never a tenant/uuid parameter).
+  before `OWNER TO`, scoped by `(SELECT app_current_tenant_id())`, never a tenant/uuid parameter).
   A table that such a function must read also needs its own `TO jantrik_auth` / `TO jantrik_search`
   SELECT policy; without it the function silently sees no rows.
 - Changing a definer function's parameters creates a new **overload**: `DROP FUNCTION name(old

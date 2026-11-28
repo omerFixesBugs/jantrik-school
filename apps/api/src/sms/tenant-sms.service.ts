@@ -135,6 +135,38 @@ export class TenantSmsService implements OnModuleInit {
   }
 
   /**
+   * An SMS logged and sent outside the institute's daily cap, but counted in the day's total (it
+   * is QUEUED, then SENT): the admission code (decision P3-D), bounded by its own ceiling. No
+   * dedupe key. The caller sends it itself (the body stored here may be masked) and then calls
+   * markSent or markFailed. Returns the row's id.
+   */
+  async recordOutsideCap(input: {
+    purpose: SmsPurpose;
+    phone: string;
+    /** What is stored (a code is masked); the segments are the real text's. */
+    body: string;
+    segmentsOf: string;
+    localDate: IsoDate;
+  }): Promise<string> {
+    const tx = this.db.tx;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('sms:' || (SELECT public.app_current_tenant_id())::text, 0))`;
+    const log = await tx.smsLog.create({
+      data: {
+        tenantId: this.context.requireTenantId(),
+        phone: input.phone,
+        purpose: input.purpose,
+        status: 'QUEUED',
+        segments: smsLength(input.segmentsOf).segments,
+        body: input.body,
+        localDate: dateToDb(input.localDate),
+        sendAfter: new Date(),
+      },
+      select: { id: true },
+    });
+    return log.id;
+  }
+
+  /**
    * An admin sends today's held SMS anyway (over the institute's own cap). Each one is re-checked
    * first: when the reason went away (the student is no longer absent) it is CANCELLED instead.
    * `ceiling` is Jantrik's limit for the day (the plan): never passed, so only what still fits

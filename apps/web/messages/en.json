@@ -99,6 +99,7 @@
     "dashboard": "Dashboard",
     "notices": "Notices",
     "students": "{student} list",
+    "admission": "Admission",
     "classesAndSections": "{classLevel} & {section}",
     "attendance": "Attendance",
     "fees": "Fees",
