@@ -307,6 +307,11 @@ export class AdmissionApplicationsService {
         field: 'guardianNameBn',
       });
     }
+    if (next['cycleClassId'] !== undefined && old.testRoll !== null) {
+      throw apiError(409, 'HAS_TEST_ROLL', 'An applicant with a test roll stays in its class', {
+        field: 'cycleClassId',
+      });
+    }
     if (next['cycleClassId'] !== undefined) {
       const cc = await tx.admissionCycleClass.findUnique({
         where: { id: next['cycleClassId'] as string },
@@ -381,6 +386,14 @@ export class AdmissionApplicationsService {
     const old = await this.lockRow(id);
     if (old.status === 'ADMITTED') {
       throw apiError(409, 'APPLICATION_ADMITTED', 'An admitted application cannot be changed');
+    }
+    // Sprint 1 P4 (review round 2, N1): once the test's result is published, the test decides;
+    // staff may withdraw or reject (or approve), but putting it back to submitted or shortlisted
+    // would let the next rebuild undo a move-up the applicant was already told about.
+    if (old.resultVersion !== null && (status === 'SUBMITTED' || status === 'SHORTLISTED')) {
+      throw apiError(409, 'TEST_RESULT_PUBLISHED', 'The admission test result is published', {
+        status: old.status,
+      });
     }
     if (status === 'SELECTED') {
       const cycle = await this.db.tx.admissionCycle.findUniqueOrThrow({

@@ -659,6 +659,17 @@ wrapped and composite foreign keys `ON UPDATE/DELETE RESTRICT`:
   live in the API). What it can reach is what the form can: submit an application (the duplicate
   and per-phone rules still hold) or read the status of an application whose number and phone it
   already knows. `p_now` stays a parameter so tests can move time (decision P3-b13).
+- **The admission test** (P4): new columns on the three admission tables, UPDATE granted by
+  column; CHECKs with `IS [NOT] NULL` first (a waitlist position needs a `WAITLISTED` draft; a
+  published version needs its time and full marks; the published snapshot only with a version);
+  one roll per class (a partial unique index); two invoker triggers with a pinned `search_path`:
+  `test_score_within_full_marks` (a score needs its class's full marks and stays within them) and
+  `full_marks_keep_test_scores` (full marks never drop below or away from a score). Not named
+  `admission_*`: that prefix is the definer functions'. `admission_lookup` was replaced in
+  `20261117300200` under `SET ROLE jantrik_admission` with `CREATE` on `public` granted back for
+  that migration only; `jantrik_admission` gained `SELECT (test_roll, result_version,
+result_merit_position, result_waitlist_position, result_score_h, result_absent)` and never the
+  draft columns or a live score.
 
 ### Files and the institute profile (sprint 1 P2)
 
