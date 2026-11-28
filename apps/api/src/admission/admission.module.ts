@@ -40,7 +40,16 @@ import { zodDto } from '../common/zod.js';
 import { ImageUpload, ImageUploads, type UploadedImage } from '../files/files.module.js';
 import { StudentsModule } from '../students/students.module.js';
 import { RequestTransaction } from '../tenancy/request-transaction.service.js';
+import { AttendanceModule } from '../attendance/attendance.module.js';
+import { AdmissionSmsProcessor } from './admission-sms.processor.js';
 import { AdmissionApplicationsService } from './applications.service.js';
+import { ADMISSION_SMS_QUEUE, AdmissionOtpService } from './public/admission-otp.service.js';
+import { FormTickets } from './public/form-ticket.js';
+import { PhoneTokens } from './public/phone-token.js';
+import { AdmissionPublicController } from './public/public.controller.js';
+import { AdmissionPublicService } from './public/public.service.js';
+import { AdmissionSubmitGuard } from './public/submit.guard.js';
+import { TurnstileVerifier } from './public/turnstile.js';
 import { AdmissionApprovalProcessor } from './approval.processor.js';
 import {
   ADMISSION_QUEUE,
@@ -217,13 +226,28 @@ export class AdmissionApplicationsController {
 }
 
 @Module({
-  imports: [BullModule.registerQueue({ name: ADMISSION_QUEUE }), StudentsModule],
-  controllers: [AdmissionCyclesController, AdmissionApplicationsController],
+  imports: [
+    BullModule.registerQueue({ name: ADMISSION_QUEUE }, { name: ADMISSION_SMS_QUEUE }),
+    StudentsModule,
+    AttendanceModule,
+  ],
+  controllers: [
+    AdmissionCyclesController,
+    AdmissionApplicationsController,
+    AdmissionPublicController,
+  ],
   providers: [
     AdmissionCyclesService,
     AdmissionApplicationsService,
     AdmissionApprovalService,
     AdmissionApprovalProcessor,
+    AdmissionPublicService,
+    AdmissionOtpService,
+    PhoneTokens,
+    FormTickets,
+    TurnstileVerifier,
+    AdmissionSubmitGuard,
+    AdmissionSmsProcessor,
   ],
   exports: [AdmissionApplicationsService],
 })

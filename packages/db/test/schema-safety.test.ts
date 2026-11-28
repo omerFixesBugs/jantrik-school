@@ -189,6 +189,11 @@ describe('schema safety net', () => {
   // for the password-login login.
   const isContext = (fn: string) =>
     ['app_verified_context', 'auth_context_key', 'app_context_key_id'].includes(fn);
+  // And the public admission form's (sprint 1 P3b): no context at all, scoped by the slug.
+  const isAdmission = (fn: string) => fn.startsWith('admission_');
+  // admission_submit takes a cycle class id: it is checked against the slug's institute inside
+  // (another institute's class is CLOSED, admission-functions.test.ts).
+  const ADMISSION_UUID_ARGS = ['admission_submit'];
 
   it('no SECURITY DEFINER function takes a tenant id parameter', async () => {
     // Parameters it takes: OUT parameters are results (app_verified_context() returns an
@@ -198,7 +203,7 @@ describe('schema safety net', () => {
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef`;
     const rows = all
-      .filter((r) => !isPlatform(r.fn))
+      .filter((r) => !isPlatform(r.fn) && !ADMISSION_UUID_ARGS.includes(r.fn))
       .map((r) => ({
         fn: r.fn,
         args: r.args
@@ -218,7 +223,9 @@ describe('schema safety net', () => {
       FROM pg_proc p
       WHERE p.pronamespace = 'public'::regnamespace AND p.prosecdef
         AND p.proname <> ALL(${PRE_CONTEXT_AUTH_LOOKUPS})`;
-    const scoped = rows.filter((r) => !isPlatform(r.fn) && !isIngest(r.fn) && !isContext(r.fn));
+    const scoped = rows.filter(
+      (r) => !isPlatform(r.fn) && !isIngest(r.fn) && !isContext(r.fn) && !isAdmission(r.fn),
+    );
     expect(scoped.map((r) => r.fn).sort()).toEqual([
       'app_find_or_create_user',
       'auth_list_my_memberships',
@@ -597,6 +604,167 @@ describe('schema safety net', () => {
           r.ingest_exec !== INGEST_ENTRY_POINTS.includes(r.fn),
       ),
     ).toEqual([]);
+  });
+
+  // The public admission form (sprint 1 P3b): three definer functions owned by the NOLOGIN
+  // jantrik_admission, run by jantrik_app only, and that role's grants exactly as written.
+  const ADMISSION_FUNCTIONS = ['admission_lookup', 'admission_public_form', 'admission_submit'];
+
+  it('every admission function is owned by jantrik_admission, pins search_path, and only jantrik_app may run it', async () => {
+    const rows = await app.$queryRaw<
+      {
+        fn: string;
+        owner: string;
+        definer: boolean;
+        temp_last: boolean;
+        app_exec: boolean;
+        platform_exec: boolean;
+        ingest_exec: boolean;
+        login_exec: boolean;
+        public_exec: boolean;
+      }[]
+    >`
+      SELECT p.proname AS fn, r.rolname AS owner, p.prosecdef AS definer,
+             'search_path=pg_catalog, public, pg_temp' = ANY(p.proconfig) AS temp_last,
+             has_function_privilege('jantrik_app', p.oid, 'EXECUTE') AS app_exec,
+             has_function_privilege('jantrik_platform_app', p.oid, 'EXECUTE') AS platform_exec,
+             has_function_privilege('jantrik_ingest_app', p.oid, 'EXECUTE') AS ingest_exec,
+             has_function_privilege('jantrik_login_app', p.oid, 'EXECUTE') AS login_exec,
+             COALESCE(EXISTS (SELECT 1 FROM aclexplode(p.proacl) a
+                              WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'), true)
+               AS public_exec
+      FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
+      WHERE p.pronamespace = 'public'::regnamespace
+        AND (p.proname LIKE 'admission\_%' OR p.proowner = 'jantrik_admission'::regrole)`;
+    expect(rows.map((r) => r.fn).sort()).toEqual(ADMISSION_FUNCTIONS);
+    expect(
+      rows.filter(
+        (r) =>
+          r.owner !== 'jantrik_admission' ||
+          !r.definer ||
+          !r.temp_last ||
+          !r.app_exec ||
+          r.platform_exec ||
+          r.ingest_exec ||
+          r.login_exec ||
+          r.public_exec,
+      ),
+    ).toEqual([]);
+  });
+
+  it('jantrik_admission: NOLOGIN, no login is a member, the owner may SET ROLE to it but not inherit it', async () => {
+    const [role] = await app.$queryRaw<
+      { login: boolean; superuser: boolean; bypassrls: boolean; members: string[] }[]
+    >`
+      SELECT r.rolcanlogin AS login, r.rolsuper AS superuser, r.rolbypassrls AS bypassrls,
+             ARRAY(SELECT m.rolname || ':' || a.inherit_option || ':' || a.set_option
+                   FROM pg_auth_members a JOIN pg_roles m ON m.oid = a.member
+                   WHERE a.roleid = r.oid ORDER BY 1)::text[] AS members
+      FROM pg_roles r WHERE r.rolname = 'jantrik_admission'`;
+    expect(role).toEqual({
+      login: false,
+      superuser: false,
+      bypassrls: false,
+      members: ['jantrik_owner:false:true'],
+    });
+  });
+
+  // A snapshot: widening what the public form's functions may touch fails here.
+  it("jantrik_admission's table and column privileges are exactly the plan's", async () => {
+    // From the catalogs: information_schema shows only the grants the current login may see.
+    const rows = await app.$queryRaw<{ grant: string }[]>`
+      SELECT c.relname || ':' || a.privilege_type || ':' || att.attname AS grant
+      FROM pg_class c
+      JOIN pg_attribute att ON att.attrelid = c.oid AND att.attnum > 0 AND NOT att.attisdropped
+      CROSS JOIN LATERAL aclexplode(att.attacl) a
+      WHERE c.relnamespace = 'public'::regnamespace AND a.grantee = 'jantrik_admission'::regrole
+      UNION
+      SELECT c.relname || ':' || a.privilege_type || ':*'
+      FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+      WHERE c.relnamespace = 'public'::regnamespace AND a.grantee = 'jantrik_admission'::regrole
+      ORDER BY 1`;
+    // Every table:privilege with its columns ('*' = the whole table), exactly: any widening, a
+    // column or a whole-table grant, fails here (review of P3b, S5).
+    const got: Record<string, string[]> = {};
+    for (const { grant } of rows) {
+      const [table, privilege, column] = grant.split(':') as [string, string, string];
+      (got[`${table}:${privilege}`] ??= []).push(column);
+    }
+    for (const k of Object.keys(got)) got[k]!.sort();
+    const cols = (...c: string[]) => [...c].sort();
+    expect(got).toEqual({
+      'tenants:SELECT': cols('default_locale', 'id', 'name', 'slug', 'status', 'timezone'),
+      'institute_profiles:SELECT': cols('name_bn', 'name_en', 'tenant_id'),
+      'academic_years:SELECT': cols('id', 'start_date', 'tenant_id'),
+      'class_levels:SELECT': cols(
+        'id',
+        'is_active',
+        'name_bn',
+        'name_en',
+        'sort_order',
+        'tenant_id',
+      ),
+      'study_groups:SELECT': cols(
+        'id',
+        'is_active',
+        'name_bn',
+        'name_en',
+        'sort_order',
+        'tenant_id',
+      ),
+      'admission_cycles:SELECT': ['*'],
+      'admission_cycle_classes:SELECT': ['*'],
+      'admission_applications:SELECT': cols(
+        'application_no',
+        'birth_registration_no',
+        'cycle_class_id',
+        'cycle_id',
+        'date_of_birth',
+        'id',
+        'name_bn',
+        'name_en',
+        'name_key',
+        'phone',
+        'status',
+        'submitted_at',
+        'tenant_id',
+      ),
+      'admission_applications:INSERT': cols(
+        'id',
+        'tenant_id',
+        'cycle_id',
+        'cycle_class_id',
+        'application_no',
+        'source',
+        'name_bn',
+        'name_en',
+        'name_key',
+        'date_of_birth',
+        'gender',
+        'religion',
+        'blood_group',
+        'birth_registration_no',
+        'previous_institute',
+        'present_address',
+        'permanent_address',
+        'father_name_bn',
+        'father_name_en',
+        'mother_name_bn',
+        'mother_name_en',
+        'guardian_name_bn',
+        'guardian_name_en',
+        'guardian_relation',
+        'guardian_occupation',
+        'phone',
+        'submitted_at',
+        'created_at',
+        'updated_at',
+      ),
+      'admission_application_photos:INSERT': ['*'],
+      'admission_counters:SELECT': ['*'],
+      'admission_counters:INSERT': ['*'],
+      'admission_counters:UPDATE': cols('last_no', 'updated_at'),
+    });
   });
 
   // The receiver parses internet input without a login: whatever it does goes through the

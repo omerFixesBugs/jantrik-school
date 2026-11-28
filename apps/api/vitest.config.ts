@@ -63,6 +63,8 @@ export default defineConfig({
       JWT_ACCESS_SECRET: 'test-only-access-secret-0123456789abcdefghij',
       OTP_PEPPER: 'test-only-otp-pepper-0123456789abcdefghijklm',
       SMS_PROVIDER: 'memory',
+      // The public admission form's Turnstile check, without Cloudflare (docs/admission.md).
+      TURNSTILE_PROVIDER: 'fake',
       COOKIE_SECURE: 'true',
       // A developer's .env may enable phone testing; tests never run with it.
       DEV_LAN: 'false',

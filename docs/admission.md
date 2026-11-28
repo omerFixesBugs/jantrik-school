@@ -118,3 +118,102 @@ keys `ON UPDATE/DELETE RESTRICT`):
 | `admission_counters`           | S I U            | last number per institute and year                       |
 
 `sms_purpose` gains `ADMISSION_OTP` and `ADMISSION_SUBMITTED` (used by P3b).
+
+## The public form (P3b)
+
+A guardian applies from a phone, without an account: `/apply/<institute slug>` (bn by default,
+an en switch; light, no app shell, no session restored) and `/apply/<slug>/status`. The cycle page
+shows the address to share.
+
+- **Steps:** class → phone → code → the form → check → submitted, with the slip (application
+  number; print or save). The status page asks for the number, then a code to the phone that
+  applied (decision P3-F).
+- **The database** is reached only through three `SECURITY DEFINER` functions owned by the
+  NOLOGIN role `jantrik_admission` and run by `jantrik_app` with no institute and no person
+  (decision S4; a public request never opens an institute's transaction, P3-C):
+  - `admission_public_form(slug, now)`: the institute (ACTIVE or TRIAL) and its cycles taking
+    applications now, with their open classes; no person's data. (It also returns the
+    institute's id and timezone, which the API keeps to itself.)
+  - `admission_submit(slug, cycle class, phone, payload, photo, width, height, now)`: one row,
+    `CREATED` with the number, or `UNKNOWN`, `CLOSED` (also for another institute's class),
+    `INVALID`, `PHONE_CAP` (checked first) or `DUPLICATE`, with the earlier number **only when that
+    application has the same phone** (otherwise "already applied, contact the institute": a
+    stranger who types another family's birth registration number learns nothing). The same
+    duplicate and per-phone rules as the staff entry, under the same locks in the same order (the
+    cycle's, shared; the phone's; one per birth registration number).
+  - `admission_lookup(slug, number, phone)`: the status, only for that phone.
+    The role sees rows only through `TO jantrik_admission` policies and column grants
+    (`schema-safety.test.ts` pins them exactly).
+  - `admission_submit` resolves the class's cycle, takes the cycle's shared lock, and only then
+    reads the cycle to check it (status, window, open class; review round 2): a cycle edit that
+    committed while it waited is always seen.
+- **Changing these functions later** (P4's `admission_lookup`, for one): only the owner,
+  `jantrik_admission`, can replace them, and migration `20261117110100` revoked its `CREATE` on
+  schema `public`; `jantrik_owner` holds the role `WITH INHERIT FALSE, SET TRUE`. So the migration
+  does, in one transaction:
+
+  ```sql
+  GRANT CREATE ON SCHEMA public TO jantrik_admission;
+  SET ROLE jantrik_admission;
+  CREATE OR REPLACE FUNCTION public.admission_lookup(...) ...;  -- the same signature
+  RESET ROLE;
+  REVOKE CREATE ON SCHEMA public FROM jantrik_admission;
+  ```
+
+  The same signature keeps the grants (`EXECUTE` to `jantrik_app` only). A new signature is a new
+  function: drop the old one under the same `SET ROLE`, then `REVOKE ALL … FROM PUBLIC` and
+  `GRANT EXECUTE … TO jantrik_app` on the new one, and update the exact privilege list in
+  `schema-safety.test.ts`.
+
+- **The phone:** `POST /public/admission/:slug/otp {phone, turnstileToken}` sends a 6-digit code
+  (5 minutes, 5 attempts, single use; HMAC in Redis) to any valid Bangladeshi mobile;
+  `POST …/otp/verify {phone, code}` returns a phone token (HS256 with its own key derived from
+  `JWT_ACCESS_SECRET`, `typ: admission-phone`, audience the institute, 30 minutes, decision P3-N)
+  for the `X-Admission-Token` header. It is never an access token, and an access token never works
+  here. A status code (below) has its own slot in Redis and verifies only with
+  `purpose: 'status'`, into a **status token** (`typ: admission-status`): only `POST …/status`
+  accepts it, and `…/status` accepts nothing else; the submit (and its upload guard, before the
+  body is read) accepts only the form's token (review round 2, second follow-up).
+- **Limits (review focus 1):** a code request first passes a per-address limit (60 an hour,
+  before the database or Cloudflare is reached), then Turnstile (a refused token uses no code
+  counter), then per address 20 an hour and per phone one a minute
+  (`ADMISSION_OTP_PHONE_COOLDOWN_SEC`, 60); the shared budgets, per phone 5 a day (across
+  institutes) and per institute the form's share of `ADMISSION_OTP_PER_TENANT_PER_DAY` a day
+  whatever the phones and addresses, are checked together and spent **only by a code that is
+  sent** (one atomic Redis script), so refused requests can never exhaust an institute's day.
+  `ADMISSION_OTP_PER_TENANT_PER_DAY` (300) caps **all** of an institute's codes in a day: the
+  status page has a fixed fifth (60), the form the rest (240), so the total never exceeds it
+  (`admissionOtpCeilings`).
+- **The status page** asks for a code with the application number (`purpose: 'status'`): it
+  works after the form closed, and the code is sent only when that phone made that application;
+  the answer is the same either way, **in every budget state, and leaves no trace** (review
+  round 2 and its follow-ups): a status code spends budgets of its own (per phone 5 a day across
+  institutes, per institute the status page's fifth of the ceiling), which the form's code
+  requests never read, and it is sent after the answer (not awaited). So neither the answer (202 `{expiresIn: 300}`, no
+  `Retry-After`), nor its time, nor any later request's answer depends on whether the pair
+  matched; a spent status budget sends nothing (the guardian tries the next day). The form: 60 a
+  minute per address; submit 10 an hour per address and 10 a day per phone; status 30 an hour per
+  address and 20 a day per phone.
+- **Bots (S6):** Turnstile on every code and every submit (each needs its own token); a hidden
+  `website` field (the honeypot); and the form ticket from `GET`: a submit under 15 s or over 2 h
+  after the form opened gets the same vague 422 `ADMISSION_REJECTED` as a filled honeypot
+  (decision P3-L). Turnstile fails closed: Cloudflare unreachable in 5 s → 503.
+- **The photo:** multipart, read only after a guard checked the per-address submit limit and the
+  phone token's signature and expiry; at most 5 MB (refused while it streams), re-encoded by P2's pipeline
+  (JPEG ≤ 600×800, ≤ 200 KB, no EXIF), at most two decodes at a time per process. Only the
+  re-encoded bytes reach the database.
+- **SMS** (decision P3-C, queue `admission-sms`, run by the worker in the institute's own
+  context): the code is logged in the institute's `sms_logs` (`ADMISSION_OTP`, the code masked),
+  sent outside the institute's daily cap but counted in the day's total (P3-D); "application
+  received" (`ADMISSION_SUBMITTED`, S11) goes through the normal per-institute queue and is skipped
+  over the cap (the slip is on screen). In development and tests the SMS go to the console, memory
+  or outbox providers only.
+- **Turnstile checks** a real widget's answer for our action (`admission-otp` or
+  `admission-submit`) and the web app's host (from `WEB_PUBLIC_URL`); Cloudflare's test secrets
+  report neither and are accepted only outside production.
+- **Public answers** carry `Cache-Control: no-store`.
+- **Turnstile keys:** development uses Cloudflare's published always-pass **test keys**
+  (`.env.example`); the API and Playwright tests use a fake verifier (`TURNSTILE_PROVIDER=fake`,
+  test only) and never call Cloudflare; production needs a real widget's keys (the API refuses the
+  test secrets there). Without a site key built into the web app, the form shows a plain
+  "I am not a robot" box that only the fake verifier accepts.

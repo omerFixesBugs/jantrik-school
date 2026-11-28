@@ -330,6 +330,13 @@ it never runs a destructive command. CI runs the same check on the production co
 
 ## 11. Upgrades
 
+**Upgrading to the public admission form (sprint 1 P3b) needs a new role first:** run
+`deploy/postgres/create-roles.sh` again after the checkout and before `migrate` (it creates
+`jantrik_admission`; the migration stops with a clear message until the role exists), and add
+`TURNSTILE_SECRET_KEY`, `TURNSTILE_SITE_KEY` and `WEB_PUBLIC_URL` to the settings file (the API
+refuses to start in production without them, and refuses Cloudflare's test secrets). The site key
+is built into the web image: rebuild `web` after changing it.
+
 Migrations first, then the apps (deployment requirement 3: an old API still running after a
 migration can fail on a changed function until it restarts).
 

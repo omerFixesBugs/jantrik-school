@@ -983,3 +983,91 @@ December dues rule: P3a (this PR). Decisions taken alone, each the safest option
   `REJECTED` to a live status also runs the per-phone cap. A staff entry takes the cycle's shared
   lock before reading the cycle. A bulk run approves an application only if it is still `SELECTED`
   under the row lock.
+
+The public form, P3b (its own PR, stacked on P3a):
+
+- **P3-b1. Turnstile keys (the owner's instruction):** development uses Cloudflare's official
+  always-pass **test keys** (`.env.example`); the API and Playwright tests use a fake verifier
+  (`TURNSTILE_PROVIDER=fake`, refused outside `NODE_ENV=test`) and never call Cloudflare;
+  production refuses a missing or published test secret. A web build without a site key shows a
+  plain "I am not a robot" box whose token only the fake verifier accepts, so such a build fails
+  closed in production. The production compose requires `TURNSTILE_SITE_KEY` (a build argument).
+- **P3-b2. `admission_public_form` also returns the institute's id and timezone**, which the API
+  keeps (never sent to the browser): the code request then needs no fourth function.
+- **P3-b3. `admission_submit` hashes the photo itself** (no `p_photo_sha256` parameter) and
+  takes the name key from the API (`p_name_key`, made by the same `nameKey` as staff entries; review
+  N8: PostgreSQL's `lower` and `\s` could differ from JavaScript's and miss a duplicate).
+- **P3-b4. The two SMS jobs have their own queue, `admission-sms`** (the plan said `sms`): the
+  API's SMS processor is unchanged and the admission module owns its jobs. A code's log row is
+  kept across a send retry (no second row).
+- **P3-b5. A value the tables refuse answers `INVALID`** inside `admission_submit` (an exception
+  block around the inserts), never an error: the counter increment rolls back with it (no gap).
+- **P3-b6. The public calls run in a transaction with no institute and no person**
+  (`withContext({})`), following P1-J8's rule that no query runs outside a transaction.
+- **P3-b7. `/apply` restores no session** (the auth provider is inactive there, as on `/platform`):
+  the page never calls `/auth/refresh`.
+- **P3-b8. The "received" SMS** is in the institute's default language and carries the status
+  link only when `WEB_PUBLIC_URL` is set (required in production).
+- **P3-b9. The per-phone daily code limit counts across institutes** (5 a day per phone in all),
+  stricter than per institute: SMS pumping through many institutes' forms gets nothing extra.
+  **Owner, by design (review round 2):** anyone who knows a family's phone can spend its five
+  codes with five requests (each passes Turnstile and is one minute apart) and so shut that family
+  out of every institute's form for up to 24 hours (not the status page: its codes have their own
+  budget, P3-b16); the family still gets the five SMS, which shows something is wrong. The
+  alternative (per institute) multiplies what SMS pumping can send by the number of institutes.
+  Walk-in entry by staff (P3-J) is the fallback.
+- **P3-b10. Not measured here:** the 3-second budget on a throttled phone for `/apply/[slug]`
+  needs a running web app and API, and this run starts no servers (ports and memory). The page
+  loads no Turnstile script until the phone step; the build's size budget applies.
+
+After the security review of P3b (round 1):
+
+- **P3-b11 (review M1). Refused code requests never spend the shared budgets:** the per-address
+  and per-phone-cooldown limits are counted first; the phone's 5 a day and the institute's daily
+  ceiling are checked and counted together, atomically, only for a code that is sent
+  (`RateLimiter.consumeIfAllowed`, a Lua script). Before, one phone could shut an institute's form
+  for the day.
+- **P3-b12 (review S1; a change to P3-S for the owner). A duplicate tells its number only to the
+  same phone:** an application found by another family's birth registration number answers
+  "already applied, contact the institute" with no number; a phone at its cap is told so before any
+  duplicate check (no oracle).
+- **P3-b13 (review N5).** An injection as `jantrik_app` can call the public functions with any
+  phone and `p_now` (documented in database.md); `p_now` stays a parameter (the tests move time).
+- **P3-b14 (review S2). Turnstile:** with a real secret, the answer must name our action and the
+  web app's host; Cloudflare's test secrets report neither and are refused in production anyway.
+- **P3-b15 (review S3). The submit's upload is read only after a guard** checked the per-address
+  limit and the phone token (signature, expiry); the route then checks its institute.
+- **P3-b16 (review S4; for the owner). The status page's code works after the form closed**, but
+  is sent only when the phone made that application (same answer otherwise); `purpose: 'status'`
+  with the application number. The answer is the same in every budget state too, and a probe
+  leaves no trace (review round 2 and its follow-up): status codes spend **budgets of their own**
+  (per phone 5 a day across institutes; per institute a fixed fifth of the ceiling), never the
+  form's five a day or its share, which a later ordinary request would read; the code is sent
+  after the answer (not awaited), so the response time does not depend on a match either. A spent
+  status budget sends nothing and still answers 202 with no `Retry-After`. **A status code proves
+  the phone for the status only** (second follow-up): its own Redis slot, verified with
+  `purpose: 'status'` into a status token (`typ: admission-status`) that only `POST …/status`
+  accepts; that route refuses the form's token, and the submit and its upload guard refuse a
+  status token. **`ADMISSION_OTP_PER_TENANT_PER_DAY` caps all codes together**: the status page a
+  fixed fifth (60 of 300), the form the rest (240); fixed shares, because a shared counter would
+  let an ordinary request see whether a status code was sent. **Owner:** the form now has 240
+  codes a day per institute by default instead of 300 (raise the setting to 375 to keep 300 for
+  the form); with a setting under 5 the status page sends no codes. The status page never says
+  "try later" (the form's code request still answers 429 with `Retry-After`: it reveals nothing
+  about an application).
+- **P3-b17 (review S5, S6, N1, N2, N6).** The role's privileges are compared to an exact list; the
+  public folder's code scan also refuses `withTenant`/`tenantClient` and any `withContext` that
+  is not empty; the no-op `GRANT EXECUTE … app_verified_context() TO jantrik_admission` is gone
+  (nothing needed it); the role loses `CREATE` on the schema after taking its functions over;
+  public answers are `no-store`. `ADMISSION_OTP_PHONE_COOLDOWN_SEC` (60) is new (the Playwright
+  suite sets 1).
+- **P3-b19 (review round 2 NIT 2; for P4).** `admission_submit` takes the cycle's shared lock
+  before it reads the cycle. Replacing an `admission_*` function later needs `CREATE` on `public`
+  granted back to `jantrik_admission` around a `SET ROLE` (admission.md, "Changing these
+  functions later").
+- **P3-b18 (review N3, N4, N7, recorded).** A per-address limit runs before Turnstile and the
+  database on `/otp` (60 an hour) and `/otp/verify` (60 a quarter hour). The decompression-bomb
+  test is in; ten parallel uploads (at most two decoding) are covered by P2's `image.service.spec`;
+  codes and tokens are never logged (only error names are). Per-address limits are generous on
+  purpose: many guardians share one address behind mobile carriers' NAT (CGNAT); the per-phone and
+  per-institute limits are the real bounds.

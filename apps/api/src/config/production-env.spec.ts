@@ -27,6 +27,8 @@ const api = {
   JWT_ACCESS_SECRET: 'q7Hk'.repeat(10),
   OTP_PEPPER: 'w3Zp'.repeat(10),
   PLATFORM_TOTP_KEY: 'e5Rt'.repeat(10),
+  TURNSTILE_SECRET_KEY: '0x4AAAAAAAexampleRealSecretKeyXYZ',
+  WEB_PUBLIC_URL: 'https://app.jantrik.com.bd',
   SMS_PROVIDER: 'none',
   INGEST_PUBLIC_HOST: 'devices.jantrik.com.bd',
 };
