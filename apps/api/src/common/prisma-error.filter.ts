@@ -24,10 +24,33 @@ export function isLockTimeout(
 }
 
 /**
+ * A transaction Postgres aborted to break a deadlock (`40P01`) or a serialization failure
+ * (`40001`): nothing was changed, the client may try again (sprint 1 P4, review round 2).
+ */
+export function isRetryableConflict(
+  error: Prisma.PrismaClientKnownRequestError | Prisma.PrismaClientUnknownRequestError,
+): boolean {
+  const codes = ['40P01', '40001'];
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === 'P2034') return true;
+    const meta = error.meta as
+      { code?: unknown; driverAdapterError?: { cause?: { code?: unknown } } } | undefined;
+    if (
+      codes.includes(String(meta?.code)) ||
+      codes.includes(String(meta?.driverAdapterError?.cause?.code))
+    ) {
+      return true;
+    }
+  }
+  return /\b40P01\b|\b40001\b|deadlock detected|could not serialize access/.test(error.message);
+}
+
+/**
  * Constraint violations that slipped past a service's own checks (usually a race between two
  * requests) become 409s instead of 500s. Services still check first: a violation aborts the
- * request's transaction, so nothing else in it can run. A lock wait that ran out (`isLockTimeout`)
- * is 409 BUSY with Retry-After: nothing was changed, the client tries again.
+ * request's transaction, so nothing else in it can run. A lock wait that ran out (`isLockTimeout`),
+ * a deadlock or a serialization failure (`isRetryableConflict`) is 409 BUSY with Retry-After:
+ * nothing was changed, the client tries again.
  */
 @Catch(Prisma.PrismaClientKnownRequestError, Prisma.PrismaClientUnknownRequestError)
 export class PrismaErrorFilter extends BaseExceptionFilter implements ExceptionFilter {
@@ -35,7 +58,7 @@ export class PrismaErrorFilter extends BaseExceptionFilter implements ExceptionF
     error: Prisma.PrismaClientKnownRequestError | Prisma.PrismaClientUnknownRequestError,
     host: ArgumentsHost,
   ): void {
-    if (isLockTimeout(error)) {
+    if (isLockTimeout(error) || isRetryableConflict(error)) {
       host
         .switchToHttp()
         .getResponse<Response>()

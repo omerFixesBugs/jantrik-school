@@ -16,8 +16,14 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import {
+  admissionAdmitCardsQuerySchema,
   admissionApplicationsQuerySchema,
   admissionCycleClassesSchema,
+  admissionResultSmsSchema,
+  admissionScoresSchema,
+  admissionTestSetupSchema,
+  issueTestRollsSchema,
+  publishMeritSchema,
   admissionCycleSchema,
   admissionCycleStatusSchema,
   admissionStatusSchema,
@@ -26,12 +32,19 @@ import {
   staffAdmissionApplicationSchema,
   updateAdmissionApplicationSchema,
   updateAdmissionCycleSchema,
+  type AdmissionAdmitCards,
   type AdmissionApplicationDetail,
   type AdmissionApplicationsPage,
   type AdmissionBulkApproveStatus,
   type AdmissionCycleView,
+  type AdmissionMeritView,
+  type AdmissionMoveUpResult,
   type AdmissionOptions,
+  type AdmissionResultSmsPreview,
+  type AdmissionResultSmsRun,
+  type AdmissionScoreRow,
   type AdmissionSectionOption,
+  type AdmissionTestClassView,
 } from '@jantrik/shared';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -57,6 +70,10 @@ import {
   type ApproveResult,
 } from './approval.service.js';
 import { AdmissionCyclesService } from './cycles.service.js';
+import { AdmissionMeritService } from './merit.service.js';
+import { AdmissionResultSmsProcessor } from './result-sms.processor.js';
+import { ADMISSION_RESULTS_QUEUE, AdmissionResultSmsService } from './result-sms.service.js';
+import { AdmissionTestService } from './test.service.js';
 
 class CycleDto extends zodDto(admissionCycleSchema) {}
 class UpdateCycleDto extends zodDto(updateAdmissionCycleSchema) {}
@@ -71,6 +88,12 @@ class UpdateApplicationDto extends zodDto(updateAdmissionApplicationSchema) {}
 class StatusDto extends zodDto(admissionStatusSchema) {}
 class ApproveDto extends zodDto(approveAdmissionSchema) {}
 class BulkApproveDto extends zodDto(bulkApproveAdmissionSchema) {}
+class TestSetupDto extends zodDto(admissionTestSetupSchema) {}
+class TestRollsDto extends zodDto(issueTestRollsSchema) {}
+class AdmitCardsQueryDto extends zodDto(admissionAdmitCardsQuerySchema) {}
+class ScoresDto extends zodDto(admissionScoresSchema) {}
+class PublishDto extends zodDto(publishMeritSchema) {}
+class ResultSmsDto extends zodDto(admissionResultSmsSchema) {}
 
 const Id = () => Param('id', ParseUUIDPipe);
 const WRITERS = ['OWNER', 'ADMIN'] as const;
@@ -225,15 +248,108 @@ export class AdmissionApplicationsController {
   }
 }
 
+/**
+ * The admission test and its merit list (sprint 1 P4, docs/admission.md → "The admission test"):
+ * OWNER/ADMIN only (P4-L).
+ */
+@Controller('admission')
+@RequireModule('CORE')
+@Roles('OWNER', 'ADMIN')
+export class AdmissionTestController {
+  constructor(
+    private readonly test: AdmissionTestService,
+    private readonly merit: AdmissionMeritService,
+    private readonly sms: AdmissionResultSmsService,
+  ) {}
+
+  @Get('cycle-classes/:id/test')
+  view(@Id() id: string): Promise<AdmissionTestClassView> {
+    return this.test.view(id);
+  }
+
+  @Patch('cycle-classes/:id/test')
+  setup(@Id() id: string, @Body() dto: TestSetupDto): Promise<AdmissionTestClassView> {
+    return this.test.setup(id, dto);
+  }
+
+  @Post('cycle-classes/:id/test-rolls')
+  @HttpCode(200)
+  rolls(
+    @Id() id: string,
+    @Body() dto: TestRollsDto,
+  ): Promise<{ issued: number; from: number | null; to: number | null }> {
+    return this.test.issueRolls(id, dto.startAt);
+  }
+
+  @Get('cycle-classes/:id/admit-cards')
+  admitCards(@Id() id: string, @Query() q: AdmitCardsQueryDto): Promise<AdmissionAdmitCards> {
+    return this.test.admitCards(id, q.from, q.to);
+  }
+
+  @Get('cycle-classes/:id/scores')
+  scores(@Id() id: string): Promise<AdmissionScoreRow[]> {
+    return this.test.scores(id);
+  }
+
+  @Put('cycle-classes/:id/scores')
+  saveScores(@Id() id: string, @Body() dto: ScoresDto): Promise<AdmissionScoreRow[]> {
+    return this.test.saveScores(id, dto.rows);
+  }
+
+  @Get('cycle-classes/:id/merit')
+  meritView(@Id() id: string): Promise<AdmissionMeritView> {
+    return this.merit.view(id);
+  }
+
+  @Post('cycle-classes/:id/merit')
+  @HttpCode(200)
+  build(@Id() id: string): Promise<AdmissionMeritView> {
+    return this.merit.build(id);
+  }
+
+  @Post('cycle-classes/:id/publish')
+  @HttpCode(200)
+  publish(@Id() id: string, @Body() dto: PublishDto): Promise<AdmissionMeritView> {
+    return this.merit.publish(id, dto.builtAt);
+  }
+
+  @Post('cycle-classes/:id/move-up')
+  @HttpCode(200)
+  moveUp(@Id() id: string): Promise<AdmissionMoveUpResult> {
+    return this.merit.moveUp(id);
+  }
+
+  @Get('cycle-classes/:id/result-sms/preview')
+  smsPreview(@Id() id: string): Promise<AdmissionResultSmsPreview> {
+    return this.sms.preview(id);
+  }
+
+  @Post('cycle-classes/:id/result-sms')
+  @HttpCode(202)
+  smsSend(@Id() id: string, @Body() dto: ResultSmsDto): Promise<AdmissionResultSmsRun> {
+    return this.sms.send(id, dto.expected);
+  }
+
+  @Get('result-sms/:id')
+  smsStatus(@Id() id: string) {
+    return this.sms.status(id);
+  }
+}
+
 @Module({
   imports: [
-    BullModule.registerQueue({ name: ADMISSION_QUEUE }, { name: ADMISSION_SMS_QUEUE }),
+    BullModule.registerQueue(
+      { name: ADMISSION_QUEUE },
+      { name: ADMISSION_SMS_QUEUE },
+      { name: ADMISSION_RESULTS_QUEUE },
+    ),
     StudentsModule,
     AttendanceModule,
   ],
   controllers: [
     AdmissionCyclesController,
     AdmissionApplicationsController,
+    AdmissionTestController,
     AdmissionPublicController,
   ],
   providers: [
@@ -248,6 +364,10 @@ export class AdmissionApplicationsController {
     TurnstileVerifier,
     AdmissionSubmitGuard,
     AdmissionSmsProcessor,
+    AdmissionTestService,
+    AdmissionMeritService,
+    AdmissionResultSmsService,
+    AdmissionResultSmsProcessor,
   ],
   exports: [AdmissionApplicationsService],
 })

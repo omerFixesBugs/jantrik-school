@@ -62,6 +62,19 @@
     "class": "Class",
     "guardianPhone": "Guardian's phone",
     "website": "Leave this empty",
-    "duplicateOther": "This child has already applied in this admission. Please contact the institute."
+    "duplicateOther": "This child has already applied in this admission. Please contact the institute.",
+    "test": {
+      "title": "Admission test",
+      "roll": "Test roll",
+      "when": "Date and time",
+      "venue": "Venue"
+    },
+    "result": {
+      "title": "Result",
+      "place": "Merit place: {place}",
+      "waitlist": "Waitlist position: {position}",
+      "score": "Score: {score} out of {full}",
+      "absent": "Absent from the test"
+    }
   }
 }

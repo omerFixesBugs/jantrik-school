@@ -372,7 +372,11 @@ export class StudentImportService implements OnModuleInit {
           select: {
             id: true,
             capacity: true,
-            _count: { select: { enrolments: { where: { student: { deletedAt: null } } } } },
+            _count: {
+              select: {
+                enrolments: { where: { student: { deletedAt: null, status: 'ACTIVE' } } },
+              },
+            },
           },
         })
       ).map((s) => [s.id, { free: s.capacity! - s._count.enrolments }]),
