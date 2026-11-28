@@ -319,6 +319,9 @@ enum SmsPurpose {
   ADMISSION_OTP
   /// "Application received" to the applicant's phone (online admission, S11).
   ADMISSION_SUBMITTED
+  ADMISSION_RESULT
+  /// An admin's SMS broadcast to guardians or staff (notices, sprint 1 P6b).
+  BROADCAST
 
   @@map("sms_purpose")
 }
@@ -598,6 +601,22 @@ model User {
 
   storedFilesCreated StoredFile[] @relation("StoredFileCreatedBy")
 
+  promotionRunsCreated PromotionRun[] @relation("PromotionRunCreatedBy")
+  promotionRunsApplied PromotionRun[] @relation("PromotionRunAppliedBy")
+
+  noticesCreated   Notice[]     @relation("NoticeCreatedBy")
+  noticesPublished Notice[]     @relation("NoticePublishedBy")
+  noticesWithdrawn Notice[]     @relation("NoticeWithdrawnBy")
+  noticeReads      NoticeRead[]
+
+  smsBroadcastsCreated   SmsBroadcast[] @relation("SmsBroadcastCreatedBy")
+  smsBroadcastsScheduled SmsBroadcast[] @relation("SmsBroadcastScheduledBy")
+  smsBroadcastsCancelled SmsBroadcast[] @relation("SmsBroadcastCancelledBy")
+
+  paymentAccountsCredentialsUpdated PaymentGatewayAccount[] @relation("PaymentAccountCredentialsUpdatedBy")
+  paymentAccountsTested             PaymentGatewayAccount[] @relation("PaymentAccountTestedBy")
+  paymentIntentsPaid                PaymentIntent[]         @relation("PaymentIntentPayer")
+
   @@map("users")
 }
 
@@ -703,6 +722,21 @@ model Tenant {
   storedFileUsage            StoredFileUsage?
   instituteProfile           InstituteProfile?
 
+  promotionRuns        PromotionRun[]
+  promotionRunStudents PromotionRunStudent[]
+
+  notices       Notice[]
+  noticeTargets NoticeTarget[]
+  noticeReads   NoticeRead[]
+
+  smsBroadcasts       SmsBroadcast[]
+  smsBroadcastTargets SmsBroadcastTarget[]
+
+  paymentGatewayAccounts PaymentGatewayAccount[]
+  paymentIntents         PaymentIntent[]
+  paymentIntentDues      PaymentIntentDue[]
+  paymentGatewayEvents   PaymentGatewayEvent[]
+
   @@index([instituteTypeId])
   @@map("tenants")
 }
@@ -778,7 +812,9 @@ model AcademicYear {
   feeDues        FeeDue[]
   exams          Exam[]
 
-  admissionCycles AdmissionCycle[]
+  admissionCycles   AdmissionCycle[]
+  promotionRunsFrom PromotionRun[]   @relation("PromotionRunFromYear")
+  promotionRunsTo   PromotionRun[]   @relation("PromotionRunToYear")
 
   @@unique([tenantId, id])
   @@unique([tenantId, name])
@@ -875,16 +911,20 @@ model ClassLevel {
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  gradingScheme  GradingScheme?      @relation(fields: [tenantId, gradingSchemeId], references: [tenantId, id], onDelete: Restrict)
-  sourceTemplate TemplateClassLevel? @relation(fields: [sourceTemplateId], references: [id], onDelete: SetNull)
-  subjects       Subject[]
-  sections       Section[]
-  enrolments     Enrolment[]
-  feeAmounts     FeeAmount[]
-  examClasses    ExamClass[]
+  tenant           Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  gradingScheme    GradingScheme?       @relation(fields: [tenantId, gradingSchemeId], references: [tenantId, id], onDelete: Restrict)
+  sourceTemplate   TemplateClassLevel?  @relation(fields: [sourceTemplateId], references: [id], onDelete: SetNull)
+  subjects         Subject[]
+  sections         Section[]
+  enrolments       Enrolment[]
+  feeAmounts       FeeAmount[]
+  examClasses      ExamClass[]
+  noticeTargets    NoticeTarget[]
+  broadcastTargets SmsBroadcastTarget[]
 
   admissionCycleClasses AdmissionCycleClass[]
+  promotionRuns         PromotionRun[]
+  promotionRowsTargets  PromotionRunStudent[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -913,6 +953,7 @@ model StudyGroup {
   examCandidates ExamCandidate[]
 
   admissionCycleClasses AdmissionCycleClass[]
+  promotionRowsTargets  PromotionRunStudent[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -986,10 +1027,17 @@ model Section {
   examCandidates     ExamCandidate[]
   examMarkSheets     ExamMarkSheet[]
   examResults        ExamResult[]
+  noticeTargets      NoticeTarget[]
+  broadcastTargets   SmsBroadcastTarget[]
+
+  promotionRowsFrom    PromotionRunStudent[] @relation("PromotionRowFromSection")
+  promotionRowsTargets PromotionRunStudent[] @relation("PromotionRowTargetSection")
 
   @@unique([tenantId, id])
   /// So rows can carry the class level and be checked against a subject's class.
   @@unique([tenantId, id, classLevelId])
+  /// So a promotion row's target section can be checked against its year and class (P5).
+  @@unique([tenantId, id, academicYearId, classLevelId])
   @@unique([tenantId, academicYearId, classLevelId, name])
   @@index([tenantId, classLevelId])
   @@map("sections")
@@ -1031,6 +1079,10 @@ model Student {
   /// Always STUDENT_PHOTO (CHECK): part of the foreign key, so the photo can only be a photo.
   photoFileKind        StoredFileKind @default(STUDENT_PHOTO) @map("photo_file_kind")
   status               StudentStatus  @default(ACTIVE)
+  /// The day a leaver left (GRADUATED, TRANSFERRED, DROPPED_OUT, INACTIVE without deletion);
+  /// NULL while the student stays (P5, S14).
+  leftOn               DateTime?      @map("left_on") @db.Date
+  leaveReason          String?        @map("leave_reason")
   // Fields required for Bangladesh education board registration.
   fatherNameBn         String?        @map("father_name_bn")
   fatherNameEn         String?        @map("father_name_en")
@@ -1066,9 +1118,12 @@ model Student {
   feePaymentAllocations   FeePaymentAllocation[]
   feeMobileSubmissions    FeeMobileSubmission[]
   feeMobileSubmissionDues FeeMobileSubmissionDue[]
+  paymentIntents          PaymentIntent[]
+  paymentIntentDues       PaymentIntentDue[]
   examCandidates          ExamCandidate[]
   devicePeople            DevicePerson[]
   admissionApplication    AdmissionApplication?
+  promotionRows           PromotionRunStudent[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
@@ -1150,7 +1205,13 @@ model Enrolment {
 
   subjectChoices StudentSubjectChoice[]
 
+  promotionRowsFrom PromotionRunStudent[] @relation("PromotionRowFromEnrolment")
+  promotionRowsTo   PromotionRunStudent[] @relation("PromotionRowToEnrolment")
+
   @@unique([tenantId, id])
+  /// So a promotion row's enrolments can be checked against its student (and its to-year).
+  @@unique([tenantId, id, studentId])
+  @@unique([tenantId, id, studentId, academicYearId])
   @@unique([tenantId, academicYearId, studentId])
   @@unique([tenantId, sectionId, roll])
   @@index([tenantId, academicYearId, classLevelId, sectionId])
@@ -1549,7 +1610,11 @@ model Exam {
   classes    ExamClass[]
   candidates ExamCandidate[]
 
+  promotionRuns PromotionRun[]
+
   @@unique([tenantId, id])
+  /// So a promotion run's merit exam can be checked against its from-year (P5).
+  @@unique([tenantId, id, academicYearId])
   @@index([tenantId, academicYearId, startsOn])
   @@map("exams")
 }
@@ -1881,6 +1946,8 @@ model SmsLog {
   @@index([tenantId, createdAt(sort: Desc)])
   /// Platform usage: a month's sent SMS across institutes.
   @@index([localDate], map: "sms_logs_sent_local_date", where: raw("status = 'SENT'"))
+  /// A broadcast's SMS by state (the broadcasts list, sprint 1 P6b).
+  @@index([tenantId, relatedId])
   @@map("sms_logs")
 }
 
@@ -2557,6 +2624,7 @@ model FeeDue {
   fineWaivers  FeeFineWaiver[]
   allocations  FeePaymentAllocation[]
   submissions  FeeMobileSubmissionDue[]
+  intentDues   PaymentIntentDue[]
 
   @@unique([tenantId, id])
   /// Composite target for rows that must name the due's own student (allocations, waivers).
@@ -2594,6 +2662,10 @@ enum FeePaymentMethod {
   CASH
   BKASH
   NAGAD
+  /// Online only (SSLCommerz, S21): Rocket, a card, any other instrument the gateway reports.
+  ROCKET
+  CARD
+  OTHER_ONLINE
 
   @@map("fee_payment_method")
 }
@@ -2603,6 +2675,8 @@ enum FeePaymentChannel {
   COUNTER
   /// A bKash/Nagad transfer to the institute's own number, verified by staff.
   MOBILE_MANUAL
+  /// Paid online through the institute's gateway account (SSLCommerz), confirmed by its API.
+  GATEWAY
 
   @@map("fee_payment_channel")
 }
@@ -2654,6 +2728,8 @@ model FeePayment {
   /// The client's id for this attempt: a retried request returns the same receipt.
   clientRequestId String            @map("client_request_id") @db.Uuid
   status          FeePaymentStatus  @default(ACTIVE)
+  /// GATEWAY only: the online payment it records (exactly one live payment per intent).
+  paymentIntentId String?           @map("payment_intent_id") @db.Uuid
   voidedAt        DateTime?         @map("voided_at") @db.Timestamptz(3)
   voidedById      String?           @map("voided_by_id") @db.Uuid
   voidReason      String?           @map("void_reason")
@@ -2666,6 +2742,9 @@ model FeePayment {
   voidedBy    User?                  @relation("FeePaymentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   allocations FeePaymentAllocation[]
   submissions FeeMobileSubmission[]
+  /// Same student: an online payment only ever pays its own child's dues.
+  paymentIntent  PaymentIntent?  @relation("FeePaymentIntent", fields: [tenantId, paymentIntentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  intentsHolding PaymentIntent[] @relation("PaymentIntentFeePayment")
 
   @@unique([tenantId, id])
   @@unique([tenantId, id, studentId])
@@ -2673,6 +2752,8 @@ model FeePayment {
   @@unique([tenantId, clientRequestId])
   /// A bKash/Nagad transaction ID pays once per method (again only after that payment is void).
   @@unique([tenantId, method, trxId], map: "fee_payments_live_trx", where: raw("status = 'ACTIVE' AND trx_id IS NOT NULL"))
+  /// One live payment per online payment intent (a voided one may be applied again, P7a-G).
+  @@unique([tenantId, paymentIntentId], map: "fee_payments_live_intent", where: raw("status = 'ACTIVE' AND payment_intent_id IS NOT NULL"))
   @@index([tenantId, studentId])
   @@index([tenantId, recordedOn])
   @@map("fee_payments")
@@ -3302,6 +3383,26 @@ enum AdmissionSource {
   @@map("admission_source")
 }
 
+/// How applicants with the same test score are ordered (decision P4-A).
+enum AdmissionTieBreak {
+  OLDER_FIRST
+  YOUNGER_FIRST
+  NONE
+
+  @@map("admission_tie_break")
+}
+
+/// The draft outcome of the last merit list build (P4); statuses change only at publish.
+enum AdmissionTestResult {
+  SELECTED
+  WAITLISTED
+  NOT_SELECTED
+  FAILED
+  ABSENT
+
+  @@map("admission_test_result")
+}
+
 /// An admission window for one academic year (usually the next one).
 model AdmissionCycle {
   id             String               @id @default(uuid(7)) @db.Uuid
@@ -3321,6 +3422,8 @@ model AdmissionCycle {
   collectPhoto   Boolean              @default(false) @map("collect_photo")
   /// { <field>: "HIDDEN" | "OPTIONAL" | "REQUIRED" } for the optional form fields (CHECK).
   fields         Json                 @default("{}") @db.JsonB
+  /// How equal test scores are ordered in the merit list (P4).
+  meritTieBreak  AdmissionTieBreak    @default(OLDER_FIRST) @map("merit_tie_break")
   /// The admin who made it (no FK: users are global, as audit_logs.user_id).
   createdBy      String?              @map("created_by") @db.Uuid
   createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -3338,16 +3441,36 @@ model AdmissionCycle {
 
 /// A class (and group) a cycle takes applications for.
 model AdmissionCycleClass {
-  id           String   @id @default(uuid(7)) @db.Uuid
-  tenantId     String   @map("tenant_id") @db.Uuid
-  cycleId      String   @map("cycle_id") @db.Uuid
-  classLevelId String   @map("class_level_id") @db.Uuid
-  studyGroupId String?  @map("study_group_id") @db.Uuid
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
+  cycleId            String    @map("cycle_id") @db.Uuid
+  classLevelId       String    @map("class_level_id") @db.Uuid
+  studyGroupId       String?   @map("study_group_id") @db.Uuid
   /// Shown to staff only; NULL: no limit.
-  seats        Int?
-  isOpen       Boolean  @default(true) @map("is_open")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  seats              Int?
+  isOpen             Boolean   @default(true) @map("is_open")
+  // ── The admission test (P4); the time is the institute's local time.
+  testDate           DateTime? @map("test_date") @db.Date
+  testTime           DateTime? @map("test_time") @db.Time(0)
+  testVenueBn        String?   @map("test_venue_bn")
+  testVenueEn        String?   @map("test_venue_en")
+  fullMarks          Int?      @map("full_marks")
+  passMarks          Int?      @map("pass_marks")
+  selectCount        Int?      @map("select_count")
+  waitlistCount      Int?      @map("waitlist_count")
+  /// The draft merit list: when it was built and a hash of what it was built from.
+  meritBuiltAt       DateTime? @map("merit_built_at") @db.Timestamptz(3)
+  meritInputsHash    String?   @map("merit_inputs_hash")
+  /// The latest score change (the list shows "changed since publish").
+  scoresChangedAt    DateTime? @map("scores_changed_at") @db.Timestamptz(3)
+  /// The published version (0: never published), when, and its full marks.
+  resultsVersion     Int       @default(0) @map("results_version")
+  resultsPublishedAt DateTime? @map("results_published_at") @db.Timestamptz(3)
+  resultsFullMarks   Int?      @map("results_full_marks")
+  /// The build the published version came from (never published twice).
+  resultsBuiltAt     DateTime? @map("results_built_at") @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   cycle        AdmissionCycle         @relation(fields: [tenantId, cycleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
@@ -3367,50 +3490,66 @@ model AdmissionCycleClass {
 
 /// One child's application. History: never deleted; a status change keeps who, when and why.
 model AdmissionApplication {
-  id                  String                     @id @default(uuid(7)) @db.Uuid
-  tenantId            String                     @map("tenant_id") @db.Uuid
-  cycleId             String                     @map("cycle_id") @db.Uuid
-  cycleClassId        String                     @map("cycle_class_id") @db.Uuid
+  id                     String                     @id @default(uuid(7)) @db.Uuid
+  tenantId               String                     @map("tenant_id") @db.Uuid
+  cycleId                String                     @map("cycle_id") @db.Uuid
+  cycleClassId           String                     @map("cycle_class_id") @db.Uuid
   /// <year>-<NNNN>, unique per institute (decision P3-G).
-  applicationNo       String                     @map("application_no")
-  source              AdmissionSource
-  nameBn              String?                    @map("name_bn")
-  nameEn              String?                    @map("name_en")
+  applicationNo          String                     @map("application_no")
+  source                 AdmissionSource
+  nameBn                 String?                    @map("name_bn")
+  nameEn                 String?                    @map("name_en")
   /// Lower-cased NFC name without spaces, for duplicate checks.
-  nameKey             String                     @map("name_key")
-  dateOfBirth         DateTime                   @map("date_of_birth") @db.Date
-  gender              Gender
-  religion            Religion?
-  bloodGroup          BloodGroup?                @map("blood_group")
-  birthRegistrationNo String?                    @map("birth_registration_no")
+  nameKey                String                     @map("name_key")
+  dateOfBirth            DateTime                   @map("date_of_birth") @db.Date
+  gender                 Gender
+  religion               Religion?
+  bloodGroup             BloodGroup?                @map("blood_group")
+  birthRegistrationNo    String?                    @map("birth_registration_no")
   /// Kept on the application only (decision P3-I).
-  previousInstitute   String?                    @map("previous_institute")
-  presentAddress      String?                    @map("present_address")
-  permanentAddress    String?                    @map("permanent_address")
-  fatherNameBn        String?                    @map("father_name_bn")
-  fatherNameEn        String?                    @map("father_name_en")
-  motherNameBn        String?                    @map("mother_name_bn")
-  motherNameEn        String?                    @map("mother_name_en")
-  guardianNameBn      String?                    @map("guardian_name_bn")
-  guardianNameEn      String?                    @map("guardian_name_en")
-  guardianRelation    GuardianRelation           @map("guardian_relation")
+  previousInstitute      String?                    @map("previous_institute")
+  presentAddress         String?                    @map("present_address")
+  permanentAddress       String?                    @map("permanent_address")
+  fatherNameBn           String?                    @map("father_name_bn")
+  fatherNameEn           String?                    @map("father_name_en")
+  motherNameBn           String?                    @map("mother_name_bn")
+  motherNameEn           String?                    @map("mother_name_en")
+  guardianNameBn         String?                    @map("guardian_name_bn")
+  guardianNameEn         String?                    @map("guardian_name_en")
+  guardianRelation       GuardianRelation           @map("guardian_relation")
   /// Kept on the application; becomes the guardian's occupation at approval.
-  guardianOccupation  String?                    @map("guardian_occupation")
+  guardianOccupation     String?                    @map("guardian_occupation")
   /// The applicant's (guardian's) phone, E.164.
-  phone               String
-  status              AdmissionApplicationStatus @default(SUBMITTED)
-  statusReason        String?                    @map("status_reason")
-  statusBy            String?                    @map("status_by") @db.Uuid
-  statusAt            DateTime?                  @map("status_at") @db.Timestamptz(3)
-  staffNote           String?                    @map("staff_note")
+  phone                  String
+  status                 AdmissionApplicationStatus @default(SUBMITTED)
+  statusReason           String?                    @map("status_reason")
+  statusBy               String?                    @map("status_by") @db.Uuid
+  statusAt               DateTime?                  @map("status_at") @db.Timestamptz(3)
+  staffNote              String?                    @map("staff_note")
   /// The student made from it (status ADMITTED, and only then).
-  studentId           String?                    @map("student_id") @db.Uuid
+  studentId              String?                    @map("student_id") @db.Uuid
   /// Why bulk approval skipped it (decision P3-T).
-  approvalProblem     String?                    @map("approval_problem")
-  approvalProblemAt   DateTime?                  @map("approval_problem_at") @db.Timestamptz(3)
-  submittedAt         DateTime                   @map("submitted_at") @db.Timestamptz(3)
-  createdAt           DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  approvalProblem        String?                    @map("approval_problem")
+  approvalProblemAt      DateTime?                  @map("approval_problem_at") @db.Timestamptz(3)
+  // ── The admission test (P4). A score in hundredths, within the class's full marks (trigger).
+  testRoll               Int?                       @map("test_roll")
+  testScoreH             Int?                       @map("test_score_h")
+  testAbsent             Boolean                    @default(false) @map("test_absent")
+  /// The draft of the last build: never shown to the applicant.
+  testResult             AdmissionTestResult?       @map("test_result")
+  meritPosition          Int?                       @map("merit_position")
+  waitlistPosition       Int?                       @map("waitlist_position")
+  /// The published snapshot (the only result columns the public lookup reads).
+  resultVersion          Int?                       @map("result_version")
+  resultMeritPosition    Int?                       @map("result_merit_position")
+  resultWaitlistPosition Int?                       @map("result_waitlist_position")
+  resultScoreH           Int?                       @map("result_score_h")
+  resultAbsent           Boolean?                   @map("result_absent")
+  /// ADMITTED_NOT_SELECTED: admitted, but a corrected list would not select them (P4-F).
+  resultFlag             String?                    @map("result_flag")
+  submittedAt            DateTime                   @map("submitted_at") @db.Timestamptz(3)
+  createdAt              DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant     Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   cycle      AdmissionCycle             @relation(fields: [tenantId, cycleId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
@@ -3423,9 +3562,12 @@ model AdmissionApplication {
   @@unique([tenantId, studentId])
   /// One live application per birth registration number per cycle (the duplicate rule).
   @@unique([tenantId, cycleId, birthRegistrationNo], map: "admission_applications_birth_reg_live", where: raw("birth_registration_no IS NOT NULL AND status <> 'WITHDRAWN'"))
+  /// One test roll per class (P4-C).
+  @@unique([tenantId, cycleClassId, testRoll], map: "admission_applications_test_roll_key", where: raw("test_roll IS NOT NULL"))
   @@index([tenantId, cycleId, status])
   @@index([tenantId, phone])
   @@index([tenantId, cycleClassId])
+  @@index([tenantId, cycleClassId, meritPosition], map: "admission_applications_merit_idx")
   @@map("admission_applications")
 }
 
@@ -3460,4 +3602,554 @@ model AdmissionCounter {
 
   @@id([tenantId, year])
   @@map("admission_counters")
+}
+
+// ───────────────────────────── Promotion and new session (sprint 1 P5) ─────────────────────────────
+// A run per class moves its students into the next academic year (docs/promotion.md). Rows are
+// edited while pending; an applied row never changes again (restrictive policies, migration
+// 20261117200100_promotion_runs).
+
+/// How rolls are proposed for a group of students in the new year (assignRolls, @jantrik/shared).
+enum PromotionRollStrategy {
+  MERIT
+  NAME_BN
+  NAME_EN
+  MANUAL
+  KEEP
+
+  @@map("promotion_roll_strategy")
+}
+
+/// DRAFT (rows edited) → APPLYING (the job runs, or stopped with last_error) → APPLIED (no pending
+/// row left). Rows added by a refresh after APPLIED are applied by another apply.
+enum PromotionRunStatus {
+  DRAFT
+  APPLYING
+  APPLIED
+
+  @@map("promotion_run_status")
+}
+
+enum PromotionDecision {
+  PROMOTE
+  REPEAT
+  LEAVE
+
+  @@map("promotion_decision")
+}
+
+/// What applying a row did: a new enrolment, an enrolment that was already there (left as is,
+/// P5-D), the student marked as leaving, or nothing because the student was deactivated or had
+/// already left (another way) meanwhile.
+enum PromotionApplyOutcome {
+  ENROLLED
+  ALREADY_ENROLLED
+  LEFT
+  SKIPPED_DEACTIVATED
+  SKIPPED_LEFT
+
+  @@map("promotion_apply_outcome")
+}
+
+/// One promotion run: a from-class of the from-year moving into the to-year. History once applied
+/// (no DELETE grant); a draft is emptied, never deleted (P5-L).
+model PromotionRun {
+  id             String                @id @default(uuid(7)) @db.Uuid
+  tenantId       String                @map("tenant_id") @db.Uuid
+  fromYearId     String                @map("from_year_id") @db.Uuid
+  toYearId       String                @map("to_year_id") @db.Uuid
+  /// The from-class.
+  classLevelId   String                @map("class_level_id") @db.Uuid
+  rollStrategy   PromotionRollStrategy @map("roll_strategy")
+  /// A published exam of the from-year (defaults and merit order); checked against the from-year.
+  meritExamId    String?               @map("merit_exam_id") @db.Uuid
+  status         PromotionRunStatus    @default(DRAFT)
+  createdById    String                @map("created_by_id") @db.Uuid
+  /// The admin who pressed apply last (the job acts as them).
+  appliedById    String?               @map("applied_by_id") @db.Uuid
+  applyStartedAt DateTime?             @map("apply_started_at") @db.Timestamptz(3)
+  /// Set when no pending row is left.
+  appliedAt      DateTime?             @map("applied_at") @db.Timestamptz(3)
+  /// A fixed code (SECTION_FULL, ACTOR_NOT_ADMIN, ERROR…), never a message.
+  lastError      String?               @map("last_error")
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromYear   AcademicYear @relation("PromotionRunFromYear", fields: [tenantId, fromYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  toYear     AcademicYear @relation("PromotionRunToYear", fields: [tenantId, toYearId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel ClassLevel   @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  meritExam  Exam?        @relation(fields: [tenantId, meritExamId, fromYearId], references: [tenantId, id, academicYearId], onDelete: Restrict, onUpdate: Restrict)
+  createdBy  User         @relation("PromotionRunCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  appliedBy  User?        @relation("PromotionRunAppliedBy", fields: [appliedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  rows PromotionRunStudent[]
+
+  @@unique([tenantId, id])
+  /// The rows' target: a row carries its run's to-year, so its target section can be checked.
+  @@unique([tenantId, id, toYearId])
+  @@unique([tenantId, fromYearId, toYearId, classLevelId])
+  @@index([tenantId, toYearId])
+  @@map("promotion_runs")
+}
+
+/// One student of a run: the snapshot when the run was made, the decision and target, and what
+/// applying it did. Updated and deleted only while pending (applied_at NULL).
+model PromotionRunStudent {
+  id                 String                 @id @default(uuid(7)) @db.Uuid
+  tenantId           String                 @map("tenant_id") @db.Uuid
+  runId              String                 @map("run_id") @db.Uuid
+  /// Copied from the run, so the target section can be checked by a foreign key.
+  toYearId           String                 @map("to_year_id") @db.Uuid
+  studentId          String                 @map("student_id") @db.Uuid
+  fromEnrolmentId    String                 @map("from_enrolment_id") @db.Uuid
+  fromSectionId      String?                @map("from_section_id") @db.Uuid
+  fromRoll           Int?                   @map("from_roll")
+  /// From the merit exam; NULL = no result.
+  resultPassed       Boolean?               @map("result_passed")
+  /// The class position in the merit exam; NULL = unranked or no result.
+  meritPosition      Int?                   @map("merit_position")
+  decision           PromotionDecision
+  targetClassLevelId String?                @map("target_class_level_id") @db.Uuid
+  targetSectionId    String?                @map("target_section_id") @db.Uuid
+  targetStudyGroupId String?                @map("target_study_group_id") @db.Uuid
+  leaveStatus        StudentStatus?         @map("leave_status")
+  leftOn             DateTime?              @map("left_on") @db.Date
+  leaveReason        String?                @map("leave_reason")
+  appliedAt          DateTime?              @map("applied_at") @db.Timestamptz(3)
+  applyOutcome       PromotionApplyOutcome? @map("apply_outcome")
+  toEnrolmentId      String?                @map("to_enrolment_id") @db.Uuid
+  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  run              PromotionRun @relation(fields: [tenantId, runId, toYearId], references: [tenantId, id, toYearId], onDelete: Restrict, onUpdate: Restrict)
+  student          Student      @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  fromEnrolment    Enrolment    @relation("PromotionRowFromEnrolment", fields: [tenantId, fromEnrolmentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  fromSection      Section?     @relation("PromotionRowFromSection", fields: [tenantId, fromSectionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  targetClassLevel ClassLevel?  @relation(fields: [tenantId, targetClassLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  targetSection    Section?     @relation("PromotionRowTargetSection", fields: [tenantId, targetSectionId, toYearId, targetClassLevelId], references: [tenantId, id, academicYearId, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+  targetStudyGroup StudyGroup?  @relation(fields: [tenantId, targetStudyGroupId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  toEnrolment      Enrolment?   @relation("PromotionRowToEnrolment", fields: [tenantId, toEnrolmentId, studentId, toYearId], references: [tenantId, id, studentId, academicYearId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, runId, studentId])
+  /// A student is in at most one run into a given year.
+  @@unique([tenantId, toYearId, studentId])
+  @@index([tenantId, runId, targetSectionId])
+  @@index([tenantId, toYearId, targetClassLevelId])
+  @@index([tenantId, studentId])
+  @@map("promotion_run_students")
+}
+
+// ───────────────────────────── Notices (sprint 1 P6, docs/notices.md) ─────────────────────────────
+
+enum NoticeAudience {
+  ALL
+  STAFF
+  GUARDIANS
+
+  @@map("notice_audience")
+}
+
+/// "Scheduled" is a PUBLISHED notice whose publish_at is still ahead (P6-A): visibility is computed
+/// when read, so no job flips it.
+enum NoticeStatus {
+  DRAFT
+  PUBLISHED
+  WITHDRAWN
+
+  @@map("notice_status")
+}
+
+/// A notice on the board. Never deleted (withdrawn instead); OWNER/ADMIN write it (S20).
+model Notice {
+  id              String         @id @default(uuid(7)) @db.Uuid
+  tenantId        String         @map("tenant_id") @db.Uuid
+  title           String
+  body            String
+  audience        NoticeAudience
+  status          NoticeStatus   @default(DRAFT)
+  publishAt       DateTime?      @map("publish_at") @db.Timestamptz(3)
+  expiresAt       DateTime?      @map("expires_at") @db.Timestamptz(3)
+  pinned          Boolean        @default(false)
+  createdById     String         @map("created_by_id") @db.Uuid
+  publishedById   String?        @map("published_by_id") @db.Uuid
+  withdrawnById   String?        @map("withdrawn_by_id") @db.Uuid
+  withdrawnAt     DateTime?      @map("withdrawn_at") @db.Timestamptz(3)
+  withdrawnReason String?        @map("withdrawn_reason")
+  /// The last edit after publishing ("edited" on the board, P6-N).
+  editedAt        DateTime?      @map("edited_at") @db.Timestamptz(3)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User           @relation("NoticeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  publishedBy User?          @relation("NoticePublishedBy", fields: [publishedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  withdrawnBy User?          @relation("NoticeWithdrawnBy", fields: [withdrawnById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targets     NoticeTarget[]
+  reads       NoticeRead[]
+  broadcasts  SmsBroadcast[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status, publishAt(sort: Desc)])
+  @@map("notices")
+}
+
+/// Narrows a notice's guardians to some classes (or one section of a class); none = everyone of
+/// the audience. Staff see an ALL or STAFF notice whatever its targets (P6-G). Replaced whole on
+/// save (delete + insert), so there is no UPDATE.
+model NoticeTarget {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  noticeId     String   @map("notice_id") @db.Uuid
+  classLevelId String   @map("class_level_id") @db.Uuid
+  sectionId    String?  @map("section_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  notice     Notice     @relation(fields: [tenantId, noticeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel ClassLevel @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  /// A section of that class.
+  section    Section?   @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, noticeId])
+  @@map("notice_targets")
+}
+
+/// Who read a notice. Only for oneself (a restrictive policy); history: no UPDATE, no DELETE.
+model NoticeRead {
+  id       String   @id @default(uuid(7)) @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  noticeId String   @map("notice_id") @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  readAt   DateTime @default(now()) @map("read_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  notice Notice @relation(fields: [tenantId, noticeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, noticeId, userId])
+  @@index([tenantId, userId])
+  @@map("notice_reads")
+}
+
+enum BroadcastRecipients {
+  PRIMARY_GUARDIANS
+  ALL_GUARDIANS
+  STAFF
+
+  @@map("broadcast_recipients")
+}
+
+/// SENT means every SMS was handed to the SMS queue (in one transaction); delivery is read live
+/// from sms_logs (P6-C). FAILED_OVER_CAP: nothing was sent (all or nothing, S18).
+enum BroadcastStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+  CANCELLED
+  FAILED_OVER_CAP
+  /// Found more than 3 hours late (its job was lost): not sent; a new preview and send is needed.
+  EXPIRED
+  /// At send time it would cost much more than confirmed (the audience grew): not sent.
+  COST_CHANGED
+
+  @@map("broadcast_status")
+}
+
+/// An SMS to guardians or staff, sent now or at a set time, whole or not at all (S18–S20). Never
+/// deleted (money history).
+model SmsBroadcast {
+  id                 String              @id @default(uuid(7)) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  body               String
+  noticeId           String?             @map("notice_id") @db.Uuid
+  recipients         BroadcastRecipients
+  status             BroadcastStatus     @default(DRAFT)
+  scheduledAt        DateTime?           @map("scheduled_at") @db.Timestamptz(3)
+  /// The recipient count the admin confirmed (an estimate: the audience is resolved at send, S19).
+  previewCount       Int?                @map("preview_count")
+  segments           Int?                @db.SmallInt
+  estimatedCostPaisa Int?                @map("estimated_cost_paisa")
+  queuedCount        Int?                @map("queued_count")
+  /// The real cost of what was queued (SENT), integer paisa.
+  sentCostPaisa      Int?                @map("sent_cost_paisa")
+  /// The institute's day it was sent (cap and billing).
+  localDate          DateTime?           @map("local_date") @db.Date
+  createdById        String              @map("created_by_id") @db.Uuid
+  /// The admin the send job acts for.
+  scheduledById      String?             @map("scheduled_by_id") @db.Uuid
+  sentAt             DateTime?           @map("sent_at") @db.Timestamptz(3)
+  cancelledById      String?             @map("cancelled_by_id") @db.Uuid
+  cancelledAt        DateTime?           @map("cancelled_at") @db.Timestamptz(3)
+  /// BY_ADMIN or ACTOR_NOT_ADMIN.
+  cancelReason       String?             @map("cancel_reason")
+  /// {needed, capLeft} for FAILED_OVER_CAP.
+  failure            Json?
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  notice      Notice?              @relation(fields: [tenantId, noticeId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User                 @relation("SmsBroadcastCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  scheduledBy User?                @relation("SmsBroadcastScheduledBy", fields: [scheduledById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cancelledBy User?                @relation("SmsBroadcastCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targets     SmsBroadcastTarget[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status, scheduledAt])
+  @@index([tenantId, noticeId])
+  @@map("sms_broadcasts")
+}
+
+/// A broadcast's guardian targets (as notice_targets): a class, or a section of that class.
+model SmsBroadcastTarget {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  broadcastId  String   @map("broadcast_id") @db.Uuid
+  classLevelId String   @map("class_level_id") @db.Uuid
+  sectionId    String?  @map("section_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  broadcast  SmsBroadcast @relation(fields: [tenantId, broadcastId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  classLevel ClassLevel   @relation(fields: [tenantId, classLevelId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  section    Section?     @relation(fields: [tenantId, sectionId, classLevelId], references: [tenantId, id, classLevelId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, broadcastId])
+  @@map("sms_broadcast_targets")
+}
+
+// ───────────────────────────── Online payments (sprint 1 P7a, docs/payments.md) ─────────────────────────────
+
+/// The online payment gateway an account belongs to (BKASH_TOKENIZED later, in its own migration).
+enum PaymentProvider {
+  SSLCOMMERZ
+
+  @@map("payment_provider")
+}
+
+/// An institute's gateway account: one per provider, SANDBOX only this sprint. The store ID and
+/// password are one AES-256-GCM ciphertext bound to this row and its credentials version (AAD
+/// payments:<provider>:<tenant>:<id>:v<version>), left out of every read unless asked (CLIENT_OMIT)
+/// and read only by PaymentCredentialsService.
+/// On only after a passing test; saving credentials switches it off. Never deleted (P7a-P).
+model PaymentGatewayAccount {
+  id                     String          @id @default(uuid(7)) @db.Uuid
+  tenantId               String          @map("tenant_id") @db.Uuid
+  provider               PaymentProvider
+  /// SANDBOX only (a CHECK); live mode is a later decision.
+  mode                   String          @default("SANDBOX")
+  enabled                Boolean         @default(false)
+  /// "v1." + base64url(iv | tag | ciphertext) of {"storeId","storePassword"}.
+  credentialsCiphertext  String?         @map("credentials_ciphertext")
+  /// The store ID's last 4 characters, shown to the owner (never the password).
+  credentialsHint        String?         @map("credentials_hint")
+  keyVersion             Int             @default(1) @map("key_version") @db.SmallInt
+  /// Set by a trigger alone, never by the app (P7a1-x20): 0 without credentials, 1 when inserted
+  /// with them, one up whenever the ciphertext changes. The AAD names it, so an older ciphertext
+  /// put back never decrypts.
+  credentialsVersion     Int             @default(0) @map("credentials_version")
+  credentialsUpdatedAt   DateTime?       @map("credentials_updated_at") @db.Timestamptz(3)
+  /// NULL when a command loaded them (payments:load-sandbox): no person did.
+  credentialsUpdatedById String?         @map("credentials_updated_by_id") @db.Uuid
+  lastTestAt             DateTime?       @map("last_test_at") @db.Timestamptz(3)
+  /// OK, BAD_CREDENTIALS, STORE_INACTIVE, UNREACHABLE or ERROR.
+  lastTestResult         String?         @map("last_test_result")
+  lastTestedById         String?         @map("last_tested_by_id") @db.Uuid
+  /// The last failure of a job that used the account (a fixed code), shown to the owner.
+  lastFailureCode        String?         @map("last_failure_code")
+  lastFailureAt          DateTime?       @map("last_failure_at") @db.Timestamptz(3)
+  createdAt              DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant               Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  credentialsUpdatedBy User?  @relation("PaymentAccountCredentialsUpdatedBy", fields: [credentialsUpdatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lastTestedBy         User?  @relation("PaymentAccountTestedBy", fields: [lastTestedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  intents              PaymentIntent[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, provider])
+  @@map("payment_gateway_accounts")
+}
+
+/// What an online payment attempt is (docs/payments.md → States). REFUNDED_OUTSIDE and DISMISSED
+/// are P7b's review outcomes, created now (P7a-T); nothing in P7a writes them.
+enum PaymentIntentStatus {
+  CREATED
+  REDIRECTED
+  PAID
+  FAILED
+  CANCELLED
+  EXPIRED
+  NEEDS_REVIEW
+  REFUNDED_OUTSIDE
+  DISMISSED
+
+  @@map("payment_intent_status")
+}
+
+/// Why an intent or a gateway event waits for a person (S23). VOIDED: an admin voided the
+/// posted payment (P7a-G).
+enum PaymentReviewReason {
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  TRAN_ID_MISMATCH
+  HIGH_RISK
+  DUES_CHANGED
+  LATE_SUCCESS
+  DUPLICATE
+  UNMATCHED
+  VOIDED
+
+  @@map("payment_review_reason")
+}
+
+/// INIT: the session; RETURN: the payer's browser; IPN: the gateway's notification; VALIDATE and
+/// QUERY: our own questions to the gateway.
+enum PaymentEventKind {
+  INIT
+  RETURN
+  IPN
+  VALIDATE
+  QUERY
+
+  @@map("payment_event_kind")
+}
+
+/// One online payment attempt by a guardian for chosen dues of one child, paid in full (S22). The
+/// amount, our tran_id and the dues are fixed when it is created (grants by column); the money the
+/// gateway reports is written once (trigger payment_intents_guard). PAID exactly when it holds a
+/// live GATEWAY payment that names it (deferred triggers). Never deleted.
+model PaymentIntent {
+  id                   String                @id @default(uuid(7)) @db.Uuid
+  tenantId             String                @map("tenant_id") @db.Uuid
+  accountId            String                @map("account_id") @db.Uuid
+  studentId            String                @map("student_id") @db.Uuid
+  /// The guardian who started it (a global user, like a payment's collector).
+  payerUserId          String                @map("payer_user_id") @db.Uuid
+  /// ৳10 to ৳5 lakh (SSLCommerz's range, P7a-L).
+  amountPaisa          Int                   @map("amount_paisa")
+  currency             String                @default("BDT")
+  /// The institute's day the amount was computed: the payment's paid_on (P7a-E).
+  pricedOn             DateTime              @map("priced_on") @db.Date
+  /// Ours: "JS" + 26 Crockford base32 characters (newTranId).
+  tranId               String                @map("tran_id")
+  clientRequestId      String                @map("client_request_id") @db.Uuid
+  status               PaymentIntentStatus   @default(CREATED)
+  /// SSLCommerz's sessionkey.
+  sessionRef           String?               @map("session_ref")
+  /// SSLCommerz's GatewayPageURL (its host checked by the client).
+  checkoutUrl          String?               @map("checkout_url")
+  /// A fixed code when the session could not be made.
+  initError            String?               @map("init_error")
+  /// The validated payment's facts, as the gateway's validation API reported them; written once.
+  valId                String?               @map("val_id")
+  bankTranId           String?               @map("bank_tran_id")
+  /// SSLCommerz card_type (e.g. "BKASH-BKash").
+  instrument           String?
+  method               FeePaymentMethod?
+  validatedAmountPaisa Int?                  @map("validated_amount_paisa")
+  storeAmountPaisa     Int?                  @map("store_amount_paisa")
+  /// currency_type as returned.
+  validatedCurrency    String?               @map("validated_currency")
+  /// LOW only for risk_level "0"; anything else HIGH.
+  risk                 String?
+  /// tran_date, read as Asia/Dhaka; shown only.
+  gatewayPaidAt        DateTime?             @map("gateway_paid_at") @db.Timestamptz(3)
+  feePaymentId         String?               @map("fee_payment_id") @db.Uuid
+  /// Until then it blocks another checkout for the child (P7a-F).
+  expiresAt            DateTime              @map("expires_at") @db.Timestamptz(3)
+  reviewReasons        PaymentReviewReason[] @default([]) @map("review_reasons")
+  reviewSince          DateTime?             @map("review_since") @db.Timestamptz(3)
+  /// When it left CREATED/REDIRECTED.
+  closedAt             DateTime?             @map("closed_at") @db.Timestamptz(3)
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  account    PaymentGatewayAccount @relation(fields: [tenantId, accountId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  student    Student               @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  payer      User                  @relation("PaymentIntentPayer", fields: [payerUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Same student as the intent's.
+  feePayment FeePayment?           @relation("PaymentIntentFeePayment", fields: [tenantId, feePaymentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  dues       PaymentIntentDue[]
+  events     PaymentGatewayEvent[]
+  payments   FeePayment[]          @relation("FeePaymentIntent")
+
+  @@unique([tenantId, id])
+  /// Composite target for rows that must name the intent's own student (its dues, its payment).
+  @@unique([tenantId, id, studentId])
+  @@unique([tenantId, tranId])
+  @@unique([tenantId, clientRequestId])
+  @@unique([tenantId, feePaymentId])
+  @@index([tenantId, studentId, status])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, payerUserId, createdAt])
+  @@map("payment_intents")
+}
+
+/// A due an intent pays, with the principal and fine it owed on the intent's priced_on (the
+/// snapshot the payment is checked against). An intent's rows add up to its amount (deferred
+/// trigger). Append-only.
+model PaymentIntentDue {
+  id                    String   @id @default(uuid(7)) @db.Uuid
+  tenantId              String   @map("tenant_id") @db.Uuid
+  intentId              String   @map("intent_id") @db.Uuid
+  studentId             String   @map("student_id") @db.Uuid
+  dueId                 String   @map("due_id") @db.Uuid
+  plannedPrincipalPaisa Int      @map("planned_principal_paisa")
+  plannedFinePaisa      Int      @map("planned_fine_paisa")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Intent and due share the student: the child's own dues only.
+  intent  PaymentIntent @relation(fields: [tenantId, intentId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  due     FeeDue        @relation(fields: [tenantId, dueId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict)
+  student Student       @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, intentId, dueId])
+  @@index([tenantId, dueId])
+  @@map("payment_intent_dues")
+}
+
+/// Everything the gateway told us or we asked it, append-only (no UPDATE or DELETE for anyone).
+/// RETURN and IPN rows are written by payment_signal_record (owner jantrik_payments) before any
+/// context; the API writes INIT, VALIDATE and QUERY rows. fields: whitelisted strings only.
+model PaymentGatewayEvent {
+  id           String               @id @default(uuid(7)) @db.Uuid
+  tenantId     String               @map("tenant_id") @db.Uuid
+  /// NULL: it matched no intent of this institute.
+  intentId     String?              @map("intent_id") @db.Uuid
+  kind         PaymentEventKind
+  /// RETURN: SUCCESS/FAIL/CANCEL (from the path, a hint only); INIT/VALIDATE/QUERY: the gateway's
+  /// status or our error code.
+  outcome      String?
+  tranId       String?              @map("tran_id")
+  valId        String?              @map("val_id")
+  fields       Json                 @default("{}")
+  /// RETURN/IPN: whether the sender's address is one SSLCommerz documents (P7a-C).
+  sourceListed Boolean?             @map("source_listed")
+  /// VALIDATE only: money with no intent to hold it (UNMATCHED) or a second payment (DUPLICATE).
+  reviewReason PaymentReviewReason? @map("review_reason")
+  receivedAt   DateTime             @map("received_at") @db.Timestamptz(3)
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  intent PaymentIntent? @relation(fields: [tenantId, intentId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, intentId, receivedAt])
+  @@index([tenantId, tranId])
+  @@index([tenantId, receivedAt], map: "payment_gateway_events_review", where: raw("review_reason IS NOT NULL"))
+  @@map("payment_gateway_events")
 }

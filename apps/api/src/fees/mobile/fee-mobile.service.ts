@@ -28,6 +28,7 @@ import { FeeDuesService } from '../dues/fee-dues.service.js';
 import { FeeLedgerService } from '../dues/fee-ledger.service.js';
 import { FeeStudentsService } from '../fee-students.service.js';
 import { lockStudentFees, lockTenantFees, lockTrxId } from '../fee-locks.js';
+import { FeeOnlineHooks } from '../fee-online-hooks.js';
 
 type AccountCreate = z.output<typeof createMobileAccountSchema>;
 type AccountUpdate = z.output<typeof updateMobileAccountSchema>;
@@ -96,6 +97,7 @@ export class FeeMobileService {
     private readonly collection: FeeCollectionService,
     private readonly students: FeeStudentsService,
     private readonly limiter: RateLimiter,
+    private readonly online: FeeOnlineHooks,
   ) {}
 
   // ─────────────────────────── The institute's numbers ───────────────────────────
@@ -169,7 +171,7 @@ export class FeeMobileService {
     await this.assertChild(studentId);
     const me = this.context.requirePrincipal().userId;
     const ledger = await this.ledgers.ledger(studentId);
-    const [submissions, accounts] = await Promise.all([
+    const [submissions, accounts, online] = await Promise.all([
       this.db.tx.feeMobileSubmission.findMany({
         where: { studentId },
         include: submissionInclude,
@@ -180,6 +182,8 @@ export class FeeMobileService {
         where: { isActive: true },
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       }),
+      // Online payment (sprint 1 P7a2): whether it is on, the child's payment in progress.
+      this.online.guardianOnline(studentId),
     ]);
     return {
       today: ledger.today,
@@ -191,6 +195,7 @@ export class FeeMobileService {
         const v = toAccountView(a);
         return { id: v.id, method: v.method, phone: v.phone, kind: v.kind, label: v.label };
       }),
+      online,
     };
   }
 

@@ -4,11 +4,14 @@ import { formatCount, formatIdentifier, formatTaka, type FeeGuardianView } from 
 import {
   ArrowLeftIcon,
   CircleCheckIcon,
+  GlobeLockIcon,
   HourglassIcon,
   SearchXIcon,
   SmartphoneIcon,
 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
+import dynamic from 'next/dynamic';
+import { useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { PersonAvatar } from '@/components/person-avatar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -26,6 +29,9 @@ import { PaymentHistory } from './payment-history';
 import { OverduePill } from './status-pills';
 import { SubmissionList } from './submission-list';
 import { isOwed, MAX_PENDING_PER_CHILD, pendingDueIds, useChildFees } from './use-child-fees';
+
+// Loaded only when a guardian opens it: the fees page keeps its first-load size (perf budget).
+const OnlinePaySheet = dynamic(() => import('./online-pay-sheet'), { ssr: false });
 
 /** A guardian's view of one child's fees (GET /me/children/:id/fees). */
 export function ChildFeesView({ childId }: { childId: string }) {
@@ -91,6 +97,9 @@ function Loaded({ childId, view }: { childId: string; view: FeeGuardianView }) {
   const locale = useLocale() as Locale;
   const label = useLabel();
   const [paying, setPaying] = useState(false);
+  // "Start again" from a payment that did not go through opens the online sheet at once.
+  const again = useSearchParams().get('pay') === 'online';
+  const [payingOnline, setPayingOnline] = useState(again);
   const taka = (paisa: number) => formatTaka(paisa, locale);
 
   const { ledger } = view;
@@ -107,6 +116,10 @@ function Loaded({ childId, view }: { childId: string; view: FeeGuardianView }) {
   const fineOwed = owedDues.reduce((sum, d) => sum + d.balance.fine, 0);
   const canReport = owed > 0 && view.accounts.length > 0;
   const full = waiting >= MAX_PENDING_PER_CHILD;
+  // Online payment (sprint 1 P7a2): offered when the school has it on; a payment in progress is
+  // continued rather than started again.
+  const online = view.online;
+  const canPayOnline = owed > 0 && online.available && !online.inProgress;
 
   const facts = [
     e ? displayName(e.classLevel.nameBn, e.classLevel.nameEn, locale) : null,
@@ -194,12 +207,40 @@ function Loaded({ childId, view }: { childId: string; view: FeeGuardianView }) {
           )}
         </div>
 
-        {owed > 0 && (
+        {(owed > 0 || online.inProgress) && (
           <div className="flex flex-col gap-2 sm:max-w-xs sm:items-end sm:text-end">
-            {canReport ? (
+            {online.inProgress &&
+              (online.inProgress.mine ? (
+                <ButtonLink
+                  size="lg"
+                  className="w-full sm:w-auto"
+                  href={`/children/${childId}/fees/pay/${online.inProgress.intentId}`}
+                  data-testid="child-online-continue"
+                >
+                  <GlobeLockIcon aria-hidden />
+                  {t('online.continueOpen')}
+                </ButtonLink>
+              ) : (
+                <p className="text-muted-foreground text-sm" data-testid="child-online-other">
+                  {t('online.otherInProgress')}
+                </p>
+              ))}
+            {canPayOnline && (
+              <Button
+                size="lg"
+                className="w-full sm:w-auto"
+                onClick={() => setPayingOnline(true)}
+                data-testid="child-online-open"
+              >
+                <GlobeLockIcon aria-hidden />
+                {t('online.open')}
+              </Button>
+            )}
+            {owed === 0 ? null : canReport ? (
               <>
                 <Button
                   size="lg"
+                  variant={online.available ? 'outline' : 'default'}
                   className="w-full sm:w-auto"
                   onClick={() => setPaying(true)}
                   disabled={full}
@@ -215,7 +256,7 @@ function Loaded({ childId, view }: { childId: string; view: FeeGuardianView }) {
                     : t('summary.payAtOffice')}
                 </p>
               </>
-            ) : (
+            ) : online.available ? null : (
               <p className="text-muted-foreground text-sm" data-testid="child-pay-no-accounts">
                 {t('pay.noAccounts')}
               </p>
@@ -236,6 +277,9 @@ function Loaded({ childId, view }: { childId: string; view: FeeGuardianView }) {
                 due={d}
                 concessions={ledger.concessions}
                 pending={pending.has(d.id)}
+                previousYear={
+                  ledger.currentYearId !== null && d.academicYear.id !== ledger.currentYearId
+                }
               />
             ))}
           </ul>
@@ -270,6 +314,14 @@ function Loaded({ childId, view }: { childId: string; view: FeeGuardianView }) {
       {/* Stays while open even if a refresh empties the list (it then explains the refusal). */}
       {(canReport || paying) && (
         <PaySheet open={paying} onOpenChange={setPaying} childId={childId} view={view} />
+      )}
+      {payingOnline && (
+        <OnlinePaySheet
+          open={canPayOnline}
+          onOpenChange={setPayingOnline}
+          childId={childId}
+          view={view}
+        />
       )}
     </>
   );

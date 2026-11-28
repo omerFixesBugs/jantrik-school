@@ -33,6 +33,7 @@ import { REDIS } from '../../src/redis/redis.constants.js';
 import { SMS_PROVIDER, type MemorySmsProvider } from '../../src/sms/sms.providers.js';
 import { TenantAccessService } from '../../src/tenancy/tenant-access.service.js';
 import { Clock } from '../../src/common/clock.js';
+import { PAYMENTS_CONFIG, type PaymentsConfig } from '../../src/payments/payments.config.js';
 import { TestController } from './test.controller.js';
 import { phoneSource } from './test-phones.js';
 
@@ -46,7 +47,14 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function createHarness(opts: { clock?: Clock } = {}): Promise<Harness> {
+/**
+ * `payments`: the payments module's settings (the fake SSLCommerz's address, a public API
+ * address). Without it SSLCommerz is an address nothing listens on (vitest.config.ts), so no test
+ * can reach the real one. Tests may change the object's fields later (app.get(PAYMENTS_CONFIG)).
+ */
+export async function createHarness(
+  opts: { clock?: Clock; payments?: Partial<PaymentsConfig> } = {},
+): Promise<Harness> {
   const builder = Test.createTestingModule({
     // AttendanceModule, DevicesModule, FeesModule and ExamsModule again so TestController can
     // inject their exported services (same instances).
@@ -55,6 +63,16 @@ export async function createHarness(opts: { clock?: Clock } = {}): Promise<Harne
   });
   // Tests that need to control time pass a FakeClock (test/support/clock.ts).
   if (opts.clock) builder.overrideProvider(Clock).useValue(opts.clock);
+  if (opts.payments) {
+    const payments: PaymentsConfig = {
+      apiPublicUrl: null,
+      webPublicUrl: null,
+      sslcommerzBaseUrl: process.env['SSLCOMMERZ_BASE_URL'] ?? 'http://127.0.0.1:9',
+      timeoutMs: 30_000,
+      ...opts.payments,
+    };
+    builder.overrideProvider(PAYMENTS_CONFIG).useValue(payments);
+  }
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
   configureApp(app);

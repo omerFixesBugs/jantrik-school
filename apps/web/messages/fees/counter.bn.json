@@ -80,7 +80,10 @@
       },
       "waivers": "জরিমানা মওকুফ",
       "waiverAll": "পুরো জরিমানা",
-      "waiverOf": "{head}, {period}"
+      "waiverOf": "{head}, {period}",
+      "previousYear": "আগের বছর ({year})",
+      "previousYearsTotal": "এর মধ্যে {amount} আগের বছরের।",
+      "onlinePending": "অনলাইনে পরিশোধ চলছে"
     },
     "collect": {
       "selected": "{count}টি খাত বাছাই করা",

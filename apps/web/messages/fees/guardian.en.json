@@ -43,7 +43,8 @@
         "OPEN": "To pay",
         "PAID": "Paid",
         "CANCELLED": "Cancelled"
-      }
+      },
+      "previousYear": "previous year ({year})"
     },
     "submissions": {
       "title": "Your bKash/Nagad payments",
@@ -129,6 +130,82 @@
       "back": "Back to fees",
       "print": "Print or save as PDF",
       "notFound": "This receipt could not be found."
+    },
+    "online": {
+      "open": "Pay online",
+      "continueOpen": "Continue the payment in progress",
+      "otherInProgress": "Another guardian is paying online right now.",
+      "title": "Pay online",
+      "text": "Pay with bKash, Nagad, Rocket or a card on SSLCommerz's page.",
+      "inFull": "Each due you choose is paid in full.",
+      "setBySchool": "The school sets the amount; you do not type it.",
+      "dues": "Which dues",
+      "fineIncluded": "Fine of {amount} included",
+      "total": "Total",
+      "minimum": "Online payments start at {amount}: choose more dues, or pay at the office.",
+      "maximum": "At most {amount} online at a time: choose fewer dues.",
+      "continue": "Continue to SSLCommerz",
+      "starting": "Getting ready…",
+      "gatewayNote": "You come back here once you have paid.",
+      "errors": {
+        "duesChanged": "These dues changed: the total is now {amount}. Check them again.",
+        "changed": "These dues changed. Check them again.",
+        "inProgressMine": "A payment for this child is in progress: finish that one.",
+        "inProgressOther": "Another guardian is paying for this child: try again later.",
+        "range": "Online payments are from {min} to {max}.",
+        "off": "Online payment is not available now.",
+        "rateLimited": "Too many tries. Try again in {minutes} minutes."
+      },
+      "page": {
+        "back": "Back to fees",
+        "leaving": "Taking you to SSLCommerz…",
+        "go": "Go to SSLCommerz",
+        "receiptNumber": "Receipt no",
+        "viewReceipt": "View receipt",
+        "startAgain": "Start again",
+        "payOtherWay": "Pay another way",
+        "abandon": "Give up this payment",
+        "nothingFound": "SSLCommerz shows no payment for this. If you cancelled it, you can start again.",
+        "dues": "What it pays",
+        "fine": "Fine of {amount} included",
+        "tranId": "Transaction ID",
+        "notFoundTitle": "Payment not found",
+        "notFoundText": "The link may be old or wrong.",
+        "state": {
+          "PREPARING": {
+            "title": "Getting ready",
+            "text": "SSLCommerz's page is being made. Please wait."
+          },
+          "READY": {
+            "title": "Pay on SSLCommerz",
+            "text": "If the page did not open, use the button."
+          },
+          "CONFIRMING": {
+            "title": "Confirming",
+            "text": "Checking with SSLCommerz. This can take a few minutes; do not pay again."
+          },
+          "PAID": {
+            "title": "Paid",
+            "text": "Your receipt is ready."
+          },
+          "CHECKING": {
+            "title": "The school is checking it",
+            "text": "The school is checking this payment. Do not pay again."
+          },
+          "NOT_PAID": {
+            "title": "Not paid",
+            "text": "No money was taken. You can try again."
+          },
+          "EXPIRED": {
+            "title": "Expired",
+            "text": "This payment ran out of time. Start again."
+          },
+          "REFUNDED": {
+            "title": "Refunded",
+            "text": "The school has refunded this money."
+          }
+        }
+      }
     }
   }
 }

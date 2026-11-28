@@ -142,13 +142,15 @@ export function DueListReport({ mode }: { mode: 'dues' | 'defaulters' }) {
                   : overdueDays(r, today);
           return dir === 'asc' ? v(a) - v(b) : v(b) - v(a);
         });
-  const sum = (k: 'principalPaisa' | 'finePaisa' | 'totalPaisa' | 'overduePaisa') =>
-    rows.reduce((s, r) => s + r[k], 0);
+  const sum = (
+    k: 'principalPaisa' | 'finePaisa' | 'totalPaisa' | 'overduePaisa' | 'previousYearsPaisa',
+  ) => rows.reduce((s, r) => s + (r[k] ?? 0), 0);
   const totals = {
     principal: sum('principalPaisa'),
     fine: sum('finePaisa'),
     total: sum('totalPaisa'),
     overdue: sum('overduePaisa'),
+    previous: sum('previousYearsPaisa'),
   };
 
   // The minimum amount is typed ahead of the URL and written after a pause.
@@ -279,6 +281,19 @@ export function DueListReport({ mode }: { mode: 'dues' | 'defaulters' }) {
         r.overduePaisa > 0 ? <span className="text-destructive">{taka(r.overduePaisa)}</span> : '—',
       foot: totals.overdue > 0 ? taka(totals.overdue) : '—',
     },
+    // S17: dues of earlier years stay on their year; shown here, not moved.
+    ...(totals.previous > 0
+      ? ([
+          {
+            id: 'previousYears',
+            header: tc('previousYears'),
+            align: 'end',
+            cell: (r: FeeDueListRow) =>
+              r.previousYearsPaisa > 0 ? taka(r.previousYearsPaisa) : '—',
+            foot: taka(totals.previous),
+          },
+        ] as const)
+      : []),
     ...(defaulters
       ? ([
           {
@@ -619,6 +634,11 @@ function DueCard({
           {r.overduePaisa > 0 && (
             <span className="text-destructive text-sm leading-normal">
               {t('cardOverdue', { amount: taka(r.overduePaisa) })}
+            </span>
+          )}
+          {r.previousYearsPaisa > 0 && (
+            <span className="text-muted-foreground text-sm leading-normal">
+              {tc('cardPreviousYears', { amount: taka(r.previousYearsPaisa) })}
             </span>
           )}
         </div>

@@ -49,6 +49,11 @@ GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 -- jantrik_app may run the functions but is NOT a member of this role.
 CREATE ROLE jantrik_admission NOLOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT jantrik_admission TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
+-- Owns payment_signal_record, the one function behind the gateway's public return and IPN routes
+-- (sprint 1 P7a2): the slug's institute, the intent by our own tran_id, the signal stored. Same
+-- rules as jantrik_auth; jantrik_app may run the function but is NOT a member of this role.
+CREATE ROLE jantrik_payments NOLOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT jantrik_payments TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 
 -- Runtime role of the device receiver only (DATABASE_INGEST_URL). It may run the ingest_*
 -- functions and nothing else: no table grants and NOT a member of jantrik_app, so a device

@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { isAllowedOrigin } from './config/dev-lan.js';
 import { parseTrustProxy, type Env } from './config/env.js';
+import { signalBodyReader } from './payments/public/signal-body.js';
 
 /** HTTP hardening shared by main.ts and the e2e tests. */
 export function configureApp(app: INestApplication): void {
@@ -15,6 +16,9 @@ export function configureApp(app: INestApplication): void {
   express.disable('x-powered-by');
   app.use(helmet());
   app.use(cookieParser());
+  // The gateway's return and IPN bodies (sprint 1 P7a2): read here, before the app's own
+  // parsers, as a flat form of at most 16 KB (docs/payments.md → Signals).
+  app.use('/public/payments', signalBodyReader);
   app.enableCors({
     // The CORS_ORIGINS allowlist; in development with DEV_LAN also http://<private IP>:3000.
     // No Origin header (curl, server-to-server): no CORS headers, as with a plain allowlist.

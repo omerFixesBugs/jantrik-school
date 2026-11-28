@@ -80,7 +80,10 @@
       },
       "waivers": "Fines waived",
       "waiverAll": "The whole fine",
-      "waiverOf": "{head}, {period}"
+      "waiverOf": "{head}, {period}",
+      "previousYear": "Previous year ({year})",
+      "previousYearsTotal": "{amount} of it is from previous years.",
+      "onlinePending": "Online payment in progress"
     },
     "collect": {
       "selected": "{n, plural, one {{count} fee chosen} other {{count} fees chosen}}",

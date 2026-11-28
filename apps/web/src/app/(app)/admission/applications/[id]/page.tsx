@@ -51,6 +51,7 @@ export default function ApplicationPage() {
 function Application() {
   const t = useTranslations('admissions.staff');
   const td = useTranslations('admissions.staff.detail');
+  const tt = useTranslations('admissions.staff.test');
   const ta = useTranslations('admission');
   const te = useTranslations('enums');
   const locale = useLocale() as Locale;
@@ -87,6 +88,7 @@ function Application() {
     } else if (code === 'ADMISSION_PHONE_CAP') toast.error(td('phoneCap'));
     else if (code === 'ADMISSION_FIELDS_REQUIRED') toast.error(td('fieldsRequired'));
     else if (code === 'SELECTED_BY_TEST') toast.error(td('notApprovable'));
+    else if (code === 'TEST_RESULT_PUBLISHED') toast.error(tt('resultPublishedStatus'));
     else if (e instanceof ApiError && (e.status === 400 || e.status === 422))
       toast.error(td('checkForm'));
     else toast.error(describe(e));

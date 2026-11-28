@@ -56,11 +56,14 @@ export function DueCard({
   due,
   concessions,
   pending,
+  previousYear = false,
 }: {
   due: FeeDueView;
   concessions: FeeConcessionView[];
   /** A submission naming this due is waiting to be checked. */
   pending: boolean;
+  /** A due of an earlier year than the current one (P5, S17). */
+  previousYear?: boolean;
 }) {
   const t = useTranslations('fees.guardian.dues');
   const locale = useLocale() as Locale;
@@ -95,6 +98,12 @@ export function DueCard({
           </h3>
           <p className="text-muted-foreground text-sm">
             {t('dueDate', { date: formatDate(due.dueDate, locale) })}
+            {previousYear && (
+              <span data-testid="previous-year">
+                {' · '}
+                {t('previousYear', { year: due.academicYear.name })}
+              </span>
+            )}
           </p>
         </div>
         <span className="shrink-0">
