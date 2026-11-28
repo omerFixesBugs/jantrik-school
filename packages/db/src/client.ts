@@ -9,9 +9,13 @@ import { PrismaClient as GeneratedPrismaClient, type Prisma } from './generated/
  * that returned the whole row would be refused by the database; with the column omitted, Prisma
  * never names it. The owner login can still read it with `omit: { passwordHash: false }` on one
  * query (tests only).
+ *
+ * An institute's encrypted gateway credentials (sprint 1 P7a) likewise: only the API's
+ * PaymentCredentialsService asks for them (`select`), so no other read ever carries them.
  */
 export const CLIENT_OMIT = {
   user: { passwordHash: true },
+  paymentGatewayAccount: { credentialsCiphertext: true },
 } as const satisfies Prisma.GlobalOmitConfig;
 
 /** The Prisma client of this package: always built by `createPrismaClient`, so `CLIENT_OMIT` applies. */

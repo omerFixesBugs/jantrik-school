@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@jantrik/db';
 import {
+  addYears,
   dateFromDb,
   dateToDb,
   normalizeFeeHead,
@@ -10,6 +11,7 @@ import {
   type FeeSettingsView,
   type FeeTermView,
   type IsoDate,
+  type FeeCopyResult,
 } from '@jantrik/shared';
 import type { z } from 'zod';
 import type {
@@ -448,8 +450,7 @@ export class FeeSetupService {
 
   async copyAmounts(input: CopyInput): Promise<{ copied: number }> {
     const tx = this.db.tx;
-    const from = await this.year(input.fromAcademicYearId);
-    const to = await this.year(input.toAcademicYearId);
+    const { from, to } = await this.copyYears(input, { adjacent: false });
     const key = (r: { feeHeadId: string; classLevelId: string; studyGroupId: string | null }) =>
       `${r.feeHeadId}|${r.classLevelId}|${r.studyGroupId ?? ''}`;
     const taken = new Set(
@@ -476,6 +477,160 @@ export class FeeSetupService {
       });
     }
     return { copied: missing.length };
+  }
+
+  /**
+   * Terms moved exactly one year later (S16, P5-M; 29 Feb → 28 Feb). A term whose Bangla name is
+   * already in the new year is not copied again; one whose dates fall outside the new year is
+   * copied and counted in `outsideYear`. Idempotent.
+   */
+  async copyTerms(input: CopyInput): Promise<FeeCopyResult> {
+    const tx = this.db.tx;
+    const { from, to } = await this.copyYears(input, { adjacent: true });
+    const taken = new Set(
+      (
+        await tx.feeTerm.findMany({ where: { academicYearId: to.id }, select: { nameBn: true } })
+      ).map((t) => t.nameBn),
+    );
+    const source = await tx.feeTerm.findMany({
+      where: { academicYearId: from.id },
+      orderBy: [{ sortOrder: 'asc' }, { dueDate: 'asc' }],
+    });
+    const start = dateFromDb(to.startDate);
+    const end = dateFromDb(to.endDate);
+    let outsideYear = 0;
+    const missing = source.filter((t) => !taken.has(t.nameBn));
+    const data = missing.map((t) => {
+      const opensOn = addYears(dateFromDb(t.opensOn), 1);
+      const dueDate = addYears(dateFromDb(t.dueDate), 1);
+      if (opensOn < start || dueDate > end) outsideYear++;
+      return {
+        tenantId: this.tenantId,
+        academicYearId: to.id,
+        nameBn: t.nameBn,
+        nameEn: t.nameEn,
+        opensOn: dateToDb(opensOn),
+        dueDate: dateToDb(dueDate),
+        sortOrder: t.sortOrder,
+      };
+    });
+    if (data.length > 0) {
+      await tx.feeTerm.createMany({ data });
+      await this.audit.record({
+        entity: 'fee_terms',
+        entityId: to.id,
+        action: 'CREATE',
+        newValues: {
+          copiedFrom: from.id,
+          copied: data.length,
+          outsideYear,
+          terms: data.map((t) => t.nameBn),
+        },
+      });
+    }
+    return { copied: data.length, skipped: source.length - data.length, outsideYear };
+  }
+
+  /**
+   * Concessions still running at the old year's end (P5-N), for students enrolled in the new year
+   * who are still ACTIVE, starting on the new year's first day. A student who already has one on
+   * that head in the new year is skipped. The audit row names the counts only.
+   */
+  async copyConcessions(input: CopyInput): Promise<FeeCopyResult> {
+    const tx = this.db.tx;
+    const { from, to } = await this.copyYears(input, { adjacent: true });
+    // One concession copy into a year at a time (review round 2): two at once would each see the
+    // other's ended copies as missing, since only open concessions are unique.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('fee-concession-copy:' || ${to.id}, 0))`;
+    const running = await tx.feeConcession.findMany({
+      where: {
+        academicYearId: from.id,
+        validFrom: { lte: from.endDate },
+        // Still running when the new year starts: no end, or one after the new year's first day
+        // (that end is kept, review NIT 4).
+        OR: [{ endedOn: null }, { endedOn: { gt: to.startDate } }],
+        student: {
+          deletedAt: null,
+          status: 'ACTIVE',
+          enrolments: { some: { academicYearId: to.id } },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const existing = new Set(
+      (
+        await tx.feeConcession.findMany({
+          where: { academicYearId: to.id, studentId: { in: running.map((c) => c.studentId) } },
+          select: { studentId: true, feeHeadId: true },
+        })
+      ).map((c) => `${c.studentId}|${c.feeHeadId}`),
+    );
+    const userId = this.context.requirePrincipal().userId;
+    const data = [];
+    for (const c of running) {
+      const key = `${c.studentId}|${c.feeHeadId}`;
+      if (existing.has(key)) continue;
+      existing.add(key);
+      data.push({
+        tenantId: this.tenantId,
+        studentId: c.studentId,
+        feeHeadId: c.feeHeadId,
+        academicYearId: to.id,
+        category: c.category,
+        type: c.type,
+        value: c.value,
+        reason: c.reason,
+        validFrom: to.startDate,
+        createdById: userId,
+        endedOn: c.endedOn,
+        endedById: c.endedOn ? c.endedById : null,
+        endedReason: c.endedOn ? c.endedReason : null,
+      });
+    }
+    // A copy running at the same time may have added some: those are skipped, never doubled.
+    const created =
+      data.length === 0
+        ? []
+        : await tx.feeConcession.createManyAndReturn({
+            data,
+            skipDuplicates: true,
+            select: { studentId: true, feeHeadId: true },
+          });
+    if (created.length > 0) {
+      await this.audit.record({
+        entity: 'fee_concessions',
+        entityId: to.id,
+        action: 'CREATE',
+        newValues: { copiedFrom: from.id, copied: created.length, concessions: created },
+      });
+    }
+    return { copied: created.length, skipped: running.length - created.length };
+  }
+
+  /**
+   * The two years of a copy (422 YEAR_ORDER otherwise): the new one starts after the old one, and
+   * with `adjacent` the old one is the year just before it (terms move exactly one year, and a
+   * concession runs on from one year into the next).
+   */
+  private async copyYears(input: CopyInput, opts: { adjacent: boolean }) {
+    const from = await this.year(input.fromAcademicYearId);
+    const to = await this.year(input.toAcademicYearId);
+    if (to.startDate.getTime() <= from.startDate.getTime())
+      throw apiError(422, 'YEAR_ORDER', 'Copy into a year that starts after this one', {
+        field: 'toAcademicYearId',
+      });
+    if (opts.adjacent) {
+      const previous = await this.db.tx.academicYear.findFirst({
+        where: { startDate: { lt: to.startDate } },
+        orderBy: { startDate: 'desc' },
+        select: { id: true },
+      });
+      if (previous?.id !== from.id)
+        throw apiError(422, 'YEAR_ORDER', 'Copy from the year just before the new one', {
+          field: 'fromAcademicYearId',
+        });
+    }
+    return { from, to };
   }
 
   // ─────────────────────────── Concessions ───────────────────────────

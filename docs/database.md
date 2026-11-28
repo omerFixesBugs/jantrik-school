@@ -659,6 +659,17 @@ wrapped and composite foreign keys `ON UPDATE/DELETE RESTRICT`:
   live in the API). What it can reach is what the form can: submit an application (the duplicate
   and per-phone rules still hold) or read the status of an application whose number and phone it
   already knows. `p_now` stays a parameter so tests can move time (decision P3-b13).
+- **The admission test** (P4): new columns on the three admission tables, UPDATE granted by
+  column; CHECKs with `IS [NOT] NULL` first (a waitlist position needs a `WAITLISTED` draft; a
+  published version needs its time and full marks; the published snapshot only with a version);
+  one roll per class (a partial unique index); two invoker triggers with a pinned `search_path`:
+  `test_score_within_full_marks` (a score needs its class's full marks and stays within them) and
+  `full_marks_keep_test_scores` (full marks never drop below or away from a score). Not named
+  `admission_*`: that prefix is the definer functions'. `admission_lookup` was replaced in
+  `20261117300200` under `SET ROLE jantrik_admission` with `CREATE` on `public` granted back for
+  that migration only; `jantrik_admission` gained `SELECT (test_roll, result_version,
+result_merit_position, result_waitlist_position, result_score_h, result_absent)` and never the
+  draft columns or a live score.
 
 ### Files and the institute profile (sprint 1 P2)
 
@@ -694,6 +705,104 @@ RESTRICT`) and unique. The kind column is fixed by a CHECK (`students.photo_file
   `seal_file_kind` = `LOGO`, `SIGNATURE`, `SEAL`). So a row can only point at its own institute's
   file of the right kind, a file is used in one place, and a file still in use cannot be deleted.
 - Isolation, grants, CHECKs and keys: `packages/db/test/files-rls.test.ts`.
+
+### Promotion (sprint 1 P5)
+
+Rules: [promotion.md](promotion.md). Two tenant tables (forced RLS, composite keys, every foreign
+key `ON UPDATE RESTRICT`), and two columns on `students`:
+
+- **`students.left_on`, `leave_reason`** (leaving is a status, not a deletion). CHECKs: no
+  `left_on` while `status = 'ACTIVE'`; a reason needs a date; at most 500 characters. The
+  app's table-level grants on `students` cover them.
+- **`promotion_runs`** (S I, column-level U): one per `(from_year_id, to_year_id,
+class_level_id)`. No DELETE (history; a draft is emptied, not deleted). The merit exam is
+  checked against the from-year by `(tenant_id, merit_exam_id, from_year_id) → exams (tenant_id,
+id, academic_year_id)` (a new unique index on `exams`). CHECKs: the years differ; MERIT needs
+  an exam; `(status = 'APPLIED') = (applied_at IS NOT NULL)`; a run past DRAFT has who and when;
+  `last_error` is a code (`^[A-Z_]{1,40}$`).
+- **`promotion_run_students`** (S I D, column-level U): one per run and student, and one per
+  to-year and student (a student is in at most one run into a year). A row carries its run's
+  `to_year_id` (`(tenant_id, run_id, to_year_id) → promotion_runs (tenant_id, id, to_year_id)`)
+  so its target section is checked by `(tenant_id, target_section_id, to_year_id,
+target_class_level_id) → sections (tenant_id, id, academic_year_id, class_level_id)` (a new
+  unique index on `sections`): a target can never be a section of another year or class.
+  CHECKs for LEAVE (status not ACTIVE, a date, no target) and PROMOTE/REPEAT (a class, no leaving
+  fields), outcome only with `applied_at`, an enrolment only with an enrolling outcome.
+- **Applied rows never change:** two restrictive policies, `promotion_rows_update_pending` (FOR
+  UPDATE USING `applied_at IS NULL` WITH CHECK `true`, so applying a pending row can still set
+  `applied_at`) and `promotion_rows_delete_pending`. The student, run and snapshot columns have
+  no UPDATE grant at all (the merit exam's figures may be taken again while pending).
+- The policies call the context function wrapped, `(SELECT app_current_tenant_id())`, so it runs
+  once per statement.
+- A row's from- and to-enrolment are its own student's, the new one in its run's to-year:
+  `(tenant_id, from_enrolment_id, student_id)` and `(tenant_id, to_enrolment_id, student_id,
+to_year_id)` → `enrolments` (two unique indexes on enrolments, supersets of the key; migration
+  `20261117200200_promotion_review`).
+- A run may be deleted only while none of its rows is applied: DELETE grant plus the restrictive
+  policy `promotion_runs_delete_unapplied` (the service deletes the pending rows first).
+- Deleting a year, class, section or study group that a promotion row still names answers
+  `409 REFERENCE_CONFLICT` (the foreign keys restrict); deleting the run first frees them.
+- Tests: `packages/db/test/promotion-rls.test.ts`, `students-leaving.test.ts`.
+
+### Notices (sprint 1 P6, docs/notices.md)
+
+- **`notices`** (tenant table): title (1–150 after trimming), body (1–5 000), `audience`
+  (`ALL`, `STAFF`, `GUARDIANS`), `status` (`DRAFT`, `PUBLISHED`, `WITHDRAWN`; "scheduled" is a
+  published notice whose `publish_at` is ahead, so no job flips it), `publish_at`, `expires_at`,
+  `pinned`, who created, published and withdrew it, `withdrawn_reason` (≤ 300), `edited_at`.
+  Grants SELECT, INSERT and UPDATE by column (not `created_by_id`); **no DELETE**: a notice is
+  withdrawn, never deleted. CHECKs: the lengths, published ⇒ `publish_at` and who, withdrawn ⇒
+  when and who, expiry after publishing.
+- **`notice_targets`** (tenant table): `(notice_id, class_level_id, section_id?)`, composite keys
+  to the notice, the class and `sections (tenant_id, id, class_level_id)` (a section of that
+  class). Targets narrow only the guardians part. Grants SELECT, INSERT, DELETE: the service
+  replaces a notice's targets whole, so there is no UPDATE.
+- **`notice_reads`** (tenant table): one row per notice and person (unique), **only for oneself**: a
+  restrictive policy `notice_reads_own_insert` checks `user_id = (SELECT app_current_user_id())`
+  on INSERT. SELECT stays institute-wide (the admin's read counts). Grants SELECT, INSERT: history,
+  no UPDATE, no DELETE.
+- Isolation, grants, the own-read policy and the CHECKs: `packages/db/test/notices-rls.test.ts`.
+- **`sms_broadcasts`** (tenant table, P6b): the text (1–480 characters; 1–3 segments in code),
+  `recipients`, `status` (`DRAFT`, `SCHEDULED`, `SENT`, `CANCELLED`, `FAILED_OVER_CAP`), the
+  time, the confirmed count, segments, the estimated cost, the queued count and the institute's
+  day, who created, scheduled and cancelled it, the cancel reason and the failure. Grants SELECT,
+  INSERT and UPDATE on every column but the id, the institute, who created it and when; **no
+  DELETE** (money history). CHECKs: scheduled ⇒ time and who; sent ⇒ when, count and day;
+  cancelled ⇒ when and a reason (`BY_ADMIN`, `ACTOR_NOT_ADMIN`); failed ⇒ the failure; counts
+  ≥ 0; 1–3 segments. **`scheduled_by_id` is the send job's person** (it signs its context as
+  them), so two triggers (`sms_broadcasts_scheduler`, `sms_broadcast_targets_scheduler`, P6-b21)
+  hold for a request: a row it leaves `SCHEDULED` is scheduled by its own signed person, it sets
+  the scheduler only to itself or clears it, and it changes a `SCHEDULED` broadcast's targets only
+  if it scheduled it. A context with no person (the worker) is not checked. The same rule as
+  `student_imports.created_by_id` (P1-J8k).
+- **`sms_broadcast_targets`** (tenant table): as `notice_targets`, for a broadcast's guardians.
+- `sms_purpose` has `BROADCAST` (its own migration). Isolation, grants and CHECKs:
+  `packages/db/test/broadcasts-rls.test.ts`.
+
+### Online payments (sprint 1 P7a, docs/payments.md)
+
+- **`payment_gateway_accounts`** (P7a1): an institute's SSLCommerz account, one per provider
+  (UNIQUE `(tenant_id, provider)`, enum `payment_provider`: `SSLCOMMERZ`). Forced RLS. `jantrik_app`:
+  SELECT, INSERT, and UPDATE on the changeable columns only (never the institute, the provider or
+  the mode); no DELETE: an account is switched off, never removed.
+  - CHECKs (null-safe): `mode = 'SANDBOX'`; on only with credentials and a last test of `OK`;
+    the ciphertext's format (`v1.` + base64url, 43 to 2003 characters: a regular expression may
+    repeat at most 255 times, so the length is its own test); the hint (1 to 4 of
+    `[A-Za-z0-9_-]`); credentials with their hint and the time they were saved (a person only
+    with a time: a command that loaded them names nobody); a test with its time and one of the five
+    results; a job failure as a fixed code with its time; `key_version` 1 to 100;
+    `credentials_version` not negative.
+  - `credentials_ciphertext` is AES-256-GCM bound to the row and to `credentials_version` (the
+    API encrypts it). Every client leaves it out of its reads unless a query names it
+    (`CLIENT_OMIT` in `src/client.ts`, like `users.password_hash`), and only the API's
+    `PaymentCredentialsService` names it (a code scan checks).
+  - `credentials_version` (P7a1-x20, migration `20261117500100_payment_credentials_version`): the
+    trigger `payment_gateway_accounts_credentials_version` (BEFORE INSERT OR UPDATE, function
+    `app_payment_credentials_version()`) alone sets it: on INSERT 0 without a ciphertext and 1
+    with one, whatever the INSERT names; on UPDATE one up when the ciphertext changes, else the old
+    value. No UPDATE grant. The ciphertext's AAD names it, so an older ciphertext of the row put
+    back (by an SQL injection inside the institute) never decrypts again.
+- Tests: `packages/db/test/payments-rls.test.ts`, `payments-secrets.test.ts`.
 
 ## Querying: `withContext`, `withTenant`, `tenantClient`
 

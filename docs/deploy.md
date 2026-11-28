@@ -67,6 +67,12 @@ sudo ufw allow 4080/tcp           # attendance devices (plain HTTP)
 sudo ufw enable
 ```
 
+Online payments (SSLCommerz, [payments.md](payments.md)) need nothing more: SSLCommerz posts its
+payment notifications (IPN) to `https://<API_DOMAIN>/public/payments/sslcommerz/<slug>/ipn` on 443. If a firewall in front of the server limits 443 by address, allow SSLCommerz's documented
+addresses (sandbox `103.26.139.87`; live `103.26.139.81` and `103.132.153.81`; they have
+changed between versions of SSLCommerz's documentation), and let the server reach
+`sandbox.sslcommerz.com` on 443.
+
 Docker publishes container ports past `ufw`. That is why the compose file publishes only 80, 443
 and 4080 to the world, binds the API and the web app to `127.0.0.1`, and publishes Postgres and
 Redis nowhere. Keep it that way when you edit it. If your provider has a firewall of its own, open
@@ -113,11 +119,14 @@ Fill in every value of `deploy/.env.prod` (git-ignored, never commit it):
   before it fills.
 - **Backups:** `BACKUP_HOST_DIR` (default `/srv/jantrik-backups`, outside the git checkout) and
   the deploy user's ids `BACKUP_UID` / `BACKUP_GID` (`id -u`, `id -g`; Backups below).
-- **Secrets** (`JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY`):
-  `openssl rand -base64 48 | tr -d '\n'` each, all different.
+- **Secrets** (`JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY`,
+  `PAYMENT_CREDENTIALS_KEY`): `openssl rand -base64 48 | tr -d '\n'` each, all different.
 - Keep a copy of the file in a password manager. Losing `PLATFORM_TOTP_KEY` means every platform
-  admin enrols their authenticator again; losing the role passwords means resetting them as the
-  superuser (First start below).
+  admin enrols their authenticator again; losing `PAYMENT_CREDENTIALS_KEY` means every institute's
+  owner enters their SSLCommerz store ID and password again ([payments.md](payments.md)); losing
+  the role passwords means resetting them as the superuser (First start below).
+- **The API's public address** needs no line: the compose file sets `API_PUBLIC_URL` to
+  `https://<API_DOMAIN>`, the base of the return and IPN addresses SSLCommerz is given.
 
 Nothing starts with the example values:
 
@@ -155,23 +164,27 @@ The API and the worker refuse:
 | `CORS_ORIGINS` with `http://`, localhost, `127.0.0.1`, `[::1]`, `0.0.0.0`, `*.localhost` or `*`; or empty                                                                                                    | the API answers browsers with credentials only from the real https origins                                                                                                                               |
 | a secret under 32 characters                                                                                                                                                                                 | too short to resist guessing                                                                                                                                                                             |
 | a secret with an example marker (`change-me`, `CHANGE_ME`, `dev-only`, `test-only`, `ci-only`, `dev_password`, `ci_password`, `placeholder`, `example`; the same list as `compose.sh` and `create-roles.sh`) | copied from `.env.example`, `deploy/.env.prod.example`, CI or a test config, not generated                                                                                                               |
-| two of `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY` equal                                                                                                                                          | one leak would open two doors                                                                                                                                                                            |
+| two of `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY`, `PAYMENT_CREDENTIALS_KEY` equal                                                                                                               | one leak would open two doors                                                                                                                                                                            |
 | `DATABASE_URL`, `DATABASE_PLATFORM_URL`, `DATABASE_LOGIN_URL` or `DATABASE_INGEST_URL` logging in as `jantrik_owner` or `postgres`, or naming no login                                                       | the owner and the superuser are not subject to the database's protections the app relies on                                                                                                              |
 | a password in `REDIS_URL` under 24 characters or with an example marker                                                                                                                                      | the published example would open Redis (its queues and sessions) to anything on the network. A URL without a password is allowed (Redis on a private network)                                            |
 | `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                                                                                                      | the owner's and the superuser's credentials and the roles' raw passwords belong to Postgres and the migrate step only                                                                                    |
 | `PLATFORM_TOTP_KEY` missing                                                                                                                                                                                  | the platform admins' 2FA secrets need their own key                                                                                                                                                      |
+| `PAYMENT_CREDENTIALS_KEY` missing                                                                                                                                                                            | the institutes' SSLCommerz credentials are encrypted with their own key ([payments.md](payments.md))                                                                                                     |
+| `API_PUBLIC_URL` that is not https, is local, or is more than scheme, host and port                                                                                                                          | SSLCommerz sends the payer's browser and its notifications there                                                                                                                                         |
+| `SSLCOMMERZ_SANDBOX_STORE_ID` or `SSLCOMMERZ_SANDBOX_STORE_PASSWORD` set                                                                                                                                     | the owner's own sandbox store is for the two development commands only                                                                                                                                   |
+| `SSLCOMMERZ_BASE_URL` set                                                                                                                                                                                    | a fake SSLCommerz for development and tests; production always calls SSLCommerz itself                                                                                                                   |
 | `INGEST_PUBLIC_HOST` missing, localhost or `0.0.0.0`                                                                                                                                                         | the device setup guide would show an address no device can dial                                                                                                                                          |
 
 The device receiver refuses:
 
-| Setting                                                                                                                                                                   | Why                                                                                                                                       |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| any of `DATABASE_URL`, `DATABASE_PLATFORM_URL`, `DATABASE_LOGIN_URL`, `DATABASE_MIGRATION_URL`, `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY` in its environment | it is open to the internet without a login: code run in it must find no login that can choose an institute and no key that signs sessions |
-| `INGEST_TRUST_PROXY` `true` or a `/0` range                                                                                                                               | a client could claim a school's trusted address and receive its commands                                                                  |
-| `DATABASE_INGEST_URL` as `jantrik_owner`, `postgres`, `jantrik_app`, `jantrik_platform_app` or `jantrik_login_app`                                                        | its own login only                                                                                                                        |
-| `REDIS_URL` not set, or with an example or short password                                                                                                                 | as for the API                                                                                                                            |
-| `REDIS_URL` not logging in as `jantrik_ingest`                                                                                                                            | Redis's default user could queue jobs the worker trusts; `jantrik_ingest` reaches only the receiver's keys and queue (§ 10a)              |
-| `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                                                                   | as for the API                                                                                                                            |
+| Setting                                                                                                                                                                                              | Why                                                                                                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| any of `DATABASE_URL`, `DATABASE_PLATFORM_URL`, `DATABASE_LOGIN_URL`, `DATABASE_MIGRATION_URL`, `JWT_ACCESS_SECRET`, `OTP_PEPPER`, `PLATFORM_TOTP_KEY`, `PAYMENT_CREDENTIALS_KEY` in its environment | it is open to the internet without a login: code run in it must find no login that can choose an institute and no key that signs sessions |
+| `INGEST_TRUST_PROXY` `true` or a `/0` range                                                                                                                                                          | a client could claim a school's trusted address and receive its commands                                                                  |
+| `DATABASE_INGEST_URL` as `jantrik_owner`, `postgres`, `jantrik_app`, `jantrik_platform_app` or `jantrik_login_app`                                                                                   | its own login only                                                                                                                        |
+| `REDIS_URL` not set, or with an example or short password                                                                                                                                            | as for the API                                                                                                                            |
+| `REDIS_URL` not logging in as `jantrik_ingest`                                                                                                                                                       | Redis's default user could queue jobs the worker trusts; `jantrik_ingest` reaches only the receiver's keys and queue (§ 10a)              |
+| `DATABASE_MIGRATION_URL`, `POSTGRES_PASSWORD` or any `DB_*_PASSWORD` in its environment                                                                                                              | as for the API                                                                                                                            |
 
 Beyond these, every service checks its database login at start-up, against the database itself:
 
@@ -329,6 +342,11 @@ one of the user's own keys (gone after 5 s) and asks Redis's ACL (`ACL DRYRUN`) 
 it never runs a destructive command. CI runs the same check on the production compose file.
 
 ## 11. Upgrades
+
+**Upgrading to online payments (sprint 1 P7a1) needs one new line** in the settings file:
+`PAYMENT_CREDENTIALS_KEY` (`openssl rand -base64 48 | tr -d '\n'`, different from the other
+secrets). The compose file refuses to start without it, and `API_PUBLIC_URL` comes from
+`API_DOMAIN`. No new role, nothing to run by hand.
 
 **Upgrading to the public admission form (sprint 1 P3b) needs a new role first:** run
 `deploy/postgres/create-roles.sh` again after the checkout and before `migrate` (it creates

@@ -10,6 +10,7 @@ export {
 } from './client.js';
 export * from './generated/prisma/client.js';
 export * from './login-privileges.js';
+export * from './payments/secrets.js';
 export * from './platform/context.js';
 export * from './platform/secrets.js';
 export * from './platform/totp.js';

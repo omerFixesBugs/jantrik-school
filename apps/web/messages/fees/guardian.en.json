@@ -43,7 +43,8 @@
         "OPEN": "To pay",
         "PAID": "Paid",
         "CANCELLED": "Cancelled"
-      }
+      },
+      "previousYear": "previous year ({year})"
     },
     "submissions": {
       "title": "Your bKash/Nagad payments",

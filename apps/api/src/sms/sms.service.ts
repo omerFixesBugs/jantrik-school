@@ -1,7 +1,7 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { smsLength } from '@jantrik/shared';
-import type { Job, Queue } from 'bullmq';
+import { DelayedError, type Job, type Queue } from 'bullmq';
 import { RequestContext } from '../common/request-context.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TenantJobRunner } from '../tenancy/tenant-job-runner.service.js';
@@ -65,9 +65,9 @@ export class SmsProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<SmsJob>): Promise<void> {
+  async process(job: Job<SmsJob>, token?: string): Promise<void> {
     if (job.name === EXPIRE_HELD_JOB) return this.expireHeld();
-    if (isTenantJob(job)) return this.processTenant(job);
+    if (isTenantJob(job)) return this.processTenant(job, token);
     return this.processPlatform(job as Job<PlatformSmsJob>);
   }
 
@@ -151,11 +151,17 @@ export class SmsProcessor extends WorkerHost {
     }
   }
 
-  private async processTenant(job: Job<TenantSmsJob>): Promise<void> {
+  private async processTenant(job: Job<TenantSmsJob>, token?: string): Promise<void> {
     const { tenantId, smsLogId } = job.data;
     // 1. In the tenant's context: load the log row and decide whether it should still go out.
     const toSend = await this.runner.run(tenantId, () => this.tenantSms.prepare(smsLogId));
     if (!toSend) return;
+    if ('later' in toSend) {
+      // A broadcast SMS in quiet hours: the same job waits until 08:00 (B8).
+      if (!token) return;
+      await job.moveToDelayed(toSend.later.getTime(), token);
+      throw new DelayedError();
+    }
     // 2. Send outside any transaction (no DB connection held during the network call).
     try {
       await this.provider.send(toSend.phone, toSend.body);

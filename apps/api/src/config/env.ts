@@ -28,6 +28,22 @@ const ingestInProcess = (env: { INGEST_IN_PROCESS?: boolean | undefined; NODE_EN
  */
 const UNDIALABLE_HOST = /^(localhost|127(\.\d{1,3}){3}|::1|\[::1\]|0\.0\.0\.0|::|\[::\])$/i;
 
+/** A plain-http address on this machine (the fake SSLCommerz of the tests and Playwright). */
+function isLocalFakeUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === 'http:' &&
+    /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(url.hostname) &&
+    !url.username &&
+    !url.password
+  );
+}
+
 /**
  * Environment variables the API needs. Validated once at startup. The stand-alone device receiver
  * has its own, smaller schema (ingest-env.ts).
@@ -160,6 +176,34 @@ export const envSchema = z
     /** The web app's public address (the status page link in the "received" SMS). */
     WEB_PUBLIC_URL: z.url().optional(),
 
+    // Online fee payments through SSLCommerz, sandbox only (sprint 1 P7a, docs/payments.md).
+    /**
+     * Encrypts each institute's gateway credentials (AES-256-GCM, @jantrik/db payments/secrets).
+     * Required in production; elsewhere one is derived from OTP_PEPPER when unset. Changing it
+     * makes every saved store unreadable: each owner enters the credentials again.
+     */
+    PAYMENT_CREDENTIALS_KEY: z
+      .string()
+      .min(32, 'PAYMENT_CREDENTIALS_KEY must be at least 32 characters')
+      .optional(),
+    /**
+     * The API's public address (scheme, host and port): the base of the return and IPN addresses
+     * SSLCommerz is given. Optional; an institute's account cannot be turned on without it.
+     * Normalised like an origin (lower-case host, no trailing slash); production refuses http and
+     * local hosts (production-env.ts).
+     */
+    API_PUBLIC_URL: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .transform((v) => (v === undefined ? undefined : (normaliseOrigin(v) ?? v))),
+    /**
+     * Development and tests only: a fake SSLCommerz on this machine (apps/api/test/support/
+     * fake-sslcommerz.ts). Production refuses it and always calls SSLCommerz's sandbox.
+     */
+    SSLCOMMERZ_BASE_URL: z.string().trim().min(1).optional(),
+
     // Device receiver (ZKTeco attendance machines).
     /** Run the receiver inside the API process. Default: yes, except in production (own process). */
     INGEST_IN_PROCESS: z.stringbool().optional(),
@@ -233,6 +277,38 @@ export const envSchema = z
         path: ['PLATFORM_TOTP_KEY'],
         message: 'PLATFORM_TOTP_KEY is required in production',
       });
+    }
+    if (!env.PAYMENT_CREDENTIALS_KEY && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PAYMENT_CREDENTIALS_KEY'],
+        message: 'PAYMENT_CREDENTIALS_KEY is required in production (openssl rand -base64 48)',
+      });
+    }
+    if (
+      env.API_PUBLIC_URL !== undefined &&
+      env.NODE_ENV !== 'production' &&
+      normaliseOrigin(env.API_PUBLIC_URL) === null
+    ) {
+      // Production explains what is wrong with it (production-env.ts).
+      ctx.addIssue({
+        code: 'custom',
+        path: ['API_PUBLIC_URL'],
+        message:
+          'API_PUBLIC_URL must be an address with scheme, host and port only (e.g. http://localhost:4000)',
+      });
+    }
+    if (env.SSLCOMMERZ_BASE_URL !== undefined) {
+      // Only a fake SSLCommerz on this machine: payments are never sent anywhere else (P7a-S).
+      const problem =
+        env.NODE_ENV === 'production'
+          ? "SSLCOMMERZ_BASE_URL is for development and tests only (a fake SSLCommerz); production always calls SSLCommerz's own address"
+          : isLocalFakeUrl(env.SSLCOMMERZ_BASE_URL)
+            ? null
+            : 'SSLCOMMERZ_BASE_URL must be a fake SSLCommerz on this machine: http://127.0.0.1:<port> or http://localhost:<port>';
+      if (problem) {
+        ctx.addIssue({ code: 'custom', path: ['SSLCOMMERZ_BASE_URL'], message: problem });
+      }
     }
     if (ingestInProcess(env) && !env.DATABASE_INGEST_URL) {
       ctx.addIssue({

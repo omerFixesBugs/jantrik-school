@@ -30,6 +30,7 @@ import {
   type StoredSettings,
 } from './attendance-settings.service.js';
 import { DeviceArrivalsService } from './device-arrivals.service.js';
+import { onRegisterOn } from './on-register.js';
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -92,7 +93,7 @@ export class AttendanceService {
         id: true,
         name: true,
         classLevel: { select: { id: true, nameBn: true, nameEn: true } },
-        _count: { select: { enrolments: { where: { student: { deletedAt: null } } } } },
+        _count: { select: { enrolments: { where: { student: onRegisterOn(day) } } } },
         attendanceSessions: {
           where: { date: dateToDb(day) },
           orderBy: { periodNo: 'asc' },
@@ -134,7 +135,7 @@ export class AttendanceService {
     const nonWorkingDay = await this.settings.nonWorkingDay(date, tenant.settings);
     const blockedReason =
       dateAccess.blockedReason ?? (nonWorkingDay && !caller.isAdmin ? 'NON_WORKING_DAY' : null);
-    const roster = await this.roster(section.id, section.academicYearId);
+    const roster = await this.roster(section.id, section.academicYearId, date);
     const session = await this.sessionState(section.id, date, query.periodNo);
     // Each student's arrival by device; a register not taken yet starts from the device's view
     // when the device marks attendance (DAILY mode, auto-mark on).
@@ -239,8 +240,8 @@ export class AttendanceService {
       throw apiError(422, 'NON_WORKING_DAY', 'No attendance on this day', { nonWorkingDay });
     }
 
-    // Exactly the students enrolled in this section this year.
-    const roster = await this.roster(section.id, section.academicYearId);
+    // Exactly the students on this section's register that day.
+    const roster = await this.roster(section.id, section.academicYearId, input.date);
     const rosterIds = new Set(roster.map((s) => s.id));
     const unknown = input.records
       .filter((r) => !rosterIds.has(r.studentId))
@@ -482,10 +483,21 @@ export class AttendanceService {
 
   // ─────────────────────────── Data ───────────────────────────
 
-  /** Students enrolled in the section this year, by roll. Only what the register needs. */
-  async roster(sectionId: string, academicYearId: string): Promise<RosterStudent[]> {
+  /**
+   * Students enrolled in the section this year, by roll. Only what the register needs. With
+   * `onDate`, only those on that day's register (`onRegisterOn`: leavers until the day they left).
+   */
+  async roster(
+    sectionId: string,
+    academicYearId: string,
+    onDate?: IsoDate,
+  ): Promise<RosterStudent[]> {
     const enrolments = await this.db.tx.enrolment.findMany({
-      where: { sectionId, academicYearId, student: { deletedAt: null } },
+      where: {
+        sectionId,
+        academicYearId,
+        student: onDate ? onRegisterOn(onDate) : { deletedAt: null },
+      },
       orderBy: [{ roll: { sort: 'asc', nulls: 'last' } }, { student: { studentCode: 'asc' } }],
       select: {
         roll: true,

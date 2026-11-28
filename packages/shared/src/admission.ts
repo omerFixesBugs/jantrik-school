@@ -2,6 +2,11 @@
 // their defaults, application numbers and the API's shapes. No zod here (the public form imports
 // this file); the input schemas are in admission-schema.ts.
 
+import type {
+  AdmissionPublicResult,
+  AdmissionPublicTest,
+  AdmissionTieBreak,
+} from './admission-test.js';
 import type { IsoDate } from './dates.js';
 import type { BloodGroup, Gender, GuardianRelation, Religion } from './students-values.js';
 
@@ -208,6 +213,8 @@ export interface AdmissionCycleClassView {
   studyGroup: AdmissionNamed | null;
   seats: number | null;
   isOpen: boolean;
+  /** The published merit list's version (P4; 0: none). */
+  resultsVersion: number;
   /** Applications not withdrawn or rejected, and those admitted. */
   applications: number;
   admitted: number;
@@ -228,6 +235,8 @@ export interface AdmissionCycleView {
   collectPhoto: boolean;
   /** The settings as stored (missing keys use the defaults). */
   fields: Partial<AdmissionFieldSettings>;
+  /** How equal test scores are ordered (P4-A). */
+  meritTieBreak: AdmissionTieBreak;
   /** OPEN and inside its window now: the public form takes applications. */
   takingApplications: boolean;
   classes: AdmissionCycleClassView[];
@@ -345,4 +354,8 @@ export interface AdmissionPublicStatus {
   cycleNameBn: string;
   cycleNameEn: string | null;
   submittedAt: string;
+  /** Sprint 1 P4: the test's details once a roll is issued (P4-M). */
+  test?: AdmissionPublicTest;
+  /** Sprint 1 P4: the published result of this application's class (S13). */
+  result?: AdmissionPublicResult;
 }

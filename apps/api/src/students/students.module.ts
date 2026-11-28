@@ -21,8 +21,10 @@ import { searchStudentIds, type Prisma } from '@jantrik/db';
 import {
   addGuardianSchema,
   admissionSchema,
+  changePlacementSchema,
   createEnrolmentSchema,
   guardianLookupQuerySchema,
+  leaveSchema,
   normalizeBdPhone,
   recentMonths,
   STUDENT_STATUSES,
@@ -47,6 +49,10 @@ import { OwnTransaction, RequireModule, Roles } from '../common/decorators.js';
 import { zodDto } from '../common/zod.js';
 import { FILE_STORE, type FileStore } from '../files/file-store.js';
 import { ImageUpload, sendStoredImage, type UploadedImage } from '../files/files.module.js';
+import { AttendanceUsageModule } from '../attendance/attendance-usage.js';
+import { ExamUsageModule } from '../exams/setup/exam-usage.js';
+import { SubjectChoicesModule } from '../exams/setup/subject-choices-copier.js';
+import { FeeUsageModule } from '../fees/fee-usage.js';
 import { Db } from '../tenancy/db.service.js';
 import { GuardianLinker } from './guardian-linker.service.js';
 import { StudentAdminService } from './student-admin.service.js';
@@ -61,8 +67,10 @@ class AddGuardianDto extends zodDto(addGuardianSchema) {}
 class UpdateGuardianLinkDto extends zodDto(updateGuardianLinkSchema) {}
 class TransferDto extends zodDto(transferSchema) {}
 class CreateEnrolmentDto extends zodDto(createEnrolmentSchema) {}
+class ChangePlacementDto extends zodDto(changePlacementSchema) {}
 class StudentSettingsDto extends zodDto(studentSettingsSchema) {}
 class GuardianLookupDto extends zodDto(guardianLookupQuerySchema) {}
+class LeaveDto extends zodDto(leaveSchema) {}
 
 const Id = () => Param('id', ParseUUIDPipe);
 
@@ -454,11 +462,38 @@ export class StudentsController {
     return this.admin.enrol(id, dto);
   }
 
+  /** Correct a placement in a year that is not current yet (P5-L). */
+  @Patch(':id/enrolments/:enrolmentId')
+  @Roles('OWNER', 'ADMIN')
+  changePlacement(
+    @Id() id: string,
+    @Param('enrolmentId', ParseUUIDPipe) enrolmentId: string,
+    @Body() dto: ChangePlacementDto,
+  ): Promise<StudentProfile> {
+    return this.admin.changePlacement(id, enrolmentId, dto);
+  }
+
   @Post(':id/deactivate')
   @HttpCode(200)
   @Roles('OWNER', 'ADMIN')
   deactivate(@Id() id: string): Promise<StudentProfile> {
     return this.admin.deactivate(id);
+  }
+
+  /** Leaves the institute (graduated, transferred, dropped out, inactive): not a deletion (S14). */
+  @Post(':id/leave')
+  @HttpCode(200)
+  @Roles('OWNER', 'ADMIN')
+  leave(@Id() id: string, @Body() dto: LeaveDto): Promise<StudentProfile> {
+    return this.admin.leave(id, dto);
+  }
+
+  /** A leaver comes back (P5-J). */
+  @Post(':id/return')
+  @HttpCode(200)
+  @Roles('OWNER', 'ADMIN')
+  returnStudent(@Id() id: string): Promise<StudentProfile> {
+    return this.admin.returnStudent(id);
   }
 }
 
@@ -476,6 +511,7 @@ export class GuardiansController {
 }
 
 @Module({
+  imports: [SubjectChoicesModule, AttendanceUsageModule, ExamUsageModule, FeeUsageModule],
   controllers: [StudentsController, GuardiansController],
   providers: [
     StudentsService,

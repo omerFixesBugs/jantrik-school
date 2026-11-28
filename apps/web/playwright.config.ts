@@ -14,6 +14,9 @@ const required = (name: string): string => {
 
 export const E2E_REDIS_URL = process.env['REDIS_URL_E2E'] ?? 'redis://localhost:6379/2';
 
+/** The fake SSLCommerz the API talks to in the suite (never SSLCommerz itself). */
+export const FAKE_SSLCOMMERZ_URL = 'http://127.0.0.1:4090';
+
 /**
  * The day the whole suite lives on, so no test depends on the real date or weekday: a Wednesday,
  * a working day in the demo calendar (Fridays and 21 Feb, 26 Mar, 16 Dec are holidays), inside
@@ -107,7 +110,21 @@ export default defineConfig({
         RATE_LIMIT_USER_PER_MIN: '3000',
         RATE_LIMIT_IP_PER_MIN: '6000',
         CORS_ORIGINS: 'http://localhost:3000',
+        // Online payments (docs/payments.md): the fake SSLCommerz below, never SSLCommerz itself,
+        // and a public address so an institute can turn online payments on.
+        SSLCOMMERZ_BASE_URL: FAKE_SSLCOMMERZ_URL,
+        API_PUBLIC_URL: 'http://localhost:4000',
       },
+    },
+    {
+      // The fake SSLCommerz (apps/api/scripts/fake-sslcommerz.ts): the sandbox's three APIs and a
+      // payer page, on this machine only.
+      command: 'pnpm payments:fake',
+      cwd: path.resolve(import.meta.dirname, '../api'),
+      url: `${FAKE_SSLCOMMERZ_URL}/health`,
+      reuseExistingServer: false,
+      timeout: 60_000,
+      env: { ...(process.env as Record<string, string>), FAKE_SSLCOMMERZ_PORT: '4090' },
     },
     {
       command: 'pnpm start',

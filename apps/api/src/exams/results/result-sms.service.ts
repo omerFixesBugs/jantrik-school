@@ -14,7 +14,7 @@ import { AttendanceSettingsService } from '../../attendance/attendance-settings.
 import { AuditService } from '../../audit/audit.module.js';
 import { apiError } from '../../common/api-error.js';
 import { RequestContext } from '../../common/request-context.js';
-import { TenantSmsService } from '../../sms/tenant-sms.service.js';
+import { BULK_SMS_PRIORITY, TenantSmsService } from '../../sms/tenant-sms.service.js';
 import { Db } from '../../tenancy/db.service.js';
 
 export const EXAMS_QUEUE = 'exams';
@@ -165,6 +165,7 @@ export class ResultSmsService implements OnModuleInit {
     for (const r of recipients) {
       if (!r.phone) continue;
       await this.sms.queue({
+        priority: BULK_SMS_PRIORITY,
         purpose: 'EXAM_RESULT',
         phone: r.phone,
         body: r.text,

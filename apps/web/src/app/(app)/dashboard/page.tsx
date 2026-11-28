@@ -95,6 +95,8 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { useErrorMessage, useLabel, useMeContext } from '@/lib/hooks';
 import { bnGenitive, classLevelName, displayName, displayUserName } from '@/lib/names';
 import { canSee, isStaff, navItem } from '@/lib/navigation';
+import { BroadcastAlerts } from '@/components/notices/broadcast-alerts';
+import { NoticesCard } from '@/components/notices/notices-card';
 import { useSetupChecklist, wizardHref } from '@/lib/setup-checklist';
 import { cn } from '@/lib/utils';
 
@@ -105,6 +107,8 @@ export default function DashboardPage() {
     <>
       <InvitationsBanner />
       {context.roles.includes('OWNER') && <BillingNoticeBanner />}
+      {context.modules.includes('CORE') &&
+        (context.roles.includes('OWNER') || context.roles.includes('ADMIN')) && <BroadcastAlerts />}
       {isStaff(context.roles) ? (
         <StaffDashboard context={context} />
       ) : context.roles.includes('GUARDIAN') ? (
@@ -112,6 +116,8 @@ export default function DashboardPage() {
       ) : (
         <Greeting subtitle={null} today={context.today} />
       )}
+      {context.modules.includes('CORE') &&
+        (isStaff(context.roles) || context.roles.includes('GUARDIAN')) && <NoticesCard />}
     </>
   );
 }

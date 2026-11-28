@@ -1,0 +1,20 @@
+{
+  "board": {
+    "title": "Notices",
+    "hint": "Your institute's notice board",
+    "empty": "No notices yet.",
+    "pinned": "Pinned",
+    "edited": "Edited",
+    "unread": "New",
+    "manage": "Manage notices",
+    "back": "All notices",
+    "published": "Published {date}",
+    "expires": "Until {date}",
+    "notFound": "This notice was not found or is no longer shown.",
+    "unreadCount": "{count} unread",
+    "dashboardTitle": "Notices",
+    "dashboardAll": "All notices",
+    "dashboardEmpty": "No new notices.",
+    "loadError": "Could not load the notices. Please try again."
+  }
+}

@@ -9,6 +9,7 @@ import {
   ADMISSION_STAFF_STATUSES,
 } from './admission.js';
 import { toAsciiDigits } from './digits.js';
+import { ADMISSION_TIE_BREAKS } from './admission-test.js';
 import { bdPhoneSchema } from './phone-schema.js';
 import {
   birthRegistrationSchema,
@@ -179,10 +180,84 @@ export const updateAdmissionCycleSchema = z
     requiresTest: z.boolean(),
     collectPhoto: z.boolean(),
     fields: z.partialRecord(z.enum(ADMISSION_FIELDS), z.enum(ADMISSION_FIELD_SETTINGS)),
+    /** How equal test scores are ordered (P4-A); fixed once a list is published. */
+    meritTieBreak: z.enum(ADMISSION_TIE_BREAKS),
   })
   .partial()
   .strict();
 export type UpdateAdmissionCycleInput = z.input<typeof updateAdmissionCycleSchema>;
+
+// ─────────────────────────── The admission test (sprint 1 P4) ───────────────────────────
+
+/** A whole number typed with Bangla or ASCII digits; '' or null clears it. */
+const countInput = (min: number, max: number) =>
+  z.preprocess(
+    (v) => (typeof v === 'string' ? (v.trim() === '' ? null : Number(toAsciiDigits(v))) : v),
+    z.number().int().min(min).max(max).nullable(),
+  );
+
+/** PATCH /admission/cycle-classes/:id/test: any of the test's settings (null clears one). */
+export const admissionTestSetupSchema = z
+  .object({
+    testDate: z.iso.date().nullable(),
+    /** "HH:MM", the institute's local time. */
+    testTime: z
+      .string()
+      .regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)
+      .nullable(),
+    testVenueBn: text(200),
+    testVenueEn: text(200),
+    fullMarks: countInput(1, 1000),
+    passMarks: countInput(0, 1000),
+    selectCount: countInput(0, 5000),
+    waitlistCount: countInput(0, 5000),
+  })
+  .partial()
+  .strict();
+export type AdmissionTestSetupInput = z.input<typeof admissionTestSetupSchema>;
+export type AdmissionTestSetup = z.output<typeof admissionTestSetupSchema>;
+
+/** POST /admission/cycle-classes/:id/test-rolls: the first roll when none is issued yet. */
+export const issueTestRollsSchema = z
+  .object({ startAt: countInput(1, 999_000).optional() })
+  .strict();
+
+/** GET /admission/cycle-classes/:id/admit-cards: a roll range (both ends included). */
+export const admissionAdmitCardsQuerySchema = z.object({
+  from: z.coerce.number().int().min(1).max(999_999).optional(),
+  to: z.coerce.number().int().min(1).max(999_999).optional(),
+});
+
+/** PUT /admission/cycle-classes/:id/scores: up to 500 rows, saved together or not at all. */
+export const admissionScoresSchema = z
+  .object({
+    rows: z
+      .array(
+        z
+          .object({
+            applicationId: z.uuid(),
+            /** As typed (Bangla digits, two decimals at most); null or '' clears it. */
+            score: z.string().max(12).nullable(),
+            absent: z.boolean(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(500)
+      .refine((rows) => new Set(rows.map((r) => r.applicationId)).size === rows.length, {
+        message: 'An application is listed twice',
+      }),
+  })
+  .strict();
+export type AdmissionScoresInput = z.input<typeof admissionScoresSchema>;
+
+/** POST /admission/cycle-classes/:id/publish: the draft the admin looked at. */
+export const publishMeritSchema = z.object({ builtAt: z.iso.datetime({ offset: true }) }).strict();
+
+/** POST /admission/cycle-classes/:id/result-sms: the preview's count, confirmed. */
+export const admissionResultSmsSchema = z
+  .object({ expected: z.number().int().min(0).max(100_000) })
+  .strict();
 
 export const admissionCycleStatusSchema = z.object({ status: z.enum(ADMISSION_CYCLE_STATUSES) });
 
