@@ -11,6 +11,8 @@ const SAFE: LoginPrivileges = {
   replication: false,
   createRole: false,
   canBecome: [],
+  temp: false,
+  roleSettings: [],
 };
 
 /** The database server not answering, as the driver adapter reports it. */
@@ -23,6 +25,10 @@ const unreachable = () =>
 
 /** The service with the privilege query answering each call in turn (a row, or a failure). */
 function service(...answers: (LoginPrivileges | Error)[]) {
+  return serviceIn(false, ...answers);
+}
+
+function serviceIn(production: boolean, ...answers: (LoginPrivileges | Error)[]) {
   const queryRaw = vi.fn();
   for (const a of answers) {
     queryRaw.mockImplementationOnce(() =>
@@ -35,20 +41,58 @@ function service(...answers: (LoginPrivileges | Error)[]) {
               bypass_rls: a.bypassRls,
               replication: a.replication,
               create_role: a.createRole,
+              temp: a.temp,
+              role_settings: a.roleSettings,
               can_become: a.canBecome,
             },
           ]),
     );
   }
   const s = Object.create(PrismaService.prototype) as PrismaService;
+  const warn = vi.fn();
   Object.assign(s, {
     client: { $queryRaw: queryRaw },
-    logger: { warn: vi.fn(), log: vi.fn() },
+    logger: { warn, log: vi.fn() },
+    production,
     retryDelaysMs: [0, 0, 0],
     checkTimeoutMs: 50,
   });
-  return { s, queryRaw };
+  return { s, queryRaw, warn };
 }
+
+describe('PrismaService, TEMP and role settings (P1-J8 review)', () => {
+  it('refuses, in production, a login that may create temporary objects', async () => {
+    await expect(serviceIn(true, { ...SAFE, temp: true }).s.onModuleInit()).rejects.toThrow(
+      /DATABASE_URL.*may create temporary objects \(TEMP\)/,
+    );
+  });
+
+  it('starts elsewhere, warning loudly with the REVOKE to run', async () => {
+    const { s, warn } = serviceIn(false, { ...SAFE, temp: true });
+    await expect(s.onModuleInit()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /jantrik_app may create temporary objects.*REVOKE TEMPORARY ON DATABASE/,
+      ),
+    );
+  });
+
+  it('refuses, in production, a login with stored role settings (ALTER ROLE … SET); warns elsewhere', async () => {
+    const tampered = { ...SAFE, roleSettings: ['statement_timeout=1ms'] };
+    await expect(serviceIn(true, tampered).s.onModuleInit()).rejects.toThrow(
+      /DATABASE_URL.*has role settings it should not have \(statement_timeout=1ms\)/,
+    );
+    const { s, warn } = serviceIn(false, tampered);
+    await expect(s.onModuleInit()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/ALTER ROLE jantrik_app RESET ALL/));
+  });
+
+  it('says nothing about TEMP when the login has none', async () => {
+    const { s, warn } = serviceIn(true, SAFE);
+    await expect(s.onModuleInit()).resolves.toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
 
 describe('PrismaService startup check', () => {
   it('starts when the login has no privileges', async () => {

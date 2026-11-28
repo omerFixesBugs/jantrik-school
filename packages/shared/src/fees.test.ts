@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  duesAdmissionDate,
   allocate,
   amountInWords,
   concessionAmount,
@@ -508,6 +509,105 @@ describe('planStudentDues (which dues a student should have)', () => {
     expect(dues).toEqual([]);
     const heads = input().heads.map((h) => ({ ...h, isActive: h.id !== 'tuition' }));
     expect(planStudentDues(input({ heads })).some((d) => d.feeHeadId === 'tuition')).toBe(false);
+  });
+});
+
+describe('duesAdmissionDate (sprint 1 P3, review focus 5: admitted in December for January)', () => {
+  const year = { id: 'y27', startDate: '2027-01-01', endDate: '2027-12-31' };
+  const plan = (createdOn: string, admissionDateForDues: string | null, asOf: string) =>
+    planStudentDues({
+      asOf,
+      upTo: null,
+      duesFrom: '2027-01-01',
+      sibling: null,
+      year,
+      heads: [
+        {
+          id: 'admission',
+          frequency: 'ONE_TIME',
+          dueDay: null,
+          dueOffsetDays: 15,
+          oneTimeFrom: '2027-01-01',
+          siblingEligible: false,
+          isActive: true,
+          fine: { type: 'PER_DAY', amountPaisa: 1000, capPaisa: null },
+        },
+        {
+          id: 'tuition',
+          frequency: 'MONTHLY',
+          dueDay: 10,
+          dueOffsetDays: 0,
+          oneTimeFrom: null,
+          siblingEligible: false,
+          isActive: true,
+          fine: { type: 'PER_DAY', amountPaisa: 1000, capPaisa: null },
+        },
+      ],
+      terms: [],
+      amounts: [
+        { feeHeadId: 'admission', classLevelId: 'c1', studyGroupId: null, amountPaisa: 500000 },
+        { feeHeadId: 'tuition', classLevelId: 'c1', studyGroupId: null, amountPaisa: 100000 },
+      ],
+      student: {
+        id: 's1',
+        admittedOn: duesAdmissionDate({
+          createdOn,
+          admissionDateForDues,
+          yearStart: year.startDate,
+        }),
+        classLevelId: 'c1',
+        studyGroupId: null,
+        siblingRank: null,
+      },
+      concessions: [],
+    });
+
+  it('the recorded date wins; otherwise the creation day', () => {
+    const yearStart = '2027-01-01';
+    expect(
+      duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: '2027-01-01', yearStart }),
+    ).toBe('2027-01-01');
+    expect(
+      duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: null, yearStart }),
+    ).toBe('2026-12-10');
+  });
+
+  it('the recorded date counts only for a year that starts on or after it (review round 2, NIT 6: never fewer dues)', () => {
+    const at = (yearStart: string) =>
+      duesAdmissionDate({ createdOn: '2026-12-10', admissionDateForDues: '2027-01-01', yearStart });
+    // A later year: the recorded date, before it starts (a member from its first day).
+    expect(at('2028-01-01')).toBe('2027-01-01');
+    // An earlier year (the child enrolled there too, e.g. moved back by staff): the day the child
+    // really joined, so December is charged as for any late joiner, not skipped.
+    expect(at('2026-01-01')).toBe('2026-12-10');
+    // The year's start moved earlier after the admission, still after the creation day: from that
+    // start.
+    expect(at('2026-12-20')).toBe('2026-12-20');
+  });
+
+  it('admitted on 10 December for January: the admission fee is due 15 days after the year starts, January on the 10th, no fine on 5 January', () => {
+    const dues = plan('2026-12-10', '2027-01-01', '2027-01-05');
+    const once = dues.find((d) => d.feeHeadId === 'admission');
+    const january = dues.find((d) => d.periodKey === '2027-01');
+    expect(once).toMatchObject({ periodKey: 'ONCE', dueDate: '2027-01-16', amountPaisa: 500000 });
+    // Not extended as for a late joiner: the child was a member from the first day.
+    expect(january).toMatchObject({ dueDate: '2027-01-10', amountPaisa: 100000 });
+    const fine = { type: 'PER_DAY' as const, amountPaisa: 1000, capPaisa: null };
+    expect(fineAccrued(fine, once!.dueDate, '2027-01-05')).toBe(0);
+    expect(fineAccrued(fine, january!.dueDate, '2027-01-05')).toBe(0);
+  });
+
+  it('a student created before the year starts with nothing recorded (an import, an existing student) is unchanged: no one-time fee from a later date', () => {
+    const dues = plan('2026-12-10', null, '2027-02-20');
+    expect(dues.some((d) => d.feeHeadId === 'admission')).toBe(false);
+    expect(dues.map((d) => d.periodKey)).toEqual(['2027-01', '2027-02']);
+  });
+
+  it('admitted mid-year: unchanged (due 15 days later, that month extended for a late joiner)', () => {
+    const dues = plan('2027-03-15', null, '2027-03-20');
+    expect(dues.find((d) => d.feeHeadId === 'admission')).toMatchObject({ dueDate: '2027-03-30' });
+    expect(dues.find((d) => d.periodKey === '2027-03')).toMatchObject({ dueDate: '2027-03-22' });
+    expect(dues.some((d) => d.periodKey === '2027-02')).toBe(false);
   });
 });
 

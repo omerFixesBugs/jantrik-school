@@ -238,6 +238,33 @@ const maxDate = (a: IsoDate, b: IsoDate) => (a > b ? a : b);
 const minDate = (a: IsoDate, b: IsoDate) => (a < b ? a : b);
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
+/**
+ * The admission date a student's dues count from (sprint 1 P3, decision P3-K, review focus 5):
+ * the day the student was created, unless the child was admitted (by staff or from an application)
+ * into a year that had not started and was not current yet; then that year's start, recorded at
+ * admission (`students.admission_date_for_dues`). So a child admitted in December for January owes
+ * the admission fee from the year's start and the first month is not "late". Every other student
+ * (imports, existing students, admissions into the current year) keeps the creation day exactly as
+ * before (the review's M1: deriving it would have back-dated dues for imported students).
+ */
+export function duesAdmissionDate(input: {
+  /** The day the student was created, in the institute's timezone. */
+  createdOn: IsoDate;
+  /** students.admission_date_for_dues, or null. */
+  admissionDateForDues: IsoDate | null;
+  /** The start of the year whose dues are planned. */
+  yearStart: IsoDate;
+}): IsoDate {
+  const recorded = input.admissionDateForDues;
+  if (recorded === null) return input.createdOn;
+  // The recorded date is a year's start; it holds for that year and later ones. For a year that
+  // starts before it (the child also enrolled in an earlier year, or the year's start was moved
+  // earlier) the dues count from when the child really joined, never later (review round 2, NIT 6:
+  // a later date would skip months).
+  if (recorded <= input.yearStart) return recorded;
+  return maxDate(input.createdOn, input.yearStart);
+}
+
 function lastDayOfMonth(year: number, month: number): IsoDate {
   const day = new Date(Date.UTC(year, month, 0)).getUTCDate(); // month is 1-based here
   return `${year}-${pad2(month)}-${pad2(day)}`;

@@ -111,12 +111,15 @@ SELECT format('CREATE ROLE jantrik_login_app LOGIN NOSUPERUSER NOBYPASSRLS NOCRE
 -- to them (migrations hand them their functions) but never inherits them: their policies would
 -- otherwise show the owner every row.
 SELECT format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS', r)
-  FROM unnest(ARRAY['jantrik_auth', 'jantrik_search', 'jantrik_platform', 'jantrik_ingest']) AS r
+  FROM unnest(ARRAY['jantrik_auth', 'jantrik_search', 'jantrik_platform', 'jantrik_ingest',
+                     'jantrik_admission']) AS r
  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r) \gexec
 GRANT jantrik_auth TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 GRANT jantrik_search TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 GRANT jantrik_platform TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 GRANT jantrik_ingest TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
+-- The public admission form's three functions (sprint 1 P3b, docs/admission.md).
+GRANT jantrik_admission TO jantrik_owner WITH INHERIT FALSE, SET TRUE;
 
 -- An admin that is not a superuser (a managed Postgres) must be able to act as the owner to
 -- create its database and set it up. SET only: it never inherits the owner's rights.
